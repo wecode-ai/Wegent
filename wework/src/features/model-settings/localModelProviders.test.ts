@@ -1,5 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
-import { discoverProviderModels, findLocalModelProviderProfile } from './localModelProviders'
+import type { LocalModelConfig } from './localModelSettings'
+import {
+  discoverProviderModels,
+  findLocalModelProviderProfile,
+  localModelSupportsImageInput,
+} from './localModelProviders'
+
+function localModelConfig(overrides: Partial<LocalModelConfig>): LocalModelConfig {
+  return {
+    id: 'model-id',
+    displayName: 'Model',
+    modelId: 'model',
+    baseUrl: 'https://example.com/v1',
+    apiFormat: 'openai-chat-completions',
+    toolProfile: 'function',
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    catalogReady: true,
+    enabled: true,
+    updatedAt: '2026-08-04T00:00:00.000Z',
+    ...overrides,
+  }
+}
 
 describe('localModelProviders', () => {
   it('defines the Kimi Coding profile with only provider-managed defaults', () => {
@@ -53,13 +75,17 @@ describe('localModelProviders', () => {
         apiFormat: 'openai-responses',
         requestPath: '/responses',
         toolProfile: 'custom',
-        allowedModelIds: ['deepseek-v4-flash'],
+        allowedModelIds: ['deepseek-v4-flash', 'deepseek-v4-pro'],
         contextWindow: 1_048_576,
         webSearchMode: 'live',
         modelDefaults: {
           'deepseek-v4-flash': {
             contextWindow: 1_048_576,
             codexCatalogModelId: 'wework-deepseek-v4-flash',
+          },
+          'deepseek-v4-pro': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-deepseek-v4-pro',
           },
         },
       },
@@ -97,7 +123,44 @@ describe('localModelProviders', () => {
 
     await expect(
       discoverProviderModels(findLocalModelProviderProfile('deepseek'), 'secret-key', { fetcher })
-    ).resolves.toEqual([{ id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' }])
+    ).resolves.toEqual([
+      { id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
+      { id: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' },
+    ])
+  })
+
+  it('recognizes a Kimi Coding K3 model saved with a stale provider profile', () => {
+    expect(
+      localModelSupportsImageInput(
+        localModelConfig({
+          providerProfileId: 'kimi',
+          modelId: 'k3',
+          baseUrl: 'https://api.kimi.com/coding/v1/',
+          catalogEntry: {
+            slug: 'legacy-k3',
+            display_name: 'K3',
+            input_modalities: ['text'],
+          },
+        })
+      )
+    ).toBe(true)
+  })
+
+  it('does not infer image support from a matching model id on an unknown endpoint', () => {
+    expect(
+      localModelSupportsImageInput(
+        localModelConfig({
+          providerProfileId: 'custom',
+          modelId: 'k3',
+          baseUrl: 'https://example.com/v1',
+          catalogEntry: {
+            slug: 'custom-k3',
+            display_name: 'Custom K3',
+            input_modalities: ['text'],
+          },
+        })
+      )
+    ).toBe(false)
   })
 
   it('loads, validates, sorts, and deduplicates provider model entries', async () => {

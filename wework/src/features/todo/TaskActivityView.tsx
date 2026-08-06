@@ -698,8 +698,7 @@ export function TaskActivityView({
                 variant="desktop"
                 projectChat={commentProjectChat}
                 showProjectWorkBar={false}
-                composerMode="default"
-                composerInputTestId="cloud-task-activity-composer"
+                inputTestId="cloud-task-activity-composer"
               />
             </div>
           ) : (
@@ -719,8 +718,7 @@ export function TaskActivityView({
                 variant="desktop"
                 projectChat={commentProjectChat}
                 showProjectWorkBar={false}
-                composerMode="default"
-                composerInputTestId="cloud-task-activity-composer"
+                inputTestId="cloud-task-activity-composer"
               />
             </div>
           )}

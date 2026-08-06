@@ -12,6 +12,10 @@ The first main window starts with three default tabs: Task, Project spaces, and 
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
+## Move between project-space tasks and runtime tasks
+
+When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.
@@ -28,6 +32,8 @@ Press `Command+J` to open or close the bottom workspace panel. Opening the panel
 
 Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
 
+When diagnosing a terminal that does not repaint after a task switch, frontend logs record the terminal type, task and session identifiers, activation phase, xterm row and column count, container dimensions, and hidden state. They never record terminal output, commands, or workspace paths.
+
 ## Expand the right workspace
 
 With the right workspace open, select **Expand panel** in its title bar to let files, previews, or change reviews fill the main workspace. The task composer is hidden while a non-chat workspace is expanded; an expanded temporary chat keeps only its own composer. The expanded state is saved per conversation.
@@ -40,7 +46,7 @@ When a conversation is taller than the current viewport, turn markers appear alo
 
 ## Switch conversations and restore position
 
-When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.
+When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. The Files tab restores the selected file and its actual directory, including absolute paths opened from assistant messages outside the workspace root. The Review tab restores the selected review scope and loaded diff. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.
 
 Conversation panes with a running Terminal or Wework built-in browser remain mounted. Terminal processes, tabs, and output buffers stay live, while built-in browser pages, addresses, and tab state are preserved. After those resources close, the pane can be released while its restorable panel state remains. Hidden conversations do not handle shortcuts or browser-open events intended for the active conversation.
 

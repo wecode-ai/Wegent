@@ -197,7 +197,7 @@
       "description": "描述",
       "version": "版本",
       "author": "作者",
-      "tags": "标签",
+      "tags": "技能关键词",
       "created_at": "创建时间",
       "actions": "操作"
     },
@@ -238,7 +238,7 @@
       "tags": "标签1, 标签2, 标签3"
     },
     "hints": {
-      "tags": "多个标签用逗号分隔",
+      "tags": "来自技能包的特点关键词，不用于市场分类筛选；多个关键词用逗号分隔",
       "visible": "关闭后该技能不会出现在用户的技能列表中，但已绑定的智能体仍可正常使用"
     }
   },
@@ -339,6 +339,8 @@
     "quick_launch_function_team_placeholder": "选择智能体",
     "quick_launch_function_order": "排序",
     "quick_launch_function_icon": "图标",
+    "quick_launch_function_cover": "场景背景图",
+    "quick_launch_function_cover_placeholder": "输入图片地址，例如 /marketplace-covers/development.webp",
     "quick_launch_function_enabled": "启用",
     "quick_launch_function_disabled": "已停用",
     "quick_launch_function_phrases": "快捷短语",
@@ -358,6 +360,19 @@
     "quick_launch_function_preset_attachments": "附件",
     "quick_launch_function_preset_upload_attachment": "上传附件",
     "quick_launch_function_preset_no_attachments": "暂无预设附件",
+    "marketplace_tags_title": "市场标签",
+    "marketplace_tags_description": "维护市场筛选标签。标签 ID 保存后不可修改或删除，只能停用；排序值越小越靠前。",
+    "marketplace_tags_add": "添加标签",
+    "marketplace_tags_load_failed": "市场标签配置加载失败",
+    "marketplace_tags_save_failed": "市场标签配置保存失败",
+    "marketplace_tags_saved": "市场标签配置已保存",
+    "marketplace_tags_required": "标签 ID、中英文名称均为必填项",
+    "marketplace_tag_id": "标签 ID",
+    "marketplace_tag_name_zh": "中文名称",
+    "marketplace_tag_name_en": "英文名称",
+    "marketplace_tag_sort": "排序值",
+    "marketplace_tag_enabled": "启用",
+    "marketplace_tag_disabled": "停用",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"
@@ -1075,7 +1090,9 @@
     "connections": "已有 {{count}} 个用户连接",
     "confirm_disable": "确定停用应用“{{name}}”吗？现有连接将被删除，重新启用后用户需要再次授权。",
     "auth": {
-      "none": "无需用户认证"
+      "none": "无需用户认证",
+      "oauth2": "OAuth 2.0 用户授权",
+      "bearer": "用户 Bearer Token"
     },
     "visibility": {
       "all": "所有用户",

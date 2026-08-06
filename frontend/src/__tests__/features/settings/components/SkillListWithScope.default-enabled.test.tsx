@@ -394,6 +394,10 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
     expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
     const personalCard = within(librarySection).getByTestId('skill-library-item-1')
+    expect(within(personalCard).getByTestId('resource-icon')).toHaveAttribute(
+      'data-icon-source',
+      'initial'
+    )
     expect(within(personalCard).getByRole('switch', { name: '取消自动启用' })).toBeInTheDocument()
 
     await user.click(within(personalCard).getByTestId('skill-card-more-button-1'))
@@ -528,12 +532,8 @@ describe('SkillListWithScope default enabled skills', () => {
     const [card] = within(list).getAllByTestId(/^skill-library-item-/)
     expect(card).toHaveClass('gap-3')
     expect(card).not.toHaveClass('min-h-[180px]')
-    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
-      'h-11',
-      'w-11',
-      'rounded-xl',
-      'border'
-    )
+    expect(within(card).getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
+    expect(within(card).getByTestId('resource-icon')).toHaveClass('h-11', 'w-11', 'rounded-xl')
     const topActions = within(card).getByTestId('skill-card-top-actions-1')
     const bottomActions = within(card).getByTestId('skill-card-actions-1')
     expect(bottomActions).toHaveClass('mt-auto', 'w-full', 'border-t', 'pt-3')
@@ -812,7 +812,7 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).queryByText('Personal Skill')).not.toBeInTheDocument()
   })
 
-  it('keeps personal, group, and installed skills in mine while excluding system skills', async () => {
+  it('keeps my personal and group skills in mine while excluding other creators and system skills', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       buildSkill({
         id: 10,
@@ -834,6 +834,12 @@ describe('SkillListWithScope default enabled skills', () => {
       }),
       buildSkill({
         id: 13,
+        user_id: 2,
+        name: 'other-user-skill',
+        displayName: 'Other User Skill',
+      }),
+      buildSkill({
+        id: 14,
         name: 'system-skill',
         displayName: 'System Skill',
         user_id: 0,
@@ -841,14 +847,16 @@ describe('SkillListWithScope default enabled skills', () => {
       }),
     ])
 
-    render(<SkillListWithScope scope="all" sourceFilter="mine" compact />)
+    render(
+      <SkillListWithScope scope="all" sourceFilter="mine" compact showAutoEnabledSkills={false} />
+    )
 
     const librarySection = await screen.findByTestId('skill-library-section')
 
     expect(within(librarySection).getByText('Personal Mine Skill')).toBeInTheDocument()
     expect(within(librarySection).getByText('Group Mine Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByText('Installed Mine Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByTestId('installed-skill-card-12')).toBeInTheDocument()
+    expect(within(librarySection).queryByText('Installed Mine Skill')).not.toBeInTheDocument()
+    expect(within(librarySection).queryByText('Other User Skill')).not.toBeInTheDocument()
     expect(within(librarySection).queryByText('System Skill')).not.toBeInTheDocument()
   })
 

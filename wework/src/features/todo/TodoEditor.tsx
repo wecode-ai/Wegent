@@ -64,9 +64,7 @@ import {
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
-function supportsAssignApi(api: DeliveryApi): api is DeliveryApi & {
-  assignLoopItem: DeliveryApi['assignLoopItem']
-} {
+function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
 }
 

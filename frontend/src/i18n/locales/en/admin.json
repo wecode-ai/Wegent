@@ -197,7 +197,7 @@
       "description": "Description",
       "version": "Version",
       "author": "Author",
-      "tags": "Tags",
+      "tags": "Skill Keywords",
       "created_at": "Created At",
       "actions": "Actions"
     },
@@ -238,7 +238,7 @@
       "tags": "tag1, tag2, tag3"
     },
     "hints": {
-      "tags": "Separate multiple tags with commas",
+      "tags": "Feature keywords from the skill package; they are not used for marketplace category filters. Separate multiple keywords with commas.",
       "visible": "When disabled, this skill will not appear in user skill lists, but agents already bound to it can still use it"
     }
   },
@@ -339,6 +339,8 @@
     "quick_launch_function_team_placeholder": "Select agent",
     "quick_launch_function_order": "Order",
     "quick_launch_function_icon": "Icon",
+    "quick_launch_function_cover": "Scenario cover",
+    "quick_launch_function_cover_placeholder": "Enter an image URL, for example /marketplace-covers/development.webp",
     "quick_launch_function_enabled": "Enabled",
     "quick_launch_function_disabled": "Disabled",
     "quick_launch_function_phrases": "Quick Phrases",
@@ -358,6 +360,19 @@
     "quick_launch_function_preset_attachments": "Attachments",
     "quick_launch_function_preset_upload_attachment": "Upload Attachment",
     "quick_launch_function_preset_no_attachments": "No preset attachments",
+    "marketplace_tags_title": "Marketplace Tags",
+    "marketplace_tags_description": "Manage marketplace filters. Saved IDs cannot be renamed or deleted, only disabled. Lower sort values appear first.",
+    "marketplace_tags_add": "Add Tag",
+    "marketplace_tags_load_failed": "Failed to load marketplace tag configuration",
+    "marketplace_tags_save_failed": "Failed to save marketplace tag configuration",
+    "marketplace_tags_saved": "Marketplace tag configuration saved",
+    "marketplace_tags_required": "Tag ID and both localized names are required",
+    "marketplace_tag_id": "Tag ID",
+    "marketplace_tag_name_zh": "Chinese Name",
+    "marketplace_tag_name_en": "English Name",
+    "marketplace_tag_sort": "Sort Value",
+    "marketplace_tag_enabled": "Enabled",
+    "marketplace_tag_disabled": "Disabled",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -1075,7 +1090,9 @@
     "connections": "{{count}} user connections",
     "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
     "auth": {
-      "none": "No user auth"
+      "none": "No user auth",
+      "oauth2": "OAuth 2.0 user authorization",
+      "bearer": "User bearer token"
     },
     "visibility": {
       "all": "All users",

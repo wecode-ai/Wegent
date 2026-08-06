@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FormEvent, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { RefreshCw, Search } from 'lucide-react'
 
@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getResourceSearchPlaceholderKey } from '../resourceSearch'
 import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
+import { getMarketplaceTagLabel, useMarketplaceTags } from '../useMarketplaceTags'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 
@@ -25,10 +26,12 @@ interface DiscoverResourcesProps {
   targetNamespace?: string
   leadingFilterControls?: ReactNode
   hideSearch?: boolean
+  systemOnly?: boolean
 }
 
 const RESOURCE_LIBRARY_PAGE_SIZE = 20
 const MARKETPLACE_KEYWORD_PARAM = 'keyword'
+const MARKETPLACE_TAG_PARAM = 'tag'
 
 function isVisibleListing(listing: ResourceLibraryListing, targetNamespace: string) {
   if (listing.resource_type === 'mcp') return false
@@ -58,16 +61,24 @@ export function DiscoverResources({
   targetNamespace = 'default',
   leadingFilterControls,
   hideSearch = false,
+  systemOnly = false,
 }: DiscoverResourcesProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { t } = useTranslation('resource-library')
+  const { t, i18n } = useTranslation('resource-library')
   const { toast } = useToast()
   const [listings, setListings] = useState<ResourceLibraryListing[]>([])
   const keywordParam = searchParams.get(MARKETPLACE_KEYWORD_PARAM)?.trim() || ''
+  const tagParam = searchParams.get(MARKETPLACE_TAG_PARAM)?.trim() || ''
   const [searchInput, setSearchInput] = useState(keywordParam)
   const [keyword, setKeyword] = useState(keywordParam)
+  const [selectedTag, setSelectedTag] = useState(tagParam)
+  const { items: marketplaceTags } = useMarketplaceTags()
+  const enabledMarketplaceTags = marketplaceTags.filter(item => item.enabled)
+  const marketplaceTagLabels = Object.fromEntries(
+    marketplaceTags.map(item => [item.id, getMarketplaceTagLabel(item, i18n.language)])
+  )
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -78,10 +89,11 @@ export function DiscoverResources({
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isDetailLoading, setIsDetailLoading] = useState(false)
   const [installingIds, setInstallingIds] = useState<Set<number>>(() => new Set())
+  const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null)
   const listingGridClassName = 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
   const replaceMarketplaceParams = useCallback(
-    (updates: { keyword?: string }) => {
+    (updates: { keyword?: string; tag?: string }) => {
       const params = new URLSearchParams(searchParams.toString())
 
       if (updates.keyword !== undefined) {
@@ -89,6 +101,13 @@ export function DiscoverResources({
           params.set(MARKETPLACE_KEYWORD_PARAM, updates.keyword)
         } else {
           params.delete(MARKETPLACE_KEYWORD_PARAM)
+        }
+      }
+      if (updates.tag !== undefined) {
+        if (updates.tag) {
+          params.set(MARKETPLACE_TAG_PARAM, updates.tag)
+        } else {
+          params.delete(MARKETPLACE_TAG_PARAM)
         }
       }
 
@@ -102,6 +121,10 @@ export function DiscoverResources({
     setSearchInput(keywordParam)
     setKeyword(keywordParam)
   }, [keywordParam])
+
+  useEffect(() => {
+    setSelectedTag(tagParam)
+  }, [tagParam])
 
   const loadListings = useCallback(
     async (cursor?: string, append = false) => {
@@ -118,7 +141,9 @@ export function DiscoverResources({
       try {
         const response = await resourceLibraryApi.listListings({
           resourceType,
-          keyword: keyword || undefined,
+          ...(keyword ? { keyword } : {}),
+          ...(selectedTag ? { tags: [selectedTag] } : {}),
+          ...(systemOnly && !selectedTag ? { systemOnly: true } : {}),
           targetNamespace,
           cursor,
           limit: RESOURCE_LIBRARY_PAGE_SIZE,
@@ -153,7 +178,7 @@ export function DiscoverResources({
         }
       }
     },
-    [keyword, resourceType, targetNamespace]
+    [keyword, resourceType, selectedTag, systemOnly, targetNamespace]
   )
 
   useEffect(() => {
@@ -202,10 +227,34 @@ export function DiscoverResources({
     replaceMarketplaceParams({ keyword: nextKeyword })
   }
 
-  const handleLoadMore = () => {
+  const handleTagChange = (tag: string) => {
+    setSelectedTag(tag)
+    replaceMarketplaceParams({ tag })
+  }
+
+  const handleLoadMore = useCallback(() => {
     if (!nextCursor || isLoadingMore) return
     void loadListings(nextCursor, true)
-  }
+  }, [isLoadingMore, loadListings, nextCursor])
+
+  useEffect(() => {
+    const trigger = loadMoreTriggerRef.current
+    if (!trigger || !hasMore || isLoadingMore || loadMoreFailed) return
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry?.isIntersecting) return
+
+        observer.unobserve(entry.target)
+        handleLoadMore()
+      },
+      { rootMargin: '200px 0px' }
+    )
+
+    observer.observe(trigger)
+    return () => observer.disconnect()
+  }, [handleLoadMore, hasMore, isLoadingMore, loadMoreFailed])
 
   const handleViewDetails = async (listing: ResourceLibraryListing) => {
     setSelectedListing(listing)
@@ -281,39 +330,64 @@ export function DiscoverResources({
 
   return (
     <div className="flex flex-col gap-4" data-testid="discover-resources">
-      {(!hideSearch || leadingFilterControls) && (
-        <div
-          className={
-            hideSearch && !leadingFilterControls
-              ? 'flex justify-end'
-              : 'flex flex-col gap-3 rounded-xl border border-border bg-surface p-3 lg:flex-row lg:items-end'
-          }
-          data-testid="marketplace-toolbar"
-        >
-          {leadingFilterControls}
-          {!hideSearch && (
-            <form className="flex flex-1 flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
-              <Input
-                value={searchInput}
-                onChange={event => setSearchInput(event.target.value)}
-                placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
-                className="h-11 bg-base sm:h-10"
-                data-testid="resource-library-search-input"
-              />
-              <Button
-                type="submit"
-                variant="outline"
-                className="h-11 min-w-[44px] px-4 sm:w-auto lg:h-10"
-                aria-label={t('actions.search')}
-                data-testid="resource-library-search-button"
-              >
-                <Search className="h-4 w-4" aria-hidden="true" />
-                {t('actions.search')}
-              </Button>
-            </form>
-          )}
+      <div
+        className={
+          hideSearch && !leadingFilterControls
+            ? 'flex justify-start'
+            : 'flex flex-col gap-3 rounded-xl border border-border bg-surface p-3 lg:flex-row lg:items-end'
+        }
+        data-testid="marketplace-toolbar"
+      >
+        {leadingFilterControls}
+        <div className="flex max-w-full flex-wrap gap-2" data-testid="marketplace-tag-filter">
+          <Button
+            type="button"
+            size="sm"
+            className="min-h-11 min-w-11 md:min-h-9 md:min-w-0"
+            variant={selectedTag ? 'outline' : 'primary'}
+            onClick={() => handleTagChange('')}
+            aria-pressed={!selectedTag}
+            data-testid="marketplace-tag-filter-all"
+          >
+            {t(systemOnly ? 'marketplace_tags.featured' : 'marketplace_tags.all')}
+          </Button>
+          {enabledMarketplaceTags.map(item => (
+            <Button
+              key={item.id}
+              type="button"
+              size="sm"
+              className="min-h-11 min-w-11 md:min-h-9 md:min-w-0"
+              variant={selectedTag === item.id ? 'primary' : 'outline'}
+              onClick={() => handleTagChange(item.id)}
+              aria-pressed={selectedTag === item.id}
+              data-testid={`marketplace-tag-filter-${item.id}`}
+            >
+              {getMarketplaceTagLabel(item, i18n.language)}
+            </Button>
+          ))}
         </div>
-      )}
+        {!hideSearch && (
+          <form className="flex flex-1 flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
+            <Input
+              value={searchInput}
+              onChange={event => setSearchInput(event.target.value)}
+              placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
+              className="h-11 bg-base sm:h-10"
+              data-testid="resource-library-search-input"
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              className="h-11 min-w-[44px] px-4 sm:w-auto lg:h-10"
+              aria-label={t('actions.search')}
+              data-testid="resource-library-search-button"
+            >
+              <Search className="h-4 w-4" aria-hidden="true" />
+              {t('actions.search')}
+            </Button>
+          </form>
+        )}
+      </div>
 
       {isLoading ? (
         <div className={listingGridClassName} aria-label={t('states.loading')}>
@@ -349,24 +423,37 @@ export function DiscoverResources({
               onViewDetails={handleViewDetails}
               targetNamespace={targetNamespace}
               compact={resourceType === 'skill'}
+              tagLabels={marketplaceTagLabels}
             />
           ))}
         </div>
       )}
 
       {!isLoading && !hasError && listings.length > 0 && hasMore && (
-        <div className="flex justify-center pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 min-w-28"
-            onClick={handleLoadMore}
-            disabled={isLoadingMore || !nextCursor}
-            data-testid="resource-library-load-more"
-          >
-            {isLoadingMore && <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            {t(loadMoreFailed ? 'actions.retry' : 'actions.load_more')}
-          </Button>
+        <div
+          ref={loadMoreTriggerRef}
+          className="flex min-h-10 items-center justify-center pt-2"
+          data-testid="resource-library-load-more-trigger"
+        >
+          {loadMoreFailed ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 min-w-28"
+              onClick={handleLoadMore}
+              disabled={!nextCursor}
+              data-testid="resource-library-load-more"
+            >
+              {t('actions.retry')}
+            </Button>
+          ) : (
+            isLoadingMore && (
+              <RefreshCw
+                className="h-5 w-5 animate-spin text-text-secondary"
+                aria-label={t('states.loading')}
+              />
+            )
+          )}
         </div>
       )}
 
@@ -378,6 +465,7 @@ export function DiscoverResources({
         onOpenChange={setIsDetailOpen}
         onInstall={handleInstall}
         targetNamespace={targetNamespace}
+        tagLabels={marketplaceTagLabels}
       />
     </div>
   )

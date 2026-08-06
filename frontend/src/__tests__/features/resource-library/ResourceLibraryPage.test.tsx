@@ -85,18 +85,25 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
   DiscoverResources: ({
     resourceType,
     targetNamespace,
+    systemOnly,
   }: {
     resourceType: string
     targetNamespace?: string
+    systemOnly?: boolean
   }) => (
     <div
       data-testid="discover-resources"
       data-type={resourceType}
       data-target-namespace={targetNamespace ?? ''}
+      data-system-only={String(Boolean(systemOnly))}
     >
       发现能力
     </div>
   ),
+}))
+
+jest.mock('@/features/resource-library/components/FeaturedScenarios', () => ({
+  FeaturedScenarios: () => <div data-testid="featured-scenarios">系统智能体</div>,
 }))
 
 jest.mock('@/features/resource-library/components/InstalledResources', () => ({
@@ -116,6 +123,24 @@ jest.mock('@/features/resource-library/components/InstalledResources', () => ({
       data-group-namespaces={groupNamespaces?.join(',') ?? ''}
     >
       已添加能力
+    </div>
+  ),
+}))
+
+jest.mock('@/features/settings/components/SkillListWithScope', () => ({
+  SkillListWithScope: ({
+    selectedGroup,
+    searchQuery,
+  }: {
+    selectedGroup?: string | null
+    searchQuery?: string
+  }) => (
+    <div
+      data-testid="group-skill-management"
+      data-selected-group={selectedGroup ?? ''}
+      data-search-query={searchQuery ?? ''}
+    >
+      团队技能管理
     </div>
   ),
 }))
@@ -140,6 +165,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.shell': '执行器',
         'filters.retriever': '检索器',
         'sources.all': '全部',
+        'sources.mine': '我创建的',
         'sources.personal': '我创建的',
         'sources.group': '团队共享',
         'sources.installed': '已添加',
@@ -186,7 +212,7 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams()
   })
 
-  it('shows a focused discovery view with only agents and skills', () => {
+  it('shows system-only agent and skill marketplaces', () => {
     render(<ResourceLibraryPage />)
 
     expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
@@ -195,15 +221,24 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByRole('tab', { name: '技能市场' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '模型' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-source-select')).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
-      'placeholder',
-      '搜索智能体或描述'
-    )
+    expect(screen.queryByTestId('resource-library-header-search')).not.toBeInTheDocument()
+    expect(screen.getByTestId('featured-scenarios')).toBeInTheDocument()
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'agent')
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
     expect(screen.getByTestId('resource-type-navigation')).toHaveClass(
       'rounded-none',
       'bg-transparent'
     )
+  })
+
+  it('shows only system resources in the skill marketplace', () => {
+    mockSearchParams = new URLSearchParams('type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.queryByTestId('featured-scenarios')).not.toBeInTheDocument()
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'skill')
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
+    expect(mockReplace).not.toHaveBeenCalled()
   })
 
   it('moves all management types and source filtering into My Capabilities', () => {
@@ -220,15 +255,16 @@ describe('ResourceLibraryPage', () => {
       '检索器',
     ])
     expect(screen.queryByRole('tab', { name: '连接器' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-source-select')).toHaveTextContent('全部')
+    expect(screen.getByTestId('resource-library-source-select')).toHaveTextContent('我创建的')
     expect(screen.getByTestId('resource-library-source-select')).toHaveClass('sm:hidden')
     expect(screen.getByTestId('resource-library-source-segments')).toBeInTheDocument()
     expect(screen.getByTestId('resource-library-source-all-button')).toHaveAttribute(
       'aria-pressed',
-      'true'
+      'false'
     )
-    expect(screen.getByTestId('resource-library-source-personal-button')).toHaveTextContent(
-      '我创建的'
+    expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
     )
     expect(screen.getByTestId('resource-library-source-group-button')).toHaveTextContent('团队共享')
     expect(screen.getByTestId('resource-library-source-installed-button')).toHaveTextContent(
@@ -246,7 +282,10 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-source-select')).not.toHaveClass('lg:h-10')
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveClass('h-11')
     expect(screen.getByTestId('resource-library-header-search-input')).not.toHaveClass('lg:h-10')
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'mine'
+    )
   })
 
   it.each([
@@ -260,6 +299,20 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
       'placeholder',
       placeholder
+    )
+  })
+
+  it('uses created-by-me filtering for skills', () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'mine'
     )
   })
 
@@ -290,11 +343,17 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=model&source=installed')
     render(<ResourceLibraryPage />)
 
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'personal'
+    )
     await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=model&source=all', {
-        scroll: false,
-      })
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=model&source=personal',
+        {
+          scroll: false,
+        }
+      )
     )
   })
 
@@ -324,23 +383,28 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=agent')
     render(<ResourceLibraryPage />)
 
-    await user.click(screen.getByTestId('resource-library-source-personal-button'))
+    await user.click(screen.getByTestId('resource-library-source-mine-button'))
 
-    expect(mockReplace).toHaveBeenCalledWith(
-      '/resource-library?tab=mine&type=agent&source=personal',
-      { scroll: false }
-    )
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=mine', {
+      scroll: false,
+    })
   })
 
   it('normalizes unsupported system filters for agents and skills', async () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=agent&source=system')
     render(<ResourceLibraryPage />)
 
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'mine'
+    )
     await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=all', {
-        scroll: false,
-      })
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=agent&source=mine',
+        {
+          scroll: false,
+        }
+      )
     )
   })
 
@@ -358,6 +422,17 @@ describe('ResourceLibraryPage', () => {
         'platform'
       )
     )
+  })
+
+  it('shows native team agents with the editable resource manager', async () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=agent&source=group&group=platform')
+    render(<ResourceLibraryPage />)
+
+    const manager = screen.getByTestId('my-resource-management')
+    expect(manager).toHaveAttribute('data-fixed-source', 'group')
+    expect(manager).toHaveAttribute('data-fixed-group', 'platform')
+    expect(manager).toHaveAttribute('data-types', 'agent')
+    expect(screen.queryByTestId('installed-resources')).not.toBeInTheDocument()
   })
 
   it('truncates a long selected team name and exposes the full name as a tooltip', async () => {
@@ -470,19 +545,22 @@ describe('ResourceLibraryPage', () => {
 
   it('persists the applied search and clears it from the compact search control', async () => {
     const user = userEvent.setup()
+    mockSearchParams = new URLSearchParams('tab=mine')
     render(<ResourceLibraryPage />)
 
     fireEvent.change(screen.getByTestId('resource-library-header-search-input'), {
       target: { value: '  chat  ' },
     })
     fireEvent.submit(screen.getByTestId('resource-library-header-search'))
-    expect(mockReplace).toHaveBeenCalledWith('/resource-library?keyword=chat', { scroll: false })
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&keyword=chat', {
+      scroll: false,
+    })
 
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveClass('pr-12')
     const clearButton = screen.getByTestId('resource-library-header-search-clear')
     expect(clearButton).toHaveClass('h-11', 'w-11')
     await user.click(clearButton)
-    expect(mockReplace).toHaveBeenLastCalledWith('/resource-library', { scroll: false })
+    expect(mockReplace).toHaveBeenLastCalledWith('/resource-library?tab=mine', { scroll: false })
   })
 
   it('keeps common creation types visible and foundation resources under Advanced', async () => {

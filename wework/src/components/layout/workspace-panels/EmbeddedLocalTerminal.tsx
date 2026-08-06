@@ -19,6 +19,11 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
+import {
+  installXtermRenderRecovery,
+  logXtermRenderState,
+  refreshXterm,
+} from './xtermRenderRecovery'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -75,7 +80,18 @@ export function EmbeddedLocalTerminal({
 
   useEffect(() => {
     activeRef.current = active
-  }, [active])
+    const container = containerRef.current
+    if (!container) return
+    logXtermRenderState({
+      active,
+      container,
+      phase: 'active-changed',
+      sessionId,
+      taskId,
+      terminal: terminalRef.current,
+      terminalKind: 'local',
+    })
+  }, [active, sessionId, taskId])
 
   useEffect(() => {
     contextRef.current = { taskId, workspacePath, cwd, title }
@@ -144,9 +160,10 @@ export function EmbeddedLocalTerminal({
     })
 
     const fitAndResize = () => {
-      if (disposed || !container.isConnected) return
+      if (disposed || !activeRef.current || !container.isConnected) return
       try {
         fitAddon.fit()
+        refreshXterm(terminal)
         syncTerminalSize()
       } catch (error) {
         console.error('Failed to resize local terminal:', error)
@@ -165,6 +182,7 @@ export function EmbeddedLocalTerminal({
 
     const resizeObserver = new ResizeObserver(fitAndResize)
     resizeObserver.observe(container)
+    const removeRenderRecovery = installXtermRenderRecovery(fitAndResize)
     requestAnimationFrame(fitAndResize)
 
     void listenLocalTerminalOutput(payload => {
@@ -205,6 +223,7 @@ export function EmbeddedLocalTerminal({
     return () => {
       disposed = true
       unobserveTheme()
+      removeRenderRecovery()
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
@@ -229,6 +248,16 @@ export function EmbeddedLocalTerminal({
       try {
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
+        refreshXterm(terminal)
+        logXtermRenderState({
+          active,
+          container,
+          phase: 'activation-complete',
+          sessionId,
+          taskId,
+          terminal,
+          terminalKind: 'local',
+        })
         terminal.focus()
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current
@@ -245,7 +274,7 @@ export function EmbeddedLocalTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, sessionId, showWorkbenchBackground])
+  }, [active, sessionId, showWorkbenchBackground, taskId])
 
   return (
     <div

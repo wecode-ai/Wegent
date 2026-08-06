@@ -339,7 +339,9 @@ describe('localExecutor', () => {
     await expect(
       connectLocalExecutorToBackend({
         backendUrl: 'https://cloud.example.com',
+        socketBaseUrl: 'wss://socket.example.com',
         authToken: 'wg-token',
+        runtimeAuthToken: 'task-token',
       })
     ).resolves.toEqual({
       running: true,
@@ -348,7 +350,9 @@ describe('localExecutor', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.connectBackend, {
       backendUrl: 'https://cloud.example.com',
+      socketUrl: 'wss://socket.example.com',
       authToken: 'wg-token',
+      runtimeAuthToken: 'task-token',
     })
   })
 

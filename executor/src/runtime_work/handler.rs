@@ -289,10 +289,10 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
-    active_local_tasks: Arc<Mutex<HashSet<String>>>,
+    next_execution_id: Arc<AtomicU64>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
-    active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
+    active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -314,12 +314,20 @@ struct CodexRuntimeProxyConfig {
 }
 
 struct ActiveTurnCancellation {
+    execution_id: u64,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
 }
 
 #[derive(Clone)]
+struct ActiveRequestUserInput {
+    execution_id: u64,
+    sender: mpsc::Sender<Value>,
+}
+
+#[derive(Clone)]
 struct ActiveCodexTurn {
+    execution_id: u64,
     thread_id: String,
     turn_id: String,
 }
@@ -360,7 +368,7 @@ impl RuntimeWorkRpcHandler {
                 CodexRuntimeProxyConfig::default(),
             )),
             event_tx: None,
-            active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
+            next_execution_id: Arc::new(AtomicU64::new(1)),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -462,6 +470,19 @@ impl RuntimeWorkRpcHandler {
             "runtime.connectors.tools" => self.connectors.tools().await,
             "runtime.connectors.call" => self.connectors.call(payload).await,
             "runtime.connectors.apps.sync" => self.connectors.sync_apps(payload).await,
+            "runtime.local_connector_auth.health" => {
+                super::local_connector_auth::health(payload).await
+            }
+            "runtime.local_connector_auth.start" => {
+                super::local_connector_auth::start(payload).await
+            }
+            "runtime.local_connector_auth.poll" => super::local_connector_auth::poll(payload).await,
+            "runtime.local_connector_auth.cancel" => {
+                super::local_connector_auth::cancel(payload).await
+            }
+            "runtime.local_connector_auth.logout" => {
+                super::local_connector_auth::logout(payload).await
+            }
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }

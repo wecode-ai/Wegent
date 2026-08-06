@@ -67,6 +67,7 @@ pub struct ExecutionRequest {
     pub validation_params: Value,
     pub user_name: Option<String>,
     pub auth_token: Option<String>,
+    pub runtime_auth_token: Option<String>,
     pub skill_identity_token: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -119,6 +120,7 @@ impl Default for ExecutionRequest {
             validation_params: Value::Object(Default::default()),
             user_name: None,
             auth_token: None,
+            runtime_auth_token: None,
             skill_identity_token: None,
             extra: Map::new(),
         }

@@ -6,6 +6,7 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import type { ComposerEditorSnapshot } from './ComposerProseMirrorEditor'
 
 export interface ComposerSubmitOptions {
   guideWhenBusy?: boolean
@@ -24,6 +25,8 @@ export interface ComposerExternalMentionCandidate {
 export interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   canSend: boolean
   disabled?: boolean
@@ -33,6 +36,8 @@ export interface ComposerTextareaProps {
   textareaRef: RefObject<HTMLElement | null>
   className: string
   skillMenuClassName?: string
+  disableAutocomplete?: boolean
+  onKeyDown?: (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => boolean | void
   onPasteFiles?: (files: File[]) => void
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null

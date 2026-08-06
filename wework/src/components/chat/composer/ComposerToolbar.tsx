@@ -1,13 +1,16 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
@@ -44,7 +47,12 @@ interface ComposerToolbarProps {
   projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
+  sendButtonTestId?: string
   leadingContext?: ReactNode
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  selectedCloudProjectId?: CloudProject['id']
+  onSelectCloudProject?: (project: CloudProject) => void
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -82,7 +90,12 @@ export function ComposerToolbar({
   projectWorkMenuContext,
   onQuickPhraseSelect,
   onSubmit,
+  sendButtonTestId = 'send-message-button',
   leadingContext,
+  onListLocalApps,
+  cloudProjectCandidates,
+  selectedCloudProjectId,
+  onSelectCloudProject,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -126,8 +139,16 @@ export function ComposerToolbar({
           onConfigureSupervisor={onConfigureSupervisor}
           supervisorEnabled={supervisorEnabled}
           supervisorPending={supervisorPending}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
+        <PluginPickerMenu
+          disabled={disabled}
+          iconOnly={compact}
+          onListLocalApps={onListLocalApps}
+        />
         {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
@@ -186,7 +207,7 @@ export function ComposerToolbar({
           <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
             <button
               type="submit"
-              data-testid="send-message-button"
+              data-testid={sendButtonTestId}
               className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
               aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
             >
@@ -243,7 +264,7 @@ export function ComposerToolbar({
         ) : (
           <button
             type="submit"
-            data-testid="send-message-button"
+            data-testid={sendButtonTestId}
             disabled={!canSend}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
             aria-label={t('workbench.send_message', '发送消息')}

@@ -15,7 +15,6 @@ from app.models.api_key import APIKey
 from app.models.cloud_project import (
     CloudProject,
     CloudProjectFile,
-    CloudProjectLocalBinding,
     LoopItemTaskBinding,
 )
 from app.models.delivery import (
@@ -35,6 +34,13 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.plugin_marketplace import (
+    Plugin,
+    PluginDeviceInstallation,
+    PluginRelease,
+    PluginSubmission,
+    PluginUpstream,
+)
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -69,7 +75,6 @@ __all__ = [
     "DingtalkSyncedNode",
     "CloudProject",
     "CloudProjectFile",
-    "CloudProjectLocalBinding",
     "LoopItemTaskBinding",
     "LoopItem",
     "LoopItemAttachment",
@@ -94,6 +99,11 @@ __all__ = [
     "KnowledgeArtifactRecord",
     "Project",
     "ProjectChatMessage",
+    "Plugin",
+    "PluginRelease",
+    "PluginUpstream",
+    "PluginSubmission",
+    "PluginDeviceInstallation",
     "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

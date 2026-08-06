@@ -10,6 +10,7 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
+import type { MarketplaceTagsResponse, MarketplaceTagsUpdate } from '@/types/marketplace'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
@@ -115,7 +116,7 @@ export interface SystemStats {
 }
 
 // Connector App Types
-export type ConnectorAuthType = 'none'
+export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
 export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
 
@@ -165,6 +166,7 @@ export interface AdminConnectorApp {
   mcp_url: string
   provider_header_names: string[]
   provider_headers_configured: boolean
+  forward_user_context_headers: boolean
   tool_allowlist: string[]
   http_tools: ConnectorHttpToolDefinition[]
   connection_count: number
@@ -184,6 +186,7 @@ export interface AdminConnectorAppCreate {
   transport: ConnectorTransport
   mcp_url: string
   provider_headers: Record<string, string>
+  forward_user_context_headers?: boolean
   tool_allowlist: string[]
   http_tools: ConnectorHttpToolDefinition[]
 }
@@ -351,6 +354,11 @@ export interface AdminPublicTeamUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+}
+
+export interface AdminPublicTeamIconUpload {
+  asset_id: number
+  url: string
 }
 
 // Public Bot Types
@@ -836,6 +844,14 @@ export const adminApis = {
     return apiClient.put('/admin/system-config/quick-access', { teams })
   },
 
+  async getMarketplaceTagsConfig(): Promise<MarketplaceTagsResponse> {
+    return apiClient.get('/admin/system-config/marketplace-tags')
+  },
+
+  async updateMarketplaceTagsConfig(data: MarketplaceTagsUpdate): Promise<MarketplaceTagsResponse> {
+    return apiClient.put('/admin/system-config/marketplace-tags', data)
+  },
+
   // ==================== Chat Slogan & Tips Config ====================
 
   /**
@@ -1020,6 +1036,22 @@ export const adminApis = {
    */
   async deletePublicTeam(teamId: number): Promise<void> {
     return apiClient.delete(`/admin/public-teams/${teamId}`)
+  },
+
+  /**
+   * Upload a custom image used as a public team's canonical icon.
+   */
+  async uploadPublicTeamIcon(file: File): Promise<AdminPublicTeamIconUpload> {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.postForm('/admin/public-teams/icon-assets', formData)
+  },
+
+  /**
+   * Delete an uploaded public team icon.
+   */
+  async deletePublicTeamIcon(assetId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-teams/icon-assets/${assetId}`)
   },
 
   // ==================== Public Bot Management ====================

@@ -21,7 +21,7 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
 
-Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Tauri IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
@@ -108,7 +108,7 @@ API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` be
 
 “测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。`custom` Responses 模式使用 Codex 的 `apply_patch` custom tool 名称和 grammar 完成探针，`function` 模式使用普通函数探针。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
 
-DeepSeek V4-Flash 是内置 provider profile：上游地址为 `https://api.deepseek.com/responses`，模型目录 ID 为 `wework-deepseek-v4-flash`，上下文窗口为 1,048,576 tokens，推理等级支持 `low`、`high`、`max` 且默认使用 `high`。模型目录开启并行工具、multi-agent v2 和 Web Search，只声明文本输入，不声明图片生成。Wework 从 DeepSeek `/models` 发现模型后只保留当前 Codex profile 支持的 `deepseek-v4-flash`；旧版由该 profile 管理的默认 Chat Completions 配置会在读取时迁移到 Responses API、`custom` 工具模式和实时搜索。
+DeepSeek V4-Flash 和 V4-Pro 是内置 provider profile：上游地址为 `https://api.deepseek.com/responses`，模型目录 ID 分别为 `wework-deepseek-v4-flash` 和 `wework-deepseek-v4-pro`，上下文窗口均为 1,048,576 tokens，推理等级支持 `low`、`high`、`max` 且默认使用 `high`。模型目录开启并行工具、multi-agent v2 和 Web Search，只声明文本输入，不声明图片生成。Wework 从 DeepSeek `/models` 发现模型后只保留当前 Codex profile 支持的 `deepseek-v4-flash` 和 `deepseek-v4-pro`；旧版由该 profile 管理的 Chat Completions 配置会在读取时迁移到 Responses API、`custom` 工具模式和实时搜索。
 
 在云端或远程设备中首次选择本地模型，或者本地模型配置发生变化后再次使用时，Wework 会在真正创建或继续任务之前显示确认框。用户确认后，Wework 将当前本地自定义模型目录写入目标 Executor，使用 `ifIdle` 语义重启该设备维护的 persistent Codex app-server，并通过 `model/list` 校验目标模型已经加载；校验成功后才继续发送当前消息。同一设备和同一配置版本在当前 Wework 会话内只需要确认一次。
 

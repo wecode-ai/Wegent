@@ -104,6 +104,7 @@ import { ResourceManagementLayout } from './resource-management/ResourceManageme
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { SkillShareScopeDialog } from '@/features/resource-library/components/SkillShareScopeDialog'
 import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -121,8 +122,17 @@ interface SkillListWithScopeProps {
   creationOnly?: boolean
   showAutoEnabledSkills?: boolean
   hideCreateActions?: boolean
+  hideEmptyState?: boolean
+  hideLoadingState?: boolean
   compact?: boolean
   searchQuery?: string
+  onListStateChange?: (state: ResourceListState) => void
+}
+
+export interface ResourceListState {
+  loading: boolean
+  hasItems: boolean
+  hasError: boolean
 }
 
 function normalizeSkillCreateTarget(target: ResourceCreateTarget): ResourceCreateTarget {
@@ -151,8 +161,11 @@ export function SkillListWithScope({
   creationOnly = false,
   showAutoEnabledSkills = true,
   hideCreateActions = false,
+  hideEmptyState = false,
+  hideLoadingState = false,
   compact = false,
   searchQuery = '',
+  onListStateChange,
 }: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
   const { t: tSettingsBase } = useTranslation('settings')
@@ -352,11 +365,11 @@ export function SkillListWithScope({
         return isSystemSkill(skill)
       }
       if (sourceFilter === 'mine') {
-        return !isSystemSkill(skill)
+        return !isSystemSkill(skill) && skill.user_id === user?.id
       }
       return true
     },
-    [isGroupSkill, sourceFilter]
+    [isGroupSkill, sourceFilter, user]
   )
 
   const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
@@ -703,7 +716,17 @@ export function SkillListWithScope({
       )
     : sortedLibrarySkills
 
+  useEffect(() => {
+    onListStateChange?.({
+      loading,
+      hasItems: managedSkills.length > 0,
+      hasError: Boolean(error),
+    })
+  }, [error, loading, managedSkills.length, onListStateChange])
+
   if (loading && !creationOnly) {
+    if (hideLoadingState) return null
+
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-text-secondary">{t('skills.loading')}</div>
@@ -734,7 +757,7 @@ export function SkillListWithScope({
             display_name: skill.spec.displayName || skill.metadata.name,
             description: skill.spec.description || null,
             icon: null,
-            tags: skill.spec.tags || [],
+            tags: pendingCreateRequestRef.current.marketplaceTags || [],
             version: skill.spec.version || '1.0.0',
             manifest_options: {},
           })
@@ -755,13 +778,18 @@ export function SkillListWithScope({
     if (!saved && hadPendingCreateRequest) onCreateRequestClose?.()
   }
 
-  const handleCreateOptionsChange = (target: ResourceCreateTarget, publishAfterCreate: boolean) => {
+  const handleCreateOptionsChange = (
+    target: ResourceCreateTarget,
+    publishAfterCreate: boolean,
+    marketplaceTags: string[]
+  ) => {
     setCreateTarget(target)
     if (pendingCreateRequestRef.current) {
       pendingCreateRequestRef.current = {
         ...pendingCreateRequestRef.current,
         target,
         publishAfterCreate,
+        marketplaceTags,
       }
     }
   }
@@ -864,395 +892,400 @@ export function SkillListWithScope({
     <div className={creationOnly ? 'contents' : 'space-y-6'}>
       {!creationOnly && (
         <>
-          <ResourceManagementLayout
-            title={tSettings(
-              sourceFilter === 'group'
-                ? 'skills.groupLibraryTitle'
-                : showAutoEnabledSkills
-                  ? 'skills.myLibraryTitle'
-                  : 'skills.libraryTitle'
-            )}
-            description={tSettings(
-              sourceFilter === 'group'
-                ? 'skills.groupLibraryDescription'
-                : showAutoEnabledSkills
-                  ? 'skills.myLibraryDescription'
-                  : 'skills.libraryDescription'
-            )}
-            actions={libraryActions}
-            filters={libraryFilters}
-            hideHeader={compact}
-            data-testid="skill-library-section"
-          >
-            {/* Skills list */}
-            {managedSkills.length === 0 ? (
-              <div className="text-center py-12 text-text-secondary">
-                <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>{t('skills.no_skills')}</p>
-                <p className="text-sm mt-2">{t('skills.no_skills_hint')}</p>
-              </div>
-            ) : (
-              <div className={getResourceGridClassName(compact)} data-testid="skill-library-list">
-                {managedSkills.map(skill => {
-                  if (installedSkillIds.has(skill.id)) {
-                    return (
-                      <InstalledSkillCard
-                        key={skill.id}
-                        skill={skill}
-                        sourceLabel={getSkillSourceLabel(skill)}
-                        sourceVariant={
-                          isSystemSkill(skill)
-                            ? 'info'
-                            : isGroupSkill(skill)
-                              ? 'success'
-                              : 'secondary'
+          {!(hideEmptyState && managedSkills.length === 0) && (
+            <ResourceManagementLayout
+              title={tSettings(
+                sourceFilter === 'group'
+                  ? 'skills.groupLibraryTitle'
+                  : showAutoEnabledSkills
+                    ? 'skills.myLibraryTitle'
+                    : 'skills.libraryTitle'
+              )}
+              description={tSettings(
+                sourceFilter === 'group'
+                  ? 'skills.groupLibraryDescription'
+                  : showAutoEnabledSkills
+                    ? 'skills.myLibraryDescription'
+                    : 'skills.libraryDescription'
+              )}
+              actions={libraryActions}
+              filters={libraryFilters}
+              hideHeader={compact}
+              data-testid="skill-library-section"
+            >
+              {/* Skills list */}
+              {managedSkills.length === 0 ? (
+                <div className="text-center py-12 text-text-secondary">
+                  <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>{t('skills.no_skills')}</p>
+                  <p className="text-sm mt-2">{t('skills.no_skills_hint')}</p>
+                </div>
+              ) : (
+                <div className={getResourceGridClassName(compact)} data-testid="skill-library-list">
+                  {managedSkills.map(skill => {
+                    if (installedSkillIds.has(skill.id)) {
+                      return (
+                        <InstalledSkillCard
+                          key={skill.id}
+                          skill={skill}
+                          sourceLabel={getSkillSourceLabel(skill)}
+                          sourceVariant={
+                            isSystemSkill(skill)
+                              ? 'info'
+                              : isGroupSkill(skill)
+                                ? 'success'
+                                : 'secondary'
+                          }
+                          isUpdating={updatingDefaultSkillId === skill.id}
+                          onConfigure={() => setConfiguringSkill(skill)}
+                          onDisable={() => handleToggleDefaultEnabledSkill(skill)}
+                        />
+                      )
+                    }
+
+                    const defaultEnabledSwitch = (
+                      <Switch
+                        checked={Boolean(skill.availability?.inMyDefault)}
+                        onCheckedChange={() => handleToggleDefaultEnabledSkill(skill)}
+                        disabled={updatingDefaultSkillId === skill.id}
+                        aria-label={
+                          skill.availability?.inMyDefault
+                            ? tSettings('skills.availability.removeFromMyDefault')
+                            : tSettings('skills.availability.addToMyDefault')
                         }
-                        isUpdating={updatingDefaultSkillId === skill.id}
-                        onConfigure={() => setConfiguringSkill(skill)}
-                        onDisable={() => handleToggleDefaultEnabledSkill(skill)}
+                        title={tSettings('skills.availability.inMyDefault')}
+                        data-testid={
+                          skill.availability?.inMyDefault
+                            ? `remove-skill-default-button-${skill.id}`
+                            : `add-skill-default-button-${skill.id}`
+                        }
                       />
                     )
-                  }
 
-                  const defaultEnabledSwitch = (
-                    <Switch
-                      checked={Boolean(skill.availability?.inMyDefault)}
-                      onCheckedChange={() => handleToggleDefaultEnabledSkill(skill)}
-                      disabled={updatingDefaultSkillId === skill.id}
-                      aria-label={
-                        skill.availability?.inMyDefault
-                          ? tSettings('skills.availability.removeFromMyDefault')
-                          : tSettings('skills.availability.addToMyDefault')
-                      }
-                      title={tSettings('skills.availability.inMyDefault')}
-                      data-testid={
-                        skill.availability?.inMyDefault
-                          ? `remove-skill-default-button-${skill.id}`
-                          : `add-skill-default-button-${skill.id}`
-                      }
-                    />
-                  )
-
-                  return (
-                    <Card
-                      key={skill.id}
-                      className={cn(
-                        getResourceCardClassName(compact),
-                        compact && 'group relative gap-3'
-                      )}
-                      data-testid={`skill-library-item-${skill.id}`}
-                    >
-                      <div className={getResourceCardBodyClassName(compact)}>
-                        {compact ? (
-                          <>
-                            <div className="flex min-w-0 items-start gap-3">
-                              <ResourceCardIcon compact>
-                                <Sparkles className="h-5 w-5 text-primary" aria-hidden />
-                              </ResourceCardIcon>
-                              <div className="min-w-0 flex-1">
-                                <h3
-                                  className="truncate font-semibold text-text-primary"
-                                  title={skill.displayName || skill.name}
-                                >
-                                  {skill.displayName || skill.name}
-                                </h3>
-                                <div className="mt-1 flex flex-wrap items-center gap-2">
-                                  <Badge
-                                    variant={
-                                      isSystemSkill(skill)
-                                        ? 'info'
-                                        : isGroupSkill(skill)
-                                          ? 'success'
-                                          : 'secondary'
-                                    }
+                    return (
+                      <Card
+                        key={skill.id}
+                        className={cn(
+                          getResourceCardClassName(compact),
+                          compact && 'group relative gap-3'
+                        )}
+                        data-testid={`skill-library-item-${skill.id}`}
+                      >
+                        <div className={getResourceCardBodyClassName(compact)}>
+                          {compact ? (
+                            <>
+                              <div className="flex min-w-0 items-start gap-3">
+                                <ResourceIcon
+                                  resourceType="skill"
+                                  name={skill.displayName || skill.name}
+                                  marketplaceTags={skill.marketplaceTags}
+                                  size="md"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <h3
+                                    className="truncate font-semibold text-text-primary"
+                                    title={skill.displayName || skill.name}
                                   >
-                                    {getSkillSourceLabel(skill)}
-                                  </Badge>
-                                  {skill.version && (
-                                    <span className="text-xs text-text-muted">
-                                      v{skill.version}
-                                    </span>
+                                    {skill.displayName || skill.name}
+                                  </h3>
+                                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                                    <Badge
+                                      variant={
+                                        isSystemSkill(skill)
+                                          ? 'info'
+                                          : isGroupSkill(skill)
+                                            ? 'success'
+                                            : 'secondary'
+                                      }
+                                    >
+                                      {getSkillSourceLabel(skill)}
+                                    </Badge>
+                                    {skill.version && (
+                                      <span className="text-xs text-text-muted">
+                                        v{skill.version}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div
+                                  className="relative z-20 ml-auto flex shrink-0 items-center gap-1"
+                                  data-testid={`skill-card-top-actions-${skill.id}`}
+                                >
+                                  {(skill.publication_status === 'published' ||
+                                    publishedSkillIds.has(skill.id)) && (
+                                    <PublishedResourceIndicator
+                                      testId={`published-skill-${skill.id}-indicator`}
+                                    />
                                   )}
+                                  <span className="flex h-11 w-11 items-center justify-center md:h-9 md:w-9">
+                                    <span className="sr-only">
+                                      {tSettings('skills.availability.inMyDefault')}
+                                    </span>
+                                    {defaultEnabledSwitch}
+                                  </span>
                                 </div>
                               </div>
-                              <div
-                                className="relative z-20 ml-auto flex shrink-0 items-center gap-1"
-                                data-testid={`skill-card-top-actions-${skill.id}`}
-                              >
-                                {(skill.publication_status === 'published' ||
-                                  publishedSkillIds.has(skill.id)) && (
-                                  <PublishedResourceIndicator
-                                    testId={`published-skill-${skill.id}-indicator`}
-                                  />
-                                )}
-                                <span className="flex h-11 w-11 items-center justify-center md:h-9 md:w-9">
-                                  <span className="sr-only">
-                                    {tSettings('skills.availability.inMyDefault')}
-                                  </span>
-                                  {defaultEnabledSwitch}
-                                </span>
-                              </div>
-                            </div>
-                            {skill.description && (
-                              <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">
-                                {skill.description}
-                              </p>
-                            )}
-                            {(canEditSkill(skill) ||
-                              skill.availability?.inMyDefault ||
-                              !isSystemSkill(skill)) && (
-                              <div
-                                className={cn(
-                                  'relative z-20 flex flex-shrink-0 items-center gap-2',
-                                  getResourceCardActionsClassName(true)
-                                )}
-                                data-testid={`skill-card-actions-${skill.id}`}
-                              >
-                                {canEditSkill(skill) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleEditSkill(skill)}
-                                    title={t('resource-library:actions.edit_skill')}
-                                    className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
-                                    data-testid={`edit-skill-button-${skill.id}`}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                    <span>{t('actions.edit')}</span>
-                                  </Button>
-                                )}
-                                {(skill.availability?.inMyDefault || !isSystemSkill(skill)) && (
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-11 w-11 shrink-0 md:h-8 md:w-8"
-                                        aria-label={t('teams.more_actions')}
-                                        data-testid={`skill-card-more-button-${skill.id}`}
-                                      >
-                                        <MoreHorizontal className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end" className="w-44">
-                                      {canEditSkillShareScope(skill) && (
-                                        <DropdownMenuItem
-                                          onClick={() => setShareScopeSkill(skill)}
-                                          data-testid={`edit-skill-share-scope-button-${skill.id}`}
-                                        >
-                                          <SlidersHorizontal className="mr-2 h-4 w-4" />
-                                          {t('resource-library:publication.edit_share_scope')}
-                                        </DropdownMenuItem>
-                                      )}
-                                      {canEditSkillShareScope(skill) &&
-                                        skill.availability?.inMyDefault && (
-                                          <DropdownMenuSeparator />
-                                        )}
-                                      {skill.availability?.inMyDefault && (
-                                        <>
-                                          <DropdownMenuItem
-                                            onClick={() => setConfiguringSkill(skill)}
-                                            data-testid={`configure-personal-skill-${skill.id}`}
-                                          >
-                                            <Settings2 className="mr-2 h-4 w-4" />
-                                            {tSettings('skills.autoSettings.configure')}
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                        </>
-                                      )}
-                                      {canEditSkill(skill) && skill.source?.type === 'git' && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleUpdateFromGit(skill)}
-                                          disabled={updatingFromGitId === skill.id}
-                                          data-testid={`update-skill-from-git-button-${skill.id}`}
-                                        >
-                                          <RefreshCw className="mr-2 h-4 w-4" />
-                                          {t('skills.update_from_git')}
-                                        </DropdownMenuItem>
-                                      )}
-                                      <DropdownMenuItem
-                                        onClick={() => handleDownload(skill)}
-                                        data-testid={`download-skill-button-${skill.id}`}
-                                      >
-                                        <Download className="mr-2 h-4 w-4" />
-                                        {t('actions.download')}
-                                      </DropdownMenuItem>
-                                      {canDeleteSkill(skill) && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleViewReferences(skill)}
-                                          data-testid={`view-skill-references-button-${skill.id}`}
-                                        >
-                                          <Link2 className="mr-2 h-4 w-4" />
-                                          {t('skills.view_references')}
-                                        </DropdownMenuItem>
-                                      )}
-                                      {canDeleteSkill(skill) && <DropdownMenuSeparator />}
-                                      {canDeleteSkill(skill) && (
-                                        <DropdownMenuItem
-                                          danger
-                                          onClick={() => openDeleteDialog(skill)}
-                                          data-testid={`delete-skill-button-${skill.id}`}
-                                        >
-                                          <Trash2 className="mr-2 h-4 w-4" />
-                                          {t('actions.delete')}
-                                        </DropdownMenuItem>
-                                      )}
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                )}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <ResourceListItem
-                            name={skill.name}
-                            displayName={skill.displayName || skill.name}
-                            description={skill.description}
-                            icon={
-                              <ResourceCardIcon compact={false}>
-                                <Sparkles className="h-5 w-5 text-primary" aria-hidden />
-                              </ResourceCardIcon>
-                            }
-                            tags={[
-                              {
-                                key: 'source',
-                                label: getSkillSourceLabel(skill),
-                                variant: isSystemSkill(skill)
-                                  ? 'info'
-                                  : isGroupSkill(skill)
-                                    ? 'success'
-                                    : 'default',
-                              },
-                              ...(isGroupSkill(skill)
-                                ? [
-                                    {
-                                      key: 'namespace',
-                                      label: skill.namespace,
-                                      variant: 'info' as const,
-                                    },
-                                  ]
-                                : []),
-                              ...(skill.version
-                                ? [
-                                    {
-                                      key: 'version',
-                                      label: `v${skill.version}`,
-                                      variant: 'default' as const,
-                                    },
-                                  ]
-                                : []),
-                              ...(skill.source?.type === 'git'
-                                ? [
-                                    {
-                                      key: 'source-git',
-                                      label: 'Git',
-                                      variant: 'info' as const,
-                                    },
-                                  ]
-                                : []),
-                              ...(skill.availability?.inMyDefault
-                                ? [
-                                    {
-                                      key: 'default-enabled',
-                                      label: tSettings('skills.availability.inMyDefault'),
-                                      variant: 'success' as const,
-                                    },
-                                  ]
-                                : []),
-                              ...((skill.tags || []).slice(0, 3).map(tag => ({
-                                key: `tag-${tag}`,
-                                label: tag,
-                                variant: 'info' as const,
-                              })) || []),
-                              ...(skill.tags && skill.tags.length > 3
-                                ? [
-                                    {
-                                      key: 'tags-more',
-                                      label: `+${skill.tags.length - 3}`,
-                                      variant: 'info' as const,
-                                    },
-                                  ]
-                                : []),
-                            ]}
-                          />
-                        )}
-
-                        {!compact && (
-                          <div
-                            className={cn(
-                              'flex flex-shrink-0 items-center gap-2',
-                              getResourceCardActionsClassName(false)
-                            )}
-                            data-testid={`skill-card-actions-${skill.id}`}
-                          >
-                            <div className="flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3">
-                              <span className="text-xs font-medium text-text-secondary">
-                                {tSettings('skills.availability.inMyDefault')}
-                              </span>
-                              {defaultEnabledSwitch}
-                            </div>
-                            {!isSystemSkill(skill) && (
-                              <>
-                                {skill.source?.type === 'git' && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleUpdateFromGit(skill)}
-                                    disabled={updatingFromGitId === skill.id}
-                                    className="h-8 w-8 text-text-secondary hover:text-text-primary"
-                                    title={t('skills.update_from_git')}
-                                  >
-                                    <RefreshCw
-                                      className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
-                                    />
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleDownload(skill)}
-                                  className="h-8 w-8 text-text-secondary hover:text-text-primary"
-                                  title={t('actions.download')}
-                                  data-testid={`download-skill-button-${skill.id}`}
+                              {skill.description && (
+                                <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">
+                                  {skill.description}
+                                </p>
+                              )}
+                              {(canEditSkill(skill) ||
+                                skill.availability?.inMyDefault ||
+                                !isSystemSkill(skill)) && (
+                                <div
+                                  className={cn(
+                                    'relative z-20 flex flex-shrink-0 items-center gap-2',
+                                    getResourceCardActionsClassName(true)
+                                  )}
+                                  data-testid={`skill-card-actions-${skill.id}`}
                                 >
-                                  <Download className="w-4 h-4" />
-                                </Button>
-                                {canDeleteSkill(skill) && (
+                                  {canEditSkill(skill) && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleEditSkill(skill)}
+                                      title={t('resource-library:actions.edit_skill')}
+                                      className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                                      data-testid={`edit-skill-button-${skill.id}`}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                      <span>{t('actions.edit')}</span>
+                                    </Button>
+                                  )}
+                                  {(skill.availability?.inMyDefault || !isSystemSkill(skill)) && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          size="icon"
+                                          className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                                          aria-label={t('teams.more_actions')}
+                                          data-testid={`skill-card-more-button-${skill.id}`}
+                                        >
+                                          <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end" className="w-44">
+                                        {canEditSkillShareScope(skill) && (
+                                          <DropdownMenuItem
+                                            onClick={() => setShareScopeSkill(skill)}
+                                            data-testid={`edit-skill-share-scope-button-${skill.id}`}
+                                          >
+                                            <SlidersHorizontal className="mr-2 h-4 w-4" />
+                                            {t('resource-library:publication.edit_share_scope')}
+                                          </DropdownMenuItem>
+                                        )}
+                                        {canEditSkillShareScope(skill) &&
+                                          skill.availability?.inMyDefault && (
+                                            <DropdownMenuSeparator />
+                                          )}
+                                        {skill.availability?.inMyDefault && (
+                                          <>
+                                            <DropdownMenuItem
+                                              onClick={() => setConfiguringSkill(skill)}
+                                              data-testid={`configure-personal-skill-${skill.id}`}
+                                            >
+                                              <Settings2 className="mr-2 h-4 w-4" />
+                                              {tSettings('skills.autoSettings.configure')}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                          </>
+                                        )}
+                                        {canEditSkill(skill) && skill.source?.type === 'git' && (
+                                          <DropdownMenuItem
+                                            onClick={() => handleUpdateFromGit(skill)}
+                                            disabled={updatingFromGitId === skill.id}
+                                            data-testid={`update-skill-from-git-button-${skill.id}`}
+                                          >
+                                            <RefreshCw className="mr-2 h-4 w-4" />
+                                            {t('skills.update_from_git')}
+                                          </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuItem
+                                          onClick={() => handleDownload(skill)}
+                                          data-testid={`download-skill-button-${skill.id}`}
+                                        >
+                                          <Download className="mr-2 h-4 w-4" />
+                                          {t('actions.download')}
+                                        </DropdownMenuItem>
+                                        {canDeleteSkill(skill) && (
+                                          <DropdownMenuItem
+                                            onClick={() => handleViewReferences(skill)}
+                                            data-testid={`view-skill-references-button-${skill.id}`}
+                                          >
+                                            <Link2 className="mr-2 h-4 w-4" />
+                                            {t('skills.view_references')}
+                                          </DropdownMenuItem>
+                                        )}
+                                        {canDeleteSkill(skill) && <DropdownMenuSeparator />}
+                                        {canDeleteSkill(skill) && (
+                                          <DropdownMenuItem
+                                            danger
+                                            onClick={() => openDeleteDialog(skill)}
+                                            data-testid={`delete-skill-button-${skill.id}`}
+                                          >
+                                            <Trash2 className="mr-2 h-4 w-4" />
+                                            {t('actions.delete')}
+                                          </DropdownMenuItem>
+                                        )}
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <ResourceListItem
+                              name={skill.name}
+                              displayName={skill.displayName || skill.name}
+                              description={skill.description}
+                              icon={
+                                <ResourceCardIcon compact={false}>
+                                  <Sparkles className="h-5 w-5 text-primary" aria-hidden />
+                                </ResourceCardIcon>
+                              }
+                              tags={[
+                                {
+                                  key: 'source',
+                                  label: getSkillSourceLabel(skill),
+                                  variant: isSystemSkill(skill)
+                                    ? 'info'
+                                    : isGroupSkill(skill)
+                                      ? 'success'
+                                      : 'default',
+                                },
+                                ...(isGroupSkill(skill)
+                                  ? [
+                                      {
+                                        key: 'namespace',
+                                        label: skill.namespace,
+                                        variant: 'info' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(skill.version
+                                  ? [
+                                      {
+                                        key: 'version',
+                                        label: `v${skill.version}`,
+                                        variant: 'default' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(skill.source?.type === 'git'
+                                  ? [
+                                      {
+                                        key: 'source-git',
+                                        label: 'Git',
+                                        variant: 'info' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(skill.availability?.inMyDefault
+                                  ? [
+                                      {
+                                        key: 'default-enabled',
+                                        label: tSettings('skills.availability.inMyDefault'),
+                                        variant: 'success' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...((skill.tags || []).slice(0, 3).map(tag => ({
+                                  key: `tag-${tag}`,
+                                  label: tag,
+                                  variant: 'info' as const,
+                                })) || []),
+                                ...(skill.tags && skill.tags.length > 3
+                                  ? [
+                                      {
+                                        key: 'tags-more',
+                                        label: `+${skill.tags.length - 3}`,
+                                        variant: 'info' as const,
+                                      },
+                                    ]
+                                  : []),
+                              ]}
+                            />
+                          )}
+
+                          {!compact && (
+                            <div
+                              className={cn(
+                                'flex flex-shrink-0 items-center gap-2',
+                                getResourceCardActionsClassName(false)
+                              )}
+                              data-testid={`skill-card-actions-${skill.id}`}
+                            >
+                              <div className="flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3">
+                                <span className="text-xs font-medium text-text-secondary">
+                                  {tSettings('skills.availability.inMyDefault')}
+                                </span>
+                                {defaultEnabledSwitch}
+                              </div>
+                              {!isSystemSkill(skill) && (
+                                <>
+                                  {skill.source?.type === 'git' && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleUpdateFromGit(skill)}
+                                      disabled={updatingFromGitId === skill.id}
+                                      className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                                      title={t('skills.update_from_git')}
+                                    >
+                                      <RefreshCw
+                                        className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                                      />
+                                    </Button>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    onClick={() => handleViewReferences(skill)}
+                                    onClick={() => handleDownload(skill)}
                                     className="h-8 w-8 text-text-secondary hover:text-text-primary"
-                                    title={t('skills.view_references')}
-                                    data-testid={`view-skill-references-button-${skill.id}`}
+                                    title={t('actions.download')}
+                                    data-testid={`download-skill-button-${skill.id}`}
                                   >
-                                    <Link2 className="w-4 h-4" />
+                                    <Download className="w-4 h-4" />
                                   </Button>
-                                )}
-                                {/* Show delete button if user has permission */}
-                                {canDeleteSkill(skill) && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => openDeleteDialog(skill)}
-                                    className="h-8 w-8 text-red-500 hover:text-red-600"
-                                    title={t('actions.delete')}
-                                    data-testid={`delete-skill-button-${skill.id}`}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  )
-                })}
-              </div>
-            )}
-          </ResourceManagementLayout>
+                                  {canDeleteSkill(skill) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleViewReferences(skill)}
+                                      className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                                      title={t('skills.view_references')}
+                                      data-testid={`view-skill-references-button-${skill.id}`}
+                                    >
+                                      <Link2 className="w-4 h-4" />
+                                    </Button>
+                                  )}
+                                  {/* Show delete button if user has permission */}
+                                  {canDeleteSkill(skill) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => openDeleteDialog(skill)}
+                                      className="h-8 w-8 text-red-500 hover:text-red-600"
+                                      title={t('actions.delete')}
+                                      data-testid={`delete-skill-button-${skill.id}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    )
+                  })}
+                </div>
+              )}
+            </ResourceManagementLayout>
+          )}
         </>
       )}
 

@@ -47,7 +47,9 @@ from app.services.capability_reference_service import (
 )
 from app.services.group_permission import (
     check_group_permission,
+    get_effective_roles_in_groups,
 )
+from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.skill_binding_service import skill_binding_service
 
 LEGACY_CAPABILITY_INSTALLATION_KIND = "CapabilityInstallation"
@@ -75,6 +77,13 @@ def _resource_json_text(db: Session, path: str):
 
 def _escape_sql_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _is_visible_discovery_resource(source: Kind) -> bool:
+    if source.user_id != 0 or source.kind != "Skill":
+        return True
+    spec = source.json.get("spec", {}) if isinstance(source.json, dict) else {}
+    return not isinstance(spec, dict) or spec.get("visible", True) is not False
 
 
 def _encode_discovery_cursor(updated_at: datetime, kind_id: int) -> str:
@@ -114,6 +123,7 @@ class ResourceLibraryService:
         limit: int,
         cursor: str | None = None,
         target_namespace: str = "default",
+        system_only: bool = False,
     ) -> ResourceLibraryDiscoveryList:
         kinds = (
             [RESOURCE_KIND_BY_TYPE[resource_type]]
@@ -142,9 +152,10 @@ class ResourceLibraryService:
             Kind.kind.in_(system_kinds),
             Kind.is_active == True,
         )
-        candidates = union_all(
-            published_candidates,
-            system_candidates,
+        candidates = (
+            system_candidates
+            if system_only
+            else union_all(published_candidates, system_candidates)
         ).subquery()
         query = (
             db.query(
@@ -156,7 +167,11 @@ class ResourceLibraryService:
             .filter(Kind.is_active == True)
         )
 
-        if target_namespace == "default":
+        normalized_keyword = (keyword or "").strip().lower()
+        should_hide_installed_skills = (
+            target_namespace == "default" and not tags and not normalized_keyword
+        )
+        if should_hide_installed_skills:
             installed_skill_ids = skill_binding_service.list_user_default_skill_ids(
                 db, user_id
             )
@@ -168,7 +183,6 @@ class ResourceLibraryService:
                     )
                 )
 
-        normalized_keyword = (keyword or "").strip().lower()
         if normalized_keyword:
             keyword_pattern = f"%{_escape_sql_like(normalized_keyword)}%"
             searchable_fields = [
@@ -192,33 +206,41 @@ class ResourceLibraryService:
             encoded_tag = json.dumps(tag, ensure_ascii=False)[1:-1]
             tag_pattern = f'%"{_escape_sql_like(encoded_tag)}"%'
             query = query.filter(
-                or_(
-                    func.lower(_resource_json_text(db, "$.spec.capability.tags")).like(
-                        tag_pattern, escape="\\"
-                    ),
-                    func.lower(_resource_json_text(db, "$.spec.tags")).like(
-                        tag_pattern, escape="\\"
-                    ),
+                func.lower(_resource_json_text(db, "$.spec.capability.tags")).like(
+                    tag_pattern, escape="\\"
                 )
             )
 
-        if cursor:
-            cursor_time, cursor_kind_id = _decode_discovery_cursor(cursor)
-            query = query.filter(
-                or_(
-                    candidates.c.sort_time < cursor_time,
-                    and_(
-                        candidates.c.sort_time == cursor_time,
-                        Kind.id < cursor_kind_id,
-                    ),
+        scan_position = _decode_discovery_cursor(cursor) if cursor else None
+        rows = []
+        batch_size = limit + 1
+        ordered_query = query.order_by(candidates.c.sort_time.desc(), Kind.id.desc())
+        while len(rows) <= limit:
+            batch_query = ordered_query
+            if scan_position:
+                cursor_time, cursor_kind_id = scan_position
+                batch_query = batch_query.filter(
+                    or_(
+                        candidates.c.sort_time < cursor_time,
+                        and_(
+                            candidates.c.sort_time == cursor_time,
+                            Kind.id < cursor_kind_id,
+                        ),
+                    )
                 )
-            )
+            batch_rows = batch_query.limit(batch_size).all()
+            if not batch_rows:
+                break
+            for row in batch_rows:
+                if _is_visible_discovery_resource(row[0]):
+                    rows.append(row)
+                    if len(rows) > limit:
+                        break
+            if len(rows) > limit or len(batch_rows) < batch_size:
+                break
+            last_kind, last_sort_time, _ = batch_rows[-1]
+            scan_position = (last_sort_time, last_kind.id)
 
-        rows = (
-            query.order_by(candidates.c.sort_time.desc(), Kind.id.desc())
-            .limit(limit + 1)
-            .all()
-        )
         has_more = len(rows) > limit
         page_rows = rows[:limit]
         page_items = [row[0] for row in page_rows]
@@ -328,6 +350,13 @@ class ResourceLibraryService:
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+        marketplace_tags = request.tags
+        if source.kind in {"Team", "Skill"}:
+            marketplace_tags = marketplace_tag_service.validate_resource_tags(
+                db,
+                request.tags,
+                require_nonempty=request.status == "published",
+            )
         capability = {
             "visibility": ("public" if request.status == "published" else "private"),
             "publishStatus": request.status,
@@ -335,7 +364,7 @@ class ResourceLibraryService:
             "displayName": request.display_name.strip(),
             "description": request.description,
             "icon": request.icon,
-            "tags": self._normalize_tags(request.tags),
+            "tags": self._normalize_tags(marketplace_tags),
             "version": request.version.strip(),
             "publishedAt": _iso_now(),
             "publishedBy": current_user.id,
@@ -370,7 +399,7 @@ class ResourceLibraryService:
                 "displayName": self._display_name(source),
                 "description": self._description(source),
                 "icon": self._icon(source),
-                "tags": self._tags(source),
+                "tags": [],
                 "publishedAt": source.created_at.replace(
                     tzinfo=timezone.utc
                 ).isoformat(),
@@ -390,7 +419,29 @@ class ResourceLibraryService:
             if request_field in updates:
                 capability[capability_field] = updates[request_field]
         if "tags" in updates:
-            capability["tags"] = self._normalize_tags(updates["tags"] or [])
+            marketplace_tags = updates["tags"] or []
+            if source.kind in {"Team", "Skill"}:
+                marketplace_tags = marketplace_tag_service.validate_resource_tags(
+                    db,
+                    marketplace_tags,
+                    existing_tags=list(capability.get("tags") or []),
+                    require_nonempty=updates.get(
+                        "status", capability.get("publishStatus")
+                    )
+                    == "published",
+                )
+            capability["tags"] = self._normalize_tags(marketplace_tags)
+        elif (
+            source.kind in {"Team", "Skill"}
+            and updates.get("status") == "published"
+            and capability.get("publishStatus") != "published"
+        ):
+            capability["tags"] = marketplace_tag_service.validate_resource_tags(
+                db,
+                list(capability.get("tags") or []),
+                existing_tags=list(capability.get("tags") or []),
+                require_nonempty=True,
+            )
         if "target_groups" in updates:
             target_groups = self._normalize_group_names(updates["target_groups"] or [])
             previous_target_groups = self._normalize_group_names(
@@ -697,32 +748,92 @@ class ResourceLibraryService:
         if not check_group_permission(
             db, current_user.id, group_namespace, GroupRole.Reporter
         ):
-            raise HTTPException(status_code=403, detail="Group access denied")
+            return ResourceLibraryInstallList(
+                items=[],
+                total=0,
+                page=page,
+                limit=limit,
+            )
 
+        installs = self._group_install_responses(
+            db,
+            group_namespace=group_namespace,
+            user_id=current_user.id,
+            resource_type=resource_type,
+        )
+        return self._paginate_installs(installs, page=page, limit=limit)
+
+    def list_group_installs_batch(
+        self,
+        db: Session,
+        *,
+        group_namespaces: list[str],
+        current_user: User,
+        resource_type: str | None,
+        page: int,
+        limit: int,
+    ) -> ResourceLibraryInstallList:
         installs: list[ResourceLibraryInstall] = []
-        if resource_type in {None, "agent"}:
+        unique_namespaces = list(dict.fromkeys(group_namespaces))
+        effective_roles = get_effective_roles_in_groups(
+            db,
+            current_user.id,
+            unique_namespaces,
+        )
+        for group_namespace in unique_namespaces:
+            role = effective_roles.get(group_namespace)
+            if role is None or not has_permission(role, GroupRole.Reporter):
+                continue
             installs.extend(
-                self._group_agent_install_responses(
+                self._group_install_responses(
                     db,
                     group_namespace=group_namespace,
                     user_id=current_user.id,
+                    resource_type=resource_type,
                 )
+            )
+        return self._paginate_installs(installs, page=page, limit=limit)
+
+    def _group_install_responses(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        user_id: int,
+        resource_type: str | None,
+    ) -> list[ResourceLibraryInstall]:
+        installs: list[ResourceLibraryInstall] = []
+        if resource_type in {None, "agent"}:
+            group_owned_agents = self._group_owned_agent_responses(
+                db,
+                group_namespace=group_namespace,
+                user_id=user_id,
+            )
+            group_owned_ids = {item.listing_id for item in group_owned_agents}
+            group_bindings = self._group_agent_install_responses(
+                db,
+                group_namespace=group_namespace,
+                user_id=user_id,
+            )
+            installs.extend(group_owned_agents)
+            installs.extend(
+                item
+                for item in group_bindings
+                if item.listing_id not in group_owned_ids
             )
         if resource_type in {None, "skill"}:
             group_owned_skills = self._group_owned_skill_responses(
                 db,
                 group_namespace=group_namespace,
-                user_id=current_user.id,
+                user_id=user_id,
             )
             group_owned_names = {
                 item.listing.name for item in group_owned_skills if item.listing
             }
             group_bindings = self._skill_binding_responses(
                 db,
-                skill_binding_service.list_group_bindings(
-                    db, group_namespace, current_user.id
-                ),
-                current_user.id,
+                skill_binding_service.list_group_bindings(db, group_namespace, user_id),
+                user_id,
             )
             installs.extend(group_owned_skills)
             installs.extend(
@@ -730,6 +841,15 @@ class ResourceLibraryService:
                 for item in group_bindings
                 if not item.listing or item.listing.name not in group_owned_names
             )
+        return installs
+
+    def _paginate_installs(
+        self,
+        installs: list[ResourceLibraryInstall],
+        *,
+        page: int,
+        limit: int,
+    ) -> ResourceLibraryInstallList:
         installs.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         page_items = installs[(page - 1) * limit : page * limit]
         return ResourceLibraryInstallList(
@@ -760,16 +880,23 @@ class ResourceLibraryService:
             if resolved_publisher_user_id > 0
             else None
         )
+        if source.user_id == 0:
+            display_name = self._display_name(source) or capability.get("displayName")
+            description = self._description(source) or capability.get("description")
+            icon = self._icon(source) or capability.get("icon")
+        else:
+            display_name = capability.get("displayName") or self._display_name(source)
+            description = capability.get("description") or self._description(source)
+            icon = capability.get("icon") or self._icon(source)
         return ResourceLibraryListing(
             id=source.id,
             resource_type=resource_type,
             name=str(capability.get("listingName") or source.name),
-            display_name=str(
-                capability.get("displayName") or self._display_name(source)
-            ),
-            description=capability.get("description") or self._description(source),
-            icon=capability.get("icon") or self._icon(source),
-            tags=list(capability.get("tags") or self._tags(source)),
+            display_name=str(display_name),
+            description=description,
+            icon=icon,
+            tags=list(capability.get("tags") or []),
+            feature_tags=self._tags(source) if source.kind == "Skill" else [],
             publisher_user_id=resolved_publisher_user_id,
             publisher_user_name=publisher.user_name if publisher is not None else None,
             publisher_namespace=source.namespace,
@@ -1574,6 +1701,45 @@ class ResourceLibraryService:
                 )
             )
         return result
+
+    def _group_owned_agent_responses(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        user_id: int,
+    ) -> list[ResourceLibraryInstall]:
+        agents = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                Kind.namespace == group_namespace,
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        return [
+            ResourceLibraryInstall(
+                id=agent.id,
+                listing_id=agent.id,
+                version_id=agent.id,
+                user_id=agent.user_id,
+                resource_type="agent",
+                listing=self.to_listing(db, agent, user_id=user_id),
+                installed_kind_id=agent.id,
+                installed_reference={
+                    "namespace": group_namespace,
+                    "name": agent.name,
+                    "kind": "Team",
+                    "team_id": agent.id,
+                    "resource_type": "agent",
+                    "ownership": "group",
+                },
+                installed_at=agent.created_at,
+                updated_at=agent.updated_at,
+            )
+            for agent in agents
+        ]
 
     def _query_resources(self, db: Session, resource_type: str | None) -> list[Kind]:
         kinds = (

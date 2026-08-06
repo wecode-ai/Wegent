@@ -11,11 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from app.core import security
 from app.models.user import User
 from app.schemas.site import (
+    ApplicationTypeListResponse,
+    SiteAppType,
     SiteListResponse,
     SiteNetworkUpdateRequest,
     SiteResponse,
     SiteUpdateRequest,
 )
+from app.services.site_application_types import list_application_types
 from app.services.sites import (
     SitesNotAvailableError,
     SitesUpstreamResponseError,
@@ -53,15 +56,17 @@ def _raise_sites_error(error: Exception) -> NoReturn:
 
 @router.get("", response_model=SiteListResponse)
 async def list_sites(
+    app_type: SiteAppType = Query(default="web"),
     q: str | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(security.get_current_user),
 ) -> SiteListResponse:
-    """List sites owned by the authenticated user."""
+    """List typed applications owned by the authenticated user."""
     try:
         return await sites_service.list_sites(
             username=current_user.user_name,
+            app_type=app_type,
             query=q.strip() if q and q.strip() else None,
             offset=offset,
             limit=limit,
@@ -72,6 +77,14 @@ async def list_sites(
         SitesUpstreamResponseError,
     ) as error:
         _raise_sites_error(error)
+
+
+@router.get("/app-types", response_model=ApplicationTypeListResponse)
+async def list_site_app_types(
+    _current_user: User = Depends(security.get_current_user),
+) -> ApplicationTypeListResponse:
+    """List application types and capabilities supported by this Backend."""
+    return list_application_types()
 
 
 @router.post("/{siteid}/publish", response_model=SiteResponse)

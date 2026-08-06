@@ -1268,7 +1268,10 @@ tags: ["public", "api", "test"]
         response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "public-api-test-skill"},
+            data={
+                "name": "public-api-test-skill",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
 
@@ -1278,6 +1281,25 @@ tags: ["public", "api", "test"]
         assert data["description"] == "Public API test skill"
         assert data["version"] == "1.0.0"
         assert data["is_public"] is True
+        assert data["tags"] == ["public", "api", "test"]
+        assert data["marketplaceTags"] == ["technical_development"]
+
+    def test_upload_public_skill_requires_marketplace_tags(
+        self, test_client: TestClient, test_admin_token: str
+    ):
+        """Test public skill upload requires a configured marketplace category."""
+        skill_md = "---\ndescription: Missing marketplace tags\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+
+        response = test_client.post(
+            "/api/v1/kinds/skills/public/upload",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            data={"name": "missing-marketplace-tags"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+
+        assert response.status_code == 400
+        assert "At least one marketplace tag is required" in response.json()["detail"]
 
     def test_upload_public_skill_non_admin_forbidden(
         self, test_client: TestClient, test_token: str
@@ -1289,7 +1311,10 @@ tags: ["public", "api", "test"]
         response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_token}"},
-            data={"name": "non-admin-public-skill"},
+            data={
+                "name": "non-admin-public-skill",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
 
@@ -1302,7 +1327,10 @@ tags: ["public", "api", "test"]
 
         response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
-            data={"name": "unauth-public-skill"},
+            data={
+                "name": "unauth-public-skill",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
 
@@ -1315,7 +1343,10 @@ tags: ["public", "api", "test"]
         response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "invalid-public-file"},
+            data={
+                "name": "invalid-public-file",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.txt", io.BytesIO(b"not a zip"), "text/plain")},
         )
 
@@ -1333,7 +1364,10 @@ tags: ["public", "api", "test"]
         first_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "duplicate-public-name"},
+            data={
+                "name": "duplicate-public-name",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
         assert first_response.status_code == 201
@@ -1342,7 +1376,10 @@ tags: ["public", "api", "test"]
         response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "duplicate-public-name"},
+            data={
+                "name": "duplicate-public-name",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
 
@@ -1360,7 +1397,10 @@ tags: ["public", "api", "test"]
         create_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "update-public-test"},
+            data={
+                "name": "update-public-test",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={
                 "file": (
                     "update-public-test.zip",
@@ -1520,6 +1560,67 @@ tags: ["public", "api", "test"]
         assert all(item["id"] != skill.id for item in removed_group_response.json())
         assert any(item["id"] == skill.id for item in retained_group_response.json())
 
+    def test_unified_skills_keep_personal_and_group_skills_with_same_name(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        """Personal and group skills may share a name without hiding either one."""
+        group = _create_group(test_db, test_user, "same-name-skill-group")
+        _add_group_member(test_db, group, test_user, "Developer")
+
+        personal_skill = Kind(
+            user_id=test_user.id,
+            kind="Skill",
+            name="same-name-skill",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Skill",
+                "metadata": {
+                    "name": "same-name-skill",
+                    "namespace": "default",
+                },
+                "spec": {"description": "Personal skill"},
+            },
+            is_active=True,
+        )
+        group_skill = Kind(
+            user_id=test_user.id,
+            kind="Skill",
+            name="same-name-skill",
+            namespace=group.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Skill",
+                "metadata": {
+                    "name": "same-name-skill",
+                    "namespace": group.name,
+                },
+                "spec": {"description": "Group skill"},
+            },
+            is_active=True,
+        )
+        test_db.add_all([personal_skill, group_skill])
+        test_db.commit()
+
+        response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            params={"scope": "all"},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 200
+        matching = [
+            item for item in response.json() if item["name"] == "same-name-skill"
+        ]
+        assert {item["namespace"] for item in matching} == {
+            "default",
+            group.name,
+        }
+
     def test_unified_skills_returns_hidden_public_skill_with_visible_flag(
         self,
         test_client: TestClient,
@@ -1539,7 +1640,10 @@ visible: false
         upload_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "hidden-public-unified"},
+            data={
+                "name": "hidden-public-unified",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={
                 "file": (
                     "hidden-public-unified.zip",
@@ -1583,7 +1687,10 @@ visible: false
         create_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "non-admin-update-test"},
+            data={
+                "name": "non-admin-update-test",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
         assert create_response.status_code == 201
@@ -1625,7 +1732,10 @@ visible: false
         create_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "download-public-test"},
+            data={
+                "name": "download-public-test",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
         assert create_response.status_code == 201
@@ -1659,7 +1769,10 @@ visible: false
         create_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "download-public-forbidden-test"},
+            data={
+                "name": "download-public-forbidden-test",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
         assert create_response.status_code == 201
@@ -1685,7 +1798,10 @@ visible: false
         create_response = test_client.post(
             "/api/v1/kinds/skills/public/upload",
             headers={"Authorization": f"Bearer {test_admin_token}"},
-            data={"name": "download-unauth-test"},
+            data={
+                "name": "download-unauth-test",
+                "marketplace_tags": '["technical_development"]',
+            },
             files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
         )
         assert create_response.status_code == 201

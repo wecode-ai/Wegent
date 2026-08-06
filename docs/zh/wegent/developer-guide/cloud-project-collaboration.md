@@ -8,13 +8,13 @@ sidebar_position: 32
 
 ## 目标
 
-云项目是多人共享的协作与存储边界。成员可以把同一个云项目关联到各自不同的本地项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为不可变交付快照提交到云端。
+云项目是多人共享的协作与存储边界。成员可以在自己的本地项目中选择默认云项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为不可变交付快照提交到云端。
 
 云项目不等同于现有 `Project`：
 
 - `Project` 是单个用户拥有的本地执行工作区，保存设备、路径、Git 和执行配置。
 - `CloudProject` 是多人共享的协作聚合根，拥有成员权限、TODO、共享文件和 MinIO 空间。
-- 一个云项目可以被多个成员关联到多个本地项目。
+- 多个成员的本地项目可以分别把同一个云项目保存为默认目标；云项目不保存反向关联。
 - 一个 TODO 可以关联多个 Wework Task，但一个 Task 同时最多处理一个活跃 TODO。
 
 ## 领域关系
@@ -23,8 +23,6 @@ sidebar_position: 32
 CloudProject
 ├── ResourceMember(resource_type=CloudProject)
 ├── ShareLink(resource_type=CloudProject)
-├── CloudProjectLocalBinding
-│   └── Project (local execution workspace)
 └── LoopItem
     ├── LoopItemTaskBinding
     │   └── TaskResource
@@ -35,12 +33,12 @@ CloudProject
 
 ## 数据归属
 
-| 数据 | 事实来源 |
-| --- | --- |
-| 云项目、成员、TODO、任务关联、交付元数据 | Backend MySQL |
-| 本地路径、设备、Git 和执行配置 | 现有 `projects` 与 `tasks` |
-| 共享文件、Markdown、聊天记录、交付快照 | MinIO/S3 |
-| AI 对云空间的访问 | Backend 鉴权后的 MCP |
+| 数据                                            | 事实来源             |
+| ----------------------------------------------- | -------------------- |
+| 云项目、成员、TODO、任务关联、交付元数据        | Backend MySQL        |
+| 本地路径、设备、Git、执行配置和默认项目空间引用 | 本地 Codex 项目状态  |
+| 共享文件、Markdown、聊天记录、交付快照          | MinIO/S3             |
+| AI 对云空间的访问                               | Backend 鉴权后的 MCP |
 
 MinIO 对象使用云项目公开 ID 隔离：
 
@@ -69,9 +67,9 @@ created_by_user_id, storage_prefix, next_item_number
 status, version, created_at, updated_at
 ```
 
-### CloudProjectLocalBinding
+### 本地项目默认空间
 
-`cloud_project_local_bindings` 保存某个成员在某台设备上使用的本地项目。绝对路径仍保存在本地项目配置中，并且不能向其他云项目成员返回。
+本地 Codex 项目可以保存一个 `{ projectStore, projectId }` 默认项目空间引用。该引用属于设备上的本地项目状态，不进入 Backend，也不向项目空间建立反向索引。新对话发送前可以覆盖或清除这个默认值。
 
 ### LoopItem
 
@@ -97,19 +95,19 @@ inbox → pending → in_progress → in_review → completed
 
 复用 `resource_members` 和 `share_links`，新增 `CloudProject` 资源类型。
 
-| 角色 | 读取 | 编辑 TODO/文件 | 管理成员 | 归档项目 |
-| --- | --- | --- | --- | --- |
-| Reporter | 是 | 否 | 否 | 否 |
-| Developer | 是 | 是 | 否 | 否 |
-| Maintainer | 是 | 是 | 是 | 否 |
-| Owner | 是 | 是 | 是 | 是 |
+| 角色       | 读取 | 编辑 TODO/文件 | 管理成员 | 归档项目 |
+| ---------- | ---- | -------------- | -------- | -------- |
+| Reporter   | 是   | 否             | 否       | 否       |
+| Developer  | 是   | 是             | 否       | 否       |
+| Maintainer | 是   | 是             | 是       | 否       |
+| Owner      | 是   | 是             | 是       | 是       |
 
 所有 TODO、交付、文件和 MCP 请求都必须先解析云项目角色。无权限资源统一返回 404，避免泄露资源是否存在。
 
 ## 服务边界
 
 ```text
-cloud_projects/  项目、成员和本地关联
+cloud_projects/  项目和成员
 loop_items/      TODO、状态机和 Task 关联
 delivery/        不可变交付快照
 cloud_files/     可变共享文件
@@ -133,7 +131,6 @@ Delivery 服务不负责 TODO CRUD；LoopItem 服务不直接访问 MinIO；MCP 
 /v1/cloud-projects
 /v1/cloud-projects/{id}/members
 /v1/cloud-projects/{id}/members/{user_id}
-/v1/cloud-projects/{id}/local-bindings
 /v1/cloud-projects/{id}/files
 /v1/cloud-projects/{id}/folders
 /v1/cloud-projects/files/{file_id}
@@ -148,6 +145,8 @@ Delivery 服务不负责 TODO CRUD；LoopItem 服务不直接访问 MinIO；MCP 
 ```
 
 创建与更新使用不同端点，不提供 PUT upsert。共享文件支持创建目录、上传、重命名/移动、短期授权访问和递归删除；移动对象时先复制 MinIO 对象、提交元数据，再删除旧对象，失败时清理新对象。
+
+Wework 把新运行任务加入云项目空间时，使用已有的基础能力组合完成：先创建 `LoopItem`，再绑定运行任务；运行状态变化时先读取任务上下文，再更新对应 TODO。Backend 不提供仅为这条编排流程设计的聚合追踪接口，因此桌面端和 Backend 可以独立发布，同时仍由 TODO 创建、任务绑定和乐观锁更新这三类稳定 API 保证行为一致。桌面端会对同一运行任务的并发关联请求去重；如果绑定临时失败，会复用已创建的 TODO 后重试，避免产生重复卡片。
 
 Wework Composer 把云项目、目录、文件、TODO 和交付编码为 `cloud://` 原子引用。任务携带云项目上下文时注入 Delivery MCP；`resolve_cloud_reference` 在 Backend 再次鉴权并解析引用，客户端和 AI 均不接触 S3 凭证。TODO 看板在窗口可见时周期刷新，写操作仍依赖 `version` 乐观锁处理多人并发。
 

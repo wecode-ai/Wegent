@@ -422,21 +422,27 @@ export function createHybridWorkbenchServices(
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
 
-  const listLocalDevices = async () => {
-    const devices = await localServices.deviceApi.listDevices()
+  const listLocalDevices = async (signal?: AbortSignal) => {
+    const devices = signal
+      ? await localServices.deviceApi.listDevices({ signal })
+      : await localServices.deviceApi.listDevices()
     rememberLocalDevices(devices)
     return devices
   }
-  const listCloudDevices = async () => {
-    const devices = (await cloudServices.deviceApi.listDevices()).filter(
+  const listCloudDevices = async (signal?: AbortSignal) => {
+    const devices = (
+      signal
+        ? await cloudServices.deviceApi.listDevices({ signal })
+        : await cloudServices.deviceApi.listDevices()
+    ).filter(
       device =>
         (isCloudDevice(device) || isRemoteDevice(device)) && !isAppDeviceRegistration(device)
     )
     rememberCloudDevices(devices)
     return devices
   }
-  const listKnownDevices = async () =>
-    mergeDeviceLists(await listLocalDevices(), rememberedCloudDevices)
+  const listKnownDevices = async (signal?: AbortSignal) =>
+    mergeDeviceLists(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
     const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
     if (knownDevice) return knownDevice
@@ -444,27 +450,33 @@ export function createHybridWorkbenchServices(
     const cloudDevices = await listCloudDevices()
     return cloudDevices.find(device => device.device_id === deviceId) ?? null
   }
-  const listLocalRuntimeWork = async () => {
-    const work = await localServices.runtimeWorkApi!.listRuntimeWork()
+  const listLocalRuntimeWork = async (signal?: AbortSignal) => {
+    const work = signal
+      ? await localServices.runtimeWorkApi!.listRuntimeWork({ signal })
+      : await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
     return work
   }
-  const listCloudRuntimeWork = async () => {
-    const localDevices = await listLocalDevices()
+  const listCloudRuntimeWork = async (signal?: AbortSignal) => {
+    const localDevices = await listLocalDevices(signal)
     const localRuntimeIds = new Set([
       ...localRuntimeInstanceIds,
       ...localDevices.flatMap(device =>
         device.runtime_instance_id ? [device.runtime_instance_id] : []
       ),
     ])
-    const devices = await listCloudDevices()
+    const devices = await listCloudDevices(signal)
     const runtimeDevices = devices.filter(
       device =>
         isUsableDevice(device) &&
         !(device.runtime_instance_id && localRuntimeIds.has(device.runtime_instance_id))
     )
     const results = await Promise.allSettled(
-      runtimeDevices.map(device => cloudRuntimeApi(device.device_id).listRuntimeWork())
+      runtimeDevices.map(device =>
+        signal
+          ? cloudRuntimeApi(device.device_id).listRuntimeWork({ signal })
+          : cloudRuntimeApi(device.device_id).listRuntimeWork()
+      )
     )
     const failedResult = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected'
@@ -545,8 +557,8 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridDeviceApi: WorkbenchServices['deviceApi'] = {
-    async listDevices() {
-      const devices = await listKnownDevices()
+    async listDevices(requestOptions) {
+      const devices = await listKnownDevices(requestOptions?.signal)
       return devices as Awaited<ReturnType<WorkbenchServices['deviceApi']['listDevices']>>
     },
     getHomeDirectory(deviceId) {
@@ -609,8 +621,8 @@ export function createHybridWorkbenchServices(
     prepareRuntimeModel(data) {
       return runtimeApi(data.deviceId).prepareRuntimeModel(data)
     },
-    async listRuntimeWork() {
-      return listLocalRuntimeWork()
+    async listRuntimeWork(requestOptions) {
+      return listLocalRuntimeWork(requestOptions?.signal)
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
@@ -962,8 +974,8 @@ export function createHybridWorkbenchServices(
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,
-      listDevices: listCloudDevices,
-      listRuntimeWork: listCloudRuntimeWork,
+      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     executorClient: createExecutorClientFromApis({
       transportKind: 'backend-relay',

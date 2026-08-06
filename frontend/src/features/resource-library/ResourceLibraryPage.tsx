@@ -41,7 +41,9 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
+import type { Group } from '@/types/group'
 import { DiscoverResources } from './components/DiscoverResources'
+import { FeaturedScenarios } from './components/FeaturedScenarios'
 import { InstalledResources } from './components/InstalledResources'
 import { MyResources } from './components/MyResources'
 import { PublishedResources } from './components/PublishedResources'
@@ -50,6 +52,10 @@ import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import type { ManagedResourceType } from './types'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
+import {
+  SkillListWithScope,
+  type ResourceListState,
+} from '@/features/settings/components/SkillListWithScope'
 
 const discoverTypes: ManagedResourceType[] = ['agent', 'skill']
 const mineTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
@@ -63,9 +69,9 @@ const advancedCreateTypes: Array<{ type: ManagedResourceType; icon: typeof Bot }
   { type: 'retriever', icon: Database },
 ]
 
-type MineSource = 'all' | 'personal' | 'group' | 'system' | 'installed'
+type MineSource = 'all' | 'mine' | 'personal' | 'group' | 'system' | 'installed'
 
-const mineSources: MineSource[] = ['all', 'personal', 'group', 'system', 'installed']
+const mineSources: MineSource[] = ['all', 'mine', 'personal', 'group', 'system', 'installed']
 
 function isMineSource(value: string | null): value is MineSource {
   return mineSources.includes(value as MineSource)
@@ -73,6 +79,78 @@ function isMineSource(value: string | null): value is MineSource {
 
 function getGroupDisplayName(group: { name: string; display_name?: string | null }) {
   return group.display_name || group.name
+}
+
+const initialResourceListState: ResourceListState = {
+  loading: true,
+  hasItems: false,
+  hasError: false,
+}
+
+function TeamSkillResources({
+  groupName,
+  groups,
+  keyword,
+}: {
+  groupName: string
+  groups: Group[]
+  keyword: string
+}) {
+  const { t } = useTranslation('resource-library')
+  const { t: tCommon } = useTranslation('common')
+  const [nativeState, setNativeState] = useState<ResourceListState>(initialResourceListState)
+  const [installedState, setInstalledState] = useState<ResourceListState>(initialResourceListState)
+  const hasItems = nativeState.hasItems || installedState.hasItems
+  const isLoading = !hasItems && (nativeState.loading || installedState.loading)
+  const isEmpty =
+    !hasItems &&
+    !nativeState.loading &&
+    !installedState.loading &&
+    !nativeState.hasError &&
+    !installedState.hasError
+
+  return (
+    <div className="space-y-6" data-testid="team-skill-resources">
+      <SkillListWithScope
+        scope="group"
+        selectedGroup={groupName}
+        groups={groups}
+        sourceFilter="group"
+        showAutoEnabledSkills={false}
+        hideCreateActions
+        hideEmptyState
+        hideLoadingState
+        compact
+        searchQuery={keyword}
+        onListStateChange={setNativeState}
+      />
+      <InstalledResources
+        resourceType="skill"
+        keyword={keyword}
+        groupNamespaces={[groupName]}
+        excludeGroupOwned
+        hideLoadingState
+        hideEmptyState
+        onListStateChange={setInstalledState}
+      />
+      {isLoading && (
+        <div
+          className="flex min-h-[260px] items-center justify-center text-text-secondary"
+          data-testid="team-skill-resources-loading"
+        >
+          {tCommon('skills.loading')}
+        </div>
+      )}
+      {isEmpty && (
+        <div
+          className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"
+          data-testid="team-skill-resources-empty"
+        >
+          {t('states.empty')}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function ResourceLibraryPage() {
@@ -93,15 +171,26 @@ export function ResourceLibraryPage() {
   const legacyScopeParam = searchParams.get('scope')
   const legacySource =
     legacyScopeParam === 'personal' || legacyScopeParam === 'group' ? legacyScopeParam : null
-  const requestedSource = isLegacyTeamView ? 'group' : sourceParam || legacySource
+  const requestedSource = isLegacyTeamView
+    ? 'group'
+    : sourceParam ||
+      legacySource ||
+      (isMineView
+        ? resourceType === 'agent' || resourceType === 'skill'
+          ? 'mine'
+          : 'personal'
+        : null)
   const source = isMineSource(requestedSource) ? requestedSource : 'all'
   const supportsInstalledSource = resourceType === 'agent' || resourceType === 'skill'
+  const supportsCreatedByMeSource = resourceType === 'agent' || resourceType === 'skill'
   const supportsSystemSource =
     resourceType === 'model' || resourceType === 'shell' || resourceType === 'retriever'
   const isUnsupportedSource =
     (source === 'installed' && !supportsInstalledSource) ||
-    (source === 'system' && !supportsSystemSource)
-  const effectiveSource = isUnsupportedSource ? 'all' : source
+    (source === 'system' && !supportsSystemSource) ||
+    (source === 'mine' && !supportsCreatedByMeSource)
+  const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
+  const effectiveSource = isUnsupportedSource ? fallbackSource : source
   const keywordParam = searchParams.get('keyword') || ''
   const selectedGroupName = searchParams.get('group')
   const teamGroupState = useTeamCapabilityGroups({
@@ -157,7 +246,7 @@ export function ResourceLibraryPage() {
       if (!sourceParam) updates.source = legacySource
       updates.scope = null
     }
-    if (isUnsupportedSource) updates.source = 'all'
+    if (isUnsupportedSource) updates.source = fallbackSource
     if (Object.keys(updates).length > 0) replaceParams(updates)
   }, [
     isLegacyTeamView,
@@ -166,6 +255,7 @@ export function ResourceLibraryPage() {
     resourceType,
     sourceParam,
     isUnsupportedSource,
+    fallbackSource,
     typeParam,
   ])
 
@@ -179,6 +269,7 @@ export function ResourceLibraryPage() {
       id: createRequestId.current,
       type,
       publishAfterCreate: false,
+      marketplaceTags: [],
       target: { scope: 'personal' },
     })
   }
@@ -226,15 +317,17 @@ export function ResourceLibraryPage() {
 
   const handleTypeChange = (nextType: ManagedResourceType) => {
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
+    const nextSupportsCreatedByMeSource = nextType === 'agent'
     const nextSupportsSystemSource =
       nextType === 'model' || nextType === 'shell' || nextType === 'retriever'
     const shouldResetSource =
       (effectiveSource === 'installed' && !nextSupportsInstalledSource) ||
-      (effectiveSource === 'system' && !nextSupportsSystemSource)
+      (effectiveSource === 'system' && !nextSupportsSystemSource) ||
+      (effectiveSource === 'mine' && !nextSupportsCreatedByMeSource)
 
     replaceParams({
       type: nextType,
-      source: shouldResetSource ? 'all' : undefined,
+      source: shouldResetSource ? 'personal' : undefined,
       group: effectiveSource === 'group' ? undefined : null,
       keyword: null,
       sort: null,
@@ -247,7 +340,7 @@ export function ResourceLibraryPage() {
   const handleSourceChange = (nextSource: MineSource) => {
     replaceParams({
       tab: 'mine',
-      source: nextSource === 'all' ? null : nextSource,
+      source: nextSource,
       group: nextSource === 'group' ? undefined : null,
       keyword: null,
       teamAction: null,
@@ -273,7 +366,12 @@ export function ResourceLibraryPage() {
 
   const renderContent = () => {
     if (!isMineView) {
-      return <DiscoverResources resourceType={resourceType} hideSearch />
+      return (
+        <>
+          {resourceType === 'agent' && <FeaturedScenarios />}
+          <DiscoverResources resourceType={resourceType} systemOnly hideSearch />
+        </>
+      )
     }
     if (isPublishedView) {
       return <PublishedResources key={publishedRevision} resourceType={resourceType} />
@@ -327,13 +425,39 @@ export function ResourceLibraryPage() {
           </div>
         )
       }
+      if (resourceType === 'agent') {
+        return (
+          <MyResources
+            key={`${managedRevision}:agent:group:${selectedGroupName || 'all'}`}
+            allowedTypes={['agent']}
+            fixedSource="group"
+            fixedGroup={selectedGroupName}
+            hideSourceControls
+            hideTypeControls
+            hideManagerCreateActions
+            hideSortControls
+            hideTeamModeFilter
+            searchQuery={keywordParam}
+          />
+        )
+      }
+      if (selectedGroupName) {
+        return (
+          <TeamSkillResources
+            groupName={selectedGroupName}
+            groups={teamGroupState.groups}
+            keyword={keywordParam}
+          />
+        )
+      }
       return (
         <InstalledResources
-          resourceType={resourceType}
+          resourceType="skill"
           keyword={keywordParam}
           groupNamespaces={
             selectedGroupName ? [selectedGroupName] : teamGroupState.groups.map(group => group.name)
           }
+          groups={teamGroupState.groups}
         />
       )
     }
@@ -358,7 +482,7 @@ export function ResourceLibraryPage() {
 
   const sourceOptions: MineSource[] = [
     'all',
-    'personal',
+    supportsCreatedByMeSource ? 'mine' : 'personal',
     'group',
     ...(supportsSystemSource ? (['system'] as const) : []),
     ...(supportsInstalledSource ? (['installed'] as const) : []),
@@ -454,44 +578,46 @@ export function ResourceLibraryPage() {
                   filters={availableTypes}
                   marketLabels={!isMineView}
                 />
-                <form
-                  className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px] sm:pb-0"
-                  onSubmit={handleSearch}
-                  data-testid="resource-library-header-search"
-                >
-                  <Search
-                    className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted sm:top-1/2"
-                    aria-hidden
-                  />
-                  <Input
-                    value={searchInput}
-                    onChange={event => setSearchInput(event.target.value)}
-                    placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
-                    className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
-                    data-testid="resource-library-header-search-input"
-                  />
-                  {searchInput && (
-                    <button
-                      type="button"
-                      className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary sm:top-1/2"
-                      aria-label={t('actions.clear_search')}
-                      onClick={() => {
-                        setSearchInput('')
-                        replaceParams({ keyword: null })
-                      }}
-                      data-testid="resource-library-header-search-clear"
-                    >
-                      <X className="h-4 w-4" aria-hidden />
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    className="sr-only"
-                    data-testid="resource-library-header-search-button"
+                {isMineView && (
+                  <form
+                    className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px] sm:pb-0"
+                    onSubmit={handleSearch}
+                    data-testid="resource-library-header-search"
                   >
-                    {t('actions.search')}
-                  </button>
-                </form>
+                    <Search
+                      className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted sm:top-1/2"
+                      aria-hidden
+                    />
+                    <Input
+                      value={searchInput}
+                      onChange={event => setSearchInput(event.target.value)}
+                      placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
+                      className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
+                      data-testid="resource-library-header-search-input"
+                    />
+                    {searchInput && (
+                      <button
+                        type="button"
+                        className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary sm:top-1/2"
+                        aria-label={t('actions.clear_search')}
+                        onClick={() => {
+                          setSearchInput('')
+                          replaceParams({ keyword: null })
+                        }}
+                        data-testid="resource-library-header-search-clear"
+                      >
+                        <X className="h-4 w-4" aria-hidden />
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      className="sr-only"
+                      data-testid="resource-library-header-search-button"
+                    >
+                      {t('actions.search')}
+                    </button>
+                  </form>
+                )}
               </div>
 
               {isMineView && (

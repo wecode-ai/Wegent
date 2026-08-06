@@ -4,6 +4,7 @@ import { redirectToLogin } from '@/features/auth/redirect'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const SLOW_HTTP_REQUEST_MS = 5000
+let requestSequence = 0
 
 // In a packaged Tauri app the WebView calls the API cross-origin, which
 // triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
@@ -17,22 +18,59 @@ function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
-function logSlowHttpRequest(
-  method: string,
-  baseUrl: string,
-  endpoint: string,
-  elapsedMs: number,
-  status?: number
-): void {
-  if (elapsedMs <= SLOW_HTTP_REQUEST_MS) return
-  console.warn(`[Wework] HTTP ${method} ${endpoint} completed slowly in ${elapsedMs}ms.`, {
-    method,
-    baseUrl,
-    endpoint,
-    elapsedMs,
-    status,
-    transport: shouldUseTauriFetch() ? 'tauri-http-ipc' : 'fetch',
-  })
+function createRequestId(): string {
+  requestSequence += 1
+  return `wework-${Date.now().toString(36)}-${requestSequence.toString(36)}`
+}
+
+function transportName(): 'tauri-http-ipc' | 'fetch' {
+  return shouldUseTauriFetch() ? 'tauri-http-ipc' : 'fetch'
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...(error.cause ? { cause: String(error.cause) } : {}),
+    }
+  }
+  return { message: String(error) }
+}
+
+interface HttpRequestLogContext {
+  requestId: string
+  method: string
+  baseUrl: string
+  endpoint: string
+  startedAt: number
+}
+
+interface HttpResponseDiagnostics {
+  response: Response
+  logContext: HttpRequestLogContext
+  backendRequestId: string | null
+}
+
+interface HttpFetchOptions {
+  token: string | null
+  signal?: AbortSignal
+  contentType?: string | null
+}
+
+function requestLogFields(
+  context: HttpRequestLogContext,
+  fields: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    requestId: context.requestId,
+    method: context.method,
+    baseUrl: context.baseUrl,
+    endpoint: context.endpoint,
+    elapsedMs: Math.round(nowMs() - context.startedAt),
+    transport: transportName(),
+    ...fields,
+  }
 }
 
 function requestUrl(baseUrl: string, endpoint: string): string {
@@ -70,6 +108,7 @@ export interface HttpClientOptions {
 
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 export interface HttpClient {
@@ -96,6 +135,11 @@ async function parseError(response: Response): Promise<ApiError> {
     detail = json.errors ? { detail: json.detail, errors: json.errors } : json.detail
     if (typeof json.detail === 'string') {
       message = json.detail
+    } else if (Array.isArray(json.detail) && json.detail.length > 0) {
+      const first = json.detail[0]
+      if (first && typeof first === 'object' && typeof first.msg === 'string') {
+        message = first.msg
+      }
     } else if (json.detail && typeof json.detail === 'object') {
       if (typeof json.detail.message === 'string') {
         message = json.detail.message
@@ -127,39 +171,106 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
   const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
+  async function fetchWithDiagnostics(
+    endpoint: string,
+    init: RequestInit,
+    fetchOptions: HttpFetchOptions
+  ): Promise<HttpResponseDiagnostics> {
+    const { token, signal } = fetchOptions
+    const isFormData = init.body instanceof FormData
+    const method = init.method ?? 'GET'
+    const startedAt = nowMs()
+    const requestId = createRequestId()
+    const logContext = {
+      requestId,
+      method,
+      baseUrl: options.baseUrl,
+      endpoint,
+      startedAt,
+    }
+    const slowTimer = window.setTimeout(() => {
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} is still pending after ${SLOW_HTTP_REQUEST_MS}ms.`,
+        requestLogFields(logContext, { phase: 'waiting_for_response' })
+      )
+    }, SLOW_HTTP_REQUEST_MS)
+    let response: Response
+    try {
+      response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
+        ...init,
+        ...(signal ? { signal } : {}),
+        headers: {
+          ...(fetchOptions.contentType === undefined
+            ? isFormData
+              ? {}
+              : { 'Content-Type': 'application/json' }
+            : fetchOptions.contentType
+              ? { 'Content-Type': fetchOptions.contentType }
+              : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(shouldUseTauriFetch() ? { 'X-Request-ID': requestId } : {}),
+          ...init.headers,
+        },
+      })
+    } catch (error) {
+      window.clearTimeout(slowTimer)
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} failed.`,
+        requestLogFields(logContext, {
+          phase: 'transport',
+          error: errorDetails(error),
+        })
+      )
+      throw error
+    }
+    window.clearTimeout(slowTimer)
+    const elapsedMs = Math.round(nowMs() - startedAt)
+    const backendRequestId = response.headers?.get?.('X-Request-ID') || null
+    if (elapsedMs >= SLOW_HTTP_REQUEST_MS) {
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} completed slowly in ${elapsedMs}ms.`,
+        requestLogFields(logContext, {
+          phase: 'response_received',
+          status: response.status,
+          backendRequestId,
+          serverTiming: response.headers?.get?.('Server-Timing') || null,
+        })
+      )
+    }
+
+    return { response, logContext, backendRequestId }
+  }
+
+  async function parseAndLogHttpError(
+    response: Response,
+    diagnostics: HttpResponseDiagnostics
+  ): Promise<ApiError> {
+    const error = await parseError(response)
+    console.warn(
+      `[Wework] HTTP ${diagnostics.logContext.method} ${diagnostics.logContext.endpoint} returned ${response.status}.`,
+      requestLogFields(diagnostics.logContext, {
+        phase: 'http_error',
+        status: response.status,
+        backendRequestId: diagnostics.backendRequestId,
+        error: errorDetails(error),
+      })
+    )
+    return error
+  }
+
   async function request<T>(
     endpoint: string,
     init: RequestInit,
     requestOptions: HttpRequestOptions = {}
   ): Promise<T> {
-    const token = getToken()
-    const isFormData = init.body instanceof FormData
-    const method = init.method ?? 'GET'
-    const startedAt = nowMs()
-    let response: Response
-    try {
-      response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
-        ...init,
-        headers: {
-          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...init.headers,
-        },
-      })
-    } catch (error) {
-      logSlowHttpRequest(method, options.baseUrl, endpoint, Math.round(nowMs() - startedAt))
-      throw error
-    }
-    logSlowHttpRequest(
-      method,
-      options.baseUrl,
-      endpoint,
-      Math.round(nowMs() - startedAt),
-      response.status
-    )
+    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
+      token: getToken(),
+      signal: requestOptions.signal,
+    })
+    const { response } = diagnostics
 
     if (!response.ok) {
-      const error = await parseError(response)
+      const error = await parseAndLogHttpError(response, diagnostics)
       const redirectOnUnauthorized =
         requestOptions.redirectOnUnauthorized ?? options.redirectOnUnauthorized ?? true
       if (response.status === 401 && redirectOnUnauthorized) {
@@ -180,25 +291,37 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const token = getToken()
     const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
     const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    const currentRequest = inFlightGetRequests.get(cacheKey)
-    if (currentRequest) {
-      return currentRequest as Promise<T>
+    if (!requestOptions.signal) {
+      const currentRequest = inFlightGetRequests.get(cacheKey)
+      if (currentRequest) {
+        return currentRequest as Promise<T>
+      }
     }
 
     const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
-      inFlightGetRequests.delete(cacheKey)
+      if (!requestOptions.signal) {
+        inFlightGetRequests.delete(cacheKey)
+      }
     })
-    inFlightGetRequests.set(cacheKey, nextRequest)
+    if (!requestOptions.signal) {
+      inFlightGetRequests.set(cacheKey, nextRequest)
+    }
     return nextRequest
   }
 
   async function getBlob(endpoint: string): Promise<Blob> {
-    const token = getToken()
-    const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!response.ok) throw await parseError(response)
-    return response.blob()
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {},
+      {
+        token: getToken(),
+        contentType: null,
+      }
+    )
+    if (!diagnostics.response.ok) {
+      throw await parseAndLogHttpError(diagnostics.response, diagnostics)
+    }
+    return diagnostics.response.blob()
   }
 
   return {

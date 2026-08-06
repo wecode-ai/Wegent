@@ -89,6 +89,9 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
+from app.services.plugin_device_installation_service import (
+    plugin_device_installation_service,
+)
 from app.services.project_chat.service import project_chat_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
@@ -104,7 +107,7 @@ CODEX_RUNTIME = "codex"
 DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
 DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
-REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
+REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 120
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
 RUNTIME_TASK_TERMINAL_STATUSES = {
     "done",
@@ -1310,6 +1313,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 payload=payload,
                 timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
+            with _db_session() as db:
+                plugin_device_installation_service.record_device_sync_result(
+                    db,
+                    user_id=user_id,
+                    result=result,
+                )
             if not result.success:
                 logger.warning(
                     "[Device WS] Capability sync after register failed: user=%s, device=%s, error=%s",

@@ -757,7 +757,7 @@ export function MyResources({
           createRequest={createRequest?.type === 'skill' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}
-          showAutoEnabledSkills={sourceFilter === 'all' || sourceFilter === 'mine'}
+          showAutoEnabledSkills={sourceFilter === 'all'}
           hideCreateActions={hideManagerCreateActions}
           compact
           onCreated={

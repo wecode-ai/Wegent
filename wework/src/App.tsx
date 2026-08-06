@@ -16,6 +16,7 @@ import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
@@ -94,7 +95,12 @@ const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
-  return isTauriRuntime() && getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  if (!isTauriRuntime()) return false
+  try {
+    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  } catch {
+    return false
+  }
 }
 
 function hasTauriIpc() {
@@ -164,10 +170,14 @@ function workspaceTabIframe(
   return src ? { src, title: app.label } : null
 }
 
-function workspaceTabAuxiliaryPage(path: string, experimentalFeaturesEnabled: boolean) {
+function workspaceTabAuxiliaryPage(
+  path: string,
+  search: string,
+  experimentalFeaturesEnabled: boolean
+) {
   if (path === '/plugins/manage') return <PluginManagementPage />
   if (path === '/plugins/create') return <PluginCreatePage />
-  if (path === '/plugins') return <PluginsPage />
+  if (path === '/plugins') return <PluginsPage routeSearch={search} />
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
@@ -195,8 +205,9 @@ function WorkspaceTabSurface({
   user,
 }: WorkspaceTabSurfaceProps) {
   const tabPath = workspaceTabPath(tab)
+  const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, experimentalFeaturesEnabled)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch, experimentalFeaturesEnabled)
   const auxiliaryActive = Boolean(auxiliaryPage)
   const nativeWorkbenchActive = !iframe && !auxiliaryActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
@@ -319,6 +330,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return <OidcCallbackPage />
   }
 
+  if (path === '/auth/wework/authorize') {
+    return <WeworkAuthorizePage />
+  }
+
   if (isLoading || !user) {
     return null
   }
@@ -420,7 +435,9 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
+    apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,
+    socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
   }
@@ -443,7 +460,7 @@ function AppShell() {
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
-        sites: t('workbench.workspace_tab_sites', '站点'),
+        sites: t('workbench.workspace_tab_sites', '应用'),
         automations: t('workbench.workspace_tab_automations', '自动化'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
         apps: t('workbench.workspace_tab_apps', '应用'),
@@ -674,6 +691,7 @@ function AppShell() {
           <LocalExecutorCloudBridge
             apiBaseUrl={cloudConnection.apiBaseUrl}
             backendUrl={cloudConnection.backendUrl}
+            socketBaseUrl={cloudConnection.socketBaseUrl}
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />

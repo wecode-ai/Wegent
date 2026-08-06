@@ -85,7 +85,7 @@ export type ModelType = 'public' | 'user' | 'group' | 'runtime'
 
 export interface ModelSelectionConfig {
   modelName: string
-  modelType?: ModelType | null
+  modelType?: string | null
   options?: Record<string, string>
 }
 
@@ -471,6 +471,12 @@ export interface RuntimeProjectRef {
   pinnedOrder?: number | null
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
+}
+
+export interface RuntimeProjectSpaceRef {
+  projectStore: 'local' | 'backend'
+  projectId: string
 }
 
 export interface RuntimeProjectRoot {
@@ -814,6 +820,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
 }
 
@@ -823,6 +830,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
   error?: string | null
 }
@@ -1327,6 +1335,7 @@ export interface LocalDeviceApp {
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
   skillPath?: string | null
+  trialTemplates?: PluginPathComponent[]
 }
 
 export interface SkillDirectoryMove {
@@ -1933,10 +1942,44 @@ export interface InstalledPluginComponents {
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]
   mcps: PluginMCPComponent[]
+  connectors?: Array<{
+    slug: string
+    authPolicy: 'on_install' | 'on_use' | 'optional'
+    localAuth?: PluginLocalAuthDefinition | null
+  }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+}
+
+export interface PluginLocalAuthDefinition {
+  kind?: 'local_qr' | 'browser_oauth'
+  health: string[]
+  start: string[]
+  poll: string[]
+  logout?: string[]
+  tool?: PluginLocalAuthToolDefinition | null
+  qrField?: string
+  statusField?: string
+  okValues?: string[]
+  pollIntervalSeconds?: number
+  timeoutSeconds?: number
+  logoutOnUninstall?: boolean
+}
+
+export interface PluginLocalAuthArtifactDefinition {
+  url: string
+  sha256: string
+  archive: 'tar_gz' | 'zip'
+  binaryPath: string
+}
+
+export interface PluginLocalAuthToolDefinition {
+  id: string
+  source: 'bundled' | 'managed'
+  version?: string | null
+  artifacts?: Record<string, PluginLocalAuthArtifactDefinition>
 }
 
 export interface InstalledPluginSource {
@@ -1977,6 +2020,14 @@ export interface InstalledPlugin {
   metadata: Record<string, unknown>
   spec: {
     source: InstalledPluginSource
+    origin?: 'created' | 'market'
+    pluginId?: number | null
+    releaseId?: number | null
+    desiredVersion?: string | null
+    updatePolicy?: 'manual'
+    sourceProvider?: 'wegent' | 'codex' | 'user'
+    sourceLabel?: string
+    visibility?: 'personal' | 'workspace' | 'public'
     displayName: string
     description: string
     version?: string | null
@@ -1992,6 +2043,17 @@ export interface InstalledPlugin {
   }
   status: {
     state: string
+    devices?: Array<{
+      deviceId: string
+      desiredReleaseId: number
+      actualReleaseId?: number | null
+      state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+      errorCode?: string | null
+      errorMessage?: string | null
+      attemptCount: number
+      lastSyncAt?: string | null
+      updatedAt: string
+    }>
   }
 }
 
@@ -2017,6 +2079,28 @@ export interface PluginMarketplaceItem {
   components: InstalledPluginComponents
   manifest: Record<string, unknown>
   ownerUserId: number
+  ownerDisplayName?: string
+  accessRole?: 'catalog' | 'owner' | 'recipient'
+  allowCopy?: boolean
+  grantUserCount?: number
+  grantNamespaceCount?: number
+  latestReleaseId?: number | null
+  listingType?: 'plugin' | 'skill'
+  origin?: 'market'
+  sourceProvider?: 'wegent' | 'codex' | 'user'
+  sourceLabel?: string
+  updateAvailable?: boolean
+  currentDeviceInstallation?: {
+    deviceId: string
+    desiredReleaseId: number
+    actualReleaseId?: number | null
+    state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+    errorCode?: string | null
+    errorMessage?: string | null
+    attemptCount: number
+    lastSyncAt?: string | null
+    updatedAt: string
+  } | null
 }
 
 export interface PluginMarketplaceListResponse {
@@ -2063,11 +2147,83 @@ export interface PluginMarketplaceInstallResponse {
   sync?: DeviceCapabilitySyncResponse | null
 }
 
+export interface PluginMarketplaceCapabilities {
+  canPublish: boolean
+  canSharePersonalPlugins?: boolean
+}
+
 export interface InstalledPluginUpdateRequest {
   enabled?: boolean
   componentStates?: Record<string, boolean>
   displayName?: string
   description?: string
+  releaseId?: number
+}
+
+export interface PluginSubmissionInitRequest {
+  slug: string
+  displayName: string
+  version: string
+  filename: string
+  sha256: string
+  sizeBytes: number
+  listingType?: 'plugin' | 'skill'
+  purpose?: 'marketplace_publish' | 'restricted_share'
+  visibility?: 'personal' | 'workspace' | 'public'
+  targets?: PluginAccessTarget[]
+  allowCopy?: boolean
+}
+
+export interface PluginSubmissionInitResponse {
+  submissionId: number
+  pluginId: number
+  releaseId: number
+  purpose?: 'marketplace_publish' | 'restricted_share'
+  uploadUrl: string
+  expiresAt: string
+}
+
+export interface PluginSubmissionItem {
+  id: number
+  pluginId: number
+  releaseId: number
+  status: 'uploading' | 'scanning' | 'pending' | 'approved' | 'rejected' | 'cancelled'
+  reviewNote: string
+  submittedAt: string
+  reviewedAt?: string | null
+}
+
+export interface PluginSubmissionCompleteResponse {
+  submission: PluginSubmissionItem
+  plugin?: PluginMarketplaceItem | null
+}
+
+export interface PluginAccessTarget {
+  entityType: 'user' | 'namespace'
+  entityId: string
+  displayName: string
+}
+
+export interface PluginAccessUpdateRequest {
+  scope: 'private' | 'restricted'
+  targets: PluginAccessTarget[]
+  allowCopy: boolean
+}
+
+export interface PluginAccessResponse extends PluginAccessUpdateRequest {
+  pluginId: number
+  revocationPendingCount: number
+}
+
+export interface PluginCopyResponse {
+  sourcePluginId: number
+  sourceReleaseId: number
+  sourcePluginName: string
+  sourceDisplayName: string
+  version: string
+  sha256: string
+  downloadUrl: string
+  expiresAt: string
 }
 
 export type ChatBlockType =
@@ -2106,6 +2262,7 @@ export interface ChatBlockCreatedPayload {
   subtaskId?: string
   block: ChatBlock
   deviceId?: string
+  replacesItemId?: string
 }
 
 export interface ChatBlockUpdatedPayload {
@@ -2218,12 +2375,16 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
-  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {
   family?: string | null
   provider?: string | null
+}
+
+export interface ModelCapabilities {
+  supportsImage?: boolean
+  supportsVideo?: boolean
 }
 
 export interface UnifiedModel {
@@ -2234,6 +2395,7 @@ export interface UnifiedModel {
   modelId?: string | null
   contextWindow?: number | null
   maxOutputTokens?: number | null
+  modelCapabilities?: ModelCapabilities | null
   namespace?: string
   resourceUserId?: number
   config?: Record<string, unknown>

@@ -8,6 +8,7 @@ Skills API endpoints for managing Claude Code Skills
 
 import hashlib
 import io
+import json
 import logging
 import zipfile
 from typing import Any, Dict, List, Optional
@@ -46,6 +47,7 @@ from app.schemas.kind import (
     SkillList,
 )
 from app.schemas.namespace import GroupRole
+from app.schemas.resource_library import ResourceLibraryPublicationUpdateRequest
 from app.schemas.skill_binding import (
     SkillAvailability,
     SkillBindingResponse,
@@ -56,6 +58,8 @@ from app.services.adapters.skill_kinds import skill_kinds_service
 from app.services.auth import verify_skill_identity_token
 from app.services.git_skill import git_skill_service
 from app.services.group_permission import check_group_permission
+from app.services.marketplace_tag_service import marketplace_tag_service
+from app.services.resource_library_service import resource_library_service
 from app.services.skill_binding_service import skill_binding_service
 
 router = APIRouter(prefix="/kinds/skills")
@@ -783,6 +787,7 @@ def delete_public_skill(
 async def upload_public_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
+    marketplace_tags: str = Form("[]", description="JSON array of marketplace tag IDs"),
     current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
@@ -812,6 +817,26 @@ async def upload_public_skill(
     if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
 
+    try:
+        parsed_marketplace_tags = json.loads(marketplace_tags)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Marketplace tags must be a JSON array",
+        ) from exc
+    if not isinstance(parsed_marketplace_tags, list) or not all(
+        isinstance(tag, str) for tag in parsed_marketplace_tags
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Marketplace tags must be a JSON array of strings",
+        )
+    validated_marketplace_tags = marketplace_tag_service.validate_resource_tags(
+        db,
+        parsed_marketplace_tags,
+        require_nonempty=True,
+    )
+
     # Read file content
     file_content = await file.read()
 
@@ -826,22 +851,16 @@ async def upload_public_skill(
         add_to_user_default=False,
     )
 
-    # Convert to dict format for consistency with other public skill endpoints
-    return {
-        "id": int(skill.metadata.labels.get("id", 0)),
-        "name": skill.metadata.name,
-        "namespace": skill.metadata.namespace,
-        "description": skill.spec.description,
-        "prompt": skill.spec.prompt,
-        "version": skill.spec.version,
-        "author": skill.spec.author,
-        "tags": skill.spec.tags,
-        "bindShells": skill.spec.bindShells,
-        "is_active": True,
-        "is_public": True,
-        "created_at": None,
-        "updated_at": None,
-    }
+    skill_id = int(skill.metadata.labels.get("id", 0))
+    resource_library_service.update_publication(
+        db,
+        listing_id=skill_id,
+        request=ResourceLibraryPublicationUpdateRequest(
+            tags=validated_marketplace_tags,
+        ),
+        current_user=current_user,
+    )
+    return public_skill_service.get_skill_by_id(db, skill_id=skill_id)
 
 
 @router.put("/public/{skill_id}/upload", response_model=Dict[str, Any])
@@ -1097,6 +1116,11 @@ def import_from_git_repository_for_public(
     - If the name is in overwrite_names, the existing skill will be updated
     - Otherwise, the skill will be skipped
     """
+    validated_marketplace_tags = marketplace_tag_service.validate_resource_tags(
+        db,
+        request.marketplace_tags or [],
+        require_nonempty=True,
+    )
     result = git_skill_service.import_skills(
         repo_url=request.repo_url,
         skill_paths=request.skill_paths,
@@ -1105,6 +1129,15 @@ def import_from_git_repository_for_public(
         overwrite_names=request.overwrite_names,
         db=db,
     )
+    for imported_skill in result.success:
+        resource_library_service.update_publication(
+            db,
+            listing_id=imported_skill["id"],
+            request=ResourceLibraryPublicationUpdateRequest(
+                tags=validated_marketplace_tags,
+            ),
+            current_user=current_user,
+        )
 
     return GitImportResponse(
         success=[
@@ -1174,6 +1207,7 @@ def list_unified_skills(
     from app.services.group_permission import get_user_groups
 
     user_skills = []
+    user_skill_keys = set()
     user_skill_names = set()
     user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
         db, current_user.id
@@ -1301,7 +1335,9 @@ def list_unified_skills(
 
     # Convert Kind objects to response format
     for kind in skill_kinds:
-        if kind.name not in user_skill_names:
+        skill_key = (kind.namespace, kind.name)
+        if skill_key not in user_skill_keys:
+            user_skill_keys.add(skill_key)
             user_skill_names.add(kind.name)
             spec = kind.json.get("spec", {})
             capability = spec.get("capability") or {}

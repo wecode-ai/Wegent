@@ -111,7 +111,9 @@ import { ResourceManagementLayout } from './resource-management/ResourceManageme
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { cn } from '@/lib/utils'
 import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
 import { paths } from '@/config/paths'
+import { useUser } from '@/features/common/UserContext'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -171,6 +173,7 @@ export default function TeamList({
   searchQuery = '',
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
+  const { user } = useUser()
   const { toast } = useToast()
   const [teams, setTeams] = useState<Team[]>([])
   const [publishedTeamIds, setPublishedTeamIds] = useState<Set<number>>(new Set())
@@ -296,7 +299,7 @@ export default function TeamList({
             display_name: team.displayName || team.name,
             description: team.description || null,
             icon: team.icon || null,
-            tags: [],
+            tags: pendingCreateRequestRef.current.marketplaceTags || [],
             version: '1.0.0',
             manifest_options: {},
           })
@@ -316,13 +319,14 @@ export default function TeamList({
   )
 
   const handleCreateOptionsChange = useCallback(
-    (target: ResourceCreateTarget, publishAfterCreate: boolean) => {
+    (target: ResourceCreateTarget, publishAfterCreate: boolean, marketplaceTags: string[]) => {
       setCreateTarget(target)
       if (pendingCreateRequestRef.current) {
         pendingCreateRequestRef.current = {
           ...pendingCreateRequestRef.current,
           target,
           publishAfterCreate,
+          marketplaceTags,
         }
       }
     },
@@ -509,7 +513,7 @@ export default function TeamList({
     } else if (sourceFilter === 'system') {
       filteredTeams = teams.filter(isPublicTeam)
     } else if (sourceFilter === 'mine') {
-      filteredTeams = teams.filter(team => !isPublicTeam(team))
+      filteredTeams = teams.filter(team => user !== null && team.user_id === user.id)
     }
 
     return filteredTeams.filter(team =>
@@ -521,7 +525,7 @@ export default function TeamList({
         team.user?.user_name
       )
     )
-  }, [teams, sourceFilter, searchQuery])
+  }, [teams, sourceFilter, searchQuery, user])
 
   const groupFilteredTeams = useMemo(() => {
     const isFilteredByGroupApi = scope === 'group' && !groupName && groupFilter !== undefined
@@ -892,17 +896,22 @@ export default function TeamList({
                               : undefined
                           }
                           icon={
-                            <ResourceCardIcon compact={compact}>
-                              {compact ? (
-                                <TeamIconDisplay iconId={team.icon} size="md" />
-                              ) : (
+                            compact ? (
+                              <ResourceIcon
+                                resourceType="agent"
+                                name={getTeamDisplayName(team)}
+                                icon={team.icon}
+                                size="sm"
+                              />
+                            ) : (
+                              <ResourceCardIcon compact={false}>
                                 <TeamIconDisplay
                                   iconId={team.icon}
                                   size="md"
                                   className="text-primary"
                                 />
-                              )}
-                            </ResourceCardIcon>
+                              </ResourceCardIcon>
+                            )
                           }
                           actions={
                             compact &&

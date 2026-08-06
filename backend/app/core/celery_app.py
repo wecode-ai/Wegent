@@ -44,6 +44,7 @@ celery_app = Celery(
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
         "app.tasks.robot_queue_tasks",
+        "app.tasks.plugin_marketplace_tasks",
     ],
 )
 
@@ -88,6 +89,10 @@ celery_app.conf.update(
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
+        },
+        "sync-plugin-upstreams": {
+            "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
+            "schedule": 6 * 60 * 60,
         },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)

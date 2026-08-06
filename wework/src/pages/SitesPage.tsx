@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
+import type { SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -12,21 +15,107 @@ import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
+import { getApplicationTypeDefinition } from '@/components/sites/applicationTypeDefinitions'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
-import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
+import {
+  notifyLocalPluginSkillsChanged,
+  queuePluginReferenceTrial,
+  queuePluginTrial,
+} from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
 
-class SitesDeviceSyncConfirmationError extends Error {}
+class ApplicationPluginSyncConfirmationError extends Error {}
+
+const CODEX_SITES_PLUGIN_NAME = 'sites'
+const CODEX_SITES_MARKETPLACE = 'openai-bundled'
+
+function normalizedPluginKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+}
+
+function isEnabledCodexSitesPlugin(plugin: InstalledPlugin): boolean {
+  if (!plugin.spec.enabled || plugin.spec.installState !== 'installed') return false
+  if (normalizedPluginKey(plugin.spec.source.pluginKey) !== CODEX_SITES_PLUGIN_NAME) return false
+
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : {}
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.providerKey,
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
+  ].filter((marketplace): marketplace is string => typeof marketplace === 'string')
+  return marketplaceNames.some(
+    marketplace => normalizedPluginKey(marketplace) === CODEX_SITES_MARKETPLACE
+  )
+}
+
+function isNativeCodexSitesPluginSkill(skill: LocalDeviceSkill): boolean {
+  if (skill.source !== 'codex' || skill.name.trim().toLowerCase() !== 'sites:sites-building') {
+    return false
+  }
+  const normalizedPath = skill.path.trim().toLowerCase().replace(/\\/g, '/')
+  return normalizedPath.includes('/plugins/cache/openai-bundled/sites/')
+}
+
+function queueCodexSitesPluginReference(): boolean {
+  return queuePluginReferenceTrial({
+    pluginName: CODEX_SITES_PLUGIN_NAME,
+    marketplaceName: CODEX_SITES_MARKETPLACE,
+    displayName: 'Sites',
+  })
+}
+
+function nativeCodexSitesPluginPaths(nativeCodexHome: string): string[] {
+  const normalizedHome = nativeCodexHome.trim().replace(/[\\/]+$/, '')
+  if (!normalizedHome) return []
+  return [
+    `${normalizedHome}/plugins/cache/openai-bundled/sites`,
+    `${normalizedHome}/.tmp/bundled-marketplaces/openai-bundled/plugins/sites/.codex-plugin/plugin.json`,
+  ]
+}
+
+async function tryQueueLocalCodexSitesTrial(api: LocalCodexPluginApi): Promise<boolean> {
+  try {
+    const installedPlugins = await api.listInstalledPlugins()
+    const codexSitesPlugin = installedPlugins.items.find(isEnabledCodexSitesPlugin)
+    if (codexSitesPlugin && queuePluginTrial(codexSitesPlugin)) return true
+  } catch {
+    // Continue through the remaining local discovery sources.
+  }
+
+  try {
+    const migrationStatus = await api.codexHomeMigrationStatus()
+    if (migrationStatus.nativeCodexHomeExists) {
+      for (const path of nativeCodexSitesPluginPaths(migrationStatus.nativeCodexHome)) {
+        if ((await localPathExists(path)) && queueCodexSitesPluginReference()) return true
+      }
+    }
+  } catch {
+    // Continue through the remaining local discovery sources.
+  }
+
+  try {
+    const localSkills = await api.listSkills({ forceReload: true })
+    return localSkills.some(isNativeCodexSitesPluginSkill) && queueCodexSitesPluginReference()
+  } catch {
+    return false
+  }
+}
 
 export function SitesPage() {
   const { t } = useTranslation('sites')
@@ -39,7 +128,7 @@ export function SitesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -93,6 +182,7 @@ export function SitesPage() {
     cloudConnection.token,
     isLocalFirst,
   ])
+  const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
       return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -142,12 +232,23 @@ export function SitesPage() {
     startNewProjectChat(projectId)
   }
 
-  const handleCreate = async () => {
-    if (creating) return
-    setCreating(true)
+  const handleCreate = async (appType: SiteAppType) => {
+    if (creatingType) return
+    setCreatingType(appType)
+    setCreateError(null)
     try {
+      const definition = getApplicationTypeDefinition(appType)
+      if (!definition) {
+        setCreateError(t('unsupported_application_type', '当前版本不支持该应用类型'))
+        return
+      }
+      const createStrategy = definition.create
+      if (appType === 'web' && (await tryQueueLocalCodexSitesTrial(localCodexPluginApi))) {
+        navigateTo('/')
+        return
+      }
       if (!pluginApi) {
-        setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用 Sites 插件'))
+        setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
         return
       }
       const targetDeviceId = getPreferredStandaloneDeviceId(
@@ -155,16 +256,16 @@ export function SitesPage() {
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       )
       if (!targetDeviceId) {
-        setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建站点'))
+        setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
         return
       }
 
       const { plugin, sync } = await pluginApi.ensureBuiltinPluginInstalled(
-        WEGENT_SITES_PLUGIN_NAME,
+        createStrategy.pluginName,
         { deviceId: targetDeviceId }
       )
-      const sitesPluginSynced = sync?.plugins.some(
-        item => item.name === WEGENT_SITES_PLUGIN_NAME && item.status === 'synced'
+      const applicationPluginSynced = sync?.plugins.some(
+        item => item.name === createStrategy.pluginName && item.status === 'synced'
       )
       if (
         !sync?.success ||
@@ -172,47 +273,53 @@ export function SitesPage() {
         sync.synced !== 1 ||
         sync.failed !== 0 ||
         sync.skipped !== 0 ||
-        !sitesPluginSynced
+        !applicationPluginSynced
       ) {
-        throw new SitesDeviceSyncConfirmationError(
-          'The Backend did not confirm Sites synchronization to the target device'
+        throw new ApplicationPluginSyncConfirmationError(
+          'The Backend did not confirm application plugin synchronization to the target device'
         )
       }
-      if (!queuePluginTrial(plugin)) {
-        throw new Error('The installed Sites plugin cannot be referenced in chat')
+      const queued = queuePluginTrial(
+        plugin,
+        createStrategy.prompt
+          ? { prompt: t(createStrategy.prompt.key, createStrategy.prompt.fallback) }
+          : undefined
+      )
+      if (!queued) {
+        throw new Error('The installed application plugin cannot be referenced in chat')
       }
 
       notifyLocalPluginSkillsChanged()
       setCreateError(null)
       navigateTo('/')
     } catch (error) {
-      console.error('[Wework Sites] cloud plugin preparation failed', error)
+      console.error('[Wework Applications] cloud plugin preparation failed', error)
       if (error instanceof ApiError && error.status === 404) {
         setCreateError(
           t(
             'plugin_backend_upgrade_required',
-            '云端 Backend 尚未升级 Sites 插件，请先部署最新 Backend'
+            '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
           )
         )
       } else if (error instanceof ApiError && error.status === 503) {
         setCreateError(
-          t('plugin_not_published', '云端市场尚未发布 Sites 插件，请检查内置插件打包配置')
+          t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
         )
       } else if (error instanceof ApiError && error.status === 409) {
         setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
       } else if (error instanceof ApiError && error.status === 502) {
         setCreateError(
-          t('plugin_device_sync_failed', 'Sites 插件未能同步到目标设备，请检查设备后重试')
+          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
         )
-      } else if (error instanceof SitesDeviceSyncConfirmationError) {
+      } else if (error instanceof ApplicationPluginSyncConfirmationError) {
         setCreateError(
-          t('plugin_device_sync_failed', 'Sites 插件未能同步到目标设备，请检查设备后重试')
+          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
         )
       } else {
-        setCreateError(t('plugin_install_failed', 'Sites 插件安装失败，请重试'))
+        setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
       }
     } finally {
-      setCreating(false)
+      setCreatingType(null)
     }
   }
 
@@ -347,7 +454,7 @@ export function SitesPage() {
         <SitesWorkspace
           api={sitesApi}
           onCreate={handleCreate}
-          creating={creating}
+          creatingType={creatingType}
           createError={createError}
           onOpenPlugins={() => navigateTo('/plugins')}
           sidebarCollapsed={sidebarCollapsed && !isMobile}

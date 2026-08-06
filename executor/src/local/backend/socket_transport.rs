@@ -38,7 +38,7 @@ impl LocalBackendTransport for SocketIoTransport {
                 "localhost,127.0.0.1,::1",
             );
             let handlers = self.handlers.lock().expect("handler lock").clone();
-            let mut builder = ClientBuilder::new(config.backend_url.clone())
+            let mut builder = ClientBuilder::new(config.socket_url.clone())
                 .namespace(NAMESPACE)
                 .auth(json!({ "token": config.auth_token }))
                 .transport_type(TransportType::Websocket)

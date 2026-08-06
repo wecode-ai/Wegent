@@ -46,6 +46,7 @@ export interface ResourceLibraryListing {
   description?: string | null
   icon?: string | null
   tags: string[]
+  feature_tags?: string[]
   publisher_user_id: number
   publisher_user_name?: string | null
   publisher_namespace?: string
@@ -65,6 +66,7 @@ export interface ResourceLibraryListing {
 export interface ResourceLibraryPublicationUpdateRequest {
   display_name?: string
   description?: string | null
+  icon?: string | null
   tags?: string[]
   version?: string
   status?: ResourceLibraryListingStatus
@@ -89,6 +91,7 @@ export interface ResourceLibraryListListingsParams {
   keyword?: string
   tags?: string[]
   status?: ResourceLibraryListingStatus | string
+  systemOnly?: boolean
   targetNamespace?: string
   cursor?: string
   page?: number

@@ -202,6 +202,7 @@ class QuickLaunchFunctionConfig(InputPresetMixin):
     title: str = Field(..., min_length=1)
     description: Optional[str] = None
     icon: Optional[str] = None
+    cover: Optional[str] = None
     team_id: int
     enabled: bool = True
     order: int = 0
@@ -210,6 +211,7 @@ class QuickLaunchFunctionConfig(InputPresetMixin):
 class QuickLaunchFunctionResponse(QuickLaunchFunctionConfig):
     type: Literal["system_function"] = "system_function"
     name: str
+    recommended_mode: Literal["chat", "code", "both"] = "both"
 
 
 class QuickLaunchFavoriteAgent(QuickPhraseMixin, InputPresetMixin):

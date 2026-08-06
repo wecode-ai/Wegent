@@ -17,6 +17,7 @@ import type {
   ResourceLibraryPublicationUpdateRequest,
   ResourceLibraryReferenceUsage,
 } from '@/features/resource-library/types'
+import type { MarketplaceTagsResponse } from '@/types/marketplace'
 
 const RESOURCE_LIBRARY_BASE_PATH = '/resource-library'
 
@@ -44,6 +45,7 @@ function buildListingsQuery(params?: ResourceLibraryListListingsParams): string 
   appendQueryParam(query, 'keyword', params?.keyword)
   appendQueryParam(query, 'tags', params?.tags)
   appendQueryParam(query, 'status', params?.status)
+  appendQueryParam(query, 'system_only', params?.systemOnly)
   appendQueryParam(query, 'target_namespace', params?.targetNamespace)
   appendQueryParam(query, 'cursor', params?.cursor)
   appendQueryParam(query, 'page', params?.page)
@@ -64,6 +66,10 @@ function toInstallApiRequest(
 }
 
 export const resourceLibraryApi = {
+  getMarketplaceTags(): Promise<MarketplaceTagsResponse> {
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/tags`)
+  },
+
   listListings(
     params?: ResourceLibraryListListingsParams
   ): Promise<ResourceLibraryDiscoveryResponse<ResourceLibraryListing>> {
@@ -177,6 +183,15 @@ export const resourceLibraryApi = {
     return apiClient.get(
       `${RESOURCE_LIBRARY_BASE_PATH}/groups/${encodeURIComponent(groupNamespace)}/installs${buildListingsQuery(params)}`
     )
+  },
+
+  listGroupInstallsBatch(
+    groupNamespaces: string[],
+    params?: ResourceLibraryListListingsParams
+  ): Promise<ResourceLibraryListResponse<ResourceLibraryInstall>> {
+    const query = new URLSearchParams(buildListingsQuery(params).slice(1))
+    appendQueryParam(query, 'group_names', groupNamespaces)
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/groups/installs?${query.toString()}`)
   },
 }
 

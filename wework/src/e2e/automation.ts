@@ -27,6 +27,7 @@ import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeCo
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
+import { selectDesktopControlOption } from './desktop-control-select'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -39,6 +40,22 @@ interface DesktopControlResult {
   value?: string
   error?: string
 }
+
+interface ScrollStabilitySamplePoint {
+  anchorTop: number
+  scrollTop: number
+  time: number
+}
+
+interface ScrollStabilitySample {
+  done: boolean
+  frames: ScrollStabilitySamplePoint[]
+  missingFrames: number
+  scrollEvents: ScrollStabilitySamplePoint[]
+  stop: () => void
+}
+
+let activeScrollStabilitySample: ScrollStabilitySample | null = null
 
 export interface WeworkAutomationBridge {
   version: 1
@@ -269,14 +286,39 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
             toolProfile: 'custom' as const,
             requestPath: '/v1/responses',
           },
+          // The vision proxy must be saved before the primary model that references it.
+          {
+            id: 'desktop-e2e-vision',
+            providerProfileId: 'kimi' as const,
+            displayName: 'Desktop E2E Vision',
+            modelId: 'kimi-k3',
+            apiFormat: 'openai-chat-completions' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/chat/completions',
+            catalogReady: true,
+          },
+          {
+            id: 'desktop-e2e-vision-main',
+            providerProfileId: 'deepseek' as const,
+            displayName: 'Desktop E2E DeepSeek Pro Vision Main',
+            modelId: 'deepseek-v4-pro',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'custom' as const,
+            requestPath: '/v1/responses',
+            contextWindow: 1_048_576,
+            webSearchMode: 'live' as const,
+            codexCatalogModelId: 'wework-deepseek-v4-pro',
+            visionModelConfigId: 'desktop-e2e-vision',
+            catalogReady: true,
+          },
         ]
       : []
   for (const model of localModels) {
     saveLocalModelConfig({
+      catalogReady: localModelsCatalogReady,
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      catalogReady: localModelsCatalogReady,
       enabled: true,
     })
   }
@@ -873,6 +915,95 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'startScrollStabilitySampling': {
+      const options = JSON.parse(command.value ?? '{}') as {
+        anchorText?: string
+        durationMs?: number
+        scrollerSelector?: string
+      }
+      const durationMs = options.durationMs ?? 1_000
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('sampleScrollStability requires a finite positive durationMs')
+      }
+      const scrollerSelector = options.scrollerSelector?.trim()
+      if (!scrollerSelector) {
+        throw new Error('sampleScrollStability requires scrollerSelector')
+      }
+      const scroller = findDesktopControlElements(scrollerSelector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${scrollerSelector}"`)
+      activeScrollStabilitySample?.stop()
+      const startedAt = performance.now()
+      let sampleTimer = 0
+      let mutationObserver: MutationObserver | null = null
+      const sample: ScrollStabilitySample = {
+        done: false,
+        frames: [],
+        missingFrames: 0,
+        scrollEvents: [],
+        stop: () => {},
+      }
+      const capture = (time: number) => {
+        const anchors = findDesktopControlElements(command.selector)
+        const anchor = options.anchorText
+          ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
+          : anchors[0]
+        if (!anchor) return null
+        return {
+          anchorTop: anchor.getBoundingClientRect().top,
+          scrollTop: scroller.scrollTop,
+          time: time - startedAt,
+        }
+      }
+      const handleScroll = () => {
+        const point = capture(performance.now())
+        if (point) sample.scrollEvents.push(point)
+      }
+      const finish = () => {
+        if (sample.done) return
+        sample.done = true
+        scroller.removeEventListener('scroll', handleScroll)
+        mutationObserver?.disconnect()
+      }
+      sample.stop = () => {
+        window.clearInterval(sampleTimer)
+        finish()
+      }
+      scroller.addEventListener('scroll', handleScroll)
+      mutationObserver = new MutationObserver(() => {
+        const point = capture(performance.now())
+        if (point) sample.frames.push(point)
+        else sample.missingFrames += 1
+      })
+      mutationObserver.observe(scroller, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      })
+      const captureFrame = () => {
+        const time = performance.now()
+        const point = capture(time)
+        if (point) sample.frames.push(point)
+        else sample.missingFrames += 1
+        if (time - startedAt >= durationMs) {
+          window.clearInterval(sampleTimer)
+          finish()
+        }
+      }
+      captureFrame()
+      sampleTimer = window.setInterval(captureFrame, 16)
+      activeScrollStabilitySample = sample
+      return ''
+    }
+    case 'getScrollStabilitySample': {
+      const sample = activeScrollStabilitySample
+      if (!sample) throw new Error('Scroll stability sampling has not started')
+      return JSON.stringify({
+        done: sample.done,
+        frames: sample.frames,
+        missingFrames: sample.missingFrames,
+        scrollEvents: sample.scrollEvents,
+      })
+    }
     case 'getAttribute': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.text
@@ -945,7 +1076,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -120,
         })
       )
-      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      element.scrollIntoView({
+        block: command.value === 'start' ? 'start' : 'center',
+        inline: 'nearest',
+      })
       return text
     }
     case 'scrollToBottomAsUser': {
@@ -962,6 +1096,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.scrollTop = element.scrollHeight
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
+    }
+    case 'scrollFromBottomAsUser': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const distance = Number(command.value)
+      if (!Number.isFinite(distance) || distance < 0) {
+        throw new Error('scrollFromBottomAsUser requires a non-negative distance')
+      }
+
+      scroller.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: -Math.max(120, distance),
+        })
+      )
+      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(scroller.scrollTop)
     }
     case 'scrollToRatioAsUser': {
       const scroller = findDesktopControlElements(command.selector)[0]
@@ -1110,6 +1264,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
+    case 'getLocalExecutorLog':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':
@@ -1135,6 +1291,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
       }
       return element.textContent?.trim() ?? ''
+    }
+    case 'select': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!(element instanceof HTMLSelectElement)) {
+        throw new Error(`Selector "${command.selector}" is not a select element`)
+      }
+      return selectDesktopControlOption(element, command.value ?? '', command.by)
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]

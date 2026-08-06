@@ -12,7 +12,14 @@ import {
 } from '@/tauri/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 
+const runtimeTokenPostMock = vi.hoisted(() => vi.fn())
 const startDragging = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@/api/http', () => ({
+  createHttpClient: vi.fn(() => ({
+    post: runtimeTokenPostMock,
+  })),
+}))
 
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: vi.fn(),
@@ -57,6 +64,12 @@ describe('LocalRuntimeInitializer', () => {
     disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
+    runtimeTokenPostMock.mockReset()
+    runtimeTokenPostMock.mockResolvedValue({
+      auth_token: 'runtime-task-token',
+      token_type: 'bearer',
+      expires_in: 86400,
+    })
     startDragging.mockClear()
   })
 
@@ -90,7 +103,9 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
+          socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
         }}
@@ -103,11 +118,67 @@ describe('LocalRuntimeInitializer', () => {
     await waitFor(() =>
       expect(connectMock).toHaveBeenCalledWith({
         backendUrl: 'https://backend.example.com',
+        socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
+        runtimeAuthToken: 'runtime-task-token',
       })
     )
     expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
       connectMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('applies the latest cloud connection when startup finishes', async () => {
+    let resolveEnsure:
+      | ((value: { running: boolean; ready: boolean; deviceId: string }) => void)
+      | null = null
+    ensureMock.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveEnsure = resolve
+        })
+    )
+    connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    const { rerender } = render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
+          backendUrl: 'https://backend.example.com',
+          socketBaseUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    await waitFor(() => expect(ensureMock).toHaveBeenCalledTimes(1))
+    rerender(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
+          backendUrl: 'https://backend.example.com',
+          socketBaseUrl: 'wss://socket.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+    await act(async () => {
+      resolveEnsure?.({ running: true, ready: true, deviceId: 'local-device' })
+    })
+
+    await waitFor(() =>
+      expect(connectMock).toHaveBeenCalledWith({
+        backendUrl: 'https://backend.example.com',
+        socketBaseUrl: 'wss://socket.example.com',
+        authToken: 'token-a',
+        runtimeAuthToken: 'runtime-task-token',
+      })
     )
   })
 
@@ -140,7 +211,9 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
+          socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
         }}
@@ -164,7 +237,9 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
+          socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
         }}
@@ -215,6 +290,7 @@ describe('LocalRuntimeInitializer', () => {
       currentDir: '/Applications/Wework.app/Contents/MacOS',
       executorHome: '~/.wegent-executor',
       backendUrl: 'https://cloud.example.com',
+      socketUrl: 'wss://socket.example.com',
       hasBackendAuthToken: true,
       pendingRequestCount: 1,
       status: {
@@ -328,6 +404,7 @@ describe('LocalRuntimeInitializer', () => {
       currentDir: '/tmp/wework',
       executorHome: '~/.wegent-executor',
       backendUrl: null,
+      socketUrl: null,
       hasBackendAuthToken: false,
       pendingRequestCount: 0,
       status: {

@@ -538,7 +538,9 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
         bind_shell: "claudecode".to_owned(),
         connection: wegent_executor::config::device::ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
+            socket_url: "wss://socket.example.com".to_owned(),
             auth_token: "bEaReR\twg-token".to_owned(),
+            runtime_auth_token: "bEaReR\truntime-wg-token".to_owned(),
         },
         ..DeviceConfig::default()
     };
@@ -547,7 +549,9 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     let config = LocalBackendConfig::from_device_config(device);
 
     assert_eq!(config.backend_url, "http://localhost:8000");
+    assert_eq!(config.socket_url, "wss://socket.example.com");
     assert_eq!(config.auth_token, "wg-token");
+    assert_eq!(config.runtime_auth_token, "runtime-wg-token");
     assert_eq!(config.device_id, "device-1");
     assert_eq!(config.runtime_instance_id, "runtime-local");
     assert_eq!(config.device_name, "Device One");
@@ -708,7 +712,9 @@ impl LocalBackendTransport for RecordingTransport {
 fn local_backend_config() -> LocalBackendConfig {
     LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
+        socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
+        runtime_auth_token: "runtime-wg-token".to_owned(),
         device_id: "device-1".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),

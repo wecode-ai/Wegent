@@ -521,6 +521,81 @@ fn function_tool_profile_enables_responses_tool_conversion() {
 }
 
 #[test]
+fn parses_vision_sidecar_from_model_config() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "proxy": {"url": "http://127.0.0.1:7890"},
+        "vision_sidecar": {
+            "enabled": true,
+            "request_url": "https://vision.example/v1/chat/completions",
+            "api_format": "openai-chat-completions",
+            "api_key": "vision-key",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 4,
+            "timeout_ms": 12_000
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(
+        sidecar.request_url,
+        "https://vision.example/v1/chat/completions"
+    );
+    assert_eq!(sidecar.api_format, "openai-chat-completions");
+    assert_eq!(sidecar.api_key, "vision-key");
+    assert_eq!(sidecar.model_id, "vision-model");
+    assert_eq!(sidecar.max_descriptions_per_turn, 4);
+    assert_eq!(sidecar.timeout, Duration::from_secs(12));
+    assert_eq!(sidecar.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+}
+
+#[test]
+fn vision_sidecar_allows_zero_descriptions_to_disable_calls_fail_closed() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 0
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(sidecar.max_descriptions_per_turn, 0);
+}
+
+#[test]
+fn vision_sidecar_rejects_invalid_configuration_and_honors_disable() {
+    assert!(vision_sidecar_upstream(&json!({
+        "visionSidecar": {
+            "requestUrl": "https://vision.example/v1/responses",
+            "modelId": "vision-model",
+            "apiFormat": "openai-embeddings"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {"model_id": "vision-model"}
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "enabled": false,
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model"
+        }
+    }))
+    .expect("disabled sidecar")
+    .is_none());
+}
+
+#[test]
 fn explicit_upstream_uses_configured_max_output_tokens() {
     let upstream = explicit_codex_upstream(
         &json!({
@@ -607,6 +682,7 @@ fn custom_shell_profile_without_catalog_entry_uses_upstream_id() {
 
 #[test]
 fn internal_catalog_provider_is_never_used_for_thread_inference() {
+    let _lock = crate::test_env::lock();
     let request = ExecutionRequest {
         model_config: json!({
             "model_id": "gpt-5.4",
@@ -945,6 +1021,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
         skill_identity_token: Some("skill-jwt".to_owned()),
         user_name: Some("alice".to_owned()),
         prompt: Value::String("create a file".to_owned()),
@@ -964,6 +1041,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
     assert!(!launch_config
         .env
         .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));
@@ -977,6 +1055,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         "task-jwt"
     );
     assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
         "skill-jwt"
     );
@@ -984,6 +1066,57 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
     );
+}
+
+#[test]
+fn turn_start_params_refreshes_task_identity_shell_environment() {
+    let request = ExecutionRequest {
+        task_id: "task-525".to_owned(),
+        auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
+        skill_identity_token: Some("skill-jwt".to_owned()),
+        user_name: Some("alice".to_owned()),
+        prompt: Value::String("continue".to_owned()),
+        model_config: json!({
+            "model_id": "gpt-5.5-codex",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let mut launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    launch_config
+        .config_overrides
+        .push("model_provider=wework-router".to_owned());
+
+    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("turn config should include shell env");
+
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
+    assert!(config.contains_key("shell_environment_policy.set.PATH"));
+    assert!(config.get("model_provider").is_none());
 }
 
 #[test]
@@ -996,6 +1129,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "mcp_servers.wework.command=\"node\"".to_owned(),
             "shell_environment_policy.set.WEGENT_TASK_ID=\"task-525\"".to_owned(),
             "shell_environment_policy.set.AUTH_TOKEN=\"task-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN=\"runtime-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
         ],
@@ -1022,6 +1156,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     for key in [
         "WEGENT_TASK_ID",
         "AUTH_TOKEN",
+        "WEGENT_RUNTIME_AUTH_TOKEN",
         "WEGENT_SKILL_IDENTITY_TOKEN",
         "WEGENT_SKILL_USER_NAME",
     ] {
@@ -1085,6 +1220,108 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
         outcome,
         ExecutionOutcome::Completed {
             content: String::new()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": ""
+                }
+            }
+        }),
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-progress",
+                "delta": "I will inspect."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "phase": "final_answer",
+                "delta": "Final answer."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Final answer.".to_owned()
         }
     );
 }
@@ -1794,6 +2031,79 @@ fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
             }),
         ]
     );
+}
+
+#[test]
+fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
+    let root = unique_test_path("managed-plugin-skill-input");
+    let codex_home = root.join("codex");
+    let manifest_path = root.join("capabilities/manifest.json");
+    let plugin_root = codex_home.join("plugins/cache/wegent/dingtalk/0.2.0");
+    let skill_path = plugin_root.join("skills/dws/SKILL.md");
+    fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
+        .expect("skill directory should be created");
+    fs::create_dir_all(plugin_root.join(".codex-plugin"))
+        .expect("plugin manifest directory should be created");
+    fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
+    )
+    .expect("plugin manifest should be written");
+    fs::write(
+        &skill_path,
+        "---\nname: dws\ndescription: DingTalk workspace\n---\n\n# DWS\n",
+    )
+    .expect("skill should be written");
+    fs::create_dir_all(
+        manifest_path
+            .parent()
+            .expect("capability manifest parent should exist"),
+    )
+    .expect("capability manifest directory should be created");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&json!({
+            "plugins": {
+                "dingtalk@wegent": {
+                    "enabled": true,
+                    "marketplace": "wegent",
+                    "name": "dingtalk",
+                    "version": "0.2.0"
+                }
+            }
+        }))
+        .expect("capability manifest should serialize"),
+    )
+    .expect("capability manifest should be written");
+
+    let plugin_skills = PluginSkillResolver::load(&codex_home, &manifest_path);
+    let input = turn_input_with_plugin_skills(
+        &Value::String("[$钉钉](plugin://dingtalk@wegent) 检查我有哪些文档？".to_owned()),
+        &plugin_skills,
+    );
+
+    assert_eq!(
+        input,
+        vec![
+            json!({
+                "type": "text",
+                "text": "@钉钉 检查我有哪些文档？",
+                "text_elements": [],
+            }),
+            json!({
+                "type": "mention",
+                "name": "钉钉",
+                "path": "plugin://dingtalk@wegent",
+            }),
+            json!({
+                "type": "skill",
+                "name": "dingtalk:dws",
+                "path": skill_path.display().to_string(),
+            }),
+        ]
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

@@ -76,6 +76,12 @@ jest.mock('@/hooks/use-toast', () => ({
   }),
 }))
 
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: { id: 1, user_name: 'yansheng3', role: 'user' },
+  }),
+}))
+
 jest.mock('@/features/settings/services/teams', () => ({
   fetchTeamsList: jest.fn(),
   deleteTeam: jest.fn(),
@@ -261,7 +267,7 @@ describe('TeamList mode filter', () => {
     expect(screen.getByText('platform')).toHaveClass('text-text-muted')
   })
 
-  it('keeps personal and group agents in mine while excluding system agents', async () => {
+  it('keeps personal and group agents created by me while excluding other creators', async () => {
     ;(fetchTeamsList as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(10, 'personal-mine-agent', ['chat']),
@@ -272,9 +278,9 @@ describe('TeamList mode filter', () => {
         namespace: 'platform',
       },
       {
-        ...makeTeam(12, 'system-agent', ['chat']),
-        namespace: 'default',
-        user_id: 0,
+        ...makeTeam(12, 'other-user-agent', ['chat']),
+        namespace: 'platform',
+        user_id: 2,
       },
     ])
 
@@ -282,7 +288,7 @@ describe('TeamList mode filter', () => {
 
     expect(await screen.findByText('personal-mine-agent')).toBeInTheDocument()
     expect(screen.getByText('group-mine-agent')).toBeInTheDocument()
-    expect(screen.queryByText('system-agent')).not.toBeInTheDocument()
+    expect(screen.queryByText('other-user-agent')).not.toBeInTheDocument()
   })
 
   it('uses the marketplace-style card grid in compact capability views', async () => {
@@ -311,12 +317,8 @@ describe('TeamList mode filter', () => {
       'xl:grid-cols-4'
     )
     expect(card).toHaveClass('group', 'relative', 'min-h-[160px]', 'gap-4')
-    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
-      'h-11',
-      'w-11',
-      'rounded-xl',
-      'border'
-    )
+    expect(within(card).getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
+    expect(within(card).getByTestId('resource-icon')).toHaveClass('h-10', 'w-10', 'rounded-full')
     expect(within(card).getByTestId('use-team-button-8')).toHaveTextContent('Go to Chat')
     expect(within(card).getByTestId('use-team-button-8')).toHaveClass(
       'h-11',
@@ -347,6 +349,48 @@ describe('TeamList mode filter', () => {
     expect(within(card).getByTestId('published-agent-8-indicator')).toHaveAccessibleName(
       'Published to Resource Library'
     )
+  })
+
+  it('shows edit on team-shared cards for members with edit permission', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(13, 'editable-team-agent', ['chat']),
+        namespace: 'platform',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Developer']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-13')
+    expect(within(card).getByTestId('edit-team-button-13')).toBeInTheDocument()
+  })
+
+  it('keeps team-shared cards read-only for members without edit permission', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(14, 'readonly-team-agent', ['chat']),
+        namespace: 'platform',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Reporter']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-14')
+    expect(within(card).queryByTestId('edit-team-button-14')).not.toBeInTheDocument()
   })
 
   it('links an empty all-agents capability view to the agent marketplace', async () => {

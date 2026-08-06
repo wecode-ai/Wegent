@@ -281,15 +281,17 @@ resolve_dev_codex_target() {
       ;;
   esac
 
-  case "$(uname -m)" in
-    arm64)
+  local rust_host
+  rust_host="$(rustc -vV | awk '$1 == "host:" { print $2; exit }')"
+  case "$rust_host" in
+    aarch64-apple-darwin)
       echo "aarch64-apple-darwin"
       ;;
-    x86_64)
+    x86_64-apple-darwin)
       echo "x86_64-apple-darwin"
       ;;
     *)
-      echo "Error: unsupported macOS architecture: $(uname -m)" >&2
+      echo "Error: unsupported macOS Rust host: ${rust_host:-unknown}" >&2
       return 1
       ;;
   esac
@@ -395,7 +397,7 @@ if [ "$MANAGED_DEV_CODEX" = "true" ]; then
   fi
   echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
 fi
-WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
+WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

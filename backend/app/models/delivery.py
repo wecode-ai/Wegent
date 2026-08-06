@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     event,
+    inspect,
     or_,
 )
 from sqlalchemy.engine import Connection
@@ -301,18 +302,49 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
 
 
 def adapt_loop_node_values_for_dialect(
-    values: dict[str, object], dialect_name: str
+    values: dict[str, object],
+    dialect_name: str,
+    non_nullable_attributes: set[str] | frozenset[str] | None = None,
 ) -> dict[str, object]:
     """Convert explicit nulls to sentinels required by the production schema."""
     if dialect_name != "mysql":
         return values
     adapted = values.copy()
-    for attribute, default in _MYSQL_NON_NULL_DEFAULTS.items():
+    attributes = (
+        _MYSQL_NON_NULL_DEFAULTS.keys()
+        if non_nullable_attributes is None
+        else non_nullable_attributes
+    )
+    for attribute in attributes:
+        default = _MYSQL_NON_NULL_DEFAULTS[attribute]
         if attribute in adapted and adapted[attribute] is None:
             adapted[attribute] = (
                 default.copy() if isinstance(default, dict) else default
             )
     return adapted
+
+
+def loop_node_non_nullable_attributes(connection: Connection) -> frozenset[str]:
+    """Return model attributes backed by NOT NULL columns in this MySQL schema."""
+    if connection.dialect.name != "mysql":
+        return frozenset()
+    cache_key = "loop_node_non_nullable_attributes"
+    cached = connection.info.get(cache_key)
+    if isinstance(cached, frozenset):
+        return cached
+    columns = {
+        column["name"]: column
+        for column in inspect(connection).get_columns("loop_items")
+    }
+    attributes = frozenset(
+        attribute
+        for attribute in _MYSQL_NON_NULL_DEFAULTS
+        if not columns[getattr(LoopNode, attribute).property.columns[0].name][
+            "nullable"
+        ]
+    )
+    connection.info[cache_key] = attributes
+    return attributes
 
 
 def loop_datetime_is_unset(column: object) -> object:
@@ -333,6 +365,10 @@ def _populate_mysql_non_null_defaults(
     values = {
         attribute: getattr(target, attribute) for attribute in _MYSQL_NON_NULL_DEFAULTS
     }
-    adapted = adapt_loop_node_values_for_dialect(values, connection.dialect.name)
+    adapted = adapt_loop_node_values_for_dialect(
+        values,
+        connection.dialect.name,
+        loop_node_non_nullable_attributes(connection),
+    )
     for attribute, value in adapted.items():
         setattr(target, attribute, value)

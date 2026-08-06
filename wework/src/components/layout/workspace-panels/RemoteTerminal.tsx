@@ -17,6 +17,11 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
+import {
+  installXtermRenderRecovery,
+  logXtermRenderState,
+  refreshXterm,
+} from './xtermRenderRecovery'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -98,7 +103,18 @@ export function RemoteTerminal({
 
   useEffect(() => {
     activeRef.current = active
-  }, [active])
+    const container = containerRef.current
+    if (!container) return
+    logXtermRenderState({
+      active,
+      container,
+      phase: 'active-changed',
+      sessionId,
+      taskId,
+      terminal: terminalRef.current,
+      terminalKind: 'remote',
+    })
+  }, [active, sessionId, taskId])
 
   useEffect(() => {
     contextRef.current = { taskId, workspacePath, cwd, title }
@@ -222,9 +238,10 @@ export function RemoteTerminal({
     })
 
     const fitAndResize = () => {
-      if (disposed || !container.isConnected) return
+      if (disposed || !activeRef.current || !container.isConnected) return
       try {
         fitAddon.fit()
+        refreshXterm(terminal)
       } catch (error) {
         console.error('Failed to resize remote terminal:', error)
         return
@@ -248,6 +265,7 @@ export function RemoteTerminal({
 
     const resizeObserver = new ResizeObserver(fitAndResize)
     resizeObserver.observe(container)
+    const removeRenderRecovery = installXtermRenderRecovery(fitAndResize)
 
     void client
       .attach()
@@ -269,6 +287,7 @@ export function RemoteTerminal({
         if (disposed) return
         disposed = true
         unobserveTheme()
+        removeRenderRecovery()
         resizeObserver.disconnect()
         dataDisposable.dispose()
         titleDisposable.dispose()
@@ -311,6 +330,16 @@ export function RemoteTerminal({
       try {
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
+        refreshXterm(terminal)
+        logXtermRenderState({
+          active,
+          container,
+          phase: 'activation-complete',
+          sessionId,
+          taskId,
+          terminal,
+          terminalKind: 'remote',
+        })
         terminal.focus()
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
@@ -330,7 +359,7 @@ export function RemoteTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, showWorkbenchBackground])
+  }, [active, sessionId, showWorkbenchBackground, taskId])
 
   return (
     <div

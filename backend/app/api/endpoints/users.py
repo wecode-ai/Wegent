@@ -40,7 +40,11 @@ from app.services.admin_password_bootstrap import (
     get_cached_admin_password_setup_required,
     raise_admin_password_setup_required,
 )
-from app.services.auth import extract_token_from_header, verify_task_token
+from app.services.auth import (
+    create_task_token,
+    extract_token_from_header,
+    verify_task_token,
+)
 from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
@@ -53,6 +57,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from shared.telemetry.decorators import trace_async
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
@@ -141,6 +146,14 @@ class WegentRuntimeUserResponse(BaseModel):
     """Encrypted user information for sandbox runtime clients."""
 
     user: str
+
+
+class WegentRuntimeAuthTokenResponse(BaseModel):
+    """Task-token credentials for WeWork skill runtime clients."""
+
+    auth_token: str
+    token_type: str = "bearer"
+    expires_in: int
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -248,6 +261,26 @@ async def read_wegent_runtime_user(
         user=encrypt_sensitive_data_with_embedded_iv(
             json.dumps(payload, ensure_ascii=False)
         )
+    )
+
+
+@router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
+@trace_async("create_wegent_runtime_auth_token", "users.api")
+async def create_wegent_runtime_auth_token(
+    current_user: User = Depends(security.get_current_user),
+) -> WegentRuntimeAuthTokenResponse:
+    """Return a task token that WeWork local Skills can use with Wegent runtime APIs."""
+
+    expires_delta_minutes = 1440
+    return WegentRuntimeAuthTokenResponse(
+        auth_token=create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+            expires_delta_minutes=expires_delta_minutes,
+        ),
+        expires_in=expires_delta_minutes * 60,
     )
 
 
@@ -700,9 +733,17 @@ def _build_system_function(
         return None
 
     metadata = team_data.get("metadata", {})
+    spec = team_data.get("spec", {})
+    capability = spec.get("capability") or {}
+    function_data = config.model_dump()
+    function_data["description"] = (
+        config.description or capability.get("description") or spec.get("description")
+    )
+    function_data["icon"] = config.icon or capability.get("icon") or spec.get("icon")
     return QuickLaunchFunctionResponse(
-        **config.model_dump(),
+        **function_data,
         name=metadata.get("name", f"team-{config.team_id}"),
+        recommended_mode=team_data.get("recommended_mode") or "both",
     )
 
 

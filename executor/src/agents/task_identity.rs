@@ -15,6 +15,12 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
     if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
         env.insert("AUTH_TOKEN".to_owned(), auth_token.to_owned());
     }
+    if let Some(runtime_auth_token) = non_empty(request.runtime_auth_token.as_deref()) {
+        env.insert(
+            "WEGENT_RUNTIME_AUTH_TOKEN".to_owned(),
+            runtime_auth_token.to_owned(),
+        );
+    }
     if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
         env.insert("WEGENT_SKILL_IDENTITY_TOKEN".to_owned(), token.to_owned());
     }

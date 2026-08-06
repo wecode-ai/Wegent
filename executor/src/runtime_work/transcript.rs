@@ -9,6 +9,8 @@ use std::{
 
 use serde_json::{json, Map, Value};
 
+use crate::protocol::{CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER};
+
 use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
@@ -20,8 +22,6 @@ use super::util::{
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
 const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
-const CODEX_FILES_MENTIONED_HEADER: &str = "# Files mentioned by the user:";
-const CODEX_REQUEST_MARKER: &str = "## My request for Codex:";
 const APPLICATION_CONTEXT_OPEN: &str = "<application_context>";
 const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 

@@ -50,7 +50,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { AITableView } from '@/features/todo/AITableView'
-import type { ProjectWithTasks, User as UserProfile } from '@/types/api'
+import type { ProjectWithTasks, RuntimeTaskAddress, User as UserProfile } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import {
@@ -213,7 +213,10 @@ interface CloudTodoWorkspaceProps {
   localProjects: ProjectWithTasks[]
   services: WorkbenchServices
   activeProjectId?: string | null
+  focusedItemId?: string | null
+  onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
 const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
@@ -662,6 +665,8 @@ export function CloudTodoWorkspace({
   localProjects,
   services,
   activeProjectId,
+  focusedItemId,
+  onFocusedItemHandled,
   onActiveProjectChange,
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
@@ -727,6 +732,7 @@ export function CloudTodoWorkspace({
   const [projectSearchFilters, setProjectSearchFilters] =
     useState<TaskSearchFilters>(emptyTaskSearchFilters)
   const locallyRequestedProjectIdRef = useRef<string | null | undefined>(undefined)
+  const focusedItemRequestRef = useRef<string | null>(null)
   const projectHeaderRef = useRef<HTMLElement>(null)
   const projectHeaderContentRef = useRef<HTMLDivElement>(null)
   const projectHeaderTabsRef = useRef<HTMLElement>(null)
@@ -1311,6 +1317,30 @@ export function CloudTodoWorkspace({
       window.clearInterval(interval)
     }
   }, [applyBoardItems, selectedProject, selectedProjectApi, selectedProjectId, services.aitableApi])
+  useEffect(() => {
+    if (!focusedItemId) {
+      focusedItemRequestRef.current = null
+      return
+    }
+    if (!selectedProjectId || itemsProjectId !== selectedProjectId) return
+    const requestKey = `${selectedProjectId}:${focusedItemId}`
+    if (focusedItemRequestRef.current === requestKey) return
+    const focusedItem = items.find(item => item.id === focusedItemId)
+    if (!focusedItem || focusedItem.can_view_detail === false) return
+    focusedItemRequestRef.current = requestKey
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      setRootView('projects')
+      setProjectView('board')
+      setBoardParentId(focusedItem.parent_id)
+      setSelectedItem(focusedItem)
+      onFocusedItemHandled?.()
+    })
+    return () => {
+      active = false
+    }
+  }, [focusedItemId, items, itemsProjectId, onFocusedItemHandled, selectedProjectId])
   useEffect(() => {
     if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
     void Promise.all(availableProjectSpaceApis.map(({ api }) => api.listMyWork())).then(responses =>

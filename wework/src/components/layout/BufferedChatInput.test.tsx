@@ -1,9 +1,12 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { BufferedChatInput } from './BufferedChatInput'
 
 describe('BufferedChatInput', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   test('syncs external value changes into the draft', async () => {
     const { rerender } = render(
       <BufferedChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} />
@@ -62,13 +65,51 @@ describe('BufferedChatInput', () => {
     })
   })
 
-  test('persists ordinary text while the composer is still mounted', async () => {
+  test('flushes the draft on blur before the debounce window elapses', async () => {
     const onChange = vi.fn()
     render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
 
-    await userEvent.type(screen.getByTestId('chat-message-input'), 'unfinished draft')
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'unfinished draft')
+    expect(onChange).not.toHaveBeenCalled()
+
+    // Blur flushes on the next animation frame, well inside the 300ms debounce
+    // window, so onChange must fire without waiting for the debounce timer.
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame'] })
+    fireEvent.blur(input)
+    vi.advanceTimersByTime(20)
 
     expect(onChange).toHaveBeenLastCalledWith('unfinished draft')
+  })
+
+  test('debounces onChange during the 300ms window', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'draft')
+    // onChange must not fire synchronously with typing; it is deferred by the debounce.
+    expect(onChange).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith('draft')
+    })
+  })
+
+  test('flushes the draft on composition end before the debounce window elapses', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    expect(onChange).not.toHaveBeenCalled()
+
+    // Composition end flushes on the next animation frame, well inside the
+    // 300ms debounce window, so onChange must fire without the debounce timer.
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame'] })
+    fireEvent.compositionEnd(input)
+    vi.advanceTimersByTime(20)
+
+    expect(onChange).toHaveBeenLastCalledWith('draft')
   })
 
   test('restores a buffered draft after switching chat scopes', async () => {

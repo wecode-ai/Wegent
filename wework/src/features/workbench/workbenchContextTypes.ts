@@ -13,7 +13,6 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
-  ModelSelectionConfig,
   PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
@@ -33,6 +32,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -74,9 +74,13 @@ export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
+export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
+
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  forceNewTask?: boolean
+  additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
@@ -109,10 +113,18 @@ export interface CreateProjectRuntimeTaskOptions {
   modelId?: string | null
   /** Full execution model fields resolved from a UnifiedModel; replaces the
    * global workbench model when provided, matching task-message execution. */
-  executionModel?: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> | null
+  executionModel?: {
+    modelId?: string | null
+    modelType?: string | null
+    modelOptions?: ModelOptions
+  } | null
   /** Model selection used for the created runtime task handle; replaces the
    * global workbench selection when provided. */
-  modelSelection?: ModelSelectionConfig | null
+  modelSelection?: {
+    modelName: string
+    modelType: string | null
+    options: ModelOptions
+  } | null
   /** Force the runtime task onto a specific device (robot execution
    * environment), bypassing the default project/standalone device pick. */
   deviceId?: string | null
@@ -150,6 +162,10 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    hasConversationContext?: boolean
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -243,7 +259,7 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
@@ -265,6 +281,7 @@ export interface WorkbenchContextValue {
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -337,6 +354,10 @@ export interface WorkbenchContextValue {
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
   createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createEphemeralRuntimeTask: (
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>

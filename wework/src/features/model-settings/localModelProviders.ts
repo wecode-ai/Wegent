@@ -4,10 +4,13 @@ import {
   DEEPSEEK_V4_CONTEXT_WINDOW,
   DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
   DEEPSEEK_V4_FLASH_MODEL_ID,
+  DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
+  DEEPSEEK_V4_PRO_MODEL_ID,
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K27_CATALOG_MODEL_ID,
   KIMI_K3_CATALOG_MODEL_ID,
   type LocalModelApiFormat,
+  type LocalModelConfig,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from './localModelSettings'
@@ -33,6 +36,7 @@ export interface LocalModelProviderProfile {
     {
       contextWindow?: number
       codexCatalogModelId?: string
+      inputModalities?: readonly string[]
     }
   >
 }
@@ -60,6 +64,7 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       k3: {
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
         codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
+        inputModalities: ['text', 'image'],
       },
       'kimi-for-coding': {
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
@@ -85,7 +90,7 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     webSearchMode: 'disabled',
     imageGenerationEnabled: false,
     modelDefaults: {
-      'kimi-k3': { contextWindow: 1_000_000 },
+      'kimi-k3': { contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
       'kimi-k2.7-code': { contextWindow: 262_144 },
       'kimi-k2.7-code-highspeed': { contextWindow: 262_144 },
       'kimi-k2.6': { contextWindow: 262_144 },
@@ -93,9 +98,18 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       'moonshot-v1-8k': { contextWindow: 8_192 },
       'moonshot-v1-32k': { contextWindow: 32_768 },
       'moonshot-v1-128k': { contextWindow: 131_072 },
-      'moonshot-v1-8k-vision-preview': { contextWindow: 8_192 },
-      'moonshot-v1-32k-vision-preview': { contextWindow: 32_768 },
-      'moonshot-v1-128k-vision-preview': { contextWindow: 131_072 },
+      'moonshot-v1-8k-vision-preview': {
+        contextWindow: 8_192,
+        inputModalities: ['text', 'image'],
+      },
+      'moonshot-v1-32k-vision-preview': {
+        contextWindow: 32_768,
+        inputModalities: ['text', 'image'],
+      },
+      'moonshot-v1-128k-vision-preview': {
+        contextWindow: 131_072,
+        inputModalities: ['text', 'image'],
+      },
     },
   },
   {
@@ -106,7 +120,7 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     apiFormat: 'openai-responses',
     requestPath: '/responses',
     modelsPath: '/models',
-    allowedModelIds: [DEEPSEEK_V4_FLASH_MODEL_ID],
+    allowedModelIds: [DEEPSEEK_V4_FLASH_MODEL_ID, DEEPSEEK_V4_PRO_MODEL_ID],
     toolProfile: 'custom',
     group: 'DeepSeek',
     contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
@@ -116,6 +130,10 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       [DEEPSEEK_V4_FLASH_MODEL_ID]: {
         contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
         codexCatalogModelId: DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
+      },
+      [DEEPSEEK_V4_PRO_MODEL_ID]: {
+        contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
+        codexCatalogModelId: DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
       },
     },
   },
@@ -153,6 +171,25 @@ export function findLocalModelProviderProfile(id?: string | null): LocalModelPro
   return (
     LOCAL_MODEL_PROVIDER_PROFILES.find(profile => profile.id === id) ??
     LOCAL_MODEL_PROVIDER_PROFILES.find(profile => profile.id === 'custom')!
+  )
+}
+
+export function localModelSupportsImageInput(config: LocalModelConfig): boolean {
+  const declaredModalities = config.catalogEntry?.input_modalities
+  if (Array.isArray(declaredModalities) && declaredModalities.includes('image')) return true
+
+  const profile = findLocalModelProviderProfile(config.providerProfileId)
+  if (profile.modelDefaults?.[config.modelId]?.inputModalities?.includes('image') === true) {
+    return true
+  }
+
+  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, '').toLowerCase()
+  return LOCAL_MODEL_PROVIDER_PROFILES.some(
+    candidate =>
+      candidate.id !== 'custom' &&
+      candidate.apiFormat === config.apiFormat &&
+      candidate.baseUrl.replace(/\/+$/, '').toLowerCase() === normalizedBaseUrl &&
+      candidate.modelDefaults?.[config.modelId]?.inputModalities?.includes('image') === true
   )
 }
 

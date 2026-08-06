@@ -7,10 +7,21 @@
 from typing import Any
 
 import httpx
-from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.site import SiteListResponse, SiteNetwork, SiteResponse
+from app.schemas.site import (
+    SiteAppType,
+    SiteListItem,
+    SiteListResponse,
+    SiteNetwork,
+    SiteResponse,
+)
+from app.services.site_application_types import (
+    SITE_APPLICATION_HANDLER,
+    ApplicationTypeHandler,
+    InvalidApplicationProjectError,
+    get_application_type_handler,
+)
 
 
 class SitesNotAvailableError(RuntimeError):
@@ -98,12 +109,15 @@ class SitesService:
         self,
         *,
         username: str,
+        app_type: SiteAppType,
         query: str | None,
         offset: int,
         limit: int,
     ) -> SiteListResponse:
+        handler = get_application_type_handler(app_type)
         return await self._list_platform_sites(
             username=username,
+            handler=handler,
             query=query,
             offset=offset,
             limit=limit,
@@ -134,7 +148,7 @@ class SitesService:
                 "network": network,
             },
         )
-        return self._site_from_platform_project(payload, username=username)
+        return self._parse_site_project(payload, username=username)
 
     async def update_site_name(
         self,
@@ -152,25 +166,28 @@ class SitesService:
                 "sitename": sitename,
             },
         )
-        return self._site_from_platform_project(payload, username=username)
+        return self._parse_site_project(payload, username=username)
 
     async def _list_platform_sites(
         self,
         *,
         username: str,
+        handler: ApplicationTypeHandler,
         query: str | None,
         offset: int,
         limit: int,
     ) -> SiteListResponse:
         cursor: str | None = None
         skipped = 0
-        items: list[SiteResponse] = []
+        items: list[SiteListItem] = []
         has_more = False
         query_value = query.lower() if query else None
         seen_cursors: set[str] = set()
 
         while len(items) < limit:
             params: dict[str, Any] = {"username": username, "limit": 100}
+            if handler.app_type != "web":
+                params["app_type"] = handler.app_type
             if query:
                 params["sitename"] = query
             if cursor:
@@ -189,6 +206,8 @@ class SitesService:
                     "Sites service returned an invalid project list"
                 )
             for project in page_items:
+                if not handler.matches(project):
+                    continue
                 if query_value and not self._project_matches_query(
                     project, query_value
                 ):
@@ -197,9 +216,7 @@ class SitesService:
                     skipped += 1
                     continue
                 if len(items) < limit:
-                    items.append(
-                        self._site_from_platform_project(project, username=username)
-                    )
+                    items.append(self._parse_project(handler, project, username))
                 else:
                     has_more = True
                     break
@@ -228,45 +245,23 @@ class SitesService:
         return isinstance(title, str) and query in title.lower()
 
     @staticmethod
-    def _site_from_platform_project(payload: Any, *, username: str) -> SiteResponse:
-        if not isinstance(payload, dict):
+    def _parse_project(
+        handler: ApplicationTypeHandler,
+        payload: Any,
+        username: str,
+    ) -> SiteListItem:
+        try:
+            return handler.parse(payload, username=username)
+        except InvalidApplicationProjectError as exc:
             raise SitesUpstreamUnavailableError(
-                "Sites service returned an invalid project"
-            )
-        url = payload.get("url")
-        if not isinstance(url, str) or not url:
-            raise SitesUpstreamUnavailableError(
-                "Sites service returned a project without a URL"
-            )
-        network = payload.get("network")
-        is_outer = network == "outer"
-        siteid = payload.get("id")
-        created_at = payload.get("created_at")
-        snapshot = payload.get("snapshot")
-        site = {
-            "siteid": siteid,
-            "taskid": siteid,
-            "username": username,
-            "name": payload.get("title"),
-            "slug": siteid,
-            "internal_url": url,
-            "external_url": url if is_outer else None,
-            "publish_status": "published" if is_outer else "unpublished",
-            "last_publish_error": None,
-            "thumbnail_url": (
-                snapshot if isinstance(snapshot, str) and snapshot else None
-            ),
-            "created_at": created_at,
-            "updated_at": created_at,
-            "published_at": None,
-        }
-        return SitesService._validate_site(site)
+                f"Sites service returned an invalid {handler.app_type} project"
+            ) from exc
 
     @staticmethod
-    def _validate_site(payload: Any) -> SiteResponse:
+    def _parse_site_project(payload: Any, *, username: str) -> SiteResponse:
         try:
-            return SiteResponse.model_validate(payload)
-        except ValidationError as exc:
+            return SITE_APPLICATION_HANDLER.parse(payload, username=username)
+        except InvalidApplicationProjectError as exc:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid site"
             ) from exc
