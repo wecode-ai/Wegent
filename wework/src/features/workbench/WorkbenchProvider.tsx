@@ -127,6 +127,9 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
+import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
+import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
+import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -304,6 +307,11 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  useWorkbenchTelemetry({
+    currentProject: state.currentProject,
+    devices: state.devices,
+    lifecycle: lifecycleSnapshot,
+  })
   const projectChatScopeKey = getProjectChatScopeKey({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
@@ -1372,6 +1380,37 @@ export function WorkbenchProvider({
     },
     [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
+  const resolveModelForAddress = useCallback(
+    (address: RuntimeTaskAddress): UnifiedModel | null => {
+      const taskSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const selectedModel = modelSelection.selectedModel
+      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
+      const matchingSelectedModel =
+        taskSelection?.modelName &&
+        selectedModel?.name === taskSelection.modelName &&
+        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
+          ? selectedModel
+          : null
+      return taskModel ?? matchingSelectedModel
+    },
+    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+  )
+  const knownModelIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const model of modelSelection.models) {
+      const id = normalizeAiModelId(model.modelId)
+      if (id) ids.add(id)
+    }
+    return ids
+  }, [modelSelection.models])
+  const aiGenerationTelemetry = useAiGenerationTelemetry({
+    resolveModel: resolveModelForAddress,
+    contextUsageByRuntimeTask,
+    knownModelIds,
+  })
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
       address: RuntimeTaskAddress,
@@ -1466,10 +1505,22 @@ export function WorkbenchProvider({
           onAssistantStart: (address, turnId) => {
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
+            aiGenerationTelemetry.onAssistantStart(address, turnId)
+          },
+          onAssistantFirstToken: (address, turnId) => {
+            aiGenerationTelemetry.onAssistantFirstToken(address, turnId)
+          },
+          onAssistantResponseSize: (address, turnId, responseSizeBytes) => {
+            aiGenerationTelemetry.onAssistantResponseSize(address, turnId, responseSizeBytes)
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)
+            aiGenerationTelemetry.onAssistantSettled(
+              address,
+              turnId,
+              outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
+            )
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1497,6 +1548,7 @@ export function WorkbenchProvider({
         })
       ),
     [
+      aiGenerationTelemetry,
       applyCanonicalRuntimeAction,
       lifecycleStore,
       refreshRuntimeWorkLists,

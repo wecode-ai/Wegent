@@ -20,6 +20,8 @@ const mergedDefaultPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   experimentalFeaturesEnabled: false,
+  telemetryConsentAsked: false,
+  telemetryEnabled: false,
   supervisorPrinciples: '',
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,

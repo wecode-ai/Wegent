@@ -584,6 +584,9 @@ struct AppPreferences {
     #[serde(default)]
     experimental_features_enabled: bool,
     #[serde(default)]
+    telemetry_consent_asked: bool,
+    #[serde(default)]
+    telemetry_enabled: bool,
     supervisor_principles: String,
     #[serde(default)]
     task_completion_notifications_enabled: bool,
@@ -692,6 +695,8 @@ impl Default for AppPreferences {
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
             experimental_features_enabled: false,
+            telemetry_consent_asked: false,
+            telemetry_enabled: false,
             supervisor_principles: String::new(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
@@ -743,6 +748,8 @@ struct AppPreferencesPatch {
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
     experimental_features_enabled: Option<bool>,
+    telemetry_consent_asked: Option<bool>,
+    telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
@@ -779,6 +786,115 @@ struct MainWindowLifecycleState {
     next_frontend_probe_id: AtomicU64,
     acknowledged_frontend_probe_id: AtomicU64,
     last_main_window_unfocused_at: Mutex<Option<std::time::Instant>>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct NativeTelemetryState {
+    guard: Mutex<Option<sentry::ClientInitGuard>>,
+}
+
+#[cfg(desktop)]
+fn sanitize_native_stacktrace(stacktrace: &mut sentry::protocol::Stacktrace) {
+    stacktrace.registers.clear();
+    for frame in &mut stacktrace.frames {
+        frame.package = None;
+        frame.filename = None;
+        frame.abs_path = None;
+        frame.pre_context.clear();
+        frame.context_line = None;
+        frame.post_context.clear();
+        frame.vars.clear();
+    }
+}
+
+#[cfg(desktop)]
+fn sanitize_native_sentry_event(
+    mut event: sentry::protocol::Event<'static>,
+) -> Option<sentry::protocol::Event<'static>> {
+    event.fingerprint = Default::default();
+    event.culprit = None;
+    event.transaction = None;
+    event.message = None;
+    event.logentry = None;
+    event.logger = None;
+    event.server_name = None;
+    event.user = None;
+    event.request = None;
+    event.contexts.clear();
+    event.breadcrumbs = Default::default();
+    event.template = None;
+    event.extra.clear();
+    event.debug_meta = Default::default();
+
+    for exception in &mut event.exception {
+        exception.value = Some("Wework error".to_string());
+        if let Some(stacktrace) = &mut exception.stacktrace {
+            sanitize_native_stacktrace(stacktrace);
+        }
+        if let Some(stacktrace) = &mut exception.raw_stacktrace {
+            sanitize_native_stacktrace(stacktrace);
+        }
+        if let Some(mechanism) = &mut exception.mechanism {
+            mechanism.description = None;
+            mechanism.help_link = None;
+            mechanism.data.clear();
+        }
+    }
+    if let Some(stacktrace) = &mut event.stacktrace {
+        sanitize_native_stacktrace(stacktrace);
+    }
+    for thread in &mut event.threads {
+        thread.id = None;
+        thread.name = None;
+        if let Some(stacktrace) = &mut thread.stacktrace {
+            sanitize_native_stacktrace(stacktrace);
+        }
+        if let Some(stacktrace) = &mut thread.raw_stacktrace {
+            sanitize_native_stacktrace(stacktrace);
+        }
+    }
+
+    Some(event)
+}
+
+#[cfg(desktop)]
+fn close_native_sentry_guard(guard: &mut Option<sentry::ClientInitGuard>) {
+    sentry::Hub::current().bind_client(None);
+    if let Some(client) = guard.as_ref() {
+        // ClientInitGuard drains on drop, so close with no wait before releasing it on revocation.
+        let _ = client.close(Some(std::time::Duration::ZERO));
+    }
+    guard.take();
+}
+
+#[cfg(desktop)]
+impl NativeTelemetryState {
+    fn configure(&self, enabled: bool) {
+        let mut guard = self.guard.lock().unwrap_or_else(|error| error.into_inner());
+        close_native_sentry_guard(&mut guard);
+        if !enabled {
+            return;
+        }
+        let Some(dsn) = std::env::var("WEWORK_SENTRY_DSN")
+            .ok()
+            .and_then(normalized_non_empty)
+            .or_else(|| option_env!("WEWORK_SENTRY_DSN").map(str::to_string))
+        else {
+            return;
+        };
+        let environment = std::env::var("WEWORK_TELEMETRY_ENVIRONMENT")
+            .ok()
+            .and_then(normalized_non_empty)
+            .unwrap_or_else(|| "production".to_string());
+        let mut options = sentry::ClientOptions::default();
+        options.dsn = dsn.parse().ok();
+        options.environment = Some(environment.into());
+        options.release = Some(format!("wework@{}", env!("CARGO_PKG_VERSION")).into());
+        options.send_default_pii = false;
+        options.before_send = Some(std::sync::Arc::new(sanitize_native_sentry_event));
+        *guard = Some(sentry::init(options));
+    }
 }
 
 #[cfg(desktop)]
@@ -1184,8 +1300,11 @@ fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> 
 fn update_app_preferences(
     app: tauri::AppHandle,
     patch: AppPreferencesPatch,
+    telemetry: tauri::State<NativeTelemetryState>,
 ) -> Result<AppPreferences, String> {
     let mut preferences = read_app_preferences_impl(&app);
+    let telemetry_was_enabled =
+        preferences.telemetry_consent_asked && preferences.telemetry_enabled;
     if let Some(value) = patch.close_to_tray_enabled {
         preferences.close_to_tray_enabled = value;
     }
@@ -1209,6 +1328,12 @@ fn update_app_preferences(
     }
     if let Some(value) = patch.experimental_features_enabled {
         preferences.experimental_features_enabled = value;
+    }
+    if let Some(value) = patch.telemetry_consent_asked {
+        preferences.telemetry_consent_asked = value;
+    }
+    if let Some(value) = patch.telemetry_enabled {
+        preferences.telemetry_enabled = value;
     }
     if let Some(value) = patch.supervisor_principles {
         preferences.supervisor_principles = value;
@@ -1256,6 +1381,10 @@ fn update_app_preferences(
         preferences.quick_phrases = value;
     }
     write_app_preferences_impl(&app, &preferences)?;
+    let telemetry_is_enabled = preferences.telemetry_consent_asked && preferences.telemetry_enabled;
+    if telemetry_was_enabled != telemetry_is_enabled {
+        telemetry.configure(telemetry_is_enabled);
+    }
     app.state::<system_sleep::SystemSleepState>()
         .set_enabled(preferences.prevent_sleep_while_tasks_running);
     Ok(preferences)
@@ -1273,6 +1402,8 @@ struct AppPreferences {
     language: String,
     terminal_context_injection_enabled: bool,
     experimental_features_enabled: bool,
+    telemetry_consent_asked: bool,
+    telemetry_enabled: bool,
     supervisor_principles: String,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
@@ -1299,6 +1430,8 @@ struct AppPreferencesPatch {
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
     experimental_features_enabled: Option<bool>,
+    telemetry_consent_asked: Option<bool>,
+    telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
@@ -1325,6 +1458,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
         experimental_features_enabled: false,
+        telemetry_consent_asked: false,
+        telemetry_enabled: false,
         supervisor_principles: String::new(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
@@ -1357,6 +1492,8 @@ fn update_app_preferences(
             .terminal_context_injection_enabled
             .unwrap_or(true),
         experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
+        telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
+        telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
         supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
@@ -3962,7 +4099,10 @@ mod tests {
         LaunchServicesProcess, RawProcessInfo, TRAY_USAGE_ICON_HEIGHT,
     };
     #[cfg(desktop)]
-    use super::{should_probe_frontend_after_focus, AppPreferencesPatch, PatchField};
+    use super::{
+        close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
+        AppPreferencesPatch, PatchField,
+    };
     use std::collections::HashSet;
     #[cfg(desktop)]
     use std::time::Duration;
@@ -4053,6 +4193,105 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn removes_sensitive_values_from_native_sentry_events() {
+        let private_path = "/Users/private/repository/secret.rs";
+        let mut event = sentry::protocol::Event {
+            message: Some("panic while reading a private prompt".to_string()),
+            transaction: Some(private_path.to_string()),
+            server_name: Some("private-macbook".into()),
+            user: Some(sentry::protocol::User {
+                email: Some("private@example.com".to_string()),
+                ..Default::default()
+            }),
+            request: Some(sentry::protocol::Request {
+                url: Some("https://private.example/task?token=secret".parse().unwrap()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        event.extra.insert(
+            "workspace_path".to_string(),
+            serde_json::json!(private_path),
+        );
+        event.exception.values.push(sentry::protocol::Exception {
+            ty: "panic".to_string(),
+            value: Some(format!("failed to open {private_path}")),
+            stacktrace: Some(sentry::protocol::Stacktrace {
+                frames: vec![sentry::protocol::Frame {
+                    function: Some("open_workspace".to_string()),
+                    filename: Some("secret.rs".to_string()),
+                    abs_path: Some(private_path.to_string()),
+                    context_line: Some("let token = private_secret;".to_string()),
+                    vars: [("prompt".to_string(), serde_json::json!("private prompt"))].into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let sanitized = sanitize_native_sentry_event(event).expect("event should be retained");
+        let serialized = serde_json::to_string(&sanitized).expect("event should serialize");
+
+        assert_eq!(
+            sanitized.exception[0].value.as_deref(),
+            Some("Wework error")
+        );
+        assert_eq!(
+            sanitized.exception[0].stacktrace.as_ref().unwrap().frames[0]
+                .function
+                .as_deref(),
+            Some("open_workspace")
+        );
+        for sensitive in [
+            private_path,
+            "private prompt",
+            "private@example.com",
+            "private-macbook",
+            "token=secret",
+            "private_secret",
+        ] {
+            assert!(
+                !serialized.contains(sensitive),
+                "native telemetry leaked {sensitive}"
+            );
+        }
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn closes_native_sentry_without_draining_after_revocation() {
+        #[derive(Default)]
+        struct RecordingTransport {
+            shutdown_timeouts: std::sync::Mutex<Vec<Duration>>,
+        }
+
+        impl sentry::Transport for RecordingTransport {
+            fn send_envelope(&self, _envelope: sentry::Envelope) {}
+
+            fn shutdown(&self, timeout: Duration) -> bool {
+                self.shutdown_timeouts.lock().unwrap().push(timeout);
+                false
+            }
+        }
+
+        let transport = std::sync::Arc::new(RecordingTransport::default());
+        let mut options = sentry::ClientOptions::default();
+        options.dsn = Some("https://public@example.invalid/1".parse().unwrap());
+        options.transport = Some(std::sync::Arc::new(transport.clone()));
+        let mut guard = Some(sentry::init(options));
+
+        close_native_sentry_guard(&mut guard);
+
+        assert!(guard.is_none());
+        assert_eq!(
+            *transport.shutdown_timeouts.lock().unwrap(),
+            vec![Duration::ZERO]
+        );
     }
 
     #[test]
@@ -4445,6 +4684,9 @@ pub fn run() {
         }
     }));
 
+    #[cfg(desktop)]
+    let builder = builder.manage(NativeTelemetryState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
@@ -4506,6 +4748,12 @@ pub fn run() {
             app.state::<system_sleep::SystemSleepState>().set_enabled(
                 read_app_preferences_impl(app.handle()).prevent_sleep_while_tasks_running,
             );
+            #[cfg(desktop)]
+            {
+                let preferences = read_app_preferences_impl(app.handle());
+                app.state::<NativeTelemetryState>()
+                    .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+            }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]

@@ -24,9 +24,7 @@
         "decorations": true,
         "transparent": true,
         "windowEffects": {
-          "effects": [
-            "sidebar"
-          ]
+          "effects": ["sidebar"]
         },
         "dragDropEnabled": false,
         "trafficLightPosition": {
@@ -43,9 +41,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -61,10 +57,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor",
-      "binaries/dws"
-    ],
+    "externalBin": ["binaries/wegent-executor", "binaries/dws"],
     "resources": [
       "binaries/codex/**/*",
       "bundled-hooks/**/*",
