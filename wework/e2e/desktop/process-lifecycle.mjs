@@ -24,7 +24,9 @@ function isProcessGroupRunning(processGroupId) {
     process.kill(-processGroupId, 0)
     return true
   } catch (error) {
-    if (error?.code === 'ESRCH') return false
+    // A reaped descendant can briefly retain the group ID under a process we
+    // cannot signal. Do not wait for, or signal, a potentially reused group.
+    if (error?.code === 'ESRCH' || error?.code === 'EPERM') return false
     throw error
   }
 }
