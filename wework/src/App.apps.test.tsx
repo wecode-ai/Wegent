@@ -295,6 +295,11 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass(
+      'app-view-surface',
+      'rounded-xl',
+      'border'
+    )
   })
 
   test('keeps duplicate task tabs as independent persistent workbench instances', async () => {
