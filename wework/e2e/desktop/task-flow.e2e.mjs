@@ -12,6 +12,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -8132,8 +8133,13 @@ async function verifyGoalRestartRecoveryLifecycle({
     'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  const interruptedDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const interruptedDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+      snapshot.pane?.goal?.status === 'active',
+    'The interrupted Goal did not finish hydrating after Wework restarted'
   )
   assert.equal(
     interruptedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
@@ -12204,11 +12210,14 @@ async function writeCodexConfig(
   upstreamApiFormat = 'openai-responses'
 ) {
   await mkdir(codexHome, { recursive: true })
+  const configPath = join(codexHome, 'config.toml')
+  const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
-    join(codexHome, 'config.toml'),
+    temporaryConfigPath,
     `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+  await rename(temporaryConfigPath, configPath)
 }
 
 function toolDetailsMcpConfigToml() {
