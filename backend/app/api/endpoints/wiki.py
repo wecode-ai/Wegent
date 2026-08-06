@@ -21,11 +21,11 @@ from app.schemas.wiki import (
     WikiGenerationListResponse,
     WikiPageRead,
     WikiProjectDetail,
-    WikiProjectInDB,
     WikiProjectListResponse,
 )
 from app.services.knowledge.code_wiki.prompts import build_diagram_correction
 from app.services.user import user_service
+from app.services.wiki_repository_access import user_can_read_project
 from app.services.wiki_service import wiki_service
 
 logger = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ def _assert_may_read_project(
     # Reloaded from the main database: the access check reads git_info, and the
     # request's user may be a stale copy.
     user = main_db.query(User).filter(User.id == current_user.id).first()
-    if not wiki_service.check_user_project_access(project, user):
+    if not user_can_read_project(project, user):
         raise HTTPException(status_code=404, detail="Generation not found")
 
 
@@ -433,7 +433,7 @@ def get_wiki_project(
     # Enforce the same repository-access check used by the project list endpoint.
     # Get user from main_db to ensure we have the latest git_info.
     user = main_db.query(User).filter(User.id == current_user.id).first()
-    if not wiki_service.check_user_project_access(project, user):
+    if not user_can_read_project(project, user):
         # Use 404 to avoid leaking the existence of inaccessible projects.
         raise HTTPException(status_code=404, detail="Project not found")
 

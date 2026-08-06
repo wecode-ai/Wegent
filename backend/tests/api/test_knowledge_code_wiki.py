@@ -71,7 +71,7 @@ def test_creating_a_code_wiki_records_its_type_and_source(
     kind_services_use_test_db,
 ):
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -89,7 +89,7 @@ def test_creation_is_refused_without_repository_access(
     from app.services.knowledge.code_wiki.source import SourceAccessDenied
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         side_effect=SourceAccessDenied("You do not have read access to 'x/y'."),
     ):
         response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -146,7 +146,7 @@ def test_ordinary_knowledge_bases_are_still_created_as_notebooks(
 
 def _create_wiki(test_client: TestClient, auth_headers: dict[str, str]) -> int:
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -162,7 +162,7 @@ def _run_url(knowledge_base_id: int) -> str:
 def caller_can_write():
     """Grant repository write access for tests that are about something else."""
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_write_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
         return_value={"has_access": True, "access_level": 30},
     ):
         yield
@@ -176,7 +176,7 @@ def test_a_run_can_be_triggered_without_waiting_for_a_schedule(
 ):
     kb_id = _create_wiki(test_client, auth_headers)
 
-    with patch("app.api.endpoints.knowledge.start_run") as start:
+    with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
         start.return_value.started = True
         start.return_value.mode = "full"
         start.return_value.reason = "first run for this repository"
@@ -203,7 +203,7 @@ def test_a_run_that_was_not_needed_is_a_success_not_a_failure(
     """ "Nothing changed" is the answer the caller asked for, not an error."""
     kb_id = _create_wiki(test_client, auth_headers)
 
-    with patch("app.api.endpoints.knowledge.start_run") as start:
+    with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
         start.return_value.started = False
         start.return_value.mode = "skip"
         start.return_value.reason = "repository unchanged since last run"
@@ -230,7 +230,7 @@ def test_a_second_run_while_one_is_live_is_a_conflict(
     kb_id = _create_wiki(test_client, auth_headers)
 
     with patch(
-        "app.api.endpoints.knowledge.start_run",
+        "app.api.endpoints.knowledge_code_wiki.start_run",
         side_effect=GenerationInFlight("generation 3 is already running"),
     ):
         response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
@@ -403,7 +403,7 @@ def test_asking_twice_for_the_same_repository_returns_the_caller_s_own_wiki(
     first_id = _create_wiki(test_client, auth_headers)
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         again = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -434,7 +434,7 @@ def test_another_user_may_build_their_own_wiki_of_the_same_repository(
     token = create_access_token(data={"sub": other.user_name})
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -459,7 +459,7 @@ def test_regenerating_requires_write_access_to_the_repository(
     kb_id = _create_wiki(test_client, auth_headers)
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_write_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
         side_effect=SourceAccessDenied("read access but not write access"),
     ):
         response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
@@ -497,7 +497,7 @@ def test_creating_a_wiki_starts_its_first_run(
     """Otherwise a new wiki sits empty until somebody finds the regenerate button,
     which is not a flow anyone would guess. TestClient runs background tasks before
     returning, so the call is observable here."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run") as start:
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run") as start:
         kb_id = _create_wiki(test_client, auth_headers)
 
     start.assert_called_once()
@@ -514,7 +514,7 @@ def test_the_first_run_does_not_block_the_response(
     hang and then to have failed, when the knowledge base is already saved."""
     import inspect
 
-    from app.api.endpoints import knowledge as endpoint
+    from app.api.endpoints import knowledge_code_wiki as endpoint
 
     # The queued function takes ids, not the request's session and user: it runs
     # after the response, by which time that session is closed.
@@ -532,7 +532,7 @@ def test_a_first_run_that_cannot_start_still_leaves_the_wiki_created(
     from app.services.knowledge.code_wiki.runner import CodeWikiRunError
 
     with patch(
-        "app.api.endpoints.knowledge.start_run",
+        "app.api.endpoints.knowledge_code_wiki.start_run",
         side_effect=CodeWikiRunError("no team configured"),
     ):
         kb_id = _create_wiki(test_client, auth_headers)
@@ -562,7 +562,7 @@ def test_resolving_answers_with_what_the_create_form_needs(
     from app.services.knowledge.code_wiki.resolution import ResolvedRepository
 
     with patch(
-        "app.api.endpoints.knowledge.resolve_repository",
+        "app.api.endpoints.knowledge_code_wiki.resolve_repository",
         return_value=ResolvedRepository(
             exists=True,
             visibility="public",
@@ -591,7 +591,8 @@ def test_an_unreadable_repository_resolves_to_200_not_404(
     from app.services.knowledge.code_wiki.resolution import UNREADABLE
 
     with patch(
-        "app.api.endpoints.knowledge.resolve_repository", return_value=UNREADABLE
+        "app.api.endpoints.knowledge_code_wiki.resolve_repository",
+        return_value=UNREADABLE,
     ):
         response = test_client.post(
             RESOLVE_URL, json=RESOLVE_PAYLOAD, headers=auth_headers
@@ -614,7 +615,8 @@ def test_resolving_names_the_wikis_that_already_exist(
     kb_id = _create_wiki(test_client, auth_headers)
 
     with patch(
-        "app.api.endpoints.knowledge.resolve_repository", return_value=UNREADABLE
+        "app.api.endpoints.knowledge_code_wiki.resolve_repository",
+        return_value=UNREADABLE,
     ):
         response = test_client.post(
             RESOLVE_URL, json=RESOLVE_PAYLOAD, headers=auth_headers
@@ -649,7 +651,8 @@ def test_another_user_s_wiki_is_named_with_its_owner(
     token = create_access_token(data={"sub": stranger.user_name})
 
     with patch(
-        "app.api.endpoints.knowledge.resolve_repository", return_value=UNREADABLE
+        "app.api.endpoints.knowledge_code_wiki.resolve_repository",
+        return_value=UNREADABLE,
     ):
         response = test_client.post(
             RESOLVE_URL,
@@ -674,7 +677,7 @@ def test_a_code_wiki_can_be_created_without_a_name(
     from app.models.kind import Kind
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -701,7 +704,7 @@ def test_an_unnamed_wiki_falls_back_to_the_url(
     from app.models.kind import Kind
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -723,10 +726,10 @@ def test_creating_does_not_describe_the_repository_again(
     whenever it has not."""
     with (
         patch(
-            "app.api.endpoints.knowledge.assert_user_can_read_source",
+            "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
             return_value={"has_access": True},
         ),
-        patch("app.api.endpoints.knowledge.resolve_repository") as resolve,
+        patch("app.api.endpoints.knowledge_code_wiki.resolve_repository") as resolve,
     ):
         test_client.post(CREATE_URL, json={**PAYLOAD, "name": ""}, headers=auth_headers)
 
@@ -761,7 +764,7 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
     from app.models.kind import Kind
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -791,7 +794,7 @@ def test_a_code_wiki_records_the_language_its_pages_are_written_in(
     from app.models.kind import Kind
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -835,7 +838,7 @@ def test_the_response_carries_the_repository_so_a_list_can_render_it(
     reader. Without this it would need a second request per row to tell which rows
     are code wikis at all."""
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -858,7 +861,7 @@ def test_a_code_wiki_keeps_the_retrieval_config_it_was_created_with(
     from app.models.kind import Kind
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
     ):
         response = test_client.post(
@@ -912,7 +915,7 @@ def test_a_wiki_that_has_never_run_says_so(
 ):
     """The reader offers to generate; it needs to know there is nothing to wait
     for rather than inferring it from an empty page tree."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     body = test_client.get(_status_url(kb_id), headers=auth_headers).json()
@@ -959,7 +962,7 @@ def test_a_running_wiki_reports_the_run_rather_than_looking_idle(
     """Until this existed the regenerate button was only disabled for the duration
     of its own request, so reloading the page made a running wiki look idle and the
     next click came back as an unexplained conflict."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     generation = _record_a_running_generation(test_db, kb_id)
 
@@ -978,7 +981,7 @@ def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
 ):
     """Stale is not busy: triggering again reclaims it and starts afresh. Reported
     separately so the client can offer that instead of saying the wiki is busy."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_running_generation(test_db, kb_id, quiet_for_hours=7)
 
@@ -995,7 +998,7 @@ def test_reading_the_status_needs_only_read_access(
 ):
     """Whether the wiki is busy is what explains why regenerating is unavailable.
     Requiring write access to learn it would leave a reader with an opaque button."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     # No repository write access is granted anywhere in this test.
@@ -1050,7 +1053,7 @@ def test_the_history_explains_why_a_wiki_has_no_pages(
 ):
     """The screen this exists for: every run failed, so the reader sees an empty
     wiki and the only useful answer is in a run that already ended."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_finished_generation(
         test_db,
@@ -1075,7 +1078,7 @@ def test_the_history_is_newest_first(
     test_db: Session,
     kind_services_use_test_db,
 ):
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     first = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
     second = _record_a_finished_generation(test_db, kb_id, status="FAILED")
@@ -1096,7 +1099,7 @@ def test_the_published_version_is_marked_in_the_history(
     from app.models.kind import Kind
     from app.services.knowledge.code_wiki.publisher import PUBLISHED_GENERATION_KEY
 
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     published = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
     later = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
@@ -1124,7 +1127,7 @@ def test_a_run_still_going_reports_no_finish_time(
 ):
     """completed_at defaults to the epoch rather than NULL, so reporting it raw
     would have every in-flight run claim it finished in 1970."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_running_generation(test_db, kb_id)
 
@@ -1141,7 +1144,7 @@ def test_reading_the_history_needs_only_read_access(
 ):
     """Same reasoning as the status beside it: a reader denied the explanation is
     left with a broken page and nothing to act on."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     assert test_client.get(_history_url(kb_id), headers=auth_headers).status_code == 200
@@ -1165,7 +1168,7 @@ def test_creating_a_code_wiki_is_refused_when_the_rollout_is_off(
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
 
     with patch(
-        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value=None,
     ):
         response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
@@ -1184,7 +1187,7 @@ def test_an_existing_wiki_stays_readable_when_the_rollout_is_off(
     """
     from app.core.wiki_config import wiki_settings
 
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
@@ -1209,17 +1212,17 @@ def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
     """
     from app.core.wiki_config import wiki_settings
 
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
 
     with (
         patch(
-            "app.api.endpoints.knowledge.assert_user_can_write_source",
+            "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
             return_value=None,
         ),
-        patch("app.api.endpoints.knowledge.start_run") as start,
+        patch("app.api.endpoints.knowledge_code_wiki.start_run") as start,
     ):
         start.return_value = SimpleNamespace(
             started=False, mode="skip", reason="unchanged", generation=None, task_id=0
@@ -1248,7 +1251,7 @@ def test_the_history_reports_a_failed_task_beside_a_completed_version(
     """
     from app.models.task import TaskResource
 
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     test_db.add(
@@ -1279,10 +1282,24 @@ def test_a_run_with_no_task_reports_no_task_status(
 ):
     """A run whose task could not be created has nothing to report, and must not be
     made to look as though its task succeeded."""
-    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_finished_generation(test_db, kb_id, status="FAILED", task_id=0)
 
     run = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"][0]
 
     assert run["task_status"] == ""
+
+
+def test_the_code_wiki_routes_are_matched_before_the_by_id_route():
+    """`/code-wikis` and `/{knowledge_base_id}` share a prefix, and FastAPI matches in
+    registration order. The code wiki routes live in their own module now, so keeping
+    them ahead of the by-id route is a line of wiring rather than a consequence of
+    where the functions sit in a file — and getting it wrong makes every code wiki
+    request try to read "code-wikis" as an id, which reads as a client bug.
+    """
+    from app.api.endpoints.knowledge import router
+
+    paths = [route.path for route in router.routes]
+
+    assert paths.index("/code-wikis") < paths.index("/{knowledge_base_id}")
