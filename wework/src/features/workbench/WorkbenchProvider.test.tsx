@@ -3727,6 +3727,59 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
+  test('opens a new task before configured model preparation completes', async () => {
+    const prepareRuntimeModel = vi.fn(() => deferred<boolean>().promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      prepareRuntimeModel,
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        `device-1:${request.taskId}`
+      )
+    )
+    expect(prepareRuntimeModel).not.toHaveBeenCalled()
+  })
+
   test('restores and records the active project from Codex global state metadata', async () => {
     const activateRuntimeProject = vi.fn().mockResolvedValue({
       accepted: true,

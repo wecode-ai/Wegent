@@ -622,21 +622,6 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      try {
-        const prepared = await executorClient.runtime.prepareRuntimeModel({
-          deviceId: optimisticDeviceId,
-          modelId: selectedModel?.name,
-        })
-        if (!prepared) return false
-      } catch (error) {
-        reportSendBlocked(
-          error instanceof Error ? error.message : '模型配置同步失败',
-          undefined,
-          options
-        )
-        return false
-      }
-
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         taskId,

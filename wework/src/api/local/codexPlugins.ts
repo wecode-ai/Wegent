@@ -93,6 +93,10 @@ export function normalizeMarketplaceSource(source: string): string {
   return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
 }
 
+export function codexMarketplaceManifestSource(source: string): string {
+  return `${normalizeMarketplaceSource(source).replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
+}
+
 export interface LocalCodexPluginApi {
   importExternalContent(source: ExternalContentSource): Promise<ExternalContentImportResult>
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
@@ -402,7 +406,7 @@ async function ensurePluginInWeworkPersonal(options: {
   if (options.installAfterMigrate !== false && ensured.migrated) {
     try {
       await codexAppServerRequest('plugin/install', {
-        marketplacePath: ensured.marketplacePath,
+        marketplacePath: codexMarketplaceManifestSource(ensured.marketplacePath),
         remoteMarketplaceName: null,
         pluginName: ensured.pluginName,
       })
