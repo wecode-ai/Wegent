@@ -187,7 +187,7 @@ async fn clear_platform_webview_data(
                 );
                 return;
             };
-            let mut data_types: Vec<&NSString> = Vec::with_capacity(2);
+            let mut data_types: Vec<&NSString> = Vec::with_capacity(5);
             if data_kinds.cookies {
                 data_types.push(unsafe { WKWebsiteDataTypeCookies });
             }
