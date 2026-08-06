@@ -268,3 +268,111 @@ def test_a_legacy_generation_only_records_its_status(
     test_db.refresh(generation)
     assert generation.status == WikiGenerationStatus.COMPLETED
     assert no_side_effects.written == []
+
+
+# --- what the agent is told when the run concludes ---------------------------
+
+
+def _conclude(test_db: Session, generation: WikiGeneration, **summary_fields) -> dict:
+    """Conclude a run through the endpoint the agent actually calls.
+
+    Through the endpoint rather than the service because the correction is assembled
+    there: the gate finds the broken diagrams, and turning them into an instruction is
+    the last step. Testing the service would leave that step unexercised, which is the
+    state this whole change exists to end -- the check has been running since it was
+    written and its findings reached nobody.
+    """
+    from app.api.endpoints.wiki import save_wiki_generation_contents
+
+    return save_wiki_generation_contents(
+        payload=WikiContentWriteRequest(
+            generation_id=generation.id,
+            sections=[],
+            summary=WikiContentSummary(**summary_fields),
+        ),
+        _=None,
+        wiki_db=test_db,
+    )
+
+
+BROKEN_DIAGRAM = "```mermaid\nflowchat TD\n  A --> B\n```"
+
+
+def test_a_broken_diagram_is_reported_back_to_the_agent(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    """The version publishes and the agent is still told to fix the diagram.
+
+    Both halves matter. Diagrams never hold a version back, so this arrives on a run
+    that succeeded -- and that is precisely why it has to arrive: the run is about to
+    end, and the agent is the only party that can rewrite the page.
+    """
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+    (
+        test_db.query(WikiContent)
+        .filter(WikiContent.generation_id == generation.id)
+        .update({WikiContent.content: BROKEN_DIAGRAM})
+    )
+
+    response = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    assert response["published"] is True
+    assert "index" in response["corrections"]
+    assert "flowchat" in response["corrections"]
+
+
+def test_a_run_whose_diagrams_render_is_asked_for_nothing(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    """An empty string, not absent. The agent prints whatever is here, and a run that
+    ends by telling a healthy agent to go fix something costs a round trip."""
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+
+    response = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    assert response["published"] is True
+    assert response["corrections"] == ""
+
+
+def test_a_structural_warning_is_not_sent_back_as_a_correction(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    """A section holding pages but having none of its own is recorded and shown in the
+    run history, and it is not the agent's to fix on the spot: it describes the shape
+    of the wiki, not a mistake in a page. Sending it as a "fix this diagram"
+    instruction would send the agent looking for a diagram that is not there.
+    """
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "architecture/backend")
+
+    response = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    assert response["corrections"] == ""
+    stored = generation.ext[PUBLISH_GATE_EXT_KEY]
+    assert any("architecture" in warning for warning in stored["warnings"])
+
+
+def test_a_failed_run_is_asked_to_fix_nothing(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    """Nothing was published, so there is no version whose diagrams could matter."""
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+
+    response = _conclude(test_db, generation, status="FAILED", error_message="budget")
+
+    assert response["corrections"] == ""

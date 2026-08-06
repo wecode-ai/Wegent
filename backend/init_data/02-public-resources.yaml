@@ -501,6 +501,12 @@ spec:
     published, you are the only one who can still fix it: your checkout is here and
     the version accepts more writes. Write the pages that are missing and run
     `complete` again.
+
+    **It also reports diagrams that will not render.** These never hold a version
+    back, so they arrive on a run that succeeded — and that is the last moment they
+    can be fixed. Rewrite the pages it names, keeping their paths unchanged, and run
+    `complete` again to republish. A diagram left broken is a blank space in the page
+    for every reader from then on.
 status:
   state: Available
 ---

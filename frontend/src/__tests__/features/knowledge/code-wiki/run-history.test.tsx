@@ -9,7 +9,7 @@
  * before it existed the reader got an empty page and no explanation.
  */
 
-import { summarise } from '@/features/knowledge/code-wiki/RunHistory'
+import { canRepublish, summarise } from '@/features/knowledge/code-wiki/RunHistory'
 import { failureText } from '@/features/knowledge/code-wiki/failureText'
 import { formatRelativeTime } from '@/utils/dateTime'
 import type { CodeWikiRunStatus } from '@/types/code-wiki'
@@ -33,7 +33,7 @@ describe('run history chip', () => {
   it('says a failed run failed rather than reporting the wiki as fine', () => {
     const chip = summarise(status({ status: 'failed', error_message: 'clone failed' }), t)
 
-    expect(chip.label).toBe('knowledge:codeWiki.history.lastFailed')
+    expect(chip.label).toBe('codeWiki.history.lastFailed')
     expect(chip.tone).toBe('bad')
   })
 
@@ -45,16 +45,14 @@ describe('run history chip', () => {
   })
 
   it('reports a wiki that has never run, including before the status arrives', () => {
-    expect(summarise(status({ status: 'never' }), t).label).toBe('knowledge:codeWiki.history.never')
-    expect(summarise(null, t).label).toBe('knowledge:codeWiki.history.never')
+    expect(summarise(status({ status: 'never' }), t).label).toBe('codeWiki.history.never')
+    expect(summarise(null, t).label).toBe('codeWiki.history.never')
   })
 
   it('falls back to a plain label when there is no publish time to show', () => {
     // A completed run whose version was not published has no timestamp; interpolating
     // an empty one would render "Updated " with nothing after it.
-    expect(summarise(status({ status: 'completed' }), t).label).toBe(
-      'knowledge:codeWiki.history.completed'
-    )
+    expect(summarise(status({ status: 'completed' }), t).label).toBe('codeWiki.history.completed')
   })
 })
 
@@ -82,7 +80,7 @@ describe('why a run failed', () => {
     // under a Chinese chip saying the run had failed, which reads as a bug rather
     // than as a diagnostic.
     expect(failureText('task_ended_without_report', '', t)).toBe(
-      'knowledge:codeWiki.failure.task_ended_without_report'
+      'codeWiki.failure.task_ended_without_report'
     )
   })
 
@@ -96,7 +94,7 @@ describe('why a run failed', () => {
 
   it('shows both when there is a code and a detail', () => {
     expect(failureText('task_not_created', 'no executor available', t)).toBe(
-      'knowledge:codeWiki.failure.task_not_created: no executor available'
+      'codeWiki.failure.task_not_created: no executor available'
     )
   })
 
@@ -107,5 +105,25 @@ describe('why a run failed', () => {
 
   it('says nothing when there is nothing to say', () => {
     expect(failureText('', '', t)).toBe('')
+  })
+})
+
+describe('going back to an earlier version', () => {
+  it('is offered on a completed version that is not the live one', () => {
+    // The gate is advisory now, so a run that went wrong does reach readers, and
+    // everything it replaced is still in the version store. Before this there was no
+    // way to any of it — the published pointer only moved forward.
+    expect(canRepublish({ status: 'completed', published: false })).toBe(true)
+  })
+
+  it('is not offered on the version readers already see', () => {
+    expect(canRepublish({ status: 'completed', published: true })).toBe(false)
+  })
+
+  it('is not offered on a run that produced no publishable result', () => {
+    // A failed run may well have pages — they are the pages of a run that did not
+    // succeed, and the server refuses them for the same reason.
+    expect(canRepublish({ status: 'failed', published: false })).toBe(false)
+    expect(canRepublish({ status: 'running', published: false })).toBe(false)
   })
 })

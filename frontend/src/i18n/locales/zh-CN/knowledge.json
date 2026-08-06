@@ -1132,7 +1132,8 @@
       "generating": "生成中…",
       "previousRunStalled": "上次运行已中断，可重新生成",
       "linkNotFound": "该链接指向的页面不存在",
-      "backToChat": "回到对话"
+      "backToChat": "回到对话",
+      "openNavigation": "页面导航"
     },
     "history": {
       "title": "生成历史",
@@ -1150,7 +1151,10 @@
         "custom": "自定义"
       },
       "commitUnreported": "未记录 commit",
-      "taskFailed": "执行任务失败"
+      "taskFailed": "执行任务失败",
+      "republish": "恢复此版本",
+      "republished": "已恢复该版本",
+      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",

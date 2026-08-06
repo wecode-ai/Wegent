@@ -826,3 +826,97 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.started
     assert knowledge_base.user_id == test_user.id
     assert started.generation.user_id == test_user.id
+
+
+# --- going back to an earlier version ----------------------------------------
+
+
+def test_an_earlier_version_can_be_published_again(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects,
+    monkeypatch,
+):
+    """The gate is advisory, so a run that goes wrong reaches readers. Everything it
+    replaced is retained, and until this there was no way back to any of it — the
+    published pointer only ever moved forward.
+    """
+    from app.services.knowledge.code_wiki import runner
+    from app.services.knowledge.code_wiki.publisher import published_generation_id
+    from app.services.knowledge.code_wiki.repo_state import RepositoryState
+    from app.services.knowledge.code_wiki.runner import republish_generation
+
+    monkeypatch.setattr(
+        runner,
+        "read_repository_state",
+        lambda *args, **kwargs: RepositoryState(head_commit="aaaaaaa"),
+    )
+    good = start_run(test_db, knowledge_base=knowledge_base, user=test_user).generation
+    for path in ("index", "architecture", "modules"):
+        _write_page(test_db, good, path)
+    finish_run(test_db, generation=good, succeeded=True)
+
+    monkeypatch.setattr(
+        runner,
+        "read_repository_state",
+        lambda *args, **kwargs: RepositoryState(head_commit="bbbbbbb"),
+    )
+    thin = start_run(test_db, knowledge_base=knowledge_base, user=test_user).generation
+    _write_page(test_db, thin, "index")
+    finish_run(test_db, generation=thin, succeeded=True)
+    assert published_generation_id(knowledge_base) == thin.id
+
+    republish_generation(
+        test_db, knowledge_base=knowledge_base, generation_id=good.id, user=test_user
+    )
+
+    assert published_generation_id(knowledge_base) == good.id
+
+
+def test_a_version_from_another_wiki_is_refused(
+    test_db: Session, knowledge_base: Kind, test_user: User
+):
+    """Otherwise one wiki's pages could be projected into another by id."""
+    from app.services.knowledge.code_wiki.runner import republish_generation
+
+    stranger = WikiGeneration(
+        project_id=1,
+        kind_id=knowledge_base.id + 999,
+        user_id=test_user.id,
+        task_id=0,
+        team_id=0,
+        source_snapshot={},
+        status=WikiGenerationStatus.COMPLETED,
+        completed_at=datetime(2026, 8, 1),
+    )
+    test_db.add(stranger)
+    test_db.flush()
+
+    with pytest.raises(CodeWikiRunError, match="does not belong"):
+        republish_generation(
+            test_db,
+            knowledge_base=knowledge_base,
+            generation_id=stranger.id,
+            user=test_user,
+        )
+
+
+def test_a_version_that_never_finished_is_refused(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A running or failed version holds no result to publish -- for a failed one the
+    pages may be there, but they are the pages of a run that did not succeed.
+    """
+    from app.services.knowledge.code_wiki.runner import republish_generation
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    with pytest.raises(CodeWikiRunError, match="holds no result"):
+        republish_generation(
+            test_db,
+            knowledge_base=knowledge_base,
+            generation_id=started.generation.id,
+            user=test_user,
+        )

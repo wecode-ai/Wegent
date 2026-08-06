@@ -104,6 +104,12 @@ class GateVerdict:
     passed: bool
     reason: str = ""
     warnings: tuple[str, ...] = field(default=())
+    # The subset of `warnings` about diagrams, kept apart because they are the only
+    # ones the agent can act on: it wrote the diagram and its checkout is still there,
+    # whereas a missing section page is a structural decision nobody asked it for.
+    # A separate field rather than a filter over `warnings`, so telling the two kinds
+    # apart never becomes a matter of matching on warning text.
+    diagram_warnings: tuple[str, ...] = field(default=())
 
     def to_ext(self, checked_at: str) -> dict:
         """Render for storage on the generation.
@@ -155,6 +161,7 @@ def evaluate_publish_gate(
                 f"{policy.min_pages}; the run produced nothing usable"
             ),
             warnings=warnings,
+            diagram_warnings=diagram_warnings,
         )
 
     if published_paths and rebuilt:
@@ -184,9 +191,12 @@ def evaluate_publish_gate(
             passed=False,
             reason="diagram problems were found and the policy blocks on them",
             warnings=warnings,
+            diagram_warnings=diagram_warnings,
         )
 
-    return GateVerdict(passed=True, warnings=warnings)
+    return GateVerdict(
+        passed=True, warnings=warnings, diagram_warnings=diagram_warnings
+    )
 
 
 def _sections_without_a_page(pages: Sequence[PageSource]) -> list[str]:

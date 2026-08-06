@@ -6,9 +6,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, PanelLeft, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Spinner } from '@/components/ui/spinner'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -83,7 +84,7 @@ export function regenerateControl(
 ): { label: string; disabled: boolean; busy: boolean; hint: string } {
   if (submitting) {
     return {
-      label: t('knowledge:codeWiki.reader.regenerating'),
+      label: t('codeWiki.reader.regenerating'),
       disabled: true,
       busy: true,
       hint: '',
@@ -91,7 +92,7 @@ export function regenerateControl(
   }
   if (status?.status === 'running' && !status.is_stale) {
     return {
-      label: t('knowledge:codeWiki.reader.generating'),
+      label: t('codeWiki.reader.generating'),
       disabled: true,
       busy: true,
       hint: '',
@@ -99,14 +100,14 @@ export function regenerateControl(
   }
   if (status?.status === 'running' && status.is_stale) {
     return {
-      label: t('knowledge:codeWiki.reader.regenerate'),
+      label: t('codeWiki.reader.regenerate'),
       disabled: false,
       busy: false,
-      hint: t('knowledge:codeWiki.reader.previousRunStalled'),
+      hint: t('codeWiki.reader.previousRunStalled'),
     }
   }
   return {
-    label: t('knowledge:codeWiki.reader.regenerate'),
+    label: t('codeWiki.reader.regenerate'),
     disabled: false,
     busy: false,
     hint:
@@ -115,7 +116,7 @@ export function regenerateControl(
 }
 
 export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -143,6 +144,10 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
   // remounting it to reach its empty state discarded the conversation, reloaded the
   // task from the URL it is read from, and flashed the whole page on the way.
   const [showDocument, setShowDocument] = useState(false)
+  // Only used below lg, where the page tree is a drawer rather than a column.
+  // Controlled so that picking a page closes it: leaving it open would cover the
+  // page it was just asked to show.
+  const [navigationOpen, setNavigationOpen] = useState(false)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -202,11 +207,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
       runStatus.refresh()
       // "Nothing to do" is the answer the caller asked for, not a failure: the
       // repository has not moved since the published version.
-      toast.success(
-        result.started
-          ? t('knowledge:codeWiki.reader.started')
-          : t('knowledge:codeWiki.reader.upToDate')
-      )
+      toast.success(result.started ? t('codeWiki.reader.started') : t('codeWiki.reader.upToDate'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
@@ -230,11 +231,41 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
           rather than to whichever page happens to be open. Sat in the page header it
           read as "regenerate this page". */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+        {pages.length > 0 && (
+          <Drawer open={navigationOpen} onOpenChange={setNavigationOpen}>
+            <DrawerTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('codeWiki.reader.openNavigation')}
+                data-testid="code-wiki-open-navigation"
+                className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover lg:hidden"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </button>
+            </DrawerTrigger>
+            <DrawerContent className="max-h-[80vh]">
+              <DrawerTitle className="px-4 pt-2 text-sm font-medium">
+                {t('codeWiki.reader.openNavigation')}
+              </DrawerTitle>
+              <div className="min-h-0 overflow-y-auto px-2 pb-4">
+                <WikiNavigation
+                  pages={pages}
+                  activePath={activePath}
+                  onSelect={node => {
+                    openPage(node.path)
+                    setNavigationOpen(false)
+                  }}
+                />
+              </div>
+            </DrawerContent>
+          </Drawer>
+        )}
         <Button
           variant="ghost"
           size="sm"
           onClick={() => router.push('/knowledge?type=code')}
           data-testid="code-wiki-back-to-list"
+          className="h-11 sm:h-9"
         >
           <ArrowLeft className="mr-1.5 h-4 w-4" />
           {projectName || wiki.name}
@@ -247,6 +278,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
           disabled={control.disabled}
           title={control.hint || undefined}
           data-testid="code-wiki-regenerate"
+          className="h-11 sm:h-9"
         >
           <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
           {control.label}
@@ -255,7 +287,11 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
 
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,
-            and what it contains. Both stay put while the middle column changes. */}
+            and what it contains. Both stay put while the middle column changes.
+
+            Below lg it is a drawer instead of a column. Hiding it outright left a
+            narrow screen with no way between pages at all -- the wiki opened on
+            whichever page came first and stayed there. */}
         <div className="hidden w-64 shrink-0 flex-col border-r border-border lg:flex">
           <div className="border-b border-border px-3 py-2">
             <RunHistory knowledgeBaseId={wiki.id} status={runStatus.status} />
@@ -272,10 +308,8 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           {pages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16">
-              <p className="text-text-secondary">{t('knowledge:codeWiki.reader.empty')}</p>
-              <p className="text-sm text-text-tertiary">
-                {t('knowledge:codeWiki.reader.emptyHint')}
-              </p>
+              <p className="text-text-secondary">{t('codeWiki.reader.empty')}</p>
+              <p className="text-sm text-text-tertiary">{t('codeWiki.reader.emptyHint')}</p>
               {control.hint && (
                 <p
                   className="max-w-lg text-center text-xs text-amber-500"
@@ -315,7 +349,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
                       data-testid="code-wiki-back-to-document"
                     >
                       <ArrowLeft className="mr-1.5 h-4 w-4" />
-                      {t('knowledge:codeWiki.reader.back')}
+                      {t('codeWiki.reader.back')}
                     </Button>
                   </div>
                 )}
@@ -359,7 +393,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
                       onClick={() => setShowDocument(false)}
                       data-testid="code-wiki-back-to-chat"
                     >
-                      {t('knowledge:codeWiki.reader.backToChat')}
+                      {t('codeWiki.reader.backToChat')}
                     </Button>
                   </div>
                   <div className="min-h-0 flex-1 overflow-auto px-6 py-6">

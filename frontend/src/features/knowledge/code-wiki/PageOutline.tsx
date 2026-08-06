@@ -55,7 +55,7 @@ function readHeadings(container: HTMLElement): Heading[] {
  * scrolling is the slow way to do it.
  */
 export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const [headings, setHeadings] = useState<Heading[]>([])
   const [activeIndex, setActiveIndex] = useState(-1)
   const frame = useRef<number | null>(null)
@@ -114,11 +114,11 @@ export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
   return (
     <nav
       className="hidden xl:flex w-56 shrink-0 flex-col gap-1 overflow-y-auto border-l border-border px-4 py-6"
-      aria-label={t('knowledge:codeWiki.outline.label')}
+      aria-label={t('codeWiki.outline.label')}
       data-testid="code-wiki-outline"
     >
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-text-tertiary">
-        {t('knowledge:codeWiki.outline.title')}
+        {t('codeWiki.outline.title')}
       </p>
       {headings.map((heading, index) => (
         <button

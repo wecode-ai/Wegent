@@ -37,6 +37,7 @@ from app.services.knowledge.code_wiki.page_path import (
     collation_key,
     normalize_page_path,
 )
+from app.services.knowledge.code_wiki.publisher import PublishResult
 from app.services.knowledge.code_wiki.runner import finish_run, is_code_wiki_generation
 from app.services.knowledge.code_wiki.version_store import (
     page_path_of,
@@ -565,7 +566,7 @@ class WikiService:
         self,
         wiki_db: Session,
         payload: WikiContentWriteRequest,
-    ) -> Optional[str]:
+    ) -> Optional[PublishResult]:
         """
         Persist wiki generation contents with incremental write support.
 
@@ -576,8 +577,8 @@ class WikiService:
         - Resilient writes regardless of current generation status so reruns can overwrite results
 
         Returns:
-            Why the version was not published, when a code wiki run concluded and was
-            refused. ``None`` otherwise, including for every ordinary page write.
+            What the publish attempt did, when a code wiki run concluded. ``None``
+            otherwise, including for every ordinary page write.
         """
         has_sections = bool(payload.sections)
         if not has_sections and not payload.summary and not payload.removed_paths:
@@ -906,7 +907,7 @@ class WikiService:
         wiki_db: Session,
         generation: WikiGeneration,
         summary: Optional[WikiContentSummary],
-    ) -> Optional[str]:
+    ) -> Optional[PublishResult]:
         """Conclude a code wiki run once its final write is safely committed.
 
         Failures here are reported to the agent as a 5xx rather than swallowed. The
@@ -914,23 +915,21 @@ class WikiService:
         silent failure would leave a run stuck RUNNING with content nobody projects.
 
         Returns:
-            Why the version was not published, or ``None`` when it was. The agent is
-            the only party that can still act on a refusal — it is running, its
-            checkout is there, and it can write what is missing and finish again —
-            and it was being told "marked as COMPLETED" while its work was discarded.
+            What the publish attempt did, or ``None`` when the run reported failure
+            and there was nothing to publish. The whole outcome rather than a refusal
+            string because the agent is the only party that can still act on any of
+            it — it is running, its checkout is there — and that covers a version the
+            gate refused *and* one that published carrying broken diagrams.
         """
         succeeded = summary is not None and summary.status == "COMPLETED"
         try:
-            result = finish_run(
+            return finish_run(
                 wiki_db,
                 generation=generation,
                 succeeded=succeeded,
                 error_message=(summary.error_message if summary else "") or "",
                 head_commit=(summary.head_commit if summary else "") or "",
             )
-            if succeeded and result is not None and not result.published:
-                return result.reason
-            return None
         except Exception as exc:
             wiki_db.rollback()
             logger.error(

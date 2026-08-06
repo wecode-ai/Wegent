@@ -25,10 +25,13 @@ const TRANSLATABLE = new Set([
 export function failureText(
   failureCode: string,
   errorMessage: string,
+  // Resolved in the caller's namespace, so this is only usable from a component whose
+  // primary namespace is `knowledge`. Both callers are in this directory and every
+  // component here declares it.
   t: (key: string) => string
 ): string {
   const known = failureCode && TRANSLATABLE.has(failureCode)
-  const headline = known ? t(`knowledge:codeWiki.failure.${failureCode}`) : ''
+  const headline = known ? t(`codeWiki.failure.${failureCode}`) : ''
 
   if (headline && errorMessage) return `${headline}: ${errorMessage}`
   return headline || errorMessage

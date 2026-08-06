@@ -462,7 +462,7 @@ def test_concluding_a_run_reports_whether_it_was_published(
             published=False,
             reason="rebuild came back with 1 pages where 20 were published",
         )
-        refusal = WikiService().save_generation_contents(
+        outcome = WikiService().save_generation_contents(
             test_db,
             WikiContentWriteRequest(
                 generation_id=generation.id,
@@ -471,7 +471,8 @@ def test_concluding_a_run_reports_whether_it_was_published(
             ),
         )
 
-    assert refusal == "rebuild came back with 1 pages where 20 were published"
+    assert outcome.published is False
+    assert outcome.reason == "rebuild came back with 1 pages where 20 were published"
 
 
 def test_a_published_run_reports_no_refusal(
@@ -486,7 +487,7 @@ def test_a_published_run_reports_no_refusal(
 
     with patch("app.services.wiki_service.finish_run") as finish:
         finish.return_value = SimpleNamespace(published=True, reason="")
-        refusal = WikiService().save_generation_contents(
+        outcome = WikiService().save_generation_contents(
             test_db,
             WikiContentWriteRequest(
                 generation_id=generation.id,
@@ -495,4 +496,24 @@ def test_a_published_run_reports_no_refusal(
             ),
         )
 
-    assert refusal is None
+    assert outcome.published is True
+    assert outcome.reason == ""
+
+
+def test_an_ordinary_page_write_concludes_nothing(
+    test_db: Session, generation: WikiGeneration
+):
+    """Only a run reporting a status has an outcome to report. Every other write is a
+    page landing in an open version, and answering it with a publish verdict would be
+    inventing one."""
+    _knowledge_base(test_db)
+
+    outcome = WikiService().save_generation_contents(
+        test_db,
+        WikiContentWriteRequest(
+            generation_id=generation.id,
+            sections=[_section("index", "Index")],
+        ),
+    )
+
+    assert outcome is None

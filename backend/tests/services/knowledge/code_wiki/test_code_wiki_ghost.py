@@ -153,6 +153,17 @@ def test_the_agent_is_told_a_completed_run_can_still_be_refused(system_prompt: s
     assert "`complete` again" in system_prompt
 
 
+def test_the_agent_is_told_to_act_on_the_diagrams_it_is_handed_back(
+    system_prompt: str,
+):
+    """Diagram findings arrive on a *successful* run, which is the part that needs
+    saying: the natural reading of "published" is that there is nothing left to do,
+    and the run is about to end with the only party who can fix them still on the
+    machine."""
+    assert "diagrams that will not render" in system_prompt
+    assert "keeping their paths unchanged" in system_prompt
+
+
 def test_the_run_is_required_to_be_finished(system_prompt: str):
     """Nothing is published until it is, and an unreported run blocks the wiki until
     the staleness sweep reclaims it hours later."""

@@ -83,7 +83,7 @@ function inferSourceType(url: string, configured: GitInfo[] = []): CodeWikiSourc
  * something a component can change.
  */
 export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const { user } = useUser()
   const configuredGitInfo = useMemo(() => user?.git_info ?? [], [user])
   const [mode, setMode] = useState<'select' | 'url'>('select')
@@ -154,7 +154,7 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
       <SimpleConfigRow
         label={
           <>
-            {t('knowledge:codeWiki.create.repository')} <span className="text-red-400">*</span>
+            {t('codeWiki.create.repository')} <span className="text-red-400">*</span>
           </>
         }
         align="start"
@@ -171,8 +171,8 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
                 />
                 <span className={mode === option ? 'text-text-primary' : 'text-text-muted'}>
                   {option === 'select'
-                    ? t('knowledge:codeWiki.create.fromMyRepositories')
-                    : t('knowledge:codeWiki.create.byUrl')}
+                    ? t('codeWiki.create.fromMyRepositories')
+                    : t('codeWiki.create.byUrl')}
                 </span>
               </label>
             ))}
@@ -218,14 +218,14 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
         </div>
       </SimpleConfigRow>
 
-      <SimpleConfigRow label={t('knowledge:codeWiki.create.language')}>
+      <SimpleConfigRow label={t('codeWiki.create.language')}>
         <Select value={value.language} onValueChange={language => onChange({ ...value, language })}>
           <SelectTrigger className="bg-base" data-testid="code-wiki-language">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="zh">{t('knowledge:codeWiki.create.languageZh')}</SelectItem>
-            <SelectItem value="en">{t('knowledge:codeWiki.create.languageEn')}</SelectItem>
+            <SelectItem value="zh">{t('codeWiki.create.languageZh')}</SelectItem>
+            <SelectItem value="en">{t('codeWiki.create.languageEn')}</SelectItem>
           </SelectContent>
         </Select>
       </SimpleConfigRow>
@@ -240,13 +240,13 @@ function SourceStatus({
   resolving: boolean
   resolution: CodeWikiResolution | null
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
 
   if (resolving) {
     return (
       <p className="flex items-center gap-1.5 text-xs text-text-muted">
         <Loader2 className="w-3 h-3 animate-spin" />
-        {t('knowledge:codeWiki.create.checking')}
+        {t('codeWiki.create.checking')}
       </p>
     )
   }
@@ -259,7 +259,7 @@ function SourceStatus({
         data-testid="code-wiki-source-unreadable"
       >
         <AlertCircle className="w-3 h-3" />
-        {t('knowledge:codeWiki.create.notReadable')}
+        {t('codeWiki.create.notReadable')}
       </p>
     )
   }
@@ -269,15 +269,15 @@ function SourceStatus({
       <p className="flex items-center gap-1.5 text-xs text-text-muted">
         <CheckCircle2 className="w-3 h-3 text-green-500" />
         {resolution.visibility === 'public'
-          ? t('knowledge:codeWiki.create.publicRepository')
-          : t('knowledge:codeWiki.create.privateRepository')}
+          ? t('codeWiki.create.publicRepository')
+          : t('codeWiki.create.privateRepository')}
         {resolution.default_branch ? ` · ${resolution.default_branch}` : ''}
       </p>
       {resolution.existing_wikis.length > 0 && (
         <div className="space-y-1" data-testid="code-wiki-existing">
           <p className="flex items-center gap-1.5 text-xs text-amber-500">
             <Users className="w-3 h-3" />
-            {t('knowledge:codeWiki.create.alreadyBuilt', {
+            {t('codeWiki.create.alreadyBuilt', {
               count: resolution.existing_wikis.length,
             })}
           </p>
@@ -299,7 +299,7 @@ function SourceStatus({
                   <span data-testid={`code-wiki-existing-owner-${wiki.id}`}>
                     {wiki.name}
                     {wiki.owner_name
-                      ? ` — ${t('knowledge:codeWiki.create.ownedBy', {
+                      ? ` — ${t('codeWiki.create.ownedBy', {
                           owner: wiki.owner_name,
                         })}`
                       : ''}
