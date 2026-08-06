@@ -4275,10 +4275,12 @@ describe('DesktopSidebar', () => {
 
     const button = screen.getByTestId('project-item-button')
     const title = screen.getByTestId('project-title-7')
+    const folderIcon = screen.getByTestId('project-folder-icon-7')
     const collapsedIndicator = screen.getByTestId('project-collapsed-hover-indicator-7')
     const expandedIndicator = screen.getByTestId('project-expanded-hover-indicator-7')
 
     expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(folderIcon).toHaveAttribute('data-state', 'closed')
     expect(title).toHaveTextContent('Wegent')
     expect(title).not.toHaveClass('group-hover/project:hidden')
     expect(title.parentElement).toHaveClass('gap-1.5')
@@ -4294,6 +4296,7 @@ describe('DesktopSidebar', () => {
     await user.click(button)
 
     expect(button).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('project-folder-icon-7')).toHaveAttribute('data-state', 'open')
     expect(screen.getByTestId('project-title-7')).not.toHaveClass('group-hover/project:hidden')
     expect(screen.getByTestId('project-collapsed-hover-indicator-7')).toHaveClass('hidden')
     expect(screen.getByTestId('project-expanded-hover-indicator-7')).toHaveClass(
