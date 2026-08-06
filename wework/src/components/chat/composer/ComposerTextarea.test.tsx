@@ -2,13 +2,18 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
-import type { LocalDeviceSkill } from '@/types/api'
+import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import {
+  insertPluginReference,
+  notifyLocalPluginSkillsChanged,
+} from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
 import { ComposerTextarea } from './ComposerTextarea'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
@@ -36,6 +41,25 @@ const GMAIL_SKILL: LocalDeviceSkill = {
   source: 'codex',
 }
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
+
+const GITHUB_PLUGIN: LocalDeviceApp = {
+  id: 'github',
+  name: 'GitHub',
+  description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
+  logoUrl: 'https://example.com/github.png',
+  isAccessible: true,
+  isEnabled: true,
+  pluginDisplayNames: ['Wegent Cloud'],
+  source: 'wegent-connector',
+  skillPath: '/tmp/github/SKILL.md',
+}
+
+const TEST_MODEL: UnifiedModel = {
+  name: 'gpt-5.6-sol',
+  type: 'user',
+  displayName: 'GPT-5.6 Sol',
+  config: { ui: { family: 'gpt' } },
+}
 
 const WEBSITE_PROJECT: CloudProject = {
   id: '7',
@@ -82,6 +106,38 @@ describe('ComposerTextarea', () => {
       attachmentFiles: [],
       referenceEntries: [],
     })
+    resetComposerAppsMemory()
+    clearComposerAppsSnapshot()
+  })
+
+  test('inserts plugin picker references without replacing the current draft', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('keep this draft')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.focus()
+      insertPluginReference('[$GitHub](/tmp/github/SKILL.md)')
+    })
+
+    await waitFor(() => expect(editor.value).toContain('[$GitHub](/tmp/github/SKILL.md)'))
+    expect(editor.value).toContain('keep this draft')
   })
 
   test('places the caret at the end when returning to a restored new-chat draft', async () => {
@@ -198,6 +254,142 @@ describe('ComposerTextarea', () => {
 
     fireEvent.mouseDown(screen.getByTestId('local-skill-chip-gmail'), { button: 0 })
     expect(onOpenSkillFile).toHaveBeenCalledWith('/tmp/gmail/SKILL.md')
+  })
+
+  test('places callable plugins between model and skill slash commands', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onListLocalApps={async () => [GITHUB_PLUGIN]}
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+          models={[TEST_MODEL]}
+          selectedModel={TEST_MODEL}
+          onSelectModel={vi.fn()}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    const modelOption = screen.getByTestId('slash-command-option-model')
+    const pluginOption = await screen.findByTestId('slash-command-option-app-github')
+    const marketplaceOption = screen.getByTestId('slash-command-option-plugin-marketplace')
+    const skillOption = await screen.findByTestId('slash-command-option-skill-gmail')
+
+    expect(modelOption.compareDocumentPosition(pluginOption)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(pluginOption.compareDocumentPosition(marketplaceOption)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(marketplaceOption.compareDocumentPosition(skillOption)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(pluginOption.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
+    expect(pluginOption).toHaveTextContent(
+      '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
+    )
+    expect(pluginOption).not.toHaveTextContent('添加')
+    expect(pluginOption.querySelectorAll('svg')).toHaveLength(1)
+
+    fireEvent.click(pluginOption)
+    await waitFor(() => expect(editor.value).toBe('[$GitHub](/tmp/github/SKILL.md) '))
+  })
+
+  test('preloads callable plugins before the slash menu opens', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onListLocalApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onListLocalApps={onListLocalApps}
+      />
+    )
+
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('slash-command-option-app-github')).toBeInTheDocument()
+    expect(onListLocalApps).toHaveBeenCalledTimes(1)
+  })
+
+  test('reloads plugin metadata after the installed plugin state changes', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const rawGithubApp: LocalDeviceApp = {
+      ...GITHUB_PLUGIN,
+      description: 'GitHub repositories, issues, pull requests, and Actions',
+      logoUrl: null,
+    }
+    const onListLocalApps = vi
+      .fn<() => Promise<LocalDeviceApp[]>>()
+      .mockResolvedValueOnce([rawGithubApp])
+      .mockResolvedValueOnce([GITHUB_PLUGIN])
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onListLocalApps={onListLocalApps}
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('slash-command-option-app-github')).toHaveTextContent(
+      'GitHub repositories, issues, pull requests, and Actions'
+    )
+
+    act(() => notifyLocalPluginSkillsChanged())
+
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(2))
+    const refreshedOption = screen.getByTestId('slash-command-option-app-github')
+    expect(refreshedOption).toHaveTextContent(
+      '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
+    )
+    expect(refreshedOption.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
   })
 
   test('inserts an authorized cloud reference from the @ menu', async () => {
@@ -351,7 +543,7 @@ describe('ComposerTextarea', () => {
       editor.focus()
     })
 
-    await screen.findByTestId('workspace-mention-option-0')
+    await screen.findByTestId('workspace-mention-option-0', {}, { timeout: 5_000 })
     expect(searchWorkspaceEntries).toHaveBeenCalledWith(
       'local-device',
       '/workspace/project',

@@ -56,7 +56,7 @@ def _raise_sites_error(error: Exception) -> NoReturn:
 
 @router.get("", response_model=SiteListResponse)
 async def list_sites(
-    app_type: SiteAppType = Query(default="site"),
+    app_type: SiteAppType = Query(default="web"),
     q: str | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),

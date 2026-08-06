@@ -317,8 +317,7 @@ describe('ChatInput', () => {
     })
   })
 
-  test('selects plan mode from the add context menu', async () => {
-    const setSelectedModelOption = vi.fn()
+  test('opens plugin picker from its toolbar button without a separate slash action', async () => {
     render(
       <ChatInput
         value=""
@@ -326,20 +325,13 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
-        projectChat={projectChatControls({
-          selectedModelOptions: {},
-          setSelectedModelOption,
-        })}
+        projectChat={projectChatControls()}
       />
     )
 
-    expect(screen.queryByTestId('plan-mode-pill')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cancel-plan-mode-button')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('add-context-button'))
-    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
-
-    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+    expect(screen.queryByTestId('composer-slash-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
   test('shows the plan mode pill when plan mode is selected', async () => {
@@ -2736,27 +2728,14 @@ describe('ChatInput', () => {
     const menu = within(screen.getByTestId('add-context-menu'))
     expect(menu.getByText('添加照片和文件')).toBeInTheDocument()
     expect(menu.getByText('计划模式')).toBeInTheDocument()
-    expect(menu.getByText('开启计划模式')).toBeInTheDocument()
     expect(menu.getByText('目标')).toBeInTheDocument()
-    expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
-    expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
-    expect(menu.queryByText('插件')).not.toBeInTheDocument()
-    expect(screen.getByTestId('attach-files-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
-    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
+    expect(screen.getByTestId('attachment-file-input')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
-
+    await userEvent.click(menu.getByTestId('set-plan-mode-button'))
     expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
 
     await userEvent.click(screen.getByTestId('add-context-button'))
     await userEvent.click(screen.getByTestId('set-goal-button'))
-
     expect(onSetGoal).toHaveBeenCalledTimes(1)
   })
 
@@ -3786,7 +3765,6 @@ describe('ChatInput', () => {
 
   test.each([
     ['model selector', 'model-selector-button', 'model-selector-menu'],
-    ['add context menu', 'add-context-button', 'add-context-menu'],
     ['project work menu', 'project-work-button', 'project-work-menu'],
   ])(
     'closes the desktop %s when clicking outside the dropdown',
@@ -3881,6 +3859,124 @@ describe('ChatInput', () => {
       'overflow-y-auto'
     )
     expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
+  })
+
+  test('shows one recommended plugin task and keeps other tasks secondary', async () => {
+    const applyTrialTemplate = vi.fn()
+    const dismissTrialGuide = vi.fn()
+    const onSubmit = vi.fn()
+    const trialTemplates = Array.from({ length: 4 }, (_, index) => ({
+      name: `Scenario ${index + 1}`,
+      path: `scenario-${index + 1}`,
+      description: `Prompt ${index + 1}`,
+    }))
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        onSubmit={onSubmit}
+        projectChat={projectChatControls({
+          trialPluginName: 'Documents',
+          trialTemplates,
+          applyTrialTemplate,
+          dismissTrialGuide,
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 1')
+    expect(screen.queryByTestId('plugin-trial-template-card')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-other-tasks-toggle'))
+
+    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(3)
+    expect(screen.getByText('Scenario 4')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('Scenario 4'))
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 4')
+    expect(screen.queryByTestId('plugin-trial-other-tasks')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
+    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
+    expect(dismissTrialGuide).toHaveBeenCalledOnce()
+  })
+
+  test('does not show plugin guidance without a selected plugin', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          trialPluginName: undefined,
+          trialTemplates: [],
+          onRefineTrialPrompt: vi.fn().mockResolvedValue('Suggested task'),
+        })}
+      />
+    )
+
+    expect(screen.queryByTestId('plugin-trial-template-strip')).not.toBeInTheDocument()
+  })
+
+  test('uses AI to refine a conversation-aware plugin task before applying it', async () => {
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    const onRefineTrialPrompt = vi
+      .fn()
+      .mockResolvedValue('Summarize the launch notes into a concise release memo')
+
+    render(
+      <ChatInput
+        value="[$Documents](plugin://documents@openai-bundled) Summarize the launch notes"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          trialPluginName: 'Documents',
+          hasConversationContext: true,
+          onRefineTrialPrompt,
+          trialTemplates: [
+            {
+              name: 'Project memo',
+              path: 'project-memo',
+              description: 'Draft a project memo',
+            },
+          ],
+        })}
+      />
+    )
+
+    expect(screen.getByText('Documents 使用建议')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
+      'Project memo'
+    )
+    await userEvent.click(screen.getByTestId('plugin-trial-ai-refine'))
+
+    expect(onRefineTrialPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginName: 'Documents',
+        draft: expect.stringContaining('Summarize the launch notes'),
+      })
+    )
+    expect(await screen.findByTestId('plugin-trial-ai-result')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
+      'Summarize the launch notes into a concise release memo'
+    )
+    expect(onChange).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
+
+    expect(onChange).toHaveBeenCalledWith(
+      '[$Documents](plugin://documents@openai-bundled) Summarize the launch notes into a concise release memo '
+    )
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 
   test('submits typed content', async () => {

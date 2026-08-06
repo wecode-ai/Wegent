@@ -341,6 +341,7 @@ describe('localExecutor', () => {
         backendUrl: 'https://cloud.example.com',
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'wg-token',
+        runtimeAuthToken: 'task-token',
       })
     ).resolves.toEqual({
       running: true,
@@ -351,6 +352,7 @@ describe('localExecutor', () => {
       backendUrl: 'https://cloud.example.com',
       socketUrl: 'wss://socket.example.com',
       authToken: 'wg-token',
+      runtimeAuthToken: 'task-token',
     })
   })
 

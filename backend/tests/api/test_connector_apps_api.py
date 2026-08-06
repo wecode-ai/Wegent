@@ -4,10 +4,14 @@
 
 """API coverage for administrator-managed connector apps."""
 
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
+
 from fastapi.testclient import TestClient
 from jose import jwt
 from sqlalchemy.orm import Session
 
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
@@ -18,6 +22,11 @@ from app.services.connector_apps import (
     ConnectorAppService,
     connector_app_service,
 )
+from app.services.connector_connections import (
+    CONNECTOR_CONNECTION_KIND,
+    connector_connection_service,
+)
+from app.services.connector_oauth import ConnectorOAuthService
 from shared.utils.crypto import decrypt_sensitive_data
 
 
@@ -137,6 +146,82 @@ def test_authorization_connector_types_are_persisted(
     assert oauth_app.auth_type == "oauth2"
 
 
+def test_github_oauth_api_flow_connects_polls_and_disconnects(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_token: str,
+    monkeypatch,
+):
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="github",
+        name="GitHub",
+        auth_type="oauth2",
+        tool_allowlist=[],
+    )
+    sessions: dict[str, dict] = {}
+
+    async def cache_set(key: str, value: dict, expire: int) -> bool:
+        sessions[key] = dict(value)
+        return True
+
+    async def cache_get(key: str):
+        value = sessions.get(key)
+        return dict(value) if value else None
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
+    monkeypatch.setattr(cache_manager, "set", cache_set)
+    monkeypatch.setattr(cache_manager, "get", cache_get)
+    monkeypatch.setattr(
+        ConnectorOAuthService,
+        "_exchange_code",
+        AsyncMock(
+            return_value={
+                "access_token": "github-access-token",
+                "token_type": "bearer",
+                "scope": "repo",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        ConnectorOAuthService,
+        "_fetch_github_login",
+        AsyncMock(return_value="octocat"),
+    )
+
+    session_response = test_client.post(
+        "/api/connector-apps/github/oauth/sessions",
+        headers=_admin_headers(test_token),
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
+    callback_response = test_client.get(
+        "/api/connector-apps/oauth/callback",
+        params={"state": state, "code": "provider-code"},
+    )
+    assert callback_response.status_code == 200
+
+    poll_response = test_client.get(
+        f"/api/connector-apps/oauth/sessions/{session['session_id']}/poll",
+        params={"poll_token": session["poll_token"]},
+        headers=_admin_headers(test_token),
+    )
+    assert poll_response.status_code == 200
+    assert poll_response.json()["connection"]["external_account_name"] == "octocat"
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "")
+    disconnect_response = test_client.delete(
+        "/api/connector-apps/github/connection",
+        headers=_admin_headers(test_token),
+    )
+    assert disconnect_response.status_code == 204
+
+
 def test_runtime_token_is_scoped_to_connector_invocation(
     test_client: TestClient,
     test_user: User,
@@ -197,6 +282,7 @@ def test_disabling_app_soft_deletes_connector_kind(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
+    test_user: User,
     test_admin_token: str,
 ):
     app = _create_app(
@@ -205,6 +291,17 @@ def test_disabling_app_soft_deletes_connector_kind(
         slug="disabled-app",
         name="Disabled app",
         tool_allowlist=[],
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=app.slug,
+        user_id=test_user.id,
+        access_token="user-token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name="octocat",
+        expires_at=None,
     )
 
     response = test_client.delete(
@@ -216,9 +313,20 @@ def test_disabling_app_soft_deletes_connector_kind(
     row = test_db.query(Kind).filter(Kind.id == app.id).one()
     assert row.is_active is False
     assert row.json["spec"]["enabled"] is False
+    connection_row = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == CONNECTOR_CONNECTION_KIND,
+            Kind.name == app.slug,
+            Kind.user_id == test_user.id,
+        )
+        .one()
+    )
+    assert connection_row.is_active is False
+    assert connection_row.json["spec"]["accessTokenEncrypted"] is None
 
 
-def test_removed_authorization_endpoints_return_not_found(
+def test_legacy_authorization_endpoints_stay_removed(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
@@ -248,7 +356,7 @@ def test_removed_authorization_endpoints_return_not_found(
 
     assert authorize_response.status_code == 404
     assert credential_response.status_code == 404
-    assert callback_response.status_code == 404
+    assert callback_response.status_code == 400
 
 
 def test_admin_can_publish_http_api_as_connector_tools(

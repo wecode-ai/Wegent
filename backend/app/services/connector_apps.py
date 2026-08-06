@@ -25,6 +25,11 @@ from app.schemas.connector import (
     ConnectorConnectionResponse,
     ConnectorHttpToolDefinition,
 )
+from app.services.connector_connections import (
+    CONNECTOR_CONNECTION_KIND,
+    CONNECTOR_CONNECTION_NAMESPACE,
+    connector_connection_service,
+)
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 CONNECTOR_APP_KIND = "ConnectorApp"
@@ -48,6 +53,7 @@ class ConnectorApp:
     transport: str
     mcp_url: str
     provider_headers_encrypted: str | None
+    forward_user_context_headers: bool
     tool_allowlist: list[str]
     http_tools: list[dict[str, Any]]
     created_by: int | None
@@ -228,6 +234,16 @@ class ConnectorAppService:
     @staticmethod
     def admin_response(db: Session, app: ConnectorApp) -> ConnectorAppAdminResponse:
         provider_headers = _decrypt_json(app.provider_headers_encrypted)
+        connection_count = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == app.slug,
+                Kind.is_active,
+            )
+            .count()
+        )
         return ConnectorAppAdminResponse(
             id=app.id,
             slug=app.slug,
@@ -242,9 +258,10 @@ class ConnectorAppService:
             mcp_url=app.mcp_url,
             provider_header_names=sorted(provider_headers),
             provider_headers_configured=bool(provider_headers),
+            forward_user_context_headers=app.forward_user_context_headers,
             tool_allowlist=list(app.tool_allowlist or []),
             http_tools=list(app.http_tools or []),
-            connection_count=0,
+            connection_count=connection_count,
             created_at=app.created_at,
             updated_at=app.updated_at,
         )
@@ -276,6 +293,21 @@ class ConnectorAppService:
     def user_response(
         db: Session, app: ConnectorApp, user: User
     ) -> ConnectorAppResponse:
+        if app.auth_type == "none":
+            connection = ConnectorConnectionResponse(
+                status="connected",
+                external_account_name=None,
+                granted_scopes=[],
+                expires_at=None,
+            )
+        else:
+            connection = connector_connection_service.response(
+                connector_connection_service.get(
+                    db,
+                    slug=app.slug,
+                    user_id=user.id,
+                )
+            )
         return ConnectorAppResponse(
             id=app.id,
             slug=app.slug,
@@ -283,12 +315,7 @@ class ConnectorAppService:
             description=app.description,
             icon_url=app.icon_url,
             auth_type=app.auth_type,
-            connection=ConnectorConnectionResponse(
-                status="connected",
-                external_account_name=None,
-                granted_scopes=[],
-                expires_at=None,
-            ),
+            connection=connection,
         )
 
     @staticmethod
@@ -300,6 +327,30 @@ class ConnectorAppService:
         data["spec"] = spec
         app.row.json = data
         flag_modified(app.row, "json")
+        connections = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == app.slug,
+                Kind.is_active,
+            )
+            .all()
+        )
+        for row in connections:
+            connection_data = dict(row.json or {})
+            connection_spec = dict(connection_data.get("spec") or {})
+            connection_spec.update(
+                {
+                    "status": "disconnected",
+                    "accessTokenEncrypted": None,
+                    "refreshTokenEncrypted": None,
+                }
+            )
+            connection_data["spec"] = connection_spec
+            row.json = connection_data
+            row.is_active = False
+            flag_modified(row, "json")
         db.commit()
 
     @staticmethod
@@ -332,6 +383,7 @@ class ConnectorAppService:
                 "transport": payload.transport,
                 "mcpUrl": payload.mcp_url,
                 "providerHeadersEncrypted": _encrypt_json(payload.provider_headers),
+                "forwardUserContextHeaders": payload.forward_user_context_headers,
                 "toolAllowlist": payload.tool_allowlist,
                 "httpTools": [
                     item.model_dump(mode="json") for item in payload.http_tools
@@ -362,6 +414,9 @@ class ConnectorAppService:
             transport=str(spec.get("transport") or "streamable-http"),
             mcp_url=str(spec.get("mcpUrl") or ""),
             provider_headers_encrypted=spec.get("providerHeadersEncrypted"),
+            forward_user_context_headers=bool(
+                spec.get("forwardUserContextHeaders", False)
+            ),
             tool_allowlist=list(spec.get("toolAllowlist") or []),
             http_tools=list(spec.get("httpTools") or []),
             created_by=spec.get("createdBy"),
@@ -377,6 +432,7 @@ class ConnectorAppService:
             "allowed_roles": "allowedRoles",
             "auth_type": "authType",
             "mcp_url": "mcpUrl",
+            "forward_user_context_headers": "forwardUserContextHeaders",
             "tool_allowlist": "toolAllowlist",
             "http_tools": "httpTools",
         }.get(field, field)

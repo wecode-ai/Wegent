@@ -85,6 +85,7 @@ fn prepare_dws_sidecar() {
         .join("binaries")
         .join(sidecar_file_name(DWS_SIDECAR_NAME, &target));
     let marker_path = sidecar_path.with_extension("debug-stub");
+    println!("cargo:rerun-if-changed={}", sidecar_path.display());
 
     if sidecar_path.exists() && !marker_path.exists() {
         return;

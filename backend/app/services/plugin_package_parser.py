@@ -2,8 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
 import io
 import json
+import re
 import zipfile
 from pathlib import PurePosixPath
 from typing import Any, Dict, Iterable
@@ -12,7 +14,11 @@ from fastapi import HTTPException
 
 from app.schemas.installed_plugin import (
     InstalledPluginComponents,
+    PluginConnectorComponent,
     PluginInterface,
+    PluginLocalAuthArtifactDefinition,
+    PluginLocalAuthDefinition,
+    PluginLocalAuthToolDefinition,
     PluginMCPComponent,
     PluginPathComponent,
     PluginSkillComponent,
@@ -20,6 +26,15 @@ from app.schemas.installed_plugin import (
 )
 
 MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
+MAX_INLINE_INTERFACE_ASSET_BYTES = 512 * 1024
+INTERFACE_ASSET_MEDIA_TYPES = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+}
 
 
 CLAUDE_PLUGIN_MANIFEST_PATH = ".claude-plugin/plugin.json"
@@ -39,6 +54,7 @@ CODEX_MANIFEST_FIELDS = {
     "keywords",
     "skills",
     "mcpServers",
+    "connectors",
 }
 # Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
 CLAUDE_MANIFEST_FIELDS = CODEX_MANIFEST_FIELDS | {
@@ -68,6 +84,11 @@ class PluginPackageParser:
                 root, manifest_relative_path = self._detect_plugin_root(archive)
                 manifest = self._read_json(archive, f"{root}{manifest_relative_path}")
                 components = self._parse_components(archive, root, manifest)
+                interface = self._inline_interface_assets(
+                    archive,
+                    root,
+                    self._parse_interface(manifest),
+                )
         except zipfile.BadZipFile as exc:
             raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
 
@@ -86,8 +107,36 @@ class PluginPackageParser:
             author=self._format_author(manifest.get("author")),
             manifest=manifest,
             components=components,
-            interface=self._parse_interface(manifest),
+            interface=interface,
         )
+
+    def resolve_interface_assets(
+        self,
+        package_bytes: bytes,
+        interface_values: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Inline the exact interface asset paths selected by catalog metadata."""
+        if len(package_bytes) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Plugin package is too large")
+        interface = PluginInterface.model_validate(interface_values)
+        try:
+            with zipfile.ZipFile(self._bytes_reader(package_bytes)) as archive:
+                self._validate_archive_paths(archive)
+                root, _ = self._detect_plugin_root(archive)
+                resolved_interface = self._inline_interface_assets(
+                    archive,
+                    root,
+                    interface,
+                )
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
+        resolved = dict(interface_values)
+        if resolved_interface:
+            for field in ("composerIcon", "logo", "logoDark"):
+                value = getattr(resolved_interface, field)
+                if value:
+                    resolved[field] = value
+        return resolved
 
     def normalize_and_parse(
         self, package_bytes: bytes
@@ -324,6 +373,7 @@ class PluginPackageParser:
             agents=self._parse_markdown_files(root, names, "agents"),
             hooks=self._parse_json_file_components(root, names, "hooks"),
             mcps=self._parse_mcps(archive, root, manifest),
+            connectors=self._parse_connectors(manifest),
             lsps=self._parse_json_file_components(root, names, ".lsp.json"),
             monitors=self._parse_json_file_components(root, names, "monitors"),
             bins=self._parse_bin_files(root, names),
@@ -390,6 +440,48 @@ class PluginPackageParser:
                 if str(item).strip()
             ],
         )
+
+    def _inline_interface_assets(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        interface: PluginInterface | None,
+    ) -> PluginInterface | None:
+        if interface is None:
+            return None
+        updates = {
+            field: self._interface_asset_data_url(
+                archive,
+                root,
+                getattr(interface, field),
+            )
+            for field in ("composerIcon", "logo", "logoDark")
+        }
+        return interface.model_copy(update=updates)
+
+    def _interface_asset_data_url(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        value: str | None,
+    ) -> str | None:
+        if not value or re.match(r"^(?:data:|https?://|file://|/)", value, re.I):
+            return value
+        relative = PurePosixPath(value.removeprefix("./"))
+        if relative.is_absolute() or ".." in relative.parts:
+            return value
+        media_type = INTERFACE_ASSET_MEDIA_TYPES.get(relative.suffix.lower())
+        if media_type is None:
+            return value
+        member_name = f"{root}{relative.as_posix()}"
+        try:
+            member = archive.getinfo(member_name)
+        except KeyError:
+            return value
+        if member.file_size > MAX_INLINE_INTERFACE_ASSET_BYTES:
+            return value
+        encoded = base64.b64encode(archive.read(member)).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
 
     @staticmethod
     def _optional_string(value: Any) -> str | None:
@@ -495,6 +587,167 @@ class PluginPackageParser:
             )
             for name, server in sorted(servers.items())
         ]
+
+    def _parse_connectors(
+        self, manifest: Dict[str, Any]
+    ) -> list[PluginConnectorComponent]:
+        raw_connectors = manifest.get("connectors")
+        if not isinstance(raw_connectors, list):
+            return []
+        connectors: list[PluginConnectorComponent] = []
+        seen: set[str] = set()
+        for item in raw_connectors:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug") or "").strip()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", slug) or slug in seen:
+                continue
+            auth_policy = str(item.get("authPolicy") or "optional")
+            if auth_policy not in {"on_install", "on_use", "optional"}:
+                continue
+            local_auth = self._parse_local_auth(item.get("localAuth"))
+            seen.add(slug)
+            connectors.append(
+                PluginConnectorComponent(
+                    slug=slug,
+                    authPolicy=auth_policy,
+                    localAuth=local_auth,
+                )
+            )
+        return connectors
+
+    def _parse_local_auth(self, raw: Any) -> PluginLocalAuthDefinition | None:
+        if not isinstance(raw, dict):
+            return None
+        kind = str(raw.get("kind") or "local_qr").strip()
+        if kind not in {"local_qr", "browser_oauth"}:
+            return None
+
+        def command_list(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            commands: list[str] = []
+            for item in value:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                # Only allow relative plugin-root paths / simple CLI args.
+                if (
+                    text.startswith("/")
+                    or text.startswith("~")
+                    or ".." in PurePosixPath(text).parts
+                    or re.search(r"^[A-Za-z]:[\\/]", text)
+                ):
+                    continue
+                commands.append(text)
+            return commands
+
+        health = command_list(raw.get("health"))
+        start = command_list(raw.get("start"))
+        poll = command_list(raw.get("poll"))
+        logout = command_list(raw.get("logout"))
+        if not health or not start or (kind == "local_qr" and not poll):
+            return None
+        tool = self._parse_local_auth_tool(raw.get("tool"))
+        if raw.get("tool") is not None and tool is None:
+            return None
+        poll_interval = raw.get("pollIntervalSeconds", 2)
+        try:
+            poll_interval_seconds = max(1, min(int(poll_interval), 30))
+        except (TypeError, ValueError):
+            poll_interval_seconds = 2
+        default_timeout = 300 if kind == "browser_oauth" else 45
+        try:
+            timeout_seconds = max(
+                15, min(int(raw.get("timeoutSeconds", default_timeout)), 600)
+            )
+        except (TypeError, ValueError):
+            timeout_seconds = default_timeout
+        ok_values = [
+            str(item).strip()
+            for item in (raw.get("okValues") or ["ok"])
+            if str(item).strip()
+        ] or ["ok"]
+        logout_on_uninstall = raw.get("logoutOnUninstall")
+        if not isinstance(logout_on_uninstall, bool):
+            logout_on_uninstall = kind == "local_qr"
+        return PluginLocalAuthDefinition(
+            kind=kind,
+            health=health,
+            start=start,
+            poll=poll,
+            logout=logout,
+            tool=tool,
+            qrField=str(raw.get("qrField") or "qr_path").strip() or "qr_path",
+            statusField=str(raw.get("statusField") or "status").strip() or "status",
+            okValues=ok_values,
+            pollIntervalSeconds=poll_interval_seconds,
+            timeoutSeconds=timeout_seconds,
+            logoutOnUninstall=logout_on_uninstall,
+        )
+
+    def _parse_local_auth_tool(self, raw: Any) -> PluginLocalAuthToolDefinition | None:
+        if not isinstance(raw, dict):
+            return None
+        tool_id = str(raw.get("id") or "").strip()
+        source = str(raw.get("source") or "").strip()
+        version = str(raw.get("version") or "").strip() or None
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", tool_id):
+            return None
+        if source not in {"bundled", "managed"}:
+            return None
+        if source == "bundled":
+            return PluginLocalAuthToolDefinition(id=tool_id, source=source)
+        if not version or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", version):
+            return None
+        raw_artifacts = raw.get("artifacts")
+        if not isinstance(raw_artifacts, dict) or not raw_artifacts:
+            return None
+        artifacts: dict[str, PluginLocalAuthArtifactDefinition] = {}
+        for target, artifact in raw_artifacts.items():
+            parsed = self._parse_local_auth_artifact(target, artifact)
+            if parsed is None:
+                return None
+            artifacts[str(target)] = parsed
+        return PluginLocalAuthToolDefinition(
+            id=tool_id,
+            source=source,
+            version=version,
+            artifacts=artifacts,
+        )
+
+    def _parse_local_auth_artifact(
+        self, target: Any, raw: Any
+    ) -> PluginLocalAuthArtifactDefinition | None:
+        if not isinstance(target, str) or not re.fullmatch(
+            r"(?:darwin|linux|windows)-(?:x64|arm64)", target
+        ):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        url = str(raw.get("url") or "").strip()
+        sha256 = str(raw.get("sha256") or "").strip().lower()
+        archive = str(raw.get("archive") or "").strip()
+        binary_path = str(raw.get("binaryPath") or "").strip()
+        if not url.startswith("https://") or not re.fullmatch(r"[a-f0-9]{64}", sha256):
+            return None
+        if archive not in {"tar_gz", "zip"}:
+            return None
+        binary_parts = PurePosixPath(binary_path).parts
+        if (
+            not binary_path
+            or binary_path.startswith(("/", "~"))
+            or "\\" in binary_path
+            or ".." in binary_parts
+            or re.search(r"^[A-Za-z]:[\\/]", binary_path)
+        ):
+            return None
+        return PluginLocalAuthArtifactDefinition(
+            url=url,
+            sha256=sha256,
+            archive=archive,
+            binaryPath=binary_path,
+        )
 
     def _join_root_path(self, root: str, path: str) -> str:
         normalized = path[2:] if path.startswith("./") else path

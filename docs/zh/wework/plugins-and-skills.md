@@ -29,3 +29,7 @@ Wegent 市场发布和上传同时接受包含 `.codex-plugin/plugin.json` 或 `
 在 **设置 → 编码 → 技能** 中可以查看本地 Skills。需要同时使用 Codex 和 Claude Code 时，可以启用统一管理，将两者的技能目录统一到 `~/.agents/skills`。
 
 重名 Skill 会保留并使用来源后缀区分。迁移完成后，新任务的自动补全会显示统一目录中的 Skills。
+
+## 开发与迁移
+
+如果你需要开发插件、把开源插件迁入 Wework 市场，或理解云端市场与本机 Codex 安装的关系，请阅读 [插件市场开发指南](./developer-guide/wework-plugin-marketplace-dev.md)。

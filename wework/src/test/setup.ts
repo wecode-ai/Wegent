@@ -71,50 +71,73 @@ function hasStorageApi(value: unknown): value is Storage {
   )
 }
 
-function createMemoryStorage(): Storage {
-  const values = new Map<string, string>()
+class MemoryStorage implements Storage {
+  private readonly values = new Map<string, string>()
 
-  return {
-    get length() {
-      return values.size
-    },
-    clear() {
-      values.clear()
-    },
-    getItem(key: string) {
-      return values.get(String(key)) ?? null
-    },
-    key(index: number) {
-      return Array.from(values.keys())[index] ?? null
-    },
-    removeItem(key: string) {
-      values.delete(String(key))
-    },
-    setItem(key: string, value: string) {
-      values.set(String(key), String(value))
-    },
+  get length() {
+    return this.values.size
+  }
+
+  clear() {
+    this.values.clear()
+  }
+
+  getItem(key: string) {
+    return this.values.get(String(key)) ?? null
+  }
+
+  key(index: number) {
+    return Array.from(this.values.keys())[index] ?? null
+  }
+
+  removeItem(key: string) {
+    this.values.delete(String(key))
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(String(key), String(value))
   }
 }
 
-function windowStorage(name: StorageName): Storage {
+function resolveTestStorage() {
   try {
-    const storage = window[name]
-    if (hasStorageApi(storage)) {
-      return storage
+    const localStorage = window.localStorage
+    const sessionStorage = window.sessionStorage
+    if (!hasStorageApi(localStorage) || !hasStorageApi(sessionStorage)) {
+      throw new Error('Incomplete browser storage API')
+    }
+    return {
+      constructor: window.Storage,
+      localStorage,
+      sessionStorage,
     }
   } catch {
-    // Some Node versions expose an incomplete Storage global in test workers.
+    const localStorage = new MemoryStorage()
+    const sessionStorage = new MemoryStorage()
+    Object.defineProperties(window, {
+      localStorage: { configurable: true, value: localStorage },
+      sessionStorage: { configurable: true, value: sessionStorage },
+    })
+    return {
+      constructor: MemoryStorage,
+      localStorage,
+      sessionStorage,
+    }
   }
-  return createMemoryStorage()
 }
 
-function installStorageGlobal(name: StorageName) {
-  const existing = (globalThis as typeof globalThis & Record<StorageName, unknown>)[name]
-  const storage = hasStorageApi(existing) ? existing : windowStorage(name)
+const testStorage = resolveTestStorage()
 
+Object.defineProperty(globalThis, 'Storage', {
+  configurable: true,
+  value: testStorage.constructor,
+  writable: true,
+})
+
+function installStorageGlobal(name: StorageName) {
   Object.defineProperty(globalThis, name, {
     configurable: true,
-    value: storage,
+    value: testStorage[name],
     writable: true,
   })
 }

@@ -908,6 +908,16 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     {
         request.auth_token = Some(config.auth_token.clone());
     }
+    if request
+        .runtime_auth_token
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+        && !config.runtime_auth_token.trim().is_empty()
+    {
+        request.runtime_auth_token = Some(config.runtime_auth_token.clone());
+    }
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
@@ -952,6 +962,7 @@ mod tests {
             backend_url: "https://backend.example.com".to_string(),
             socket_url: "wss://socket.example.com".to_string(),
             auth_token: "token".to_string(),
+            runtime_auth_token: "runtime-token".to_string(),
             device_id: device_id.to_string(),
             runtime_instance_id: "runtime-1".to_string(),
             device_name: "Cloud Device".to_string(),
@@ -1009,6 +1020,7 @@ mod tests {
             Some("https://backend.example.com")
         );
         assert_eq!(request.auth_token.as_deref(), Some("token"));
+        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
         assert_eq!(request.device_id.as_deref(), Some("local-device"));
     }
 }
