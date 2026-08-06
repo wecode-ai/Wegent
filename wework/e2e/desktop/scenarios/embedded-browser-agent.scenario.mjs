@@ -773,14 +773,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
 
       let screenshotResult
       if (process.platform === 'darwin') {
-        assert.equal(capabilities.actions.screenshot.viewport, true)
+        assert.equal(capabilities.screenshot.viewport, true)
         screenshotResult = await bridgeCall({ action: 'screenshot' })
         assert.equal(screenshotResult.kind, 'browser.screenshot')
         assert.equal(screenshotResult.format, 'png')
         assert.ok(screenshotResult.screenshotId)
         assert.ok(screenshotResult.path.endsWith('.png'))
       } else {
-        assert.equal(capabilities.actions.screenshot.viewport, false)
+        assert.equal(capabilities.screenshot.viewport, false)
         const screenshotResponse = await callBridgeResponse(bridgeIdentity, {
           action: 'screenshot',
         })
