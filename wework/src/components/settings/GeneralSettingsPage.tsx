@@ -424,15 +424,19 @@ export function GeneralSettingsPage() {
               />
             }
           />
-          <SettingsRow
-            label={t('workbench.friendly_task_titles_model', '标题模型')}
-            description={t(
-              'workbench.friendly_task_titles_model_desc',
-              '仅用于生成任务标题，不影响当前任务使用的模型。'
-            )}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+          <div data-testid="friendly-task-title-model-row" className="px-4 pb-3">
+            <div className="ml-3 flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2.5 max-sm:ml-0 max-sm:flex-col max-sm:items-stretch">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-text-primary">
+                  {t('workbench.friendly_task_titles_model', '标题模型')}
+                </div>
+                <p className="mt-0.5 text-xs text-text-secondary">
+                  {t(
+                    'workbench.friendly_task_titles_model_desc',
+                    '仅用于生成任务标题，不影响当前任务使用的模型。'
+                  )}
+                </p>
+              </div>
               <select
                 data-testid="friendly-task-title-model-select"
                 value={friendlyTitleModelKey}
@@ -446,7 +450,7 @@ export function GeneralSettingsPage() {
                     modelName ? (modelType as UnifiedModel['type']) : null
                   )
                 }}
-                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[300px]"
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[220px]"
               >
                 <option value="">
                   {t('workbench.friendly_task_titles_model_empty', '请选择模型')}
@@ -457,8 +461,8 @@ export function GeneralSettingsPage() {
                   </option>
                 ))}
               </select>
-            }
-          />
+            </div>
+          </div>
           <SettingsRow
             label={
               <span className="flex items-center gap-2">
