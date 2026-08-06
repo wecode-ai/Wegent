@@ -41,6 +41,7 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
   ArchiveRuntimeConversationsResult,
+  RefreshWorkLists,
 } from './workbenchContextTypes'
 import { evictRuntimeConversation } from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
@@ -53,7 +54,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   services: WorkbenchServices
   lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
 }
 
 const runtimeTranscriptRequests = new Map<string, Promise<RuntimePaneTranscript>>()
@@ -265,7 +266,7 @@ export function useWorkbenchRuntimeTasks({
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
-        await refreshWorkLists()
+        await refreshWorkLists({ syncCloud: false })
       }
       const failedResult = results.find(result => !result.response?.accepted)
       if (!failedResult) return { status: 'archived' }

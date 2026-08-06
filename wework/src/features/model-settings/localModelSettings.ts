@@ -8,7 +8,9 @@ export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
-export const DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash-vision'
+export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
+export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
+export const DEEPSEEK_V4_PRO_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
@@ -184,7 +186,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
-    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID &&
+    deepSeekCatalogModelIdFor(legacyConfig.modelId) !== undefined &&
     legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
     storedApiFormat === 'openai-chat-completions' &&
     normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
@@ -222,9 +224,8 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           : undefined
       : undefined
   const deepSeekCatalogModelId =
-    legacyConfig.providerProfileId === 'deepseek' &&
-    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID
-      ? DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+    legacyConfig.providerProfileId === 'deepseek'
+      ? deepSeekCatalogModelIdFor(legacyConfig.modelId)
       : undefined
   const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
@@ -283,6 +284,16 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     baseUrl: splitUrl.baseUrl,
     requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat),
   }
+}
+
+export function deepSeekCatalogModelIdFor(modelId: string): string | undefined {
+  if (modelId === DEEPSEEK_V4_FLASH_MODEL_ID) {
+    return DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+  }
+  if (modelId === DEEPSEEK_V4_PRO_MODEL_ID) {
+    return DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
+  }
+  return undefined
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {

@@ -1365,6 +1365,9 @@ function ArchiveRemoteRuntimeTaskProbe() {
       >
         archive remote task
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        refresh work lists
+      </button>
     </div>
   )
 }
@@ -2511,6 +2514,71 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('device-ids')).toHaveTextContent('refreshed-device')
+    )
+  })
+
+  test('does not leave cloud work stuck syncing when a sync is superseded', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('syncing')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    await act(async () => {
+      runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      await runtimeWork.promise
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).not.toHaveTextContent('syncing')
+    )
+  })
+
+  test('does not leave cloud work stuck syncing when a task is archived mid-sync', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock()
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <ArchiveRemoteRuntimeTaskProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('syncing')
+    )
+
+    await userEvent.click(screen.getByText('archive remote task'))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).not.toHaveTextContent('syncing')
     )
   })
 
@@ -6473,7 +6541,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 
-  test('does not restore an archived remote task from the previous cloud snapshot', async () => {
+  test('archives a remote task locally without triggering a cloud sync', async () => {
     const remoteRuntimeWork: RuntimeWorkListResponse = {
       projects: [
         {
@@ -6537,10 +6605,78 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('archive remote task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    expect(cloudListRuntimeWork).toHaveBeenCalledTimes(1)
 
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
     postArchiveCloudWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    )
+  })
+
+  test('keeps an archived remote task hidden when the local list refresh fails', async () => {
+    const remoteRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'remote-project', name: 'Remote Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/srv/Wegent',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              tasks: [
+                {
+                  taskId: 'remote-task',
+                  workspacePath: '/srv/Wegent',
+                  title: 'Remote task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockRejectedValue(new Error('local list unavailable')),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: '10.201.3.200',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+          }),
+        ]),
+        listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+      },
+    })
+
+    renderWorkbench(<ArchiveRemoteRuntimeTaskProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('Remote task')
+    )
+    runtimeWorkApi.listRuntimeWork.mockClear()
+    await userEvent.click(screen.getByText('archive remote task'))
+
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
     await waitFor(() =>
       expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
     )
@@ -7778,6 +7914,64 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
     expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('hydrates queued plugin trial input into the current runtime task', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await userEvent.click(await screen.findByText('open project runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    const standaloneChatKey = screen.getByTestId('standalone-chat-key').textContent
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@OpenAI Bundled) ',
+        pluginName: 'Documents',
+      })
+    )
+    window.dispatchEvent(new Event('wework:plugin-trial-queued'))
+
+    await waitFor(() => expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents'))
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(standaloneChatKey ?? '')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('opens a queued plugin trial in a new chat under the current project', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await userEvent.click(await screen.findByText('open project runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    const standaloneChatKey = Number(screen.getByTestId('standalone-chat-key').textContent)
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@OpenAI Bundled) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    window.dispatchEvent(new Event('wework:plugin-trial-queued'))
+
+    await waitFor(() => expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(
+      String(standaloneChatKey + 1)
+    )
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 

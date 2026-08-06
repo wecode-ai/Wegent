@@ -43,6 +43,8 @@ import {
   RerankConfig,
   VideoGenerationConfig,
   AvailableModel,
+  UnifiedModel,
+  VisionSidecarModelRef,
 } from '@/apis/models'
 import {
   ImageConfigSection,
@@ -58,6 +60,12 @@ import {
 import { CapabilityScopeSelector } from '@/features/resource-library/components/CapabilityScopeSelector'
 import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
 import type { Group } from '@/types/group'
+import {
+  matchesVisionSidecarRef,
+  visionSidecarModelKey,
+  visionSidecarModels,
+  visionSidecarRef,
+} from '@/features/settings/utils/vision-sidecar-model'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -98,6 +106,7 @@ export interface ModelFormData {
   supportsImageInput?: boolean
   supportsVideoInput?: boolean
   isWeworkAvailable?: boolean
+  visionSidecarModel?: VisionSidecarModelRef
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -126,6 +135,7 @@ export interface ModelInitialData {
   thinkingConfig?: Record<string, unknown>
   modelCapabilities?: ModelCapabilities
   isWeworkAvailable?: boolean
+  visionSidecarModel?: VisionSidecarModelRef
 }
 
 /**
@@ -325,6 +335,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
             isWeworkAvailable: model.spec.isWeworkAvailable,
+            visionSidecarModel: model.spec.modelConfig?.visionSidecarModel,
           }
         : null)
     )
@@ -403,6 +414,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   // Wework desktop client availability
   const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
+  const [selectedVisionSidecarKey, setSelectedVisionSidecarKey] = useState('')
+  const [availableVisionModels, setAvailableVisionModels] = useState<UnifiedModel[]>([])
+  const [loadingVisionModels, setLoadingVisionModels] = useState(false)
 
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<string[]>([])
@@ -541,6 +555,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
         // Load wework availability
         setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
+        setSelectedVisionSidecarKey('')
       } else {
         // Reset for new model
         setModelIdName('')
@@ -578,6 +593,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setSupportsVideoInput(false)
         // Reset wework availability
         setIsWeworkAvailable(false)
+        setSelectedVisionSidecarKey('')
         setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
@@ -596,26 +612,65 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }, [open, effectiveInitialData])
 
+  useEffect(() => {
+    if (!open || modelCategoryType !== 'llm' || !isWeworkAvailable) {
+      setAvailableVisionModels([])
+      return
+    }
+    let cancelled = false
+    setLoadingVisionModels(true)
+    void modelApis
+      .getUnifiedModels(undefined, true, 'all', undefined, 'llm')
+      .then(response => {
+        if (cancelled) return
+        setAvailableVisionModels(response.data)
+        const initialRef = effectiveInitialData?.visionSidecarModel
+        if (initialRef) {
+          const selected = response.data.find(candidate =>
+            matchesVisionSidecarRef(candidate, initialRef)
+          )
+          setSelectedVisionSidecarKey(selected ? visionSidecarModelKey(selected) : '')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableVisionModels([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingVisionModels(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveInitialData?.visionSidecarModel, isWeworkAvailable, modelCategoryType, open])
+
+  const visionModelOptions = React.useMemo(
+    () => visionSidecarModels(availableVisionModels, modelIdName),
+    [availableVisionModels, modelIdName]
+  )
+
   // Determine model options based on model category type and provider
   // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
   // For video models, use provider-specific options
-  const baseModelOptions =
-    modelCategoryType === 'embedding' ||
-    modelCategoryType === 'rerank' ||
-    modelCategoryType === 'image'
-      ? [{ value: 'custom', label: 'Custom...' }]
-      : modelCategoryType === 'video'
-        ? providerType === 'seedance'
-          ? SEEDANCE_MODEL_OPTIONS
-          : [{ value: 'custom', label: 'Custom...' }]
-        : providerType === 'openai' || providerType === 'openai-responses'
-          ? OPENAI_MODEL_OPTIONS
-          : providerType === 'gemini'
-            ? GEMINI_MODEL_OPTIONS
-            : providerType === 'gemini-deep-research'
-              ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-              : ANTHROPIC_MODEL_OPTIONS
+  const baseModelOptions = React.useMemo(
+    () =>
+      modelCategoryType === 'embedding' ||
+      modelCategoryType === 'rerank' ||
+      modelCategoryType === 'image'
+        ? [{ value: 'custom', label: 'Custom...' }]
+        : modelCategoryType === 'video'
+          ? providerType === 'seedance'
+            ? SEEDANCE_MODEL_OPTIONS
+            : [{ value: 'custom', label: 'Custom...' }]
+          : providerType === 'openai' || providerType === 'openai-responses'
+            ? OPENAI_MODEL_OPTIONS
+            : providerType === 'gemini'
+              ? GEMINI_MODEL_OPTIONS
+              : providerType === 'gemini-deep-research'
+                ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+                : ANTHROPIC_MODEL_OPTIONS,
+    [modelCategoryType, providerType]
+  )
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -1140,6 +1195,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
           ? rawModelCapabilities
           : undefined
+      const selectedVisionModel =
+        modelCategoryType === 'llm' && isWeworkAvailable
+          ? visionModelOptions.find(
+              candidate => visionSidecarModelKey(candidate) === selectedVisionSidecarKey
+            )
+          : undefined
+      const selectedVisionSidecar = selectedVisionModel
+        ? (visionSidecarRef(selectedVisionModel) ?? undefined)
+        : undefined
 
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
@@ -1188,6 +1252,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               maxOutputTokens && {
                 max_output_tokens: maxOutputTokens,
               }),
+            ...(selectedVisionSidecar && { visionSidecarModel: selectedVisionSidecar }),
           },
           modelType: modelCategoryType,
           // Save protocol/apiFormat so downstream routing can pick the right upstream endpoint.
@@ -1268,6 +1333,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         supportsImageInput,
         supportsVideoInput,
         isWeworkAvailable,
+        visionSidecarModel: selectedVisionSidecar,
       }
 
       // If custom onSave callback is provided, use it
@@ -1503,6 +1569,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     variant="outline"
                     role="combobox"
                     aria-expanded={modelIdPopoverOpen}
+                    data-testid="model-id-select"
                     className="w-full justify-between bg-base font-normal"
                   >
                     {modelId
@@ -1574,6 +1641,52 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               )}
             </div>
           </div>
+
+          {modelCategoryType === 'llm' && isWeworkAvailable && (
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <Label htmlFor="vision-sidecar-model" className="text-sm font-medium">
+                {t('common:models.vision_sidecar_model')}
+              </Label>
+              <Select
+                value={selectedVisionSidecarKey || 'disabled'}
+                onValueChange={value =>
+                  setSelectedVisionSidecarKey(value === 'disabled' ? '' : value)
+                }
+                disabled={loadingVisionModels}
+              >
+                <SelectTrigger
+                  id="vision-sidecar-model"
+                  data-testid="vision-sidecar-model-select"
+                  className="bg-base"
+                >
+                  <SelectValue
+                    placeholder={
+                      loadingVisionModels
+                        ? t('common:models.vision_sidecar_loading')
+                        : t('common:models.vision_sidecar_disabled')
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disabled">
+                    {t('common:models.vision_sidecar_disabled')}
+                  </SelectItem>
+                  {visionModelOptions.map(candidate => (
+                    <SelectItem
+                      key={visionSidecarModelKey(candidate)}
+                      value={visionSidecarModelKey(candidate)}
+                    >
+                      {candidate.displayName || candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">{t('common:models.vision_sidecar_hint')}</p>
+              {!loadingVisionModels && visionModelOptions.length === 0 && (
+                <p className="text-xs text-warning">{t('common:models.vision_sidecar_empty')}</p>
+              )}
+            </div>
+          )}
 
           {/* API Key */}
           <div className="space-y-2">

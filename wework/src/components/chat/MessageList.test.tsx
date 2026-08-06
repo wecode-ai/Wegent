@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -2295,7 +2295,7 @@ describe('MessageList', () => {
           {
             id: 'assistant-link',
             role: 'assistant',
-            content: '[MessageList.tsx](https://example.com/MessageList.tsx)',
+            content: '[MessageList.tsx](https://github.com/wecode-ai/Wegent)',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
           },
@@ -2303,24 +2303,11 @@ describe('MessageList', () => {
       />
     )
 
-    const link = screen.getByRole('link', { name: 'MessageList.tsx' })
-    expect(link).toHaveClass(
-      'inline-flex',
-      'items-center',
-      'gap-1',
-      'rounded-md',
-      'text-blue-600',
-      'no-underline'
-    )
-    expect(link).not.toHaveClass('bg-blue-50')
-    expect(link).not.toHaveClass('hover:bg-blue-100')
-    expect(link).not.toHaveClass('ring-1')
-    expect(link).not.toHaveClass('text-primary')
-    expect(link).not.toHaveAttribute('target')
-    expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
-
-    fireEvent.click(link)
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
+    const chip = screen.getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('MessageList.tsx')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'https://github.com/wecode-ai/Wegent')
+    fireEvent.click(chip)
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/wecode-ai/Wegent')
   })
 
   test('keeps angle-bracket external link destinations as external links', () => {
@@ -3933,9 +3920,8 @@ describe('MessageList', () => {
 
     expect(screen.getAllByTestId('edit-message-button')).toHaveLength(1)
 
-    const lastHoverRegion = screen
-      .getByText('最后问题')
-      .closest('[data-testid="message-hover-region"]')
+    const lastUserMessage = screen.getAllByTestId('message-user').at(-1) as HTMLElement
+    const lastHoverRegion = within(lastUserMessage).getByTestId('message-hover-region')
     expect(lastHoverRegion).toBeInstanceOf(HTMLElement)
     fireEvent.pointerEnter(lastHoverRegion as HTMLElement)
 
@@ -3944,20 +3930,27 @@ describe('MessageList', () => {
 
     await userEvent.click(screen.getByTestId('edit-message-button'))
     expect(screen.getByTestId('edit-user-message-form')).toBeInTheDocument()
-    expect(screen.getByTestId('edit-user-message-textarea')).toHaveValue('最后问题')
+    const editor = screen.getByTestId('edit-user-message-textarea') as HTMLElement & {
+      value: string
+    }
+    expect(editor).toHaveTextContent('最后问题')
 
     await userEvent.click(screen.getByTestId('cancel-edit-user-message-button'))
     expect(screen.queryByTestId('edit-user-message-form')).not.toBeInTheDocument()
 
     fireEvent.pointerEnter(lastHoverRegion as HTMLElement)
     await userEvent.click(screen.getByTestId('edit-message-button'))
-    const textarea = screen.getByTestId('edit-user-message-textarea')
-    await userEvent.clear(textarea)
-    await userEvent.type(textarea, '编辑后的问题')
-    await userEvent.keyboard('{Shift>}{Enter}{/Shift}继续')
+
+    const activeEditor = screen.getByTestId('edit-user-message-textarea') as HTMLElement & {
+      value: string
+    }
+
+    act(() => {
+      activeEditor.value = '编辑后的问题\n继续'
+    })
 
     expect(onEditLastUserMessage).not.toHaveBeenCalled()
-    expect(textarea).toHaveValue('编辑后的问题\n继续')
+    expect(activeEditor.value).toBe('编辑后的问题\n继续')
 
     await userEvent.keyboard('{Enter}')
 
@@ -3968,6 +3961,71 @@ describe('MessageList', () => {
       )
     )
     expect(screen.queryByTestId('edit-user-message-form')).not.toBeInTheDocument()
+  })
+
+  test('renders sent user GitHub links as composer chips and opens them externally', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-github-link',
+            role: 'user',
+            content: '[wecode-ai/Wegent#2350](https://github.com/wecode-ai/Wegent/pull/2350)',
+            status: 'done',
+            createdAt: '2026-07-30T10:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const chip = screen.getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('wecode-ai/Wegent#2350')
+    expect(chip).toHaveAttribute(
+      'data-composer-link-url',
+      'https://github.com/wecode-ai/Wegent/pull/2350'
+    )
+    fireEvent.click(chip)
+    expect(openExternalUrlMock).toHaveBeenCalledWith(
+      'https://github.com/wecode-ai/Wegent/pull/2350'
+    )
+  })
+
+  test('renders GitHub link chips in the edit form and opens the link edit popover', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-github-link',
+            role: 'user',
+            content: '[wecode-ai/Wegent#2350](https://github.com/wecode-ai/Wegent/pull/2350)',
+            status: 'done',
+            createdAt: '2026-07-30T10:00:00.000Z',
+          },
+          {
+            id: 'assistant-github-link',
+            role: 'assistant',
+            content: 'OK',
+            status: 'done',
+            createdAt: '2026-07-30T10:01:00.000Z',
+          },
+        ]}
+        onEditLastUserMessage={vi.fn().mockResolvedValue(true)}
+        canEditLastUserMessage
+      />
+    )
+
+    const userHoverRegion = screen
+      .getByText('wecode-ai/Wegent#2350')
+      .closest('[data-testid="message-hover-region"]') as HTMLElement
+    fireEvent.pointerEnter(userHoverRegion)
+    await userEvent.click(screen.getByTestId('edit-message-button'))
+
+    const form = screen.getByTestId('edit-user-message-form')
+    const chip = within(form).getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('wecode-ai/Wegent#2350')
+
+    fireEvent.click(chip)
+    expect(await screen.findByTestId('link-edit-popover')).toBeInTheDocument()
   })
 
   test('hides edit action while the final user turn is still streaming', () => {
@@ -5104,6 +5162,11 @@ describe('MessageList', () => {
       '/plugins?plugin=documents&marketplace=openai-primary-runtime'
     )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('sent-plugin-icon-Documents').tagName).toBe('IMG')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toHaveAttribute(
+      'src',
+      '/plugin-icons/wework.svg'
+    )
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
     )

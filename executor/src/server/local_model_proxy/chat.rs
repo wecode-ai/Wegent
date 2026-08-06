@@ -176,7 +176,7 @@ fn responses_to_chat_with_namespace_mode(
     }
     apply_reasoning_options(body, &mut result, kimi_k3_compat);
 
-    let tools = chat_tools(body, &context);
+    let tools = chat_tools(body, &context, kimi_k3_compat);
     if !tools.is_empty() {
         result.insert("tools".to_owned(), Value::Array(tools));
         if let Some(choice) = body.get("tool_choice") {
@@ -372,7 +372,7 @@ fn unique_wire_name(context: &ToolContext, preferred: String) -> String {
     unreachable!("an unused tool name suffix must exist")
 }
 
-fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
+fn chat_tools(body: &Value, context: &ToolContext, kimi_k3_compat: bool) -> Vec<Value> {
     let mut converted = Vec::new();
     for tool in body
         .get("tools")
@@ -390,18 +390,25 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
                 .into_iter()
                 .flatten()
             {
-                if let Some(converted_tool) = chat_tool(inner_tool, Some(namespace), context) {
+                if let Some(converted_tool) =
+                    chat_tool(inner_tool, Some(namespace), context, kimi_k3_compat)
+                {
                     converted.push(converted_tool);
                 }
             }
-        } else if let Some(converted_tool) = chat_tool(tool, None, context) {
+        } else if let Some(converted_tool) = chat_tool(tool, None, context, kimi_k3_compat) {
             converted.push(converted_tool);
         }
     }
     converted
 }
 
-fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Option<Value> {
+fn chat_tool(
+    tool: &Value,
+    namespace: Option<&str>,
+    context: &ToolContext,
+    kimi_k3_compat: bool,
+) -> Option<Value> {
     let name = tool.get("name")?.as_str()?;
     let wire_name = context.wire_name(namespace, name)?;
     if context.is_custom(wire_name) {
@@ -439,7 +446,7 @@ fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Op
     }
     function.insert(
         "parameters".to_owned(),
-        normalize_function_parameters(tool.get("parameters")),
+        normalize_function_parameters(tool.get("parameters"), kimi_k3_compat),
     );
     if let Some(strict) = tool.get("strict") {
         function.insert("strict".to_owned(), strict.clone());
@@ -447,18 +454,109 @@ fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Op
     Some(json!({"type": "function", "function": function}))
 }
 
-fn normalize_function_parameters(parameters: Option<&Value>) -> Value {
+fn normalize_function_parameters(parameters: Option<&Value>, kimi_k3_compat: bool) -> Value {
     let mut normalized = match parameters {
         Some(Value::Object(parameters)) => Value::Object(parameters.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
-    let object = normalized
+    if kimi_k3_compat {
+        // Moonshot requires function parameters to declare an object type, while anyOf
+        // schemas must declare types only on their branches.
+        ensure_function_parameters_object_type(&mut normalized);
+        normalize_kimi_k3_schema(&mut normalized);
+        nest_root_any_of_constraint(&mut normalized);
+    }
+    ensure_function_parameters_object_type(&mut normalized);
+    normalized
+}
+
+fn ensure_function_parameters_object_type(schema: &mut Value) {
+    let object = schema
         .as_object_mut()
         .expect("normalized function parameters must be an object");
     if object.get("type").and_then(Value::as_str) != Some("object") {
         object.insert("type".to_owned(), Value::String("object".to_owned()));
     }
-    normalized
+}
+
+fn normalize_kimi_k3_schema(schema: &mut Value) {
+    match schema {
+        Value::Object(object) => {
+            for (keyword, value) in object.iter_mut() {
+                if !matches!(
+                    keyword.as_str(),
+                    "const" | "default" | "enum" | "example" | "examples"
+                ) {
+                    normalize_kimi_k3_schema(value);
+                }
+            }
+            move_compatible_parent_type_to_any_of(object);
+        }
+        Value::Array(values) => {
+            for value in values {
+                normalize_kimi_k3_schema(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn move_compatible_parent_type_to_any_of(schema: &mut Map<String, Value>) {
+    let Some(parent_type) = schema.get("type").cloned() else {
+        return;
+    };
+    let can_move = schema
+        .get("anyOf")
+        .and_then(Value::as_array)
+        .is_some_and(|branches| {
+            !branches.is_empty()
+                && branches.iter().all(|branch| {
+                    branch.as_object().is_some_and(|branch| {
+                        branch
+                            .get("type")
+                            .map_or(true, |branch_type| branch_type == &parent_type)
+                    })
+                })
+        });
+    if !can_move {
+        return;
+    }
+    if let Some(branches) = schema.get_mut("anyOf").and_then(Value::as_array_mut) {
+        for branch in branches {
+            branch
+                .as_object_mut()
+                .expect("compatible anyOf branches must be objects")
+                .entry("type".to_owned())
+                .or_insert_with(|| parent_type.clone());
+        }
+    }
+    schema.remove("type");
+}
+
+fn nest_root_any_of_constraint(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if object.get("allOf").is_some_and(|value| !value.is_array()) {
+        return;
+    }
+    let Some(any_of) = object
+        .get("anyOf")
+        .and_then(Value::as_array)
+        .filter(|branches| !branches.is_empty())
+        .cloned()
+    else {
+        return;
+    };
+    object.remove("anyOf");
+    let constraint = json!({"anyOf": any_of});
+    match object.get_mut("allOf") {
+        Some(Value::Array(all_of)) => all_of.push(constraint),
+        Some(_) => unreachable!("non-array allOf was rejected above"),
+        None => {
+            object.insert("allOf".to_owned(), Value::Array(vec![constraint]));
+        }
+    }
 }
 
 fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
@@ -2119,6 +2217,29 @@ mod tests {
     use super::*;
     use futures_util::StreamExt;
 
+    fn typed_any_of_parameters() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "title": {"type": "string"},
+                "metadata": {
+                    "type": "object",
+                    "anyOf": [
+                        {"type": "object", "required": ["label"]},
+                        {"required": ["description"]}
+                    ]
+                }
+            },
+            "required": ["project_id"],
+            "anyOf": [
+                {"type": "object", "required": ["title"]},
+                {"type": "object", "required": ["metadata"]}
+            ],
+            "additionalProperties": false
+        })
+    }
+
     #[test]
     fn converts_responses_request_with_history_and_custom_tool() {
         let input = json!({
@@ -2386,6 +2507,107 @@ mod tests {
             converted["tools"][0]["function"]["parameters"]["type"],
             "object"
         );
+    }
+
+    #[test]
+    fn normalizes_typed_any_of_schemas_for_kimi_k3() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "namespace",
+                "name": "wegent_apps",
+                "tools": [{
+                    "type": "function",
+                    "name": "wegent_sites__update_site_metadata",
+                    "parameters": typed_any_of_parameters()
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("anyOf").is_none());
+        assert!(parameters["properties"]["metadata"].get("type").is_none());
+        assert!(parameters["allOf"][0]["anyOf"]
+            .as_array()
+            .expect("root anyOf")
+            .iter()
+            .all(|branch| branch["type"] == "object"));
+        assert!(parameters["properties"]["metadata"]["anyOf"]
+            .as_array()
+            .expect("nested anyOf")
+            .iter()
+            .all(|branch| branch["type"] == "object"));
+    }
+
+    #[test]
+    fn normalizes_untyped_root_any_of_schema_for_kimi_k3() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "anyOf": [{"required": ["title"]}]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("anyOf").is_none());
+        assert_eq!(parameters["allOf"][0]["anyOf"][0]["type"], "object");
+    }
+
+    #[test]
+    fn preserves_existing_root_all_of_when_nesting_any_of_for_kimi_k3() {
+        let existing_constraint = json!({
+            "type": "object",
+            "required": ["project_id"]
+        });
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "type": "object",
+                    "allOf": [existing_constraint.clone()],
+                    "anyOf": [{"required": ["title"]}]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+        let all_of = parameters["allOf"].as_array().expect("root allOf");
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(all_of.len(), 2);
+        assert_eq!(all_of[0], existing_constraint);
+        assert_eq!(all_of[1]["anyOf"][0]["type"], "object");
+    }
+
+    #[test]
+    fn preserves_typed_any_of_schema_for_non_kimi_chat_models() {
+        let input = json!({
+            "model": "gpt-compatible-model",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": typed_any_of_parameters()
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(parameters["properties"]["metadata"]["type"], "object");
     }
 
     #[test]

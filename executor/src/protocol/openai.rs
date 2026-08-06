@@ -110,6 +110,7 @@ impl OpenAIResponsesRequest {
             user_name: get_string(&metadata, "user_name")
                 .or_else(|| metadata_user_string(&metadata, "user_name")),
             auth_token: get_string(&metadata, "auth_token"),
+            runtime_auth_token: get_string(&metadata, "runtime_auth_token"),
             skill_identity_token: get_string(&metadata, "skill_identity_token"),
             extra: extra_metadata(&metadata),
         }
@@ -283,6 +284,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "validation_params",
     "user_name",
     "auth_token",
+    "runtime_auth_token",
     "skill_identity_token",
 ];
 

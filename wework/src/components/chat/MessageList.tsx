@@ -44,11 +44,13 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
+import { getRecognizedLink } from '@/lib/link-preview'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
+import { ComposerLinkChip } from './ComposerLinkChip'
+import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
-import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -66,7 +68,11 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
-import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
+import {
+  composerPathReference,
+  composerSkillFilePath,
+  resolveComposerMentionBrandIconUrl,
+} from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
@@ -1190,28 +1196,13 @@ function UserMessageEditForm({
   onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
 }) {
   const [draft, setDraft] = useState(initialContent)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLElement | null>(null)
   const trimmedDraft = draft.trim()
   const submitDisabled = submitting || trimmedDraft.length === 0
 
-  const resizeTextarea = () => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 280)}px`
-  }
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.focus()
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-    resizeTextarea()
+  useEffect(() => {
+    textareaRef.current?.focus()
   }, [])
-
-  useLayoutEffect(() => {
-    resizeTextarea()
-  }, [draft])
 
   const submit = () => {
     if (submitDisabled) return
@@ -1223,26 +1214,26 @@ function UserMessageEditForm({
       data-testid="edit-user-message-form"
       className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-base leading-5 text-text-primary"
     >
-      <textarea
-        ref={textareaRef}
-        data-testid="edit-user-message-textarea"
+      <ComposerTextarea
+        textareaRef={textareaRef}
+        testId="edit-user-message-textarea"
         value={draft}
+        onChange={setDraft}
+        onSubmit={value => void onSubmit?.((value ?? draft).trim())}
+        canSend={trimmedDraft.length > 0}
         disabled={submitting}
-        onChange={event => setDraft(event.target.value)}
+        placeholder=""
+        rows={2}
+        disableAutocomplete
         onKeyDown={event => {
-          if (isImeEnterEvent(event)) return
-          if (event.key === 'Enter' && event.shiftKey) return
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            submit()
-            return
-          }
           if (event.key === 'Escape') {
             event.preventDefault()
             onCancel?.()
+            return true
           }
+          return false
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="max-h-[280px] min-h-24 w-full overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -1703,6 +1694,7 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
+const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^\s)\]]+)\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1747,7 +1739,7 @@ function renderUserContent(
     const start = match.index ?? 0
     const text = content.slice(offset, start)
     if (text) {
-      parts.push(<span key={`text-${offset}`}>{text}</span>)
+      parts.push(...renderUserTextWithLinks(text, offset))
     }
 
     const mentionName = match[2]
@@ -1756,6 +1748,10 @@ function renderUserContent(
     const pathReference = composerPathReference(match[0])
     const mentionKind = codexMentionKind(href)
     const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+    const brandIconUrl =
+      mentionKind === 'plugin' || mentionKind === 'app'
+        ? resolveComposerMentionBrandIconUrl(href)
+        : null
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
       mentionKind === 'skill'
@@ -1801,6 +1797,13 @@ function renderUserContent(
           )
         ) : mentionKind === 'conversation' ? (
           <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : brandIconUrl ? (
+          <img
+            data-testid={iconTestId}
+            src={brandIconUrl}
+            alt=""
+            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+          />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
@@ -1819,10 +1822,36 @@ function renderUserContent(
 
   const remainingText = content.slice(offset)
   if (remainingText) {
-    parts.push(<span key={`text-${offset}`}>{remainingText}</span>)
+    parts.push(...renderUserTextWithLinks(remainingText, offset))
   }
 
   return parts
+}
+function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let localOffset = 0
+  for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
+    const start = match.index ?? 0
+    const url = match[2] ?? ''
+    if (!getRecognizedLink(url)) continue
+    const before = text.slice(localOffset, start)
+    if (before) {
+      nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
+    }
+    const label = match[1] ?? ''
+    nodes.push(
+      <ComposerLinkChip
+        key={`link-${baseOffset}-${start}`}
+        payload={{ url, label: label || url }}
+      />
+    )
+    localOffset = start + match[0].length
+  }
+  const tail = text.slice(localOffset)
+  if (tail) {
+    nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{tail}</span>)
+  }
+  return nodes
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [
@@ -2196,22 +2225,59 @@ function generatedImageAttachment(image: GeneratedImageArtifact, index: number):
 
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
-    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
+    if (block.type !== 'tool') return []
+    if (block.toolName === 'image_generation') {
+      const payload = block.renderPayload
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+      const imageBase64 = Reflect.get(payload, 'imageBase64')
+      if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+      const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+      return [
+        {
+          id: block.id,
+          src: imageBase64.startsWith('data:')
+            ? imageBase64
+            : `data:image/png;base64,${imageBase64}`,
+          alt:
+            typeof revisedPrompt === 'string' && revisedPrompt.trim()
+              ? revisedPrompt
+              : 'Generated image',
+        },
+      ]
+    }
+
+    if (block.toolName !== 'view_image') return []
     const payload = block.renderPayload
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
-    const imageBase64 = Reflect.get(payload, 'imageBase64')
-    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
-    return [
-      {
-        id: block.id,
-        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
-        alt:
-          typeof revisedPrompt === 'string' && revisedPrompt.trim()
-            ? revisedPrompt
-            : 'Generated image',
-      },
+    const toolInput =
+      typeof Reflect.get(block, 'toolInput') === 'object' && Reflect.get(block, 'toolInput')
+        ? (Reflect.get(block, 'toolInput') as Record<string, unknown>)
+        : null
+    const candidates: Array<unknown> = [
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'dataUrl') : null,
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'imageBase64') : null,
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'src') : null,
+      toolInput?.dataUrl,
+      toolInput?.imageBase64,
+      toolInput?.path,
+      toolInput?.file_path,
+      toolInput?.image_path,
     ]
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string' || !candidate.trim()) continue
+      const src = candidate.startsWith('data:')
+        ? candidate
+        : candidate.startsWith('/') || candidate.includes('://')
+          ? candidate
+          : `data:image/png;base64,${candidate}`
+      return [
+        {
+          id: block.id,
+          src,
+          alt: 'Viewed image',
+        },
+      ]
+    }
+    return []
   })
 }
 

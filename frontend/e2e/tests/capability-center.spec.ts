@@ -153,12 +153,12 @@ test.describe('Capability Center', () => {
     await expect(page.getByTestId('managed-resource-type-tabs')).toHaveCount(0)
 
     await expect(page.getByTestId('resource-library-source-all-button')).toBeVisible()
-    await expect(page.getByTestId('resource-library-source-personal-button')).toBeVisible()
+    await expect(page.getByTestId('resource-library-source-mine-button')).toBeVisible()
     await expect(page.getByTestId('resource-library-source-group-button')).toBeVisible()
     await expect(page.getByTestId('resource-library-source-installed-button')).toBeVisible()
 
-    await page.getByTestId('resource-library-source-personal-button').click()
-    await expect(page).toHaveURL(url => url.searchParams.get('source') === 'personal')
+    await page.getByTestId('resource-library-source-mine-button').click()
+    await expect(page).toHaveURL(url => url.searchParams.get('source') === 'mine')
     await expect(page.getByTestId('my-resources')).toBeVisible()
 
     for (const resourceType of ['model', 'shell', 'retriever']) {

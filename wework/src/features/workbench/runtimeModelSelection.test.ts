@@ -166,6 +166,39 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('passes a configured cloud vision sidecar as a hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'primary-cloud-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        visionSidecarModel: {
+          modelName: 'cloud-vision',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-responses',
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'primary-cloud-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudVisionSidecar:
+          '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
+      },
+    })
+  })
+
   test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',

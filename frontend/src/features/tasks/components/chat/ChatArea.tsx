@@ -75,7 +75,10 @@ import type { UnifiedMessage } from '@wegent/chat-core'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
-import { removeTaskQueryParams } from '@/features/tasks/utils/task-query-params'
+import {
+  removeTaskQueryParams,
+  removeTeamQueryParam,
+} from '@/features/tasks/utils/task-query-params'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -499,6 +502,7 @@ function ChatAreaContent({
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
+  const ignoredTeamIdParamRef = useRef<string | null>(null)
 
   // Filter teams by bind_mode based on current visible agent mode.
   const filteredTeams = useMemo(
@@ -514,6 +518,9 @@ function ChatAreaContent({
   // Team selection logic - using default team from server configuration
   useEffect(() => {
     if (filteredTeams.length === 0) return
+    if (!teamIdFromUrl) {
+      ignoredTeamIdParamRef.current = null
+    }
 
     // Extract team ID from task detail
     const detailTeamId = selectedTaskDetail?.team
@@ -560,7 +567,7 @@ function ChatAreaContent({
 
     // Case 2a: teamId URL param present - select specific team regardless of initialization state
     // This handles navigation after accepting a share invite (/chat?teamId=xxx)
-    if (!taskIdFromUrl && teamIdFromUrl) {
+    if (!taskIdFromUrl && teamIdFromUrl && teamIdFromUrl !== ignoredTeamIdParamRef.current) {
       const targetTeamId = Number(teamIdFromUrl)
       const teamFromUrl =
         filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
@@ -897,6 +904,19 @@ function ChatAreaContent({
   const quickPresetAttachmentIdsRef = useRef<Set<number>>(new Set())
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
+
+  const handleRestoreDefaultTeam = useCallback(() => {
+    const url = new URL(window.location.href)
+    ignoredTeamIdParamRef.current = teamIdFromUrl
+    if (removeTeamQueryParam(url.searchParams)) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${url.pathname}${url.search}${url.hash}`
+      )
+    }
+    restoreDefaultTeam()
+  }, [restoreDefaultTeam, teamIdFromUrl])
 
   const shouldConfirmPendingReplacement =
     runtimeTaskStatus === 'PENDING' &&
@@ -1645,7 +1665,7 @@ function ChatAreaContent({
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     // Only enable restore when default team exists
-    onRestoreDefaultTeam: chatState.defaultTeam ? chatState.restoreDefaultTeam : undefined,
+    onRestoreDefaultTeam: chatState.defaultTeam ? handleRestoreDefaultTeam : undefined,
     isUsingDefaultTeam: chatState.isUsingDefaultTeam,
     taskType: effectiveTaskType,
     teamModeFilter,

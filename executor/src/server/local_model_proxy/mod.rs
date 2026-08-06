@@ -2200,7 +2200,16 @@ mod tests {
         let body = serde_json::to_vec(&json!({
             "model": "cloud-model-resource-name",
             "reasoning": {"effort": "low"},
-            "input": "hello"
+            "input": "hello",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}},
+                    "anyOf": [{"type": "object", "required": ["title"]}]
+                }
+            }]
         }))
         .expect("request body");
 
@@ -2217,6 +2226,14 @@ mod tests {
         assert_eq!(prepared["model"], "cloud-model-resource-name");
         assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
         assert!(prepared.get("reasoning_effort").is_none());
+        assert_eq!(
+            prepared["tools"][0]["function"]["parameters"]["type"],
+            "object"
+        );
+        assert_eq!(
+            prepared["tools"][0]["function"]["parameters"]["allOf"][0]["anyOf"][0]["type"],
+            "object"
+        );
         assert!(matches!(conversion, Some(Conversion::Chat(_))));
     }
 

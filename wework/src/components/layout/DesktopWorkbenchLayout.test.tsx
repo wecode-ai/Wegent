@@ -461,6 +461,7 @@ const startDeviceTerminalSessionMock = vi.fn()
 const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const createTemporaryRuntimeTaskMock = vi.fn()
+const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
@@ -637,6 +638,8 @@ describe('DesktopWorkbenchLayout', () => {
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    sendRuntimePaneMessageMock.mockReset()
+    sendRuntimePaneMessageMock.mockResolvedValue(true)
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
@@ -1129,7 +1132,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onCheckoutEnvironmentBranch ?? baseProps.onCheckoutEnvironmentBranch,
       createEnvironmentBranch:
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
-      sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
+      sendRuntimePaneMessage: sendRuntimePaneMessageMock,
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
@@ -2552,14 +2555,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
     expect(main).not.toHaveClass('ml-1.5')
 
-    fireEvent.pointerEnter(preview)
+    await userEvent.click(within(preview).getByTestId('collapse-sidebar-button'))
 
-    expect(preview).toHaveClass('translate-x-0', 'opacity-100')
-
-    fireEvent.pointerLeave(preview)
-
-    expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
-    expect(main).not.toHaveClass('ml-1.5')
+    expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('desktop-sidebar')).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.queryByTestId('desktop-sidebar-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-sidebar-hover-edge')).not.toBeInTheDocument()
   })
 
   test('keeps sidebar controls out of the page chrome in Tauri', async () => {
@@ -4377,7 +4378,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
 
@@ -4824,7 +4825,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
@@ -4880,9 +4881,9 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
@@ -4910,7 +4911,152 @@ describe('DesktopWorkbenchLayout', () => {
       createResult.resolve(optimisticAddress)
       await createResult.promise
     })
-  })
+  }, 15_000)
+
+  test('temporary chat queues a follow-up while its current response is running', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+    expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantSettled?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantSettled?.())
+
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'queued follow-up'
+    )
+  }, 15_000)
+
+  test('editing a temporary chat queued message replaces draft attachments', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-queued-attachments',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['queued attachment'], 'queued-attachment.txt', { type: 'text/plain' })
+    )
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
+
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['draft attachment'], 'draft-attachment.txt', { type: 'text/plain' })
+    )
+    expect(await within(sideChat).findByTitle('draft attachment')).toBeInTheDocument()
+
+    await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
+    await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
+
+    expect(sideChatInput).toHaveValue('queued follow-up')
+    expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
+    expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
+    expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
+  }, 15_000)
+
+  test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-stale-busy',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    const retryResult = createDeferred<boolean>()
+    let sendAttempt = 0
+    sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
+      sendAttempt += 1
+      if (sendAttempt === 1) {
+        options?.onError?.('runtime task is already running')
+        return false
+      }
+      return retryResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await userEvent.type(sideChatInput, 'follow-up during stale state')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(2))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'follow-up during stale state'
+    )
+    expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
+
+    await act(async () => {
+      retryResult.resolve(true)
+      await retryResult.promise
+    })
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'follow-up during stale state'
+    )
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -4928,9 +5074,9 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
@@ -4951,7 +5097,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
     expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
-  })
+  }, 15_000)
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
     const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
@@ -7993,6 +8139,118 @@ describe('DesktopWorkbenchLayout', () => {
       )
     })
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
+  })
+
+  test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const workspaceFileApi = {
+      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          entries: [],
+        })
+      ),
+      readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          name: 'outside.md',
+          content: 'outside workspace preview',
+          editable: true,
+          revision: 'sha256:outside',
+          truncated: false,
+          size: 25,
+          modifiedAt: null,
+        })
+      ),
+    }
+    const messages = [
+      {
+        id: 'assistant-edited-absolute-file',
+        taskId: 101,
+        role: 'assistant' as const,
+        content: '',
+        status: 'completed' as const,
+        createdAt: '2026-08-05T00:00:00.000Z',
+        blocks: [
+          {
+            id: 'edit-absolute-file',
+            subtaskId: 101,
+            type: 'tool' as const,
+            toolName: 'edit_file',
+            toolInput: {
+              path: '/tmp/outside.md',
+              old_string: 'before',
+              new_string: 'after',
+            },
+            status: 'completed' as const,
+            createdAt: 1770000000000,
+          },
+        ],
+      },
+    ]
+    const propsWithFileMessage = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      messages,
+      workspaceFileApi,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+    await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
+    expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'outside workspace preview'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
+      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'outside workspace preview'
+      )
+    })
+    expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+  })
+
+  test('preserves the review when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/task-a.ts b/src/task-a.ts\n--- a/src/task-a.ts\n+++ b/src/task-a.ts\n@@ -1 +1 @@\n-old\n+restored\n'
+      )
+    const propsWithReview = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      onLoadEnvironmentDiff,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithReview(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-review-option'))
+    expect(await activePane().findByTestId('file-changes-review-panel')).toHaveTextContent(
+      'src/task-a.ts'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsWithReview(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithReview(taskA)} />)
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-review-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(activePane().getByTestId('file-changes-review-panel')).toHaveTextContent(
+        'src/task-a.ts'
+      )
+      expect(activePane().getByTestId('file-changes-review-panel')).toHaveTextContent('restored')
+    })
+    expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
   })
 
   test('preserves the open directory when switching runtime tasks', async () => {

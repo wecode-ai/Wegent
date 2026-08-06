@@ -466,6 +466,19 @@ impl RuntimeWorkRpcHandler {
             "runtime.connectors.tools" => self.connectors.tools().await,
             "runtime.connectors.call" => self.connectors.call(payload).await,
             "runtime.connectors.apps.sync" => self.connectors.sync_apps(payload).await,
+            "runtime.local_connector_auth.health" => {
+                super::local_connector_auth::health(payload).await
+            }
+            "runtime.local_connector_auth.start" => {
+                super::local_connector_auth::start(payload).await
+            }
+            "runtime.local_connector_auth.poll" => super::local_connector_auth::poll(payload).await,
+            "runtime.local_connector_auth.cancel" => {
+                super::local_connector_auth::cancel(payload).await
+            }
+            "runtime.local_connector_auth.logout" => {
+                super::local_connector_auth::logout(payload).await
+            }
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }

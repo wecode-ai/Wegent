@@ -11,6 +11,8 @@ import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -24,6 +26,7 @@ import {
   projectSpaceApis,
   projectSpaceKey,
   projectSpaceRef,
+  runtimeCloudProjectId,
 } from '@/features/todo/projectSpaceSelection'
 import {
   hydrateLocalWorkItems,
@@ -145,6 +148,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
 
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
@@ -292,9 +296,10 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
   selectedWorkspaceFile: {
-    targetKey: string
+    target: WorkspaceTarget
     path: string
     isDirectory: boolean
   } | null
@@ -601,6 +606,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => cancelAnimationFrame(frame)
   }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: currentProject,
+  })
   const sendPaneInput = paneSession.send
   const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
@@ -684,7 +693,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [runtimeWorkApi, t]
   )
 
-  const submitPaneInput = useCallback(
+  const sendPaneInputWithContext = useCallback(
     (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
       const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
@@ -709,7 +718,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         additionalContext:
           cloudProjectAdditionalContext(submissionProject, submissionItem) ??
           cloudAdditionalContext,
-        cloudProjectId: submissionProject?.id,
+        cloudProjectId: runtimeCloudProjectId(submissionProject),
         initialSupervisor: supervisorConfig,
         onRuntimeTaskCreated: address => {
           if (pendingTodoBinding) {
@@ -743,6 +752,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       services,
       setPendingCloudContext,
     ]
+  )
+
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: input => sendPaneInputWithContext(input),
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+
+  const submitPaneInput = useCallback(
+    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
+          return
+        }
+      }
+      return sendPaneInputWithContext(value, options)
+    },
+    [connectorAuthGate, paneSession, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
@@ -1308,6 +1339,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(
     () => initialWorkspaceState?.selectedWorkspaceFile ?? null
   )
+  const [reviewState, setReviewState] = useState<DesktopReviewState>(
+    () =>
+      initialWorkspaceState?.reviewState ?? {
+        loading: false,
+        diff: '',
+      }
+  )
+  const restoredLoadingReviewRef = useRef(
+    initialWorkspaceState?.reviewState.loading ? initialWorkspaceState.reviewState : null
+  )
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
@@ -1315,6 +1356,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
     })
@@ -1325,6 +1367,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
   ])
@@ -1370,18 +1413,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const [reviewState, setReviewState] = useState<DesktopReviewState>({
-    loading: false,
-    diff: '',
-    error: undefined,
-    reviewTitle: undefined,
-    reviewMode: undefined,
-    defaultFileTreeVisible: undefined,
-    branchName: undefined,
-    targetBranchName: undefined,
-    sourceSubtaskId: undefined,
-    reloadDiff: undefined,
-  })
   const closeRightPanel = useCallback(() => {
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
@@ -1552,12 +1583,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       target => `${target.deviceId}:${target.path}` === selectedFileWorkspaceTargetKey
     ) ?? null
   const fileWorkspaceTarget =
-    openFileRequest?.target ?? selectedFileWorkspaceTarget ?? effectiveWorkspaceTarget
+    openFileRequest?.target ??
+    selectedFileWorkspaceTarget ??
+    selectedWorkspaceFile?.target ??
+    effectiveWorkspaceTarget
   const fileWorkspaceTargetKey = fileWorkspaceTarget
     ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
     : null
   const initialFileWorkspaceSelection =
-    selectedWorkspaceFile && selectedWorkspaceFile.targetKey === fileWorkspaceTargetKey
+    selectedWorkspaceFile &&
+    `${selectedWorkspaceFile.target.deviceId}:${selectedWorkspaceFile.target.path}` ===
+      fileWorkspaceTargetKey
       ? {
           path: selectedWorkspaceFile.path,
           isDirectory: selectedWorkspaceFile.isDirectory,
@@ -1806,8 +1842,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onModelSelectorOpenChange: open => {
         if (!open) pendingModelRetryRef.current = null
       },
+      onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
-    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
+    [
+      modelSelectorOpenSignal,
+      projectChat,
+      refinePluginTrialPrompt,
+      retryFailedMessageAfterModelSelect,
+    ]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
@@ -1996,6 +2038,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [openRightPanelTab, setReviewState, t]
   )
+  useEffect(() => {
+    const restoredReview = restoredLoadingReviewRef.current
+    restoredLoadingReviewRef.current = null
+    if (!restoredReview?.reloadDiff) return
+
+    void openReviewFromDiffLoader(restoredReview.reloadDiff, {
+      reviewTitle: restoredReview.reviewTitle,
+      reviewMode: restoredReview.reviewMode,
+      defaultFileTreeVisible: restoredReview.defaultFileTreeVisible,
+      branchName: restoredReview.branchName,
+      targetBranchName: restoredReview.targetBranchName,
+      focusFilePath: restoredReview.focusFilePath,
+      sourceSubtaskId: restoredReview.sourceSubtaskId,
+    })
+  }, [openReviewFromDiffLoader])
 
   const openEnvironmentChangesReview = useCallback(
     async (mode: EnvironmentDiffMode = 'branch') => {
@@ -2045,14 +2102,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [])
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
-      if (!fileWorkspaceTargetKey) return
+      if (!fileWorkspaceTarget) return
       setSelectedWorkspaceFile({
-        targetKey: fileWorkspaceTargetKey,
+        target: fileWorkspaceTarget,
         path: selection.path,
         isDirectory: selection.isDirectory,
       })
     },
-    [fileWorkspaceTargetKey]
+    [fileWorkspaceTarget]
   )
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
@@ -2719,7 +2776,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               <ChevronRight className="h-4 w-4" aria-hidden="true" />
                             </button>
                           )}
-                          {!rightPanelExpanded && (
+                          {connectorAuthGate.pending ? (
+                            <ConnectorAuthCard
+                              target={connectorAuthGate.pending.target}
+                              title={connectorAuthGate.pending.title}
+                              onSuccess={() => {
+                                void connectorAuthGate.completePending()
+                              }}
+                              onCancel={connectorAuthGate.clearPending}
+                            />
+                          ) : !rightPanelExpanded ? (
                             <>
                               {showConversationDeviceBanner ? (
                                 <ConversationDeviceOfflineBanner
@@ -2846,7 +2912,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 </>
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     </>

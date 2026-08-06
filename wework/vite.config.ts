@@ -57,6 +57,11 @@ export default defineConfig({
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
   },
+  optimizeDeps: {
+    // Test artifacts may contain standalone plugin apps with dependencies that
+    // are intentionally absent from Wework. Only crawl the desktop app entry.
+    entries: ['index.html'],
+  },
   build: {
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.

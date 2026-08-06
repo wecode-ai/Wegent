@@ -79,6 +79,13 @@ def _escape_sql_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _is_visible_discovery_resource(source: Kind) -> bool:
+    if source.user_id != 0 or source.kind != "Skill":
+        return True
+    spec = source.json.get("spec", {}) if isinstance(source.json, dict) else {}
+    return not isinstance(spec, dict) or spec.get("visible", True) is not False
+
+
 def _encode_discovery_cursor(updated_at: datetime, kind_id: int) -> str:
     payload = json.dumps(
         {"updated_at": updated_at.isoformat(), "kind_id": kind_id},
@@ -116,6 +123,7 @@ class ResourceLibraryService:
         limit: int,
         cursor: str | None = None,
         target_namespace: str = "default",
+        system_only: bool = False,
     ) -> ResourceLibraryDiscoveryList:
         kinds = (
             [RESOURCE_KIND_BY_TYPE[resource_type]]
@@ -144,9 +152,10 @@ class ResourceLibraryService:
             Kind.kind.in_(system_kinds),
             Kind.is_active == True,
         )
-        candidates = union_all(
-            published_candidates,
-            system_candidates,
+        candidates = (
+            system_candidates
+            if system_only
+            else union_all(published_candidates, system_candidates)
         ).subquery()
         query = (
             db.query(
@@ -202,23 +211,36 @@ class ResourceLibraryService:
                 )
             )
 
-        if cursor:
-            cursor_time, cursor_kind_id = _decode_discovery_cursor(cursor)
-            query = query.filter(
-                or_(
-                    candidates.c.sort_time < cursor_time,
-                    and_(
-                        candidates.c.sort_time == cursor_time,
-                        Kind.id < cursor_kind_id,
-                    ),
+        scan_position = _decode_discovery_cursor(cursor) if cursor else None
+        rows = []
+        batch_size = limit + 1
+        ordered_query = query.order_by(candidates.c.sort_time.desc(), Kind.id.desc())
+        while len(rows) <= limit:
+            batch_query = ordered_query
+            if scan_position:
+                cursor_time, cursor_kind_id = scan_position
+                batch_query = batch_query.filter(
+                    or_(
+                        candidates.c.sort_time < cursor_time,
+                        and_(
+                            candidates.c.sort_time == cursor_time,
+                            Kind.id < cursor_kind_id,
+                        ),
+                    )
                 )
-            )
+            batch_rows = batch_query.limit(batch_size).all()
+            if not batch_rows:
+                break
+            for row in batch_rows:
+                if _is_visible_discovery_resource(row[0]):
+                    rows.append(row)
+                    if len(rows) > limit:
+                        break
+            if len(rows) > limit or len(batch_rows) < batch_size:
+                break
+            last_kind, last_sort_time, _ = batch_rows[-1]
+            scan_position = (last_sort_time, last_kind.id)
 
-        rows = (
-            query.order_by(candidates.c.sort_time.desc(), Kind.id.desc())
-            .limit(limit + 1)
-            .all()
-        )
         has_more = len(rows) > limit
         page_rows = rows[:limit]
         page_items = [row[0] for row in page_rows]

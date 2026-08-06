@@ -291,6 +291,53 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
     assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
+def test_system_only_discovery_excludes_user_publications(test_db, test_user):
+    published_agent = _create_published_agent(test_db)
+    publisher = test_db.get(User, published_agent.user_id)
+    resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="agent",
+            source_id=published_agent.id,
+            name=published_agent.name,
+            display_name="Published Agent",
+            tags=["technical_development"],
+            version="1.0.0",
+        ),
+        current_user=publisher,
+    )
+    system_agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="system-only-agent",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {
+                "name": "system-only-agent",
+                "displayName": "System Only Agent",
+            },
+            "spec": {"members": [], "collaborationModel": "solo"},
+        },
+        is_active=True,
+    )
+    test_db.add(system_agent)
+    test_db.commit()
+    test_db.refresh(system_agent)
+
+    result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="agent",
+        keyword=None,
+        tags=[],
+        limit=20,
+        system_only=True,
+    )
+
+    assert [item.id for item in result.items] == [system_agent.id]
+
+
 def test_discovery_hides_installed_skill_only_without_search_filters(
     test_db, test_user
 ):
@@ -382,6 +429,43 @@ def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
     assert second_page.has_more is False
     assert second_page.next_cursor is None
     assert [item.id for item in second_page.items] == [older.id]
+
+
+def test_discovery_filters_hidden_system_skills_without_breaking_pagination(
+    test_db, test_user
+):
+    older = _create_skill(test_db, user_id=0, name="older-visible-skill")
+    newer = _create_skill(test_db, user_id=0, name="newer-visible-skill")
+    hidden = _create_skill(test_db, user_id=0, name="newest-hidden-skill")
+    hidden.json["spec"]["visible"] = False
+    flag_modified(hidden, "json")
+    older.updated_at = datetime(2026, 1, 1)
+    newer.updated_at = datetime(2026, 1, 2)
+    hidden.updated_at = datetime(2026, 1, 3)
+    test_db.commit()
+
+    first_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        limit=1,
+    )
+    second_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        cursor=first_page.next_cursor,
+        limit=1,
+    )
+
+    assert [item.id for item in first_page.items] == [newer.id]
+    assert first_page.has_more is True
+    assert [item.id for item in second_page.items] == [older.id]
+    assert second_page.has_more is False
 
 
 @pytest.mark.parametrize("target_namespace", ["default", "capability-team"])

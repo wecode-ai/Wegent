@@ -552,12 +552,14 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     hideResizeHandle = false,
     onPointerEnter,
     onPointerLeave,
+    onToggleSidebar,
   }: {
     collapsed: boolean
     containerTestId?: string
     hideResizeHandle?: boolean
     onPointerEnter?: PointerEventHandler<HTMLElement>
     onPointerLeave?: PointerEventHandler<HTMLElement>
+    onToggleSidebar?: () => void
   }) => (
     <DesktopSidebar
       user={state.user}
@@ -584,7 +586,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
-      onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
+      onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
       onNewChat={onNewChat}
       onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
@@ -670,6 +672,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 hideResizeHandle: true,
                 onPointerEnter: openSidebarPreview,
                 onPointerLeave: closeSidebarPreview,
+                onToggleSidebar: () => updateSidebarCollapsed(false),
               })}
             </div>
           </>

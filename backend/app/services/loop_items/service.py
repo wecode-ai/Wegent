@@ -788,24 +788,6 @@ class LoopItemService:
         item = db.get(LoopItem, binding.loop_item_id) if binding.loop_item_id else None
         return binding, project, item
 
-    def find_active_task_binding(
-        self,
-        db: Session,
-        user_id: int,
-        device_id: str,
-        task_id: str,
-    ) -> LoopItemTaskBinding | None:
-        return (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == device_id,
-                LoopItemTaskBinding.task_id == task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .first()
-        )
-
     def unbind_cloud_context(
         self, db: Session, values: LoopItemTaskBind, user_id: int
     ) -> None:

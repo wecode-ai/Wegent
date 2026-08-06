@@ -74,9 +74,13 @@ export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
+export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
+
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  forceNewTask?: boolean
+  additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
@@ -138,6 +142,10 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    hasConversationContext?: boolean
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -230,7 +238,7 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
@@ -325,6 +333,10 @@ export interface WorkbenchContextValue {
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
   createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createEphemeralRuntimeTask: (
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
