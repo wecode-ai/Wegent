@@ -5,6 +5,7 @@ import {
   filterLocalRequirements,
   findLocalConnectorsForMessage,
   listLocalConnectors,
+  messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
@@ -74,6 +75,24 @@ describe('localConnectorAuthGate', () => {
     )
     expect(items).toHaveLength(1)
     expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
+  })
+
+  test('only preflights explicit plugin or connector auth messages', () => {
+    expect(messageNeedsConnectorPreflight('继续分析这个问题')).toBe(false)
+    expect(
+      messageNeedsConnectorPreflight(
+        '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show'
+      )
+    ).toBe(true)
+    expect(
+      messageNeedsConnectorPreflight(
+        JSON.stringify({
+          error: 'connector_auth_required',
+          pluginKey: 'weibo-api-wiki',
+          connectorSlug: 'weibo-wiki',
+        })
+      )
+    ).toBe(true)
   })
 
   test('detects connector_auth_required payloads', () => {
