@@ -16,12 +16,13 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
+use crate::{agents::resolve_codex_binary, agents::CodexAppServerClient};
 use crate::{
     agents::wework_codex_home,
     local::capabilities::{
-        default_manifest_path, CapabilityPackageProvider, CapabilitySyncError,
-        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
-        ManagedCapabilityManifest, SkillSyncSpec,
+        default_manifest_path, CapabilityPackageProvider, CapabilityPluginRuntime,
+        CapabilitySyncError, CapabilitySyncHandler, GlobalCapabilityReporter,
+        GlobalCapabilityStore, ManagedCapabilityManifest, PluginSyncSpec, SkillSyncSpec,
     },
 };
 
@@ -98,6 +99,129 @@ pub(super) fn default_capability_sync_handler(
         store,
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
     )
+    .with_plugin_runtime(CodexCapabilityPluginRuntime::new(resolve_codex_binary()))
+}
+
+#[derive(Clone)]
+struct CodexCapabilityPluginRuntime {
+    client: CodexAppServerClient,
+}
+
+impl CodexCapabilityPluginRuntime {
+    fn new(binary: impl Into<String>) -> Self {
+        Self {
+            client: CodexAppServerClient::new(binary),
+        }
+    }
+
+    fn installed_plugin_id(response: &Value, name: &str, marketplace: &str) -> Option<String> {
+        response
+            .get("marketplaces")?
+            .as_array()?
+            .iter()
+            .filter(|entry| entry.get("name").and_then(Value::as_str) == Some(marketplace))
+            .flat_map(|entry| {
+                entry
+                    .get("plugins")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .find(|plugin| plugin.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|plugin| {
+                plugin
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| plugin.get("id").map(Value::to_string))
+            })
+    }
+}
+
+impl CapabilityPluginRuntime for CodexCapabilityPluginRuntime {
+    fn install_plugin<'a>(
+        &'a self,
+        spec: &'a PluginSyncSpec,
+        marketplace_path: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.client
+                .request(
+                    "plugin/install",
+                    json!({
+                        "marketplacePath": marketplace_path.display().to_string(),
+                        "remoteMarketplaceName": null,
+                        "pluginName": spec.name,
+                    }),
+                )
+                .await
+                .map_err(|error| {
+                    CapabilitySyncError::invalid_payload(format!(
+                        "Codex app-server plugin/install failed for {}: {error}",
+                        spec.name
+                    ))
+                })?;
+            self.client
+                .request(
+                    "config/value/write",
+                    json!({
+                        "keyPath": format!(
+                            "plugins.{}.enabled",
+                            serde_json::to_string(&format!(
+                                "{}@{}",
+                                spec.name, spec.marketplace
+                            ))
+                            .map_err(|error| CapabilitySyncError::invalid_payload(
+                                format!("Failed to encode plugin config key: {error}")
+                            ))?
+                        ),
+                        "value": spec.enabled,
+                        "mergeStrategy": "upsert",
+                    }),
+                )
+                .await
+                .map_err(|error| {
+                    CapabilitySyncError::invalid_payload(format!(
+                        "Codex app-server plugin enablement update failed for {}: {error}",
+                        spec.name
+                    ))
+                })?;
+            Ok(())
+        })
+    }
+
+    fn uninstall_plugin<'a>(
+        &'a self,
+        name: &'a str,
+        marketplace: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move {
+            let installed = self
+                .client
+                .request(
+                    "plugin/installed",
+                    json!({"cwds": null, "installSuggestionPluginNames": null}),
+                )
+                .await
+                .map_err(|error| {
+                    CapabilitySyncError::invalid_payload(format!(
+                        "Codex app-server plugin/installed failed: {error}"
+                    ))
+                })?;
+            let Some(plugin_id) = Self::installed_plugin_id(&installed, name, marketplace) else {
+                return Ok(());
+            };
+            self.client
+                .request("plugin/uninstall", json!({"pluginId": plugin_id}))
+                .await
+                .map_err(|error| {
+                    CapabilitySyncError::invalid_payload(format!(
+                        "Codex app-server plugin/uninstall failed for {name}: {error}"
+                    ))
+                })?;
+            Ok(())
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -118,9 +242,11 @@ impl HttpPackageProvider {
 
     async fn get_bytes(&self, path: &str) -> Result<Vec<u8>, CapabilitySyncError> {
         let url = self.resolve_backend_url(path)?;
+        let backend = parse_url_with_trailing_slash(&self.backend_url)?;
+        let should_send_backend_auth = same_origin(&backend, &url);
         let mut request = self.client.get(url);
         let auth_token = self.auth_token.trim();
-        if !auth_token.is_empty() {
+        if should_send_backend_auth && !auth_token.is_empty() {
             request = request.bearer_auth(auth_token);
         }
         let response = request.send().await.map_err(|error| {
@@ -160,11 +286,6 @@ impl HttpPackageProvider {
                     ))
                 })?
         };
-        if !same_origin(&backend, &url) {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Capability package URL must match backend origin",
-            ));
-        }
         Ok(url)
     }
 }

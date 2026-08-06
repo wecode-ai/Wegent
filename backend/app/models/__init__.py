@@ -33,6 +33,13 @@ from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.plugin_marketplace import (
+    Plugin,
+    PluginDeviceInstallation,
+    PluginRelease,
+    PluginSubmission,
+    PluginUpstream,
+)
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
@@ -89,6 +96,11 @@ __all__ = [
     "KnowledgeDocument",
     "KnowledgeArtifactRecord",
     "Project",
+    "Plugin",
+    "PluginRelease",
+    "PluginUpstream",
+    "PluginSubmission",
+    "PluginDeviceInstallation",
     "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

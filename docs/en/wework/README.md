@@ -26,4 +26,10 @@ Wework is a desktop workbench for collaborating with AI. Open a local project an
 - [Settings and data](./settings.md)
 - [Troubleshooting](./troubleshooting.md)
 
+## Developer docs
+
+- [Plugin Marketplace Developer Guide](./developer-guide/wework-plugin-marketplace-dev.md): build plugins, migrate open-source packages, local integration, and publish paths
+- [Plugin Marketplace V2](./developer-guide/plugin-marketplace-v2.md): cloud control-plane architecture and operations
+- [Codex Plugin Runtime](./developer-guide/wework-codex-plugins.md): local install and chat mentions
+
 Wework uses local workspaces and a local runtime by default. Connecting to Wegent adds cloud models and execution devices to the same workbench.

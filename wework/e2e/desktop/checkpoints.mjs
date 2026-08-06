@@ -1,6 +1,7 @@
 export const DESKTOP_CHECKPOINTS = [
   'workspace-tabs',
   'priority-filter',
+  'telemetry-consent',
   'core-task-flow',
   'window-lifecycle',
   'goal-lifecycle',
@@ -9,6 +10,7 @@ export const DESKTOP_CHECKPOINTS = [
   'conversation-state',
   'workspace-attachments',
   'rendering-extensions',
+  'embedded-browser',
 ]
 
 export const PLUGIN_SEGMENTS = [

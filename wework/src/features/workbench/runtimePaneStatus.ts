@@ -22,6 +22,10 @@ export interface RuntimePaneStatus {
   canSendQueuedMessage: boolean
 }
 
+export function isRuntimeTaskBusyError(error: string | null): boolean {
+  return error?.toLowerCase().includes('runtime task is already running') === true
+}
+
 export function deriveRuntimePaneStatus({
   messages,
   currentRuntimeTask,

@@ -23,6 +23,7 @@ import {
 } from './ArchivedConversationsSettingsContent'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type { ArchivedConversationItem } from '@/types/api'
+import { track } from '@/telemetry/client'
 
 type PendingDelete =
   | { type: 'single'; item: ArchivedConversationItem }
@@ -389,7 +390,12 @@ export function ArchivedConversationsSettingsPage({
       await onRefreshWorkLists?.()
       setLastUnarchived(item)
       await loadArchivedConversations()
+      track('feature_action_completed', {
+        domain: 'archived_conversation',
+        action: 'restore',
+      })
     } catch (unarchiveError) {
+      track('operation_failed', { operation: 'archived_conversation_action' })
       const message = unarchiveError instanceof Error ? unarchiveError.message : ''
       setError(
         message
@@ -497,7 +503,12 @@ export function ArchivedConversationsSettingsPage({
           total,
           running: false,
         })
+        track('feature_action_completed', {
+          domain: 'archived_conversation',
+          action: 'delete',
+        })
       } catch (deleteError) {
+        track('operation_failed', { operation: 'archived_conversation_action' })
         const message = deleteError instanceof Error ? deleteError.message : ''
         setOperationError(
           message
@@ -530,6 +541,13 @@ export function ArchivedConversationsSettingsPage({
       }
       setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
       setPendingDelete(null)
+      track('feature_action_completed', {
+        domain: 'archived_conversation',
+        action: 'delete',
+      })
+    } catch (deleteError) {
+      track('operation_failed', { operation: 'archived_conversation_action' })
+      throw deleteError
     } finally {
       setBusyKey(null)
     }

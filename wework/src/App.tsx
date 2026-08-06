@@ -16,6 +16,7 @@ import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
@@ -87,6 +88,8 @@ import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsCo
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { User } from '@/types/api'
+import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
+import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
@@ -94,7 +97,12 @@ const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
-  return isTauriRuntime() && getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  if (!isTauriRuntime()) return false
+  try {
+    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  } catch {
+    return false
+  }
 }
 
 function hasTauriIpc() {
@@ -143,6 +151,21 @@ function useCurrentLocation() {
   return location
 }
 
+function telemetryFeatureForPath(path: string) {
+  if (path === '/login' || path === '/login/oidc') return 'login' as const
+  if (path === '/plugins/manage') return 'plugin_management' as const
+  if (path === '/plugins/create') return 'plugin_create' as const
+  if (path === '/plugins') return 'plugins' as const
+  if (path === '/cloud-work') return 'cloud_work' as const
+  if (path === '/sites') return 'sites' as const
+  if (path === '/automations') return 'automations' as const
+  if (path === '/apps' || path.startsWith('/app/')) return 'apps' as const
+  if (path.startsWith('/settings')) return 'settings' as const
+  if (path.startsWith('/project-space')) return 'project_space' as const
+  if (path === '/') return 'workbench' as const
+  return 'unknown' as const
+}
+
 interface AppRoutesProps {
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
@@ -164,10 +187,14 @@ function workspaceTabIframe(
   return src ? { src, title: app.label } : null
 }
 
-function workspaceTabAuxiliaryPage(path: string, experimentalFeaturesEnabled: boolean) {
+function workspaceTabAuxiliaryPage(
+  path: string,
+  search: string,
+  experimentalFeaturesEnabled: boolean
+) {
   if (path === '/plugins/manage') return <PluginManagementPage />
   if (path === '/plugins/create') return <PluginCreatePage />
-  if (path === '/plugins') return <PluginsPage />
+  if (path === '/plugins') return <PluginsPage routeSearch={search} />
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
@@ -195,8 +222,9 @@ function WorkspaceTabSurface({
   user,
 }: WorkspaceTabSurfaceProps) {
   const tabPath = workspaceTabPath(tab)
+  const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, experimentalFeaturesEnabled)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch, experimentalFeaturesEnabled)
   const auxiliaryActive = Boolean(auxiliaryPage)
   const nativeWorkbenchActive = !iframe && !auxiliaryActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
@@ -227,6 +255,7 @@ function WorkspaceTabSurface({
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
   const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
+  const usesWorkbenchDesktopSurface = nativeWorkbenchActive && isTauriRuntime()
 
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
@@ -247,7 +276,13 @@ function WorkspaceTabSurface({
               ) : null}
               {renderWorkbench ? (
                 <div
-                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+                  data-testid="desktop-workbench-surface"
+                  className={cn(
+                    'h-full',
+                    usesWorkbenchDesktopSurface &&
+                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+                    !nativeWorkbenchActive && 'hidden'
+                  )}
                   aria-hidden={!nativeWorkbenchActive}
                 >
                   <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
@@ -294,6 +329,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
   }))
+  const telemetryEnabled = useTelemetryEnabled()
+
+  useEffect(() => {
+    track('feature_opened', {
+      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
+    })
+  }, [isPopoutWindow, path, telemetryEnabled])
   if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
     setMountedTabs({
       activeTabId: workspaceTabs.activeTabId,
@@ -317,6 +359,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
   if (path === '/login/oidc') {
     return <OidcCallbackPage />
+  }
+
+  if (path === '/auth/wework/authorize') {
+    return <WeworkAuthorizePage />
   }
 
   if (isLoading || !user) {
@@ -385,6 +431,7 @@ function MainApp() {
         <AppUpdateProvider>
           <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
             <AuthProvider>
+              <TelemetryBridge />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>
@@ -420,6 +467,7 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
+    apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
@@ -444,7 +492,7 @@ function AppShell() {
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
-        sites: t('workbench.workspace_tab_sites', '应用'),
+        sites: t('workbench.workspace_tab_sites', '站点与小程序'),
         automations: t('workbench.workspace_tab_automations', '自动化'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
         apps: t('workbench.workspace_tab_apps', '应用'),

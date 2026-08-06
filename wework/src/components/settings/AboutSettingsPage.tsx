@@ -24,9 +24,19 @@ function calculateDownloadPercent(
 
 function formatUpdateError(message: string | null, t: ReturnType<typeof useTranslation>['t']) {
   if (!message) return null
-  if (message.toLowerCase().includes('updater does not have any endpoints set')) {
+  const normalizedMessage = message.toLowerCase()
+  if (normalizedMessage.includes('updater does not have any endpoints set')) {
     return t('workbench.app_update_endpoint_missing', {
       defaultValue: '当前版本暂不支持自动更新检查',
+    })
+  }
+  if (
+    normalizedMessage.includes('was not found in the response') &&
+    normalizedMessage.includes('platforms')
+  ) {
+    return t('workbench.app_update_channel_migration_required', {
+      defaultValue:
+        '当前版本的更新源不支持 Beta 通道。请先手动安装最新正式版，然后再检查 Beta 更新。',
     })
   }
   return message

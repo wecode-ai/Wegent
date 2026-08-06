@@ -144,6 +144,7 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
             "name": "context7",
             "display_name": "Context7",
             "description": "Docs lookup",
+            "enabled": True,
             "marketplace": "claude-plugins-official",
             "version": "1057d02c5307",
             "source": {
@@ -204,6 +205,7 @@ def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
             "name": "superpowers",
             "display_name": "Superpowers",
             "description": "Core skills",
+            "enabled": True,
             "marketplace": None,
             "version": "5.0.7",
             "source": {

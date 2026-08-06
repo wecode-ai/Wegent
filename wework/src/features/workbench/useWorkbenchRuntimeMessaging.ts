@@ -76,6 +76,18 @@ import {
   selectedModelExecutionFields,
 } from './runtimeModelSelection'
 import type { WorkbenchServices } from './workbenchServices'
+import { track } from '@/telemetry/client'
+import type { ExecutionTarget } from '@/telemetry/events'
+
+function telemetryExecutionTarget(
+  deviceId: string,
+  devices: WorkbenchState['devices']
+): ExecutionTarget {
+  const device = devices.find(item => item.device_id === deviceId)
+  if (device?.device_type === 'local' || device?.device_type === 'app') return 'local'
+  if (device?.device_type === 'cloud' || device?.device_type === 'remote') return 'cloud'
+  return deviceId === 'local-device' ? 'local' : 'unknown'
+}
 
 interface RuntimeMessagingAttachmentSelection {
   attachments: Attachment[]
@@ -389,7 +401,9 @@ export function useWorkbenchRuntimeMessaging({
     (
       message: string,
       sourceAttachments?: Attachment[],
-      projectOverride?: ProjectWithTasks | null
+      projectOverride?: ProjectWithTasks | null,
+      includeSelectedSkills = !isOptionsLocked,
+      selectedSkillsOverride?: SkillRef[]
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
@@ -455,8 +469,12 @@ export function useWorkbenchRuntimeMessaging({
         payload.model_options = executionModel.modelOptions
       }
 
-      if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
-        payload.additional_skills = skillSelection.selectedSkills
+      const selectedSkills = selectedSkillsOverride ?? skillSelection.selectedSkills
+      if (
+        (selectedSkillsOverride !== undefined || includeSelectedSkills) &&
+        selectedSkills.length > 0
+      ) {
+        payload.additional_skills = selectedSkills
       }
 
       const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
@@ -513,8 +531,11 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        preserveAttachments?: boolean
+        launchStartedAt?: number
       }
     ): Promise<RuntimeTaskAddress | false> => {
+      const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
       const selectedModel =
         modelSelection.getSelectedModel?.() ??
@@ -525,6 +546,12 @@ export function useWorkbenchRuntimeMessaging({
       const runtime = inferRuntimeName(selectedModel)
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
+      logRuntimeTaskLaunchTiming('prepared-send-entered', launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        projectId,
+        runtime,
+      })
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
@@ -589,13 +616,29 @@ export function useWorkbenchRuntimeMessaging({
         let workspacePath = state.standaloneWorkspacePath
         if (!workspacePath && activeDeviceId) {
           try {
+            logRuntimeTaskLaunchTiming('standalone-workspace-started', launchStartedAt, {
+              taskId,
+              clientUserMessageId: options?.clientUserMessageId ?? null,
+              deviceId: activeDeviceId,
+            })
             workspacePath = await createConversationWorkspace(
               executorClient.commands,
               activeDeviceId,
               displayMessage,
               taskId
             )
+            logRuntimeTaskLaunchTiming('standalone-workspace-resolved', launchStartedAt, {
+              taskId,
+              clientUserMessageId: options?.clientUserMessageId ?? null,
+              deviceId: activeDeviceId,
+            })
           } catch (error) {
+            logRuntimeTaskLaunchTiming('standalone-workspace-failed', launchStartedAt, {
+              taskId,
+              clientUserMessageId: options?.clientUserMessageId ?? null,
+              deviceId: activeDeviceId,
+              error: runtimeLaunchErrorName(error),
+            })
             reportSendBlocked(
               error instanceof Error ? error.message : '创建对话工作区失败',
               undefined,
@@ -613,21 +656,6 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: activeDeviceId,
           workspacePath,
         }
-      }
-
-      try {
-        const prepared = await executorClient.runtime.prepareRuntimeModel({
-          deviceId: optimisticDeviceId,
-          modelId: selectedModel?.name,
-        })
-        if (!prepared) return false
-      } catch (error) {
-        reportSendBlocked(
-          error instanceof Error ? error.message : '模型配置同步失败',
-          undefined,
-          options
-        )
-        return false
       }
 
       const createRequest: RuntimeTaskCreateRequest = {
@@ -727,10 +755,26 @@ export function useWorkbenchRuntimeMessaging({
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }
+      logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        deviceId: optimisticAddress.deviceId,
+      })
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
       }
+      logRuntimeTaskLaunchTiming('optimistic-open-dispatched', launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        deviceId: optimisticAddress.deviceId,
+        openedInMainPane: options?.openInMainPane !== false,
+      })
+      logRuntimeTaskLaunchPaintTiming(launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        deviceId: optimisticAddress.deviceId,
+      })
       if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
         dispatch({
           type: 'runtime_task_optimistic_upserted',
@@ -745,10 +789,23 @@ export function useWorkbenchRuntimeMessaging({
           }),
         })
       }
-      attachmentSelection.resetAttachments()
+      if (!options?.preserveAttachments) {
+        attachmentSelection.resetAttachments()
+      }
 
       try {
+        logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
+          taskId,
+          clientUserMessageId: options?.clientUserMessageId ?? null,
+          deviceId: optimisticAddress.deviceId,
+        })
         const response = await executorClient.runtime.createRuntimeTask(createRequest)
+        logRuntimeTaskLaunchTiming('runtime-create-resolved', launchStartedAt, {
+          taskId,
+          clientUserMessageId: options?.clientUserMessageId ?? null,
+          deviceId: response.deviceId || optimisticAddress.deviceId,
+          accepted: response.accepted,
+        })
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
@@ -824,6 +881,9 @@ export function useWorkbenchRuntimeMessaging({
           }
         }
         lifecycleStore.sendAccepted(address)
+        track('conversation_created', {
+          execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
+        })
         if (!options?.ephemeral) {
           void notifyMainRuntimeWorkChanged({
             deviceId: address.deviceId,
@@ -844,6 +904,12 @@ export function useWorkbenchRuntimeMessaging({
         }
         return address
       } catch (error) {
+        logRuntimeTaskLaunchTiming('runtime-create-failed', launchStartedAt, {
+          taskId,
+          clientUserMessageId: options?.clientUserMessageId ?? null,
+          deviceId: optimisticAddress.deviceId,
+          error: runtimeLaunchErrorName(error),
+        })
         const message = error instanceof Error ? error.message : '发送失败'
         lifecycleStore.sendRejected(optimisticAddress)
         if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
@@ -893,6 +959,12 @@ export function useWorkbenchRuntimeMessaging({
 
   const sendCurrentInput = useCallback(
     async (inputOverride?: string, options?: SendCurrentInputOptions) => {
+      const launchStartedAt = runtimeLaunchNowMs()
+      logRuntimeTaskLaunchTiming('send-current-entered', launchStartedAt, {
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        forceNewTask: options?.forceNewTask === true,
+        hasCurrentRuntimeTask: Boolean(state.currentRuntimeTask),
+      })
       const rawInput = inputOverride ?? ''
       const trimmedMessage = rawInput.trim()
       const effectiveCodeCommentContexts = options?.codeCommentContexts ?? []
@@ -916,7 +988,7 @@ export function useWorkbenchRuntimeMessaging({
         runtimeSelectedModelOptions
       )
 
-      if (state.currentRuntimeTask) {
+      if (state.currentRuntimeTask && !options?.forceNewTask) {
         if (hasCodeComments) {
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
@@ -948,7 +1020,13 @@ export function useWorkbenchRuntimeMessaging({
         return sent
       }
 
-      const prepared = buildSendPayload(payloadMessage)
+      const prepared = buildSendPayload(
+        payloadMessage,
+        undefined,
+        undefined,
+        options?.forceNewTask || !isOptionsLocked,
+        options?.additionalSkills
+      )
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',
@@ -1011,6 +1089,7 @@ export function useWorkbenchRuntimeMessaging({
         prepared.payload,
         prepared.activeDeviceId,
         {
+          launchStartedAt,
           initialGoal: options?.initialGoal,
           initialSupervisor: options?.initialSupervisor,
           onError: options?.onError,
@@ -1028,6 +1107,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
+      isOptionsLocked,
       lifecycleStore,
       modelSelection,
       reportSendBlocked,
@@ -1094,7 +1174,7 @@ export function useWorkbenchRuntimeMessaging({
     [dispatch, modelSelection, reportSendBlocked, sendRuntimePaneMessage, state.currentRuntimeTask]
   )
 
-  const createTemporaryRuntimeTask = useCallback(
+  const createEphemeralRuntimeTask = useCallback(
     async (
       input: string,
       options?: CreateTemporaryRuntimeTaskOptions
@@ -1104,11 +1184,6 @@ export function useWorkbenchRuntimeMessaging({
         reportSendBlocked('请输入内容后再发送', undefined, options)
         return false
       }
-      if (!options?.source || !runtimeThreadId(options.source)) {
-        reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
-        return false
-      }
-
       const prepared = buildSendPayload(message, options?.attachments, options?.project)
       if (!prepared) {
         reportSendBlocked(
@@ -1123,12 +1198,27 @@ export function useWorkbenchRuntimeMessaging({
         onError: options?.onError,
         onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         ephemeral: true,
-        sideSource: options?.source,
+        sideSource: options?.source && runtimeThreadId(options.source) ? options.source : null,
         openInMainPane: false,
         refreshWorkListsOnResolve: false,
+        preserveAttachments: true,
       })
     },
     [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.defaultTeam]
+  )
+
+  const createTemporaryRuntimeTask = useCallback(
+    async (
+      input: string,
+      options?: CreateTemporaryRuntimeTaskOptions
+    ): Promise<RuntimeTaskAddress | false> => {
+      if (!options?.source || !runtimeThreadId(options.source)) {
+        reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
+        return false
+      }
+      return createEphemeralRuntimeTask(input, options)
+    },
+    [createEphemeralRuntimeTask, reportSendBlocked]
   )
 
   const createProjectRuntimeTask = useCallback(
@@ -1333,6 +1423,7 @@ export function useWorkbenchRuntimeMessaging({
     cancelRuntimePaneTask,
     sendCurrentInput,
     createTemporaryRuntimeTask,
+    createEphemeralRuntimeTask,
     createProjectRuntimeTask,
     retryFailedMessage,
     pauseCurrentResponse,
@@ -1437,6 +1528,36 @@ function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>)
     event,
     ...details,
   })
+}
+
+function runtimeLaunchNowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function logRuntimeTaskLaunchTiming(
+  stage: string,
+  startedAt: number,
+  details: Record<string, unknown>
+) {
+  console.info('[Wework] Runtime task launch timing', {
+    stage,
+    elapsedMs: Math.round(runtimeLaunchNowMs() - startedAt),
+    ...details,
+  })
+}
+
+function logRuntimeTaskLaunchPaintTiming(startedAt: number, details: Record<string, unknown>) {
+  if (typeof requestAnimationFrame !== 'function') return
+  requestAnimationFrame(() => {
+    logRuntimeTaskLaunchTiming('optimistic-open-frame-ready', startedAt, details)
+    requestAnimationFrame(() => {
+      logRuntimeTaskLaunchTiming('optimistic-open-frame-painted', startedAt, details)
+    })
+  })
+}
+
+function runtimeLaunchErrorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error
 }
 
 function summarizeModelOptions(modelOptions: ModelOptions | undefined): Record<string, unknown> {

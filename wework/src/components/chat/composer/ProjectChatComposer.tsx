@@ -55,6 +55,8 @@ interface ProjectChatComposerProps {
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
+  inputTestId?: string
+  submitButtonTestId?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -100,6 +102,7 @@ interface ProjectChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
+  inputLeadingContext?: ReactNode
   toolbarLeadingContext?: ReactNode
 }
 
@@ -119,6 +122,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       submitDisabled = false,
       disabledReason,
       placeholder,
+      inputTestId,
+      submitButtonTestId,
       models,
       selectedModel,
       activeModel,
@@ -164,6 +169,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
+      inputLeadingContext,
       toolbarLeadingContext,
     },
     ref
@@ -354,43 +360,51 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
             </button>
           ) : null}
-          <ComposerTextarea
-            ref={composerRef}
-            textareaRef={textareaRef}
-            value={value}
-            onChange={handleComposerChange}
-            onBlur={onBlur}
-            onCompositionEnd={onCompositionEnd}
-            onSubmit={onSubmit}
-            canSend={canSend}
-            disabled={disabled}
-            placeholder={placeholder}
-            rows={2}
-            onPasteFiles={onFileSelect}
-            onOpenSkillFile={onOpenSkillFile}
-            workspaceTarget={workspaceTarget}
-            workspaceFileApi={workspaceFileApi}
-            cloudMentionCandidates={cloudMentionCandidates}
-            conversationMentionCandidates={conversationMentionCandidates}
-            cloudProjectCandidates={cloudProjectCandidates}
-            cloudSpaceEnabled={cloudSpaceEnabled}
-            onSelectCloudProject={onSelectCloudProject}
-            className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
-            skillMenuClassName="left-[-1rem] right-[-0.5rem]"
-            onListLocalSkills={onListLocalSkills}
-            onListLocalApps={onListLocalApps}
-            models={models}
-            selectedModel={selectedModel}
-            selectedModelOptions={selectedModelOptions}
-            planModeActive={planModeActive}
-            onSetPlanMode={onSetPlanMode}
-            onSetGoal={onSetGoal}
-            onSelectModel={onSelectModel}
-            onBlockedModelSelect={onBlockedModelSelect}
-            isModelSelectionReady={isModelSelectionReady}
-          />
+          <div
+            data-testid={inputLeadingContext ? 'composer-input-leading-context' : undefined}
+            className="flex min-h-[48px] w-full items-baseline gap-1"
+          >
+            {inputLeadingContext}
+            <ComposerTextarea
+              ref={composerRef}
+              testId={inputTestId}
+              textareaRef={textareaRef}
+              value={value}
+              onChange={handleComposerChange}
+              onBlur={onBlur}
+              onCompositionEnd={onCompositionEnd}
+              onSubmit={onSubmit}
+              canSend={canSend}
+              disabled={disabled}
+              placeholder={placeholder}
+              rows={2}
+              onPasteFiles={onFileSelect}
+              onOpenSkillFile={onOpenSkillFile}
+              workspaceTarget={workspaceTarget}
+              workspaceFileApi={workspaceFileApi}
+              cloudMentionCandidates={cloudMentionCandidates}
+              conversationMentionCandidates={conversationMentionCandidates}
+              cloudProjectCandidates={cloudProjectCandidates}
+              cloudSpaceEnabled={cloudSpaceEnabled}
+              onSelectCloudProject={onSelectCloudProject}
+              className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+              onListLocalSkills={onListLocalSkills}
+              onListLocalApps={onListLocalApps}
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              planModeActive={planModeActive}
+              onSetPlanMode={onSetPlanMode}
+              onSetGoal={onSetGoal}
+              onSelectModel={onSelectModel}
+              onBlockedModelSelect={onBlockedModelSelect}
+              isModelSelectionReady={isModelSelectionReady}
+            />
+          </div>
           <ComposerToolbar
             canSend={canSend}
+            sendButtonTestId={submitButtonTestId}
             disabled={disabled}
             models={models}
             selectedModel={selectedModel}
@@ -438,6 +452,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onQuickPhraseSelect={handleQuickPhraseSelect}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
+            onListLocalApps={onListLocalApps}
             cloudProjectCandidates={cloudProjectCandidates}
             selectedCloudProjectId={selectedCloudProjectId}
             onSelectCloudProject={onSelectCloudProject}

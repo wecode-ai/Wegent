@@ -246,6 +246,19 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
 不会导致汇总任务误报失败。
 
+### 写入 GitHub Actions 输出
+
+写入 `$GITHUB_OUTPUT` 时，每一行必须是 `name=value` 格式。不要把会输出进度或诊断
+信息的命令替换结果直接写入该文件；先只提取所需的值，再写入输出。例如，解析
+Playwright 版本时：
+
+```bash
+version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
+echo "version=$version" >> "$GITHUB_OUTPUT"
+```
+
+这样包管理器的供应链检查或其他辅助日志不会使工作流输出格式失效。
+
 ### 工作流任务
 
 常规 PR 测试必须覆盖各模块测试，不能用 E2E 任务代替：

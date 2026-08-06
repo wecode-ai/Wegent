@@ -5,8 +5,10 @@ import { TaskFeedbackDialog } from './TaskFeedbackDialog'
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }))
+const trackMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('@/telemetry/client', () => ({ track: trackMock }))
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) =>
@@ -70,6 +72,7 @@ const previewResult = {
 describe('TaskFeedbackDialog', () => {
   beforeEach(() => {
     invokeMock.mockReset()
+    trackMock.mockReset()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
       callback(0)
       return 1

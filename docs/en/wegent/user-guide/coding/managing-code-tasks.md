@@ -196,6 +196,8 @@ If you submit new composer text while the queue is paused, Wework asks how to ha
 - **Clear queue**: removes the existing queue and sends only the new composer message.
 - **Cancel**: sends nothing and preserves both the composer and the queue.
 
+The temporary sidebar conversation supports automatic queueing, cancellation, and editing: a message submitted while the current response is running appears in the pending queue and is sent automatically after the current response finishes. The sidebar does not surface “task is already running” as a send failure while a message is queued; you can cancel or edit the pending message from its queue card.
+
 ---
 
 ## Advanced Features
