@@ -457,13 +457,7 @@ where
                                 .resolved_shell_type()
                                 .unwrap_or_else(|| "none".to_owned()),
                         ),
-                        (
-                            "cwd",
-                            request
-                                .cwd()
-                                .unwrap_or("<missing>")
-                                .to_owned(),
-                        ),
+                        ("cwd", request.cwd().unwrap_or("<missing>").to_owned()),
                     ],
                 ));
                 normalize_local_task_request(&mut request, &config);
@@ -609,8 +603,21 @@ where
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
                     &[
-                        ("ok", response.get("success").map(Value::as_bool).flatten().unwrap_or(false).to_string()),
-                        ("error", response.get("error").map(|v| v.to_string()).unwrap_or_default()),
+                        (
+                            "ok",
+                            response
+                                .get("success")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                .to_string(),
+                        ),
+                        (
+                            "error",
+                            response
+                                .get("error")
+                                .map(|v| v.to_string())
+                                .unwrap_or_default(),
+                        ),
                     ],
                 ));
                 Some(response)

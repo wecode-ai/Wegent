@@ -110,7 +110,8 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.message),
                     ],
                 );
-                let _ = store.fail_execution(execution.id, "Local runtime task creation failed", true);
+                let _ =
+                    store.fail_execution(execution.id, "Local runtime task creation failed", true);
             }
         }
     }

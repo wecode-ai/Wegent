@@ -1502,7 +1502,10 @@ mod tests {
             server["env"]["WEWORK_SPACE_BACKEND_URL"],
             json!("https://wework.example.com")
         );
-        assert_eq!(server["env"]["WEWORK_SPACE_AUTH_TOKEN"], json!("device-token"));
+        assert_eq!(
+            server["env"]["WEWORK_SPACE_AUTH_TOKEN"],
+            json!("device-token")
+        );
 
         if let Some(url) = previous_url {
             env::set_var("WEGENT_BACKEND_URL", url);

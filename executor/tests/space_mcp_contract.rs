@@ -137,7 +137,11 @@ impl McpChild {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
-                while reader.read_line(&mut line).await.is_ok_and(|count| count > 0) {
+                while reader
+                    .read_line(&mut line)
+                    .await
+                    .is_ok_and(|count| count > 0)
+                {
                     line.clear();
                 }
             });
@@ -159,7 +163,10 @@ impl McpChild {
             .await
             .expect("space-mcp-server did not answer in time")
             .expect("failed to read space-mcp-server response");
-        assert!(count > 0, "space-mcp-server closed stdout without a response");
+        assert!(
+            count > 0,
+            "space-mcp-server closed stdout without a response"
+        );
         serde_json::from_str(&line).unwrap()
     }
 }
@@ -198,8 +205,16 @@ async fn space_mcp_server_handshakes_on_a_legacy_database() {
     assert!(names.contains(&"get_board_item"));
 
     // list_spaces without a backend falls back to local projects and succeeds.
-    let spaces = child.request("tools/call", json!({"name": "list_spaces", "arguments": {}})).await;
-    assert!(spaces.get("error").is_none(), "list_spaces failed: {spaces}");
+    let spaces = child
+        .request(
+            "tools/call",
+            json!({"name": "list_spaces", "arguments": {}}),
+        )
+        .await;
+    assert!(
+        spaces.get("error").is_none(),
+        "list_spaces failed: {spaces}"
+    );
 
     child.process.kill().await.unwrap();
     child.process.wait().await.unwrap();
@@ -234,7 +249,11 @@ async fn space_mcp_server_exposes_environment_for_cloud_bound_projects() {
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut line = String::new();
-            while reader.read_line(&mut line).await.is_ok_and(|count| count > 0) {
+            while reader
+                .read_line(&mut line)
+                .await
+                .is_ok_and(|count| count > 0)
+            {
                 line.clear();
             }
         });

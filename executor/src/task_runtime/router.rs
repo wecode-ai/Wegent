@@ -6,9 +6,9 @@ use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalExecution, LocalExecutionClaim, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
-    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
+    LocalExecution, LocalExecutionClaim, LocalTaskStore, LoopItem, ProjectCreate,
+    ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding,
+    TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -544,10 +544,7 @@ impl TaskRuntime {
         self.local_store.list_task_bindings(item_id)
     }
 
-    pub fn list_chat_agents(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
+    pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         self.local_store.list_chat_agents(project_id)
     }
 
@@ -565,7 +562,8 @@ impl TaskRuntime {
         agent_id: &str,
         input: ChatAgentUpdate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
-        self.local_store.update_chat_agent(project_id, agent_id, input)
+        self.local_store
+            .update_chat_agent(project_id, agent_id, input)
     }
 
     pub fn archive_chat_agent(
@@ -589,10 +587,7 @@ impl TaskRuntime {
             .list_executions(project_id, agent_id, status, include_terminal)
     }
 
-    pub fn approve_execution(
-        &self,
-        execution_id: i64,
-    ) -> Result<LocalExecution, TaskRuntimeError> {
+    pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
         self.local_store.approve_execution(execution_id)
     }
 
@@ -640,7 +635,8 @@ impl TaskRuntime {
         error: &str,
         requeue: bool,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        self.local_store.fail_execution(execution_id, error, requeue)
+        self.local_store
+            .fail_execution(execution_id, error, requeue)
     }
 
     pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {

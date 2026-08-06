@@ -1103,7 +1103,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let project_id = required_task_string(&params, "project_id")?;
             serialize_task_value(
                 runtime
-                    .list_chat_agents(&project_id)
+                    .list_chat_agents(project_id)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1112,7 +1112,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let input = task_input::<ChatAgentCreate>(&params, "agent")?;
             serialize_task_value(
                 runtime
-                    .create_chat_agent(&project_id, input)
+                    .create_chat_agent(project_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1122,7 +1122,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let input = task_input::<ChatAgentUpdate>(&params, "agent")?;
             serialize_task_value(
                 runtime
-                    .update_chat_agent(&project_id, &agent_id, input)
+                    .update_chat_agent(project_id, agent_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1134,7 +1134,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .and_then(Value::as_i64)
                 .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
             runtime
-                .archive_chat_agent(&project_id, &agent_id, version)
+                .archive_chat_agent(project_id, agent_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
@@ -1148,24 +1148,25 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .unwrap_or(false);
             serialize_task_value(
                 runtime
-                    .list_executions(&project_id, agent_id, status, include_terminal)
+                    .list_executions(project_id, agent_id, status, include_terminal)
                     .map_err(task_runtime_error)?,
             )
         }
         "executions.approve" | "executions.reject" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
-            let reason = params.get("reason").and_then(Value::as_str).map(ToOwned::to_owned);
-            serialize_task_value(
-                if method == "executions.approve" {
-                    runtime
-                        .approve_execution(execution_id)
-                        .map_err(task_runtime_error)?
-                } else {
-                    runtime
-                        .reject_execution(execution_id, reason)
-                        .map_err(task_runtime_error)?
-                },
-            )
+            let reason = params
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            serialize_task_value(if method == "executions.approve" {
+                runtime
+                    .approve_execution(execution_id)
+                    .map_err(task_runtime_error)?
+            } else {
+                runtime
+                    .reject_execution(execution_id, reason)
+                    .map_err(task_runtime_error)?
+            })
         }
         "executions.claim_next" => {
             let input = task_input::<LocalExecutionClaim>(&params, "claim")?;

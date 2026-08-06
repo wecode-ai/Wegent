@@ -488,8 +488,8 @@ impl LocalTaskStore {
             Some(None) => None,
             None => current.assignee_agent_id.as_deref(),
         };
-        let assignee_changed =
-            input.assignee_agent_id.is_some() && assignee_agent_id != current.assignee_agent_id.as_deref();
+        let assignee_changed = input.assignee_agent_id.is_some()
+            && assignee_agent_id != current.assignee_agent_id.as_deref();
         let now = now();
         let completed_at = if status.as_deref() == Some("completed") {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -522,8 +522,8 @@ impl LocalTaskStore {
         if assignee_changed {
             cancel_active_executions(&transaction, task_id)?;
             if let Some(agent_id) = assignee_agent_id {
-                let agent = get_item_from(&transaction, agent_id, "chat_agent")?
-                    .ok_or_else(|| {
+                let agent =
+                    get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
                         TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
                     })?;
                 create_local_execution(
@@ -590,13 +590,7 @@ impl LocalTaskStore {
                 id, resource_type, project_space, cloud_project_id, name, title,
                 description, status, metadata, version, created_at, updated_at
              ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1, ?5, ?5)",
-            params![
-                id,
-                project_id,
-                input.name,
-                metadata.to_string(),
-                now,
-            ],
+            params![id, project_id, input.name, metadata.to_string(), now,],
         )?;
         drop(connection);
         self.get_chat_agent(project_id, &id)
@@ -609,10 +603,8 @@ impl LocalTaskStore {
         input: ChatAgentUpdate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         let connection = self.connection()?;
-        let current =
-            get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
-                TaskRuntimeError::Invalid("Robot not found".to_owned())
-            })?;
+        let current = get_item_from(&connection, agent_id, "chat_agent")?
+            .ok_or_else(|| TaskRuntimeError::Invalid("Robot not found".to_owned()))?;
         if current.cloud_project_id.as_deref() != Some(project_id) {
             return Err(TaskRuntimeError::Invalid(
                 "Robot is not in this project".to_owned(),
@@ -643,7 +635,9 @@ impl LocalTaskStore {
         if let Some(device) = input.execution_device_id.as_ref() {
             metadata["execution_device_id"] = json!(device);
         }
-        let status = input.status.unwrap_or_else(|| current.status.unwrap_or_else(|| "active".to_owned()));
+        let status = input
+            .status
+            .unwrap_or_else(|| current.status.unwrap_or_else(|| "active".to_owned()));
         let name = input.name.unwrap_or_else(|| {
             current
                 .name
@@ -690,11 +684,14 @@ impl LocalTaskStore {
         Ok(())
     }
 
-    fn get_chat_agent(&self, project_id: &str, agent_id: &str) -> Result<ChatAgent, TaskRuntimeError> {
+    fn get_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
         let connection = self.connection()?;
-        let row = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid("Robot not found".to_owned())
-        })?;
+        let row = get_item_from(&connection, agent_id, "chat_agent")?
+            .ok_or_else(|| TaskRuntimeError::Invalid("Robot not found".to_owned()))?;
         if row.cloud_project_id.as_deref() != Some(project_id) {
             return Err(TaskRuntimeError::Invalid(
                 "Robot is not in this project".to_owned(),
@@ -736,25 +733,24 @@ impl LocalTaskStore {
         if status_filter.is_some() {
             sql.push_str(" AND e.status = ?3");
         } else if !include_terminal {
-            sql.push_str(
-                " AND e.status IN ('pending_approval', 'queued', 'running')",
-            );
+            sql.push_str(" AND e.status IN ('pending_approval', 'queued', 'running')");
         }
         sql.push_str(" ORDER BY e.priority_weight DESC, e.queued_at ASC, e.id ASC");
         let mut statement = connection.prepare(&sql)?;
-        let mut rows = match (agent_id, status_filter) {
-            (Some(agent_id), Some(status)) => statement.query_map(
-                params![project_id, agent_id, status],
-                map_execution,
-            )?,
+        let rows = match (agent_id, status_filter) {
+            (Some(agent_id), Some(status)) => {
+                statement.query_map(params![project_id, agent_id, status], map_execution)?
+            }
             (Some(agent_id), None) => {
                 statement.query_map(params![project_id, agent_id], map_execution)?
             }
-            (None, Some(status)) => statement.query_map(params![project_id, status], map_execution)?,
+            (None, Some(status)) => {
+                statement.query_map(params![project_id, status], map_execution)?
+            }
             (None, None) => statement.query_map(params![project_id], map_execution)?,
         };
         let mut executions = Vec::new();
-        while let Some(execution) = rows.next() {
+        for execution in rows {
             executions.push(execution?);
         }
         Ok(executions)
@@ -865,11 +861,7 @@ impl LocalTaskStore {
              SET status = 'running', started_at = ?1, heartbeat_at = ?1,
                  lease_expires_at = ?2, version = version + 1, updated_at = ?1
              WHERE id = ?3 AND status = 'queued'",
-            params![
-                now,
-                lease_expiry(&now, lease_seconds),
-                candidate_id,
-            ],
+            params![now, lease_expiry(&now, lease_seconds), candidate_id,],
         )?;
         if changed != 1 {
             return Ok(None);
@@ -933,7 +925,10 @@ impl LocalTaskStore {
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let connection = self.connection()?;
         let current = execution_row(&connection, execution_id)?;
-        if matches!(current.status.as_str(), "completed" | "failed" | "cancelled") {
+        if matches!(
+            current.status.as_str(),
+            "completed" | "failed" | "cancelled"
+        ) {
             return Ok(Some(current));
         }
         let now = now();
@@ -944,7 +939,7 @@ impl LocalTaskStore {
                      lease_expires_at = NULL, error_message = ?2, version = version + 1,
                      updated_at = ?1
                  WHERE id = ?3",
-                params![now, truncate(&error, 2000), execution_id],
+                params![now, truncate(error, 2000), execution_id],
             )?;
         } else {
             connection.execute(
@@ -952,7 +947,7 @@ impl LocalTaskStore {
                  SET status = 'failed', completed_at = ?1, lease_expires_at = NULL,
                      error_message = ?2, version = version + 1, updated_at = ?1
                  WHERE id = ?3",
-                params![now, truncate(&error, 2000), execution_id],
+                params![now, truncate(error, 2000), execution_id],
             )?;
         }
         execution_row(&connection, execution_id).map(Some)
@@ -984,7 +979,10 @@ impl LocalTaskStore {
         Ok((requeued, failed))
     }
 
-    pub fn local_execution_payload(&self, execution_id: i64) -> Result<Option<Value>, TaskRuntimeError> {
+    pub fn local_execution_payload(
+        &self,
+        execution_id: i64,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
         let payload: Option<String> = connection.query_row(
             "SELECT execution_payload FROM loop_item_executions WHERE id = ?1",
@@ -1775,12 +1773,12 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
     ChatAgent {
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
-        name: row
-            .title
-            .or(row.name)
-            .unwrap_or_else(|| "AI".to_owned()),
+        name: row.title.or(row.name).unwrap_or_else(|| "AI".to_owned()),
         runtime: "codex".to_owned(),
-        model: metadata.get("model").and_then(Value::as_str).map(ToOwned::to_owned),
+        model: metadata
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
         system_prompt: text("system_prompt", ""),
         status: row.status.unwrap_or_else(|| "active".to_owned()),
         visibility: text("visibility", "creator_admin"),
@@ -1997,11 +1995,7 @@ mod tests {
         (directory, store, project)
     }
 
-    fn make_local_agent(
-        store: &LocalTaskStore,
-        project_id: &str,
-        mode: &str,
-    ) -> ChatAgent {
+    fn make_local_agent(store: &LocalTaskStore, project_id: &str, mode: &str) -> ChatAgent {
         store
             .create_chat_agent(
                 project_id,
@@ -2026,7 +2020,10 @@ mod tests {
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "Local Bot");
-        assert_eq!(listed[0].execution_device_id.as_deref(), Some("local-device"));
+        assert_eq!(
+            listed[0].execution_device_id.as_deref(),
+            Some("local-device")
+        );
 
         let task = store
             .create_task(
@@ -2058,9 +2055,14 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(updated.assignee_agent_id.as_deref(), Some(agent.id.as_str()));
+        assert_eq!(
+            updated.assignee_agent_id.as_deref(),
+            Some(agent.id.as_str())
+        );
 
-        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].agent_id, agent.id);
         assert_eq!(executions[0].status, "queued");
@@ -2103,7 +2105,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
         assert_eq!(executions[0].status, "pending_approval");
         assert_eq!(executions[0].approval_status.as_deref(), Some("pending"));
 
@@ -2123,12 +2127,7 @@ mod tests {
         assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
 
         store
-            .heartbeat_execution(
-                claimed.id,
-                Some("local-device"),
-                Some("codex-queue-1"),
-                300,
-            )
+            .heartbeat_execution(claimed.id, Some("local-device"), Some("codex-queue-1"), 300)
             .unwrap();
         let done = store.complete_execution(claimed.id, None).unwrap().unwrap();
         assert_eq!(done.status, "completed");
@@ -2374,7 +2373,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].status, "queued");
     }
