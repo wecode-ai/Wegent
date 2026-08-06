@@ -102,6 +102,8 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+#[path = "codex/plugin_skills.rs"]
+mod plugin_skills;
 
 use diagnostics::{json_scalar_field, json_string_field};
 pub(crate) use home::select_wework_codex_user_instructions;
@@ -109,6 +111,7 @@ pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
+use plugin_skills::PluginSkillResolver;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -4201,18 +4204,35 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
 }
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
+    let plugin_skills = PluginSkillResolver::load(
+        &wework_codex_home(),
+        &crate::local::capabilities::default_manifest_path(),
+    );
+    turn_input_with_plugin_skills(prompt, &plugin_skills)
+}
+
+fn turn_input_with_plugin_skills(
+    prompt: &Value,
+    plugin_skills: &PluginSkillResolver,
+) -> Vec<Value> {
     let Value::Array(items) = prompt else {
-        return text_input_with_structured_mentions(prompt_text(prompt));
+        return text_input_with_structured_mentions(prompt_text(prompt), plugin_skills);
     };
 
-    let mut input = items.iter().flat_map(turn_input_item).collect::<Vec<_>>();
+    let mut input = items
+        .iter()
+        .flat_map(|item| turn_input_item(item, plugin_skills))
+        .collect::<Vec<_>>();
     if input.is_empty() {
-        input.extend(text_input_with_structured_mentions(prompt_text(prompt)));
+        input.extend(text_input_with_structured_mentions(
+            prompt_text(prompt),
+            plugin_skills,
+        ));
     }
     input
 }
 
-fn turn_input_item(item: &Value) -> Vec<Value> {
+fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Value> {
     let Some(kind) = item.get("type").and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -4220,7 +4240,7 @@ fn turn_input_item(item: &Value) -> Vec<Value> {
         "input_text" | "text" => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input_with_structured_mentions(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
         "input_image" => item
             .get("image_url")
             .or_else(|| item.get("url"))
@@ -4248,7 +4268,7 @@ fn turn_input_item(item: &Value) -> Vec<Value> {
         _ => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input_with_structured_mentions(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
     }
     .unwrap_or_default()
 }
@@ -4281,14 +4301,20 @@ fn mention_input(name: &str, path: &str) -> Value {
     json!({"type": "mention", "name": name, "path": path})
 }
 
-fn text_input_with_structured_mentions(text: String) -> Vec<Value> {
-    let (normalized_text, mentions) = extract_structured_mentions(&text);
+fn text_input_with_structured_mentions(
+    text: String,
+    plugin_skills: &PluginSkillResolver,
+) -> Vec<Value> {
+    let (normalized_text, mentions) = extract_structured_mentions(&text, plugin_skills);
     let mut input = vec![text_input(normalized_text)];
     input.extend(mentions);
     input
 }
 
-fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
+fn extract_structured_mentions(
+    text: &str,
+    plugin_skills: &PluginSkillResolver,
+) -> (String, Vec<Value>) {
     let mut output = String::with_capacity(text.len());
     let mut mentions = Vec::new();
     let mut seen_paths = std::collections::BTreeSet::new();
@@ -4328,6 +4354,9 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
         output.push_str(&visible_mention_text(name, uri));
         if seen_paths.insert(structured_mention_dedup_key(uri)) {
             mentions.push(mention);
+            if let Some(skill) = plugin_skills.resolve(uri) {
+                mentions.push(skill_input(&skill.name, &skill.path.display().to_string()));
+            }
         }
         cursor = uri_end + 1;
     }

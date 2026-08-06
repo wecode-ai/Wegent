@@ -1,125 +1,37 @@
-import { ChevronRight, MoreHorizontal, Search } from 'lucide-react'
-import type { FormEvent, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
+import type { ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
-import { createMcpApi } from '@/api/mcps'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { createSystemSkillApi } from '@/api/systemSkills'
-import { getRuntimeConfig } from '@/config/runtime'
-import { navigateTo } from '@/lib/navigation'
+import { createPluginApi } from '@/api/plugins'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import {
-  CustomMcpDialog,
-  McpProviderBlock,
-  SectionHeading,
-  type CustomMcpFormState,
-} from './McpManagementSections'
-import { serverConfigFromProviderServer, serverKeyFromProviderServer } from './mcp-utils'
-import { parseOptionalStringRecordJson } from './mcp-json-import'
-import {
-  InstalledMcpRow,
-  InstalledPluginRow,
-  InstalledSkillRow,
-  type InstalledMcpItem,
-  type InstalledPluginItem,
-  type InstalledSkillItem,
-} from './PluginManagementRows'
-import { PluginCreateMenu } from './PluginCreateMenu'
-import { PluginDetailView } from './PluginDetailView'
-import { SkillUploadDialog } from './SkillUploadDialog'
+import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getErrorMessage } from '@/lib/error-message'
+import { navigateTo } from '@/lib/navigation'
 import type {
-  InstalledMCP,
   InstalledPlugin,
-  InstalledMCPServerConfig,
-  InstalledSkill,
-  MCPProviderInfo,
-  MCPServer,
+  PluginAccessResponse,
+  PluginAccessUpdateRequest,
+  PluginMarketplaceItem,
 } from '@/types/api'
+import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
+import {
+  installedPluginSourceLabel,
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+} from './installedPluginMerge'
+import { PluginDetailView } from './PluginDetailView'
+import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
+import { PluginShareDialog } from './PluginShareDialog'
+import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
+import { installedPluginDistribution } from './pluginDistribution'
+import { getRuntimeConfig } from '@/config/runtime'
 
-type ManagementTab = 'plugins' | 'apps' | 'mcp' | 'skills' | 'marketplace'
-
-const tabs: Array<{
-  id: ManagementTab
-  labelKey: string
-  fallback: string
-}> = [
-  {
-    id: 'plugins',
-    labelKey: 'plugin_management_tab_plugins',
-    fallback: '插件',
-  },
-  {
-    id: 'apps',
-    labelKey: 'plugin_management_tab_apps',
-    fallback: '应用',
-  },
-  {
-    id: 'mcp',
-    labelKey: 'plugin_management_tab_mcp',
-    fallback: 'MCP',
-  },
-  {
-    id: 'skills',
-    labelKey: 'plugin_management_tab_skills',
-    fallback: '技能',
-  },
-  {
-    id: 'marketplace',
-    labelKey: 'plugin_management_tab_marketplace',
-    fallback: '市场',
-  },
-]
-
-function tabClassName(selected: boolean) {
-  return [
-    'h-9 shrink-0 rounded-lg px-3 text-base font-semibold leading-5 transition-colors',
-    selected ? 'bg-[#f3f3f4] text-[#101014]' : 'text-[#85858c] hover:text-[#101014]',
-  ].join(' ')
-}
-
-function emptyStateClassName() {
-  return 'py-10 text-sm font-semibold text-text-secondary'
-}
-
-function createDefaultSystemSkillApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createSystemSkillApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function getInstalledSkillId(item: InstalledSkill): number {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  return Number(id ?? 0)
-}
-
-function toInstalledSkillItem(item: InstalledSkill): InstalledSkillItem {
-  return {
-    id: getInstalledSkillId(item),
-    name: item.spec.displayName || item.spec.source.skillKey,
-    description: item.spec.description,
-    enabled: item.spec.enabled,
-    sourceType: item.spec.source.type === 'personal' ? 'personal' : 'system',
-  }
-}
-
-function getInstalledMcpId(item: InstalledMCP): number {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  return Number(id ?? 0)
-}
-
-function toInstalledMcpItem(item: InstalledMCP): InstalledMcpItem {
-  return {
-    id: getInstalledMcpId(item),
-    name: item.spec.displayName || item.spec.source.serverKey,
-    description: item.spec.description || item.spec.server.url || '',
-    enabled: item.spec.enabled,
-    serverType: item.spec.server.type,
-  }
+interface PluginShareState {
+  plugin: PluginMarketplaceItem
+  access: PluginAccessResponse
 }
 
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
@@ -133,12 +45,17 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
     description: item.spec.description,
     enabled: item.spec.enabled,
     version: item.spec.version,
+    origin: item.spec.origin ?? (item.spec.source.type === 'local' ? 'created' : 'market'),
+    sourceLabel: installedPluginSourceLabel(item),
+    distribution: installedPluginDistribution(item),
+    updateAvailable: item.spec.installState === 'update_available',
     componentCounts: {
       skills: components.skills.length,
       apps: components.apps?.length ?? 0,
       commands: components.commands.length,
       agents: components.agents.length,
       mcp: components.mcps.length,
+      connectors: components.connectors?.length ?? 0,
       hooks: components.hooks.length,
       lsp: components.lsps.length,
       monitors: components.monitors.length,
@@ -148,758 +65,686 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   }
 }
 
-function installedPluginApps(plugins: InstalledPluginItem[]) {
-  return plugins.flatMap(plugin =>
-    (plugin.raw.spec.components.apps ?? []).map(app => ({
-      id: `${plugin.id}:${app.path || app.name}`,
-      name: app.name,
-      description: app.path,
-      pluginName: plugin.name,
-      enabled: plugin.enabled,
-    }))
-  )
-}
-
 function tryPluginInChat(plugin: InstalledPlugin) {
-  queuePluginTrial(plugin)
+  queuePluginTrial(plugin, { openInNewChat: true })
   navigateTo('/')
-}
-
-const emptyCustomMcpForm: CustomMcpFormState = {
-  name: '',
-  displayName: '',
-  description: '',
-  type: 'streamable-http',
-  url: '',
-  command: '',
-  args: '',
-  envJson: '',
-  headersJson: '',
-}
-
-function serverConfigFromCustomForm(form: CustomMcpFormState): InstalledMCPServerConfig {
-  if (form.type === 'stdio') {
-    return {
-      type: 'stdio',
-      command: form.command.trim(),
-      args: form.args
-        .split(/\s+/)
-        .map(arg => arg.trim())
-        .filter(Boolean),
-      env: parseOptionalStringRecordJson(form.envJson) ?? undefined,
-    }
-  }
-
-  return {
-    type: form.type,
-    url: form.url.trim(),
-    base_url: form.url.trim(),
-    headers: parseOptionalStringRecordJson(form.headersJson) ?? undefined,
-  }
 }
 
 interface PluginManagementWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
+  cloudApiBaseUrl?: string
+  cloudToken?: string | null
 }
 
 export function PluginManagementWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
+  cloudApiBaseUrl,
+  cloudToken,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
-  const [activeTab, setActiveTab] = useState<ManagementTab>('plugins')
-  const [query, setQuery] = useState('')
-  const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
-  const pluginApi = useMemo(() => {
-    return createLocalCodexPluginApi()
-  }, [])
-  const mcpApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createMcpApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
-  const [installedMcps, setInstalledMcps] = useState<InstalledMcpItem[]>([])
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
-  const [installedSkills, setInstalledSkills] = useState<InstalledSkillItem[]>([])
-  const [mcpProviders, setMcpProviders] = useState<MCPProviderInfo[]>([])
-  const [providerServers, setProviderServers] = useState<Record<string, MCPServer[]>>({})
-  const [providerErrors, setProviderErrors] = useState<Record<string, string>>({})
-  const [providerLoadingByKey, setProviderLoadingByKey] = useState<Record<string, boolean>>({})
-  const [providerSavingByKey, setProviderSavingByKey] = useState<Record<string, boolean>>({})
-  const [providerTokenInputs, setProviderTokenInputs] = useState<Record<string, string>>({})
-  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
-  const [showCustomMcpDialog, setShowCustomMcpDialog] = useState(false)
-  const [showSkillUploadDialog, setShowSkillUploadDialog] = useState(false)
-  const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
-  const [customMcpForm, setCustomMcpForm] = useState<CustomMcpFormState>(emptyCustomMcpForm)
-  const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
-  const [isUploadingSkill, setIsUploadingSkill] = useState(false)
-  const [isLoadingMcps, setIsLoadingMcps] = useState(true)
+  const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>([])
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(true)
-  const [isLoadingSkills, setIsLoadingSkills] = useState(true)
-  const normalizedQuery = query.trim().toLowerCase()
+  const [currentDeviceId, setCurrentDeviceId] = useState('')
+  const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
+  const [pluginShareState, setPluginShareState] = useState<PluginShareState | null>(null)
+  const [pluginShareSaving, setPluginShareSaving] = useState(false)
+  const [, setPluginSharePreparing] = useState(false)
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    id: string | number
+    name: string
+  } | null>(null)
+  const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
+    () => new Set()
+  )
+  const [pluginOperationNotice, setPluginOperationNotice] =
+    useState<PluginOperationNoticeState | null>(null)
+  const [pluginShareError, setPluginShareError] = useState<string | null>(null)
+  const [canPublish, setCanPublish] = useState(false)
+  const [canSharePersonalPlugins, setCanSharePersonalPlugins] = useState(true)
+  const [pluginPublishTarget, setPluginPublishTarget] = useState<InstalledPluginItem | null>(null)
+  const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
+  const [isPublishingPlugin, setIsPublishingPlugin] = useState(false)
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const cloudPluginApi = useMemo(() => {
+    const runtime = getRuntimeConfig()
+    return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudApiBaseUrl || runtime.apiBaseUrl,
+        ...(cloudToken === undefined
+          ? {}
+          : {
+              getToken: () => cloudToken,
+              redirectOnUnauthorized: false,
+            }),
+      })
+    )
+  }, [cloudApiBaseUrl, cloudToken])
 
   useEffect(() => {
-    let isCurrent = true
-
-    systemSkillApi
-      .listInstalledSystemSkills()
-      .then(response => {
-        if (!isCurrent) return
-        setInstalledSkills(response.items.map(toInstalledSkillItem))
+    let current = true
+    localPluginApi
+      .readState()
+      .then(async state => {
+        const [cloudInstalled, marketplace, capabilities] = await Promise.all([
+          cloudPluginApi.listInstalledPlugins(state.deviceId).catch(() => ({ items: [] })),
+          cloudPluginApi
+            .listMarketplacePlugins({ deviceId: state.deviceId })
+            .catch(() => ({ items: [] })),
+          cloudPluginApi
+            .getCapabilities()
+            .catch(() => ({ canPublish: false, canSharePersonalPlugins: true })),
+        ])
+        return { state, cloudInstalled, marketplace, capabilities }
       })
-      .catch(() => {
-        if (!isCurrent) return
-        setInstalledSkills([])
-      })
-      .finally(() => {
-        if (isCurrent) setIsLoadingSkills(false)
-      })
-
-    mcpApi
-      .listInstalledMcps()
-      .then(response => {
-        if (!isCurrent) return
-        setInstalledMcps(response.items.map(toInstalledMcpItem))
-        setIsLoadingMcps(false)
-      })
-      .catch(() => {
-        if (!isCurrent) return
-        setInstalledMcps([])
-        setIsLoadingMcps(false)
-      })
-
-    pluginApi
-      .listInstalledPlugins()
-      .then(response => {
-        if (!isCurrent) return
-        setInstalledPlugins(response.items.map(toInstalledPluginItem))
-        setIsLoadingPlugins(false)
-      })
-      .catch(() => {
-        if (!isCurrent) return
-        setInstalledPlugins([])
-        setIsLoadingPlugins(false)
-      })
-
-    mcpApi
-      .listProviders()
-      .then(response => {
-        if (!isCurrent) return
-        setMcpProviders(response.providers)
-      })
-      .catch(() => {
-        if (!isCurrent) return
-        setMcpProviders([])
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [mcpApi, pluginApi, systemSkillApi])
-
-  const filteredInstalledSkills = useMemo(
-    () =>
-      installedSkills.filter(skill => {
-        if (!normalizedQuery) return true
-
-        return (
-          skill.name.toLowerCase().includes(normalizedQuery) ||
-          skill.description.toLowerCase().includes(normalizedQuery)
-        )
-      }),
-    [installedSkills, normalizedQuery]
-  )
-
-  const filteredInstalledMcps = useMemo(
-    () =>
-      installedMcps.filter(mcp => {
-        if (!normalizedQuery) return true
-
-        return (
-          mcp.name.toLowerCase().includes(normalizedQuery) ||
-          mcp.description.toLowerCase().includes(normalizedQuery) ||
-          mcp.serverType.toLowerCase().includes(normalizedQuery)
-        )
-      }),
-    [installedMcps, normalizedQuery]
-  )
-
-  const filteredInstalledPlugins = useMemo(
-    () =>
-      installedPlugins.filter(plugin => {
-        if (!normalizedQuery) return true
-
-        return (
-          plugin.name.toLowerCase().includes(normalizedQuery) ||
-          plugin.description.toLowerCase().includes(normalizedQuery) ||
-          Object.keys(plugin.componentCounts).some(key =>
-            key.toLowerCase().includes(normalizedQuery)
+      .then(({ state, cloudInstalled, marketplace, capabilities }) => {
+        if (!current) return
+        setCurrentDeviceId(state.deviceId)
+        setMarketplaceItems(marketplace.items)
+        setCanPublish(Boolean(capabilities.canPublish))
+        setCanSharePersonalPlugins(Boolean(capabilities.canSharePersonalPlugins ?? true))
+        setInstalledPlugins(
+          mergeInstalledPlugins(cloudInstalled.items, state.installedPlugins, state.deviceId).map(
+            toInstalledPluginItem
           )
         )
-      }),
-    [installedPlugins, normalizedQuery]
+      })
+      .catch(() => {
+        if (!current) return
+        setInstalledPlugins([])
+        setMarketplaceItems([])
+      })
+      .finally(() => {
+        if (current) setIsLoadingPlugins(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [cloudPluginApi, localPluginApi])
+
+  const marketplaceById = useMemo(
+    () => new Map(marketplaceItems.map(item => [String(item.id), item])),
+    [marketplaceItems]
   )
-  const filteredInstalledApps = useMemo(() => {
-    const apps = installedPluginApps(installedPlugins)
-    if (!normalizedQuery) return apps
-    return apps.filter(app =>
-      `${app.name} ${app.description} ${app.pluginName}`.toLowerCase().includes(normalizedQuery)
-    )
-  }, [installedPlugins, normalizedQuery])
   const selectedPlugin = useMemo(
     () =>
       selectedPluginId === null
         ? null
-        : (installedPlugins.find(plugin => plugin.id === selectedPluginId) ?? null),
+        : (installedPlugins.find(plugin => String(plugin.id) === String(selectedPluginId)) ?? null),
     [installedPlugins, selectedPluginId]
   )
 
-  const filteredMcpProviders = useMemo(
-    () =>
-      mcpProviders.filter(provider => {
-        if (!normalizedQuery) return true
-
-        return (
-          provider.name.toLowerCase().includes(normalizedQuery) ||
-          provider.description.toLowerCase().includes(normalizedQuery) ||
-          provider.key.toLowerCase().includes(normalizedQuery)
-        )
-      }),
-    [mcpProviders, normalizedQuery]
-  )
-
-  const toggleInstalledSkill = (id: number) => {
-    const skill = installedSkills.find(item => item.id === id)
-    if (!skill) return
-
-    setInstalledSkills(previous =>
-      previous.map(skill => (skill.id === id ? { ...skill, enabled: !skill.enabled } : skill))
-    )
-
-    systemSkillApi.updateInstalledSystemSkill(id, !skill.enabled).catch(() => {
-      setInstalledSkills(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: skill.enabled } : item))
-      )
-    })
-  }
-
-  const uninstallInstalledSkill = (id: number) => {
-    const skill = installedSkills.find(item => item.id === id)
-    if (!skill) return
-
-    setInstalledSkills(previous => previous.filter(item => item.id !== id))
-    systemSkillApi
-      .uninstallInstalledSystemSkill(id)
-      .catch(() => setInstalledSkills(previous => [...previous, skill]))
-  }
-
-  const toggleInstalledMcp = (id: number) => {
-    setInstalledMcps(previous =>
-      previous.map(mcp => (mcp.id === id ? { ...mcp, enabled: !mcp.enabled } : mcp))
-    )
-    const mcp = installedMcps.find(item => item.id === id)
-    if (!mcp) return
-
-    mcpApi.updateInstalledMcp(id, { enabled: !mcp.enabled }).catch(() => {
-      setInstalledMcps(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: mcp.enabled } : item))
-      )
-    })
-  }
-
-  const uninstallInstalledMcp = (id: number) => {
-    const mcp = installedMcps.find(item => item.id === id)
-    if (!mcp) return
-
-    setInstalledMcps(previous => previous.filter(item => item.id !== id))
-    mcpApi.uninstallInstalledMcp(id).catch(() => {
-      setInstalledMcps(previous => [...previous, mcp])
-    })
+  const updateInstalledPlugin = (
+    id: string | number,
+    request: { enabled?: boolean; componentStates?: Record<string, boolean> }
+  ) => {
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
+    return isCloudManagedInstalledPlugin(plugin.raw)
+      ? cloudPluginApi.updateInstalledPlugin(id, request, currentDeviceId || undefined)
+      : localPluginApi.updateInstalledPlugin(id, request)
   }
 
   const toggleInstalledPlugin = (id: string | number) => {
-    const plugin = installedPlugins.find(item => item.id === id)
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return
-
     setInstalledPlugins(previous =>
-      previous.map(item => (item.id === id ? { ...item, enabled: !item.enabled } : item))
-    )
-    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
-      setInstalledPlugins(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
+      previous.map(item =>
+        String(item.id) === String(id) ? { ...item, enabled: !item.enabled } : item
       )
-    })
+    )
+    void updateInstalledPlugin(id, { enabled: !plugin.enabled })
+      .then(updated => {
+        setInstalledPlugins(previous =>
+          previous.map(item =>
+            String(item.id) === String(id) ? toInstalledPluginItem(updated) : item
+          )
+        )
+        notifyLocalPluginSkillsChanged()
+      })
+      .catch(() => {
+        setInstalledPlugins(previous =>
+          previous.map(item =>
+            String(item.id) === String(id) ? { ...item, enabled: plugin.enabled } : item
+          )
+        )
+      })
   }
 
   const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {
-    const plugin = installedPlugins.find(item => item.id === id)
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return
-
     const previousStates = plugin.raw.spec.componentStates || {}
-    const nextStates = { ...previousStates, [componentKey]: enabled }
     setInstalledPlugins(previous =>
       previous.map(item =>
-        item.id === id
+        String(item.id) === String(id)
           ? {
               ...item,
               raw: {
                 ...item.raw,
                 spec: {
                   ...item.raw.spec,
-                  componentStates: nextStates,
+                  componentStates: { ...previousStates, [componentKey]: enabled },
                 },
               },
             }
           : item
       )
     )
-    pluginApi
-      .updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+    void updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
       .then(updated => {
-        const nextItem = toInstalledPluginItem(updated)
-        setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        setInstalledPlugins(previous =>
+          previous.map(item =>
+            String(item.id) === String(id) ? toInstalledPluginItem(updated) : item
+          )
+        )
       })
       .catch(() => {
-        setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+        setInstalledPlugins(previous =>
+          previous.map(item => (String(item.id) === String(id) ? plugin : item))
+        )
       })
   }
 
-  const uninstallInstalledPlugin = (id: string | number) => {
-    const plugin = installedPlugins.find(item => item.id === id)
-    if (!plugin) return
+  const requestUninstallPlugin = (id: string | number, name: string) => {
+    setPendingUninstall({ id, name })
+  }
 
-    setInstalledPlugins(previous => previous.filter(item => item.id !== id))
-    setSelectedPluginId(current => (current === id ? null : current))
-    pluginApi
-      .uninstallInstalledPlugin(id)
-      .then(() => notifyLocalPluginSkillsChanged())
-      .catch(() => {
-        setInstalledPlugins(previous => [...previous, plugin])
+  const confirmUninstallPlugin = () => {
+    if (!pendingUninstall) return
+    const { id, name } = pendingUninstall
+    setPendingUninstall(null)
+    setUninstallingPluginIds(previous => new Set(previous).add(id))
+    uninstallInstalledPlugin(id, name)
+  }
+
+  const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) {
+      setUninstallingPluginIds(previous => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+      return
+    }
+    void logoutLocalConnectorsForPlugin(plugin.raw)
+      .catch(() => undefined)
+      .then(() =>
+        isCloudManagedInstalledPlugin(plugin.raw)
+          ? cloudPluginApi.uninstallInstalledPlugin(id, currentDeviceId || undefined)
+          : localPluginApi.uninstallInstalledPlugin(id)
+      )
+      .then(() => {
+        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+        notifyLocalPluginSkillsChanged()
+        setPluginOperationNotice({
+          id: `uninstalled-${id}`,
+          kind: 'success',
+          message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+            name: pluginName,
+            defaultValue: `${pluginName} 已卸载`,
+          }),
+        })
+      })
+      .catch((error: Error) => {
+        setPluginOperationNotice({
+          id: `uninstall-error-${id}`,
+          kind: 'error',
+          message: error.message,
+        })
+      })
+      .finally(() => {
+        setUninstallingPluginIds(previous => {
+          const next = new Set(previous)
+          next.delete(id)
+          return next
+        })
       })
   }
 
-  const createCustomMcp = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const displayName = customMcpForm.displayName.trim()
-    const name = customMcpForm.name.trim()
-    if (!name || !displayName) return
+  useEffect(() => {
+    if (pluginOperationNotice?.kind !== 'success') return
+    const noticeId = pluginOperationNotice.id
+    const timeoutId = window.setTimeout(() => {
+      setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
+    }, 4_000)
+    return () => window.clearTimeout(timeoutId)
+  }, [pluginOperationNotice])
 
-    setIsCreatingCustomMcp(true)
-    mcpApi
-      .createCustomMcp({
-        name,
-        displayName,
-        description: customMcpForm.description.trim(),
-        server: serverConfigFromCustomForm(customMcpForm),
-        enabled: true,
-      })
-      .then(item => {
-        setInstalledMcps(previous => [toInstalledMcpItem(item), ...previous])
-        setCustomMcpForm(emptyCustomMcpForm)
-        setShowCustomMcpDialog(false)
-      })
-      .finally(() => setIsCreatingCustomMcp(false))
+  const createdPluginSlug = (plugin: InstalledPluginItem) =>
+    plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
+
+  const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
+    const slug = createdPluginSlug(plugin)
+    return marketplaceItems.find(
+      item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
+    )
   }
 
-  const uploadPersonalSkill = async (file: File, name: string) => {
-    setIsUploadingSkill(true)
+  const listingTypeForPlugin = (plugin: InstalledPluginItem): 'plugin' | 'skill' => {
+    const components = plugin.raw.spec.components
+    const isSingleSkill =
+      components.skills.length === 1 &&
+      components.commands.length === 0 &&
+      components.agents.length === 0 &&
+      components.mcps.length === 0 &&
+      components.hooks.length === 0
+    return isSingleSkill ? 'skill' : 'plugin'
+  }
+
+  const manageInstalledPluginAccess = async (plugin: InstalledPluginItem) => {
+    setPluginShareError(null)
     try {
-      const uploaded = await systemSkillApi.uploadPersonalSkill(file, name)
-      const labels = uploaded.metadata['labels']
-      const skillId =
-        labels && typeof labels === 'object' ? Number((labels as Record<string, unknown>).id) : 0
-      if (!Number.isFinite(skillId) || skillId <= 0) {
-        throw new Error('Uploaded skill is missing id')
+      const owned = findOwnedMarketplacePlugin(plugin)
+      if (!owned || owned.visibility !== 'personal') {
+        throw new Error(
+          t(
+            'workbench.plugins_share_manage_hint',
+            '仅用于管理个人插件的可见成员；扩大到组织或全部请使用「发布」。'
+          )
+        )
       }
-      const installed = await systemSkillApi.installPersonalSkill(skillId)
-      const item = toInstalledSkillItem(installed)
-      setInstalledSkills(previous => [item, ...previous.filter(skill => skill.id !== item.id)])
-      setActiveTab('skills')
-      setShowSkillUploadDialog(false)
-    } finally {
-      setIsUploadingSkill(false)
+      if (owned.latestReleaseId) {
+        await localPluginApi.linkPersonalPluginRelease(
+          plugin.raw,
+          Number(owned.id),
+          owned.latestReleaseId
+        )
+      }
+      const access = await cloudPluginApi.getMarketplacePluginAccess(owned.id)
+      setPluginShareState({ plugin: owned, access })
+    } catch (error) {
+      setPluginShareError(error instanceof Error ? error.message : 'Failed to prepare sharing')
     }
   }
 
-  const loadProviderServers = (providerKey: string) => {
-    setProviderLoadingByKey(previous => ({ ...previous, [providerKey]: true }))
-    setProviderErrors(previous => ({ ...previous, [providerKey]: '' }))
-
-    mcpApi
-      .listProviderServers(providerKey)
-      .then(response => {
-        if (!response.success) {
-          setProviderErrors(previous => ({
-            ...previous,
-            [providerKey]: response.message,
-          }))
-          setProviderServers(previous => ({ ...previous, [providerKey]: [] }))
-          return
-        }
-        setProviderServers(previous => ({
-          ...previous,
-          [providerKey]: response.servers,
-        }))
+  const publishInstalledPlugin = async (
+    plugin: InstalledPluginItem,
+    request: PluginPublishRequest
+  ) => {
+    setIsPublishingPlugin(true)
+    setPluginPublishError(null)
+    try {
+      const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
+      const completed = await cloudPluginApi.publishSubmission(file, {
+        slug: createdPluginSlug(plugin),
+        displayName: plugin.name,
+        version: plugin.version || '0.1.0',
+        listingType: listingTypeForPlugin(plugin),
+        visibility: request.visibility,
+        targets: request.targets,
+        allowCopy: request.allowCopy,
       })
-      .catch((error: Error) => {
-        setProviderErrors(previous => ({
-          ...previous,
-          [providerKey]: error.message,
-        }))
-      })
-      .finally(() => {
-        setProviderLoadingByKey(previous => ({
-          ...previous,
-          [providerKey]: false,
-        }))
-      })
-  }
-
-  const saveProviderToken = (provider: MCPProviderInfo) => {
-    const value = providerTokenInputs[provider.key]?.trim()
-    if (!value) return
-
-    setProviderSavingByKey(previous => ({ ...previous, [provider.key]: true }))
-    mcpApi
-      .updateProviderKeys({ [provider.token_field_name]: value })
-      .then(() => {
-        setMcpProviders(previous =>
-          previous.map(item => (item.key === provider.key ? { ...item, has_token: true } : item))
+      setInstalledPlugins(previous =>
+        previous.map(candidate => {
+          if (String(candidate.id) !== String(plugin.id)) return candidate
+          const updated: InstalledPlugin = {
+            ...candidate.raw,
+            spec: {
+              ...candidate.raw.spec,
+              sourcePayload: {
+                ...(candidate.raw.spec.sourcePayload ?? {}),
+                submissionId: completed.submission.id,
+                submissionStatus: completed.submission.status,
+                submissionReviewNote: completed.submission.reviewNote ?? '',
+              },
+            },
+          }
+          return toInstalledPluginItem(updated)
+        })
+      )
+      if (completed.plugin?.latestReleaseId) {
+        await localPluginApi.linkPersonalPluginRelease(
+          plugin.raw,
+          Number(completed.plugin.id),
+          completed.plugin.latestReleaseId
         )
-        setProviderTokenInputs(previous => ({
-          ...previous,
-          [provider.key]: '',
-        }))
-        loadProviderServers(provider.key)
-      })
-      .finally(() => {
-        setProviderSavingByKey(previous => ({
-          ...previous,
-          [provider.key]: false,
-        }))
-      })
-  }
-
-  const installProviderServer = (provider: MCPProviderInfo, server: MCPServer) => {
-    mcpApi
-      .installProviderMcp({
-        providerKey: provider.key,
-        serverKey: serverKeyFromProviderServer(server),
-        catalogItemId: server.id,
-        displayName: server.name,
-        description: server.description ?? '',
-        server: serverConfigFromProviderServer(server),
-        sourcePayload: server as unknown as Record<string, unknown>,
-      })
-      .then(item => {
-        const installed = toInstalledMcpItem(item)
-        setInstalledMcps(previous => [
-          installed,
-          ...previous.filter(mcp => mcp.id !== installed.id),
+        setMarketplaceItems(previous => [
+          completed.plugin!,
+          ...previous.filter(item => item.id !== completed.plugin!.id),
         ])
-        setProviderServers(previous => ({
-          ...previous,
-          [provider.key]: (previous[provider.key] ?? []).map(candidate =>
-            candidate.id === server.id
-              ? {
-                  ...candidate,
-                  installState: 'installed',
-                  installedMcpId: installed.id,
-                  enabled: installed.enabled,
-                }
-              : candidate
-          ),
-        }))
+      }
+      setPluginPublishTarget(null)
+      setPluginOperationNotice({
+        id: `publish-${completed.submission.id}`,
+        kind: 'success',
+        message:
+          completed.submission.status === 'pending'
+            ? t('workbench.plugins_publish_pending_notice', '已提交审核，通过后将出现在插件市场。')
+            : t('workbench.plugins_publish_approved_notice', '发布成功。'),
       })
+    } catch (error) {
+      const message = getErrorMessage(error, 'Failed to publish plugin')
+      setPluginPublishError(
+        /version already exists/i.test(message)
+          ? t(
+              'workbench.plugins_version_exists_hint',
+              '该版本已存在，请先在插件清单中提升 version 后再发布。'
+            )
+          : /missing \.codex-plugin\/plugin\.json/i.test(message)
+            ? t(
+                'workbench.plugins_publish_source_missing',
+                '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
+              )
+            : message
+      )
+    } finally {
+      setIsPublishingPlugin(false)
+    }
   }
 
-  if (activeTab === 'plugins' && selectedPlugin) {
+  const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
+    setPluginSharePreparing(true)
+    try {
+      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
+      const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+      const item = toInstalledPluginItem(installed)
+      setInstalledPlugins(previous => [
+        item,
+        ...previous.filter(candidate => String(candidate.id) !== String(item.id)),
+      ])
+      notifyLocalPluginSkillsChanged()
+      setSelectedPluginId(item.id)
+    } finally {
+      setPluginSharePreparing(false)
+    }
+  }
+
+  const savePluginShare = async (request: PluginAccessUpdateRequest) => {
+    if (!pluginShareState) return
+    setPluginShareSaving(true)
+    setPluginShareError(null)
+    try {
+      const access = await cloudPluginApi.updateMarketplacePluginAccess(
+        pluginShareState.plugin.id,
+        request
+      )
+      setMarketplaceItems(previous =>
+        previous.map(item =>
+          item.id === pluginShareState.plugin.id
+            ? {
+                ...item,
+                allowCopy: access.allowCopy,
+                grantUserCount: access.targets.filter(target => target.entityType === 'user')
+                  .length,
+                grantNamespaceCount: access.targets.filter(
+                  target => target.entityType === 'namespace'
+                ).length,
+              }
+            : item
+        )
+      )
+      setPluginShareState(null)
+    } catch (error) {
+      setPluginShareError(error instanceof Error ? error.message : 'Failed to save plugin access')
+    } finally {
+      setPluginShareSaving(false)
+    }
+  }
+
+  const searchPluginShareUsers = useCallback(
+    (value: string) =>
+      cloudPluginApi.searchPluginShareUsers(value).then(response => response.users),
+    [cloudPluginApi]
+  )
+  const searchPluginShareGroups = useCallback(
+    (value: string) =>
+      cloudPluginApi.searchPluginShareGroups(value).then(response => response.items),
+    [cloudPluginApi]
+  )
+
+  const pluginShareDialog = pluginShareState ? (
+    <PluginShareDialog
+      pluginName={pluginShareState.plugin.displayName || pluginShareState.plugin.name}
+      access={pluginShareState.access}
+      saving={pluginShareSaving}
+      error={pluginShareError}
+      onClose={() => setPluginShareState(null)}
+      onSave={request => void savePluginShare(request)}
+      searchUsers={searchPluginShareUsers}
+      searchGroups={searchPluginShareGroups}
+    />
+  ) : null
+
+  const pluginPublishDialog = pluginPublishTarget ? (
+    <PluginPublishDialog
+      pluginName={pluginPublishTarget.name}
+      canPublish={canPublish}
+      canSharePersonal={canSharePersonalPlugins}
+      publishing={isPublishingPlugin}
+      error={pluginPublishError}
+      onClose={() => {
+        if (isPublishingPlugin) return
+        setPluginPublishTarget(null)
+        setPluginPublishError(null)
+      }}
+      onPublish={request => void publishInstalledPlugin(pluginPublishTarget, request)}
+      searchUsers={searchPluginShareUsers}
+      searchGroups={searchPluginShareGroups}
+    />
+  ) : null
+
+  const pluginOperationNoticeOverlay = pluginOperationNotice ? (
+    <PluginOperationNotice
+      notice={pluginOperationNotice}
+      onDismiss={() => setPluginOperationNotice(null)}
+    />
+  ) : null
+
+  if (selectedPlugin) {
+    const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
+    const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
+    const canOpenPublish =
+      selectedPlugin.origin === 'created' && (canPublish || canSharePersonalPlugins)
+    const submissionStatus =
+      typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
+        ? (selectedPlugin.raw.spec.sourcePayload.submissionStatus as
+            | 'uploading'
+            | 'scanning'
+            | 'pending'
+            | 'approved'
+            | 'rejected'
+            | 'cancelled')
+        : null
+    const submissionReviewNote =
+      typeof selectedPlugin.raw.spec.sourcePayload?.submissionReviewNote === 'string'
+        ? selectedPlugin.raw.spec.sourcePayload.submissionReviewNote
+        : null
     return (
-      <PluginDetailView
-        plugin={selectedPlugin}
-        onBack={() => setSelectedPluginId(null)}
-        onToggle={() => tryPluginInChat(selectedPlugin.raw)}
-        onComponentToggle={(componentKey, enabled) =>
-          togglePluginComponent(selectedPlugin.id, componentKey, enabled)
-        }
-        onUninstall={() => uninstallInstalledPlugin(selectedPlugin.id)}
-      />
+      <>
+        <PluginDetailView
+          plugin={selectedPlugin}
+          backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
+          primaryActionLabel={
+            isUninstalling
+              ? t('workbench.plugins_uninstalling', '正在卸载')
+              : t('workbench.plugins_try_now', '立即试用')
+          }
+          primaryActionDisabled={isUninstalling}
+          showUninstall={!isUninstalling}
+          secondaryActionLabel={
+            canOpenPublish
+              ? isPublishingPlugin
+                ? t('workbench.plugins_publishing', '发布中…')
+                : t('workbench.plugins_publish_to_marketplace', '发布')
+              : undefined
+          }
+          secondaryActionDisabled={isPublishingPlugin || submissionStatus === 'pending'}
+          onSecondaryAction={
+            canOpenPublish
+              ? () => {
+                  setPluginPublishError(null)
+                  setPluginPublishTarget(selectedPlugin)
+                }
+              : undefined
+          }
+          accessRole={ownedMarketplace?.accessRole}
+          pluginVisibility={ownedMarketplace?.visibility ?? null}
+          shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
+          shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
+          onManageAccess={
+            ownedMarketplace?.accessRole === 'owner' && ownedMarketplace.visibility === 'personal'
+              ? () => void manageInstalledPluginAccess(selectedPlugin)
+              : undefined
+          }
+          submissionStatus={submissionStatus}
+          submissionReviewNote={submissionReviewNote}
+          onBack={() => setSelectedPluginId(null)}
+          editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
+          onEditAction={
+            selectedPlugin.origin === 'created'
+              ? () =>
+                  navigateTo(
+                    `/plugins/create?edit=${encodeURIComponent(
+                      selectedPlugin.raw.spec.source.pluginKey
+                    )}`
+                  )
+              : undefined
+          }
+          onToggle={() => tryPluginInChat(selectedPlugin.raw)}
+          onComponentToggle={(componentKey, enabled) =>
+            togglePluginComponent(selectedPlugin.id, componentKey, enabled)
+          }
+          onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
+        />
+        {pluginShareDialog}
+        {pluginPublishDialog}
+        {pluginOperationNoticeOverlay}
+        {pendingUninstall && (
+          <UninstallPluginDialog
+            pluginName={pendingUninstall.name}
+            onCancel={() => setPendingUninstall(null)}
+            onConfirm={confirmUninstallPlugin}
+          />
+        )}
+      </>
     )
   }
 
   return (
-    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white text-[#101014]">
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
       <DesktopTopBar
         testId="plugin-management-topbar"
         className={[
-          'sticky top-0 z-30 h-12 bg-white/94 pl-20 pr-4 backdrop-blur-xl md:h-[52px] md:pr-7',
+          'sticky top-0 z-30 shrink-0 border-b border-border/75 bg-background/95 backdrop-blur-xl',
           sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
         ].join(' ')}
         left={
           <>
             {topBarLeftActions}
-            <nav className="flex items-center gap-3 text-sm font-semibold" aria-label="breadcrumb">
-              <button
-                type="button"
-                className="text-[#85858c] transition-colors hover:text-[#101014]"
-                onClick={() => navigateTo('/plugins')}
-              >
-                {t('workbench.plugins_tab', '插件')}
-              </button>
-              <ChevronRight className="h-4 w-4 text-[#85858c]" />
-              <span>{t('workbench.plugins_manage', '管理')}</span>
-            </nav>
-          </>
-        }
-        right={
-          <>
-            <PluginCreateMenu
-              isOpen={isCreateMenuOpen}
-              buttonTestId="plugin-management-create-button"
-              onToggle={() => setIsCreateMenuOpen(previous => !previous)}
-              onCreateSkill={() => {
-                setIsCreateMenuOpen(false)
-                setShowSkillUploadDialog(true)
-              }}
-              onCreateMcp={() => {
-                setIsCreateMenuOpen(false)
-                setShowCustomMcpDialog(true)
-              }}
-              onCreatePlugin={() => {
-                setIsCreateMenuOpen(false)
-                navigateTo('/plugins/create')
-              }}
-            />
             <button
               type="button"
-              aria-label={t('workbench.plugins_more_actions', '更多操作')}
-              className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+              data-testid="plugin-management-back-button"
+              className="plugin-route-back-button"
+              onClick={() => navigateTo('/plugins')}
             >
-              <MoreHorizontal />
+              ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
             </button>
           </>
         }
       />
 
-      <section className="mx-auto flex w-full max-w-[940px] flex-col gap-8 px-5 pb-12 pt-8 md:pt-16">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:gap-8">
+      <div
+        data-testid="plugin-management-page-content"
+        className={[
+          'mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-[68px] md:px-[26px]',
+          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+          'pt-[27px]',
+        ].join(' ')}
+      >
+        <header className="mb-6">
+          <h1 className="heading-base tracking-tight text-text-primary">
+            {t('workbench.plugins_manage_plugins', '管理插件')}
+          </h1>
+          <p className="mt-1 text-sm leading-5 text-text-secondary">
+            {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
+          </p>
+        </header>
+
+        {isLoadingPlugins ? (
+          <div className="py-10 text-sm text-text-secondary">
+            {t('workbench.plugins_loading_plugins', '正在加载插件')}
+          </div>
+        ) : installedPlugins.length > 0 ? (
           <div
-            className="scrollbar-none -mx-1 flex items-center gap-2 overflow-x-auto px-1"
-            role="tablist"
+            data-testid="plugin-management-installed-list"
+            className="rounded-[12px] border border-border/30 bg-background"
           >
-            {tabs.map(tab => {
-              const count =
-                tab.id === 'plugins'
-                  ? installedPlugins.length
-                  : tab.id === 'apps'
-                    ? installedPluginApps(installedPlugins).length
-                    : tab.id === 'mcp'
-                      ? installedMcps.length
-                      : tab.id === 'skills'
-                        ? installedSkills.length
-                        : mcpProviders.length
+            {installedPlugins.map(plugin => {
+              const marketplaceItem = plugin.raw.spec.pluginId
+                ? marketplaceById.get(String(plugin.raw.spec.pluginId))
+                : undefined
               return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === tab.id}
-                  className={tabClassName(activeTab === tab.id)}
-                  onClick={() => {
-                    setSelectedPluginId(null)
-                    setActiveTab(tab.id)
-                  }}
+                <div
+                  key={plugin.id}
+                  className="border-b border-border/25 last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
                 >
-                  {t(`workbench.${tab.labelKey}`, tab.fallback)}{' '}
-                  <span className="text-[#85858c]">{count}</span>
-                </button>
+                  <InstalledPluginRow
+                    plugin={plugin}
+                    marketplaceItem={marketplaceItem}
+                    onOpen={() => setSelectedPluginId(plugin.id)}
+                    onTry={() => tryPluginInChat(plugin.raw)}
+                    onPublish={
+                      plugin.origin === 'created' && (canPublish || canSharePersonalPlugins)
+                        ? () => {
+                            setPluginPublishError(null)
+                            setPluginPublishTarget(plugin)
+                          }
+                        : undefined
+                    }
+                    onShare={
+                      plugin.origin === 'created' &&
+                      findOwnedMarketplacePlugin(plugin)?.visibility === 'personal'
+                        ? () => void manageInstalledPluginAccess(plugin)
+                        : undefined
+                    }
+                    onCopy={
+                      marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
+                        ? () => void copyMarketplacePlugin(marketplaceItem)
+                        : undefined
+                    }
+                    onToggle={() => toggleInstalledPlugin(plugin.id)}
+                    onUninstall={() => requestUninstallPlugin(plugin.id, plugin.name)}
+                    isUninstalling={uninstallingPluginIds.has(plugin.id)}
+                  />
+                </div>
               )
             })}
           </div>
-
-          <label className="relative w-full shrink-0 md:w-[340px]">
-            <span className="sr-only">{t('workbench.plugins_search_plugins', '搜索插件')}</span>
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#85858c]" />
-            <input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder={t('workbench.plugins_search_plugins', '搜索插件')}
-              data-testid="plugin-management-search-input"
-              className="h-10 w-full rounded-xl border border-[#dedee4] bg-white pl-11 pr-4 text-sm outline-none placeholder:text-[#85858c] focus:border-[#9da2ae]"
-            />
-          </label>
-        </div>
-
-        {activeTab === 'plugins' ? (
-          <div className="space-y-9">
-            {isLoadingPlugins ? (
-              <div className={emptyStateClassName()}>
-                {t('workbench.plugins_loading_plugins', '正在加载插件')}
-              </div>
-            ) : filteredInstalledPlugins.length > 0 ? (
-              filteredInstalledPlugins.map(plugin => (
-                <InstalledPluginRow
-                  key={plugin.id}
-                  plugin={plugin}
-                  onOpen={() => setSelectedPluginId(plugin.id)}
-                  onToggle={() => toggleInstalledPlugin(plugin.id)}
-                  onUninstall={() => uninstallInstalledPlugin(plugin.id)}
-                />
-              ))
-            ) : (
-              <div className="flex flex-col items-start gap-3 text-sm font-semibold text-text-secondary">
-                <div>{t('workbench.plugins_no_installed_plugins', '暂无已安装插件')}</div>
-                <button
-                  type="button"
-                  data-testid="plugin-management-upload-plugin-button"
-                  className="rounded-xl bg-text-primary px-4 py-2 text-background hover:bg-text-primary/90"
-                  onClick={() => navigateTo('/plugins/create')}
-                >
-                  {t('workbench.plugins_create_plugin', '创建插件')}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : activeTab === 'apps' ? (
-          <div className="space-y-4">
-            {filteredInstalledApps.length > 0 ? (
-              filteredInstalledApps.map(app => (
-                <article
-                  key={app.id}
-                  data-testid={`plugin-management-app-${app.id}`}
-                  className="grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-4 rounded-xl transition-colors hover:bg-surface/70"
-                >
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-blue-50 text-blue-600 shadow-sm">
-                    <ChevronRight className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <h2 className="truncate text-base font-medium leading-6">{app.name}</h2>
-                      <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-medium text-text-muted">
-                        {app.pluginName}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
-                      {app.description}
-                    </p>
-                  </div>
-                  <span className="text-sm leading-5 text-text-muted">
-                    {app.enabled
-                      ? t('workbench.plugins_enabled', '已启用')
-                      : t('workbench.plugins_disabled', '已停用')}
-                  </span>
-                </article>
-              ))
-            ) : (
-              <div className={emptyStateClassName()}>
-                {t('workbench.plugins_no_installed_apps', '暂无已安装应用')}
-              </div>
-            )}
-          </div>
-        ) : activeTab === 'mcp' ? (
-          <div className="space-y-9">
-            <section className="space-y-5">
-              <SectionHeading
-                title={t('workbench.plugins_installed_mcps', '已安装 MCP')}
-                description={t(
-                  'workbench.plugins_installed_mcps_description',
-                  '全局安装后会进入设备安装清单，可单独启用或卸载。'
-                )}
-              />
-              {isLoadingMcps ? (
-                <div className={emptyStateClassName()}>
-                  {t('workbench.plugins_loading_mcps', '正在加载 MCP')}
-                </div>
-              ) : filteredInstalledMcps.length > 0 ? (
-                filteredInstalledMcps.map(mcp => (
-                  <InstalledMcpRow
-                    key={mcp.id}
-                    mcp={mcp}
-                    onToggle={() => toggleInstalledMcp(mcp.id)}
-                    onUninstall={() => uninstallInstalledMcp(mcp.id)}
-                  />
-                ))
-              ) : (
-                <div className={emptyStateClassName()}>
-                  {t('workbench.plugins_no_installed_mcps', '暂无已安装 MCP')}
-                </div>
-              )}
-            </section>
-          </div>
-        ) : activeTab === 'skills' ? (
-          <div className="space-y-9">
-            {isLoadingSkills ? (
-              <div className={emptyStateClassName()}>
-                {t('workbench.plugins_loading_skills', '正在加载技能')}
-              </div>
-            ) : filteredInstalledSkills.length > 0 ? (
-              filteredInstalledSkills.map(skill => (
-                <InstalledSkillRow
-                  key={skill.id}
-                  skill={skill}
-                  onToggle={() => toggleInstalledSkill(skill.id)}
-                  onUninstall={() => uninstallInstalledSkill(skill.id)}
-                />
-              ))
-            ) : (
-              <div className={emptyStateClassName()}>
-                {t('workbench.plugins_no_mcp_results', '找不到匹配的 MCP')}
-              </div>
-            )}
-          </div>
         ) : (
-          <section className="space-y-5">
-            <SectionHeading
-              title={t('workbench.plugins_mcp_providers', 'MCP 供应商')}
-              description={t(
-                'workbench.plugins_mcp_providers_description',
-                '配置 token 后同步供应商服务，并按供应商分区安装需要的 MCP。'
-              )}
-            />
-            {filteredMcpProviders.length > 0 ? (
-              filteredMcpProviders.map(provider => (
-                <McpProviderBlock
-                  key={provider.key}
-                  provider={provider}
-                  servers={providerServers[provider.key] ?? []}
-                  error={providerErrors[provider.key]}
-                  tokenInput={providerTokenInputs[provider.key] ?? ''}
-                  isLoading={providerLoadingByKey[provider.key] ?? false}
-                  isSaving={providerSavingByKey[provider.key] ?? false}
-                  onTokenChange={value =>
-                    setProviderTokenInputs(previous => ({
-                      ...previous,
-                      [provider.key]: value,
-                    }))
-                  }
-                  onSaveToken={() => saveProviderToken(provider)}
-                  onSync={() => loadProviderServers(provider.key)}
-                  onInstall={server => installProviderServer(provider, server)}
-                />
-              ))
-            ) : (
-              <div className={emptyStateClassName()}>
-                {t('workbench.plugins_no_search_results', '找不到匹配的技能')}
-              </div>
-            )}
-          </section>
+          <div
+            data-testid="plugin-management-empty-state"
+            className="rounded-[14px] border border-dashed border-border/35 bg-background px-[42px] py-[42px] text-center text-text-muted"
+          >
+            <strong className="mb-1.5 block font-medium text-text-primary">
+              {t('workbench.plugins_no_installed_plugins', '还没有安装插件')}
+            </strong>
+            <p className="mb-3.5 text-sm leading-5">
+              {t('workbench.plugins_no_installed_plugins_hint', '安装后的插件会集中显示在这里。')}
+            </p>
+            <button
+              type="button"
+              data-testid="plugin-management-browse-marketplace-button"
+              className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              onClick={() => navigateTo('/plugins')}
+            >
+              {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
+            </button>
+          </div>
         )}
-      </section>
-      {showCustomMcpDialog && (
-        <CustomMcpDialog
-          form={customMcpForm}
-          isSubmitting={isCreatingCustomMcp}
-          onCancel={() => setShowCustomMcpDialog(false)}
-          onChange={nextForm => setCustomMcpForm(nextForm)}
-          onSubmit={createCustomMcp}
-        />
-      )}
-      {showSkillUploadDialog && (
-        <SkillUploadDialog
-          isUploading={isUploadingSkill}
-          onCancel={() => setShowSkillUploadDialog(false)}
-          onUpload={uploadPersonalSkill}
+      </div>
+      {pluginShareDialog}
+      {pluginPublishDialog}
+      {pluginOperationNoticeOverlay}
+      {pendingUninstall && (
+        <UninstallPluginDialog
+          pluginName={pendingUninstall.name}
+          onCancel={() => setPendingUninstall(null)}
+          onConfirm={confirmUninstallPlugin}
         />
       )}
     </main>

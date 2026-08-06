@@ -1,4 +1,13 @@
-import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
+import {
+  ClipboardList,
+  CornerDownLeft,
+  Cpu,
+  ExternalLink,
+  Package,
+  Plug,
+  Store,
+  Target,
+} from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -11,10 +20,17 @@ import {
   startTransition,
 } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+  INSERT_PLUGIN_REFERENCE_EVENT,
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  showPluginTrialGuide,
+} from '@/features/plugins/pluginTrial'
+import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -23,6 +39,13 @@ import {
 } from '@/lib/native-workspace-path-picker'
 import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import {
+  COMPOSER_APPS_REQUEST_SYNC_EVENT,
+  getComposerApps,
+  publishComposerApps,
+  readComposerAppsSnapshot,
+  subscribeComposerApps,
+} from './composerAppsSnapshot'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -45,6 +68,7 @@ import {
 import {
   createComposerPathReference,
   findComposerMentionDeletionRange,
+  registerComposerMentionIcon,
   replaceComposerMentionTrigger,
   resolveComposerWorkspacePath,
 } from './composerMentions'
@@ -58,6 +82,7 @@ import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
+import { OPEN_COMPOSER_SLASH_MENU_EVENT } from './composerEvents'
 import type { ComposerLinkPayload } from './composerLinks'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
@@ -146,9 +171,14 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const showSlashMenuRef = useRef(false)
     const activeOptionCountRef = useRef(0)
     const suppressEnterUntilKeyUpRef = useRef(false)
-    const autocompleteFrameRef = useRef<number | null>(null)
     const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
-    const [apps, setApps] = useState<LocalDeviceApp[]>([])
+    const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
+      onListLocalApps ? readComposerAppsSnapshot() : []
+    )
+    const appsRef = useRef(apps)
+    useEffect(() => {
+      appsRef.current = apps
+    }, [apps])
     const [isComposing, setIsComposing] = useState(false)
     const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
     const [selectedIndex, setSelectedIndex] = useState(0)
@@ -169,14 +199,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
     useEffect(() => {
-      return () => {
-        if (autocompleteFrameRef.current !== null) {
-          cancelAnimationFrame(autocompleteFrameRef.current)
-        }
-      }
-    }, [])
-
-    useEffect(() => {
       valueRef.current = value
     }, [value])
 
@@ -191,10 +213,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         cloudMentionCandidates,
         conversationMentionCandidates
       )
-
-    // The `$` trigger searches skills and apps only. Conversation and cloud
-    // references belong to the `@` mention menu, so they must be excluded here
-    // even though both menus share the same candidate pipeline.
     const filteredSkillCandidates = useMemo(
       () =>
         filteredMentionCandidates.filter(
@@ -322,25 +340,43 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       }))
     }, [skillCandidates, t])
 
-    const appSlashCommands = useMemo<SlashCommand[]>(() => {
-      const appGroup = t('workbench.slash_command_group_apps', 'Apps')
-      return appCandidates.map(candidate => ({
+    const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
+      const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
+      const commands: SlashCommand[] = appCandidates.map(candidate => ({
         id: candidate.key,
         title: candidate.title,
         description: candidate.description,
-        metaLabel: candidate.metaLabel,
-        group: appGroup,
+        group: pluginGroup,
         searchAliases: candidate.searchAliases,
         Icon: Plug,
+        iconUrl: resolvePluginLogoUrl({
+          pluginKey: composerAppPluginKey(candidate.app),
+          logo: candidate.app.logoUrl,
+        }),
+        trailingIcon: CornerDownLeft,
         enabled: candidate.enabled,
         testId: slashAppTestId(candidate.app.id),
         app: candidate.app,
       }))
+
+      commands.push({
+        id: 'plugin-marketplace',
+        title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
+        description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
+        group: pluginGroup,
+        searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
+        Icon: Store,
+        trailingIcon: ExternalLink,
+        testId: 'plugin-marketplace',
+        onSelect: () => navigateTo('/plugins'),
+      })
+
+      return commands
     }, [appCandidates, t])
 
     const slashCommands = useMemo(
-      () => [...actionSlashCommands, ...skillSlashCommands, ...appSlashCommands],
-      [actionSlashCommands, appSlashCommands, skillSlashCommands]
+      () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
+      [actionSlashCommands, pluginSlashCommands, skillSlashCommands]
     )
 
     const filteredSlashCommands = useMemo(() => {
@@ -428,7 +464,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const hasMentionCandidates = mentionCandidates.length > 0
     const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
     const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
-    const hasMentionSlashCommands = skillSlashCommands.length + appSlashCommands.length > 0
+    const hasMentionSlashCommands = skillSlashCommands.length + appCandidates.length > 0
     const hasSlashMentionLoadError =
       !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
     const isSlashMentionLoading =
@@ -517,9 +553,15 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           appsLoadedRef.current = false
           appsLoadingRef.current = false
           appsRequestIdRef.current += 1
-          setApps([])
+          // Keep stale apps visible while the new source refreshes.
         }
-        if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
+        if (options?.force) {
+          // Invalidate in-flight identity so a concurrent response cannot mark
+          // the forced refresh as already settled or leave loading stuck true.
+          appsLoadedRef.current = false
+          appsLoadingRef.current = false
+          appsRequestIdRef.current += 1
+        } else if (appsLoadedRef.current || appsLoadingRef.current || appsLoadError) {
           return
         }
 
@@ -533,7 +575,14 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
             appsLoadedRef.current = true
             setAppsLoadError(false)
-            setApps(nextApps)
+            if (nextApps.length > 0) {
+              // Keep slash + toolbar picker on the same last-known list.
+              publishComposerApps(nextApps)
+              setApps(nextApps)
+              return
+            }
+            const kept = getComposerApps()
+            setApps(kept.length > 0 ? kept : nextApps)
           })
           .catch(() => {
             if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
@@ -557,8 +606,83 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       [loadLocalApps, loadLocalSkills]
     )
 
+    useEffect(() => {
+      loadLocalApps()
+    }, [loadLocalApps])
+
+    useEffect(() => {
+      // Publish whatever slash autocomplete is currently showing so the toolbar
+      // plugin picker cannot diverge into an empty “no plugins” state.
+      if (apps.length > 0) publishComposerApps(apps)
+    }, [apps])
+
+    useEffect(() => {
+      // The toolbar picker asks slash to re-publish when Vite HMR has split the
+      // module singleton or the picker opened before the first publish landed.
+      const onRequestSync = () => {
+        if (appsRef.current.length > 0) publishComposerApps(appsRef.current)
+      }
+      window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
+      return () => window.removeEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
+    }, [])
+
+    useEffect(() => {
+      // Keep slash candidates aligned when the toolbar/workbench refreshes the
+      // shared composer app inventory after install/uninstall.
+      return subscribeComposerApps(() => {
+        const next = getComposerApps()
+        if (next.length === 0) return
+        setApps(current => {
+          if (
+            current.length === next.length &&
+            current.every((app, index) => app.id === next[index]?.id)
+          ) {
+            return current
+          }
+          return next
+        })
+        appsLoadedRef.current = true
+        setAppsLoadError(false)
+        setAppsLoading(false)
+      })
+    }, [])
+
+    useEffect(() => {
+      const invalidateLocalPluginCandidates = () => {
+        skillsLoadedRef.current = false
+        skillsLoadingRef.current = false
+        skillsRequestIdRef.current += 1
+        appsLoadedRef.current = false
+        appsLoadingRef.current = false
+        appsRequestIdRef.current += 1
+        setSkills([])
+        // Keep stale composer apps visible while the forced refresh runs.
+        setLoading(false)
+        setLoadError(false)
+        setAppsLoading(false)
+        setAppsLoadError(false)
+
+        queueMicrotask(() => {
+          if (!mountedRef.current) return
+          loadLocalApps({ force: true })
+          if (showSkillMenuRef.current || showSlashMenuRef.current) {
+            loadLocalSkills({ force: true })
+          }
+        })
+      }
+
+      window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
+      return () => {
+        window.removeEventListener(
+          LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+          invalidateLocalPluginCandidates
+        )
+      }
+    }, [loadLocalApps, loadLocalSkills])
+
     const updateAutocompleteTrigger = useCallback(
       (snapshot?: ComposerEditorSnapshot) => {
+        if (disableAutocomplete) return
         const editor = editorRef.current
         const current = snapshot ?? editor?.getSnapshot()
         if (!current) return
@@ -637,6 +761,45 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       [onChange, updateAutocompleteTrigger]
     )
 
+    useEffect(() => {
+      const openSlashMenu = () => {
+        const editor = editorRef.current
+        if (!editor) return
+        const snapshot = editor.getSnapshot()
+        const before = snapshot.value.slice(0, snapshot.selectionStart)
+        const after = snapshot.value.slice(snapshot.selectionEnd)
+        const spacer = before && !/\s$/.test(before) ? ' ' : ''
+        const inserted = `${spacer}/`
+        commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
+        editor.focus()
+        textareaRef.current?.focus()
+      }
+      window.addEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+      return () => window.removeEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+    }, [commitEditorValue, textareaRef])
+
+    useEffect(() => {
+      const insertReference = (event: Event) => {
+        const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference?.trim()
+        const editor = editorRef.current
+        if (!reference || !editor) return
+        const snapshot = editor.getSnapshot()
+        const before = snapshot.value.slice(0, snapshot.selectionStart)
+        const after = snapshot.value.slice(snapshot.selectionEnd)
+        const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
+        const trailingSpace = after && !/^\s/.test(after) ? ' ' : ' '
+        const inserted = `${leadingSpace}${reference}${trailingSpace}`
+        const nextValue = `${before}${inserted}${after}`
+        const nextCursor = before.length + inserted.length
+        commitEditorValue(nextValue, nextCursor)
+        closeAutocompleteMenu()
+        editor.focus()
+        textareaRef.current?.focus()
+      }
+      window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+      return () => window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+    }, [closeAutocompleteMenu, commitEditorValue, textareaRef])
+
     const insertPathReferences = useCallback(
       (entries: NativeWorkspacePath[]) => {
         if (entries.length === 0) return
@@ -668,6 +831,15 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         if (!trigger || !editor) return false
 
         const snapshot = editor.getSnapshot()
+        if (candidate.kind === 'app') {
+          registerComposerMentionIcon(
+            candidate.reference,
+            resolvePluginLogoUrl({
+              pluginKey: composerAppPluginKey(candidate.app),
+              logo: candidate.app.logoUrl,
+            })
+          )
+        }
         const replacement = replaceComposerMentionTrigger(
           snapshot.value,
           candidate.reference,
@@ -676,6 +848,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         )
 
         commitEditorValue(replacement.value, replacement.cursor)
+        if (candidate.kind === 'app') {
+          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+        }
         closeAutocompleteMenu()
         textareaRef.current?.focus()
         editor.focus()
@@ -792,7 +967,27 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         if (row.kind === 'plan-action') onSetPlanMode?.()
         if (row.kind === 'files-action') {
           void openNativeWorkspacePathPicker(workspaceTarget?.path)
-            .then(insertPathReferences)
+            .then(entries => {
+              if (entries.length === 0) return
+              const currentEditor = editorRef.current
+              if (!currentEditor) return
+              const references = entries
+                .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
+                .join(' ')
+              const current = currentEditor.getSnapshot()
+              const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+              const nextValue =
+                current.value.slice(0, current.selectionOffset) +
+                spacer +
+                references +
+                ' ' +
+                current.value.slice(current.selectionOffset)
+              commitEditorValue(
+                nextValue,
+                current.selectionOffset + spacer.length + references.length + 1
+              )
+              currentEditor.focus()
+            })
             .catch(error => {
               console.warn('[Wework composer] native workspace picker failed', error)
             })
@@ -804,7 +999,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         closeAutocompleteMenu,
         cloudSpaceDirectReference,
         commitEditorValue,
-        insertPathReferences,
         onSelectCloudProject,
         onSetGoal,
         onSetPlanMode,
@@ -1009,13 +1203,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const handleEditorSnapshot = useCallback(
       (snapshot: ComposerEditorSnapshot) => {
         valueRef.current = snapshot.value
-        if (autocompleteFrameRef.current !== null) {
-          cancelAnimationFrame(autocompleteFrameRef.current)
-        }
-        autocompleteFrameRef.current = requestAnimationFrame(() => {
-          autocompleteFrameRef.current = null
-          updateAutocompleteTrigger(snapshot)
-        })
+        updateAutocompleteTrigger(snapshot)
       },
       [updateAutocompleteTrigger]
     )

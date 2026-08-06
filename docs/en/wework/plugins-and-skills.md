@@ -19,3 +19,7 @@ Local mode must be connected to Wegent cloud first. Click a plugin badge in the 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
 Use **Settings → Coding → Skills** to manage local Skills. Unified management places Codex and Claude Code Skills under `~/.agents/skills`; name collisions are preserved with source suffixes.
+
+## Development and migration
+
+If you need to build plugins, migrate open-source plugins into the Wework marketplace, or understand how the cloud catalog relates to local Codex installs, read the [Plugin Marketplace Developer Guide](./developer-guide/wework-plugin-marketplace-dev.md).

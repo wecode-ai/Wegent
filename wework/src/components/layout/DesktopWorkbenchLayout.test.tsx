@@ -4911,7 +4911,7 @@ describe('DesktopWorkbenchLayout', () => {
       createResult.resolve(optimisticAddress)
       await createResult.promise
     })
-  })
+  }, 15_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {

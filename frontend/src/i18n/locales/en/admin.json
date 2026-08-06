@@ -1090,7 +1090,9 @@
     "connections": "{{count}} user connections",
     "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
     "auth": {
-      "none": "No user auth"
+      "none": "No user auth",
+      "oauth2": "OAuth 2.0 user authorization",
+      "bearer": "User bearer token"
     },
     "visibility": {
       "all": "All users",

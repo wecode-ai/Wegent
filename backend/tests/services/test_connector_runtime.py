@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.connector import ConnectorAppWrite
 from app.services.connector_apps import _encrypt_json, connector_app_service
+from app.services.connector_connections import connector_connection_service
 from app.services.connector_runtime import ConnectorRuntimeService
 
 
@@ -30,6 +31,7 @@ def _app(**overrides):
         "transport": "streamable-http",
         "mcp_url": "https://mcp.example.test/app",
         "provider_headers_encrypted": None,
+        "forward_user_context_headers": False,
         "tool_allowlist": [],
         "http_tools": [],
     }
@@ -46,6 +48,8 @@ def _create_app(
     transport: str = "streamable-http",
     tool_allowlist: list[str] | None = None,
     http_tools: list[dict] | None = None,
+    auth_type: str = "none",
+    forward_user_context_headers: bool = False,
 ):
     return connector_app_service.create_app(
         db,
@@ -56,6 +60,8 @@ def _create_app(
             mcp_url=f"https://mcp.example.test/{slug}",
             tool_allowlist=tool_allowlist or [],
             http_tools=http_tools or [],
+            auth_type=auth_type,
+            forward_user_context_headers=forward_user_context_headers,
         ),
         admin,
     )
@@ -231,20 +237,46 @@ async def test_mcp_session_initializes_streamable_http_transport(
 
 
 @pytest.mark.asyncio
-async def test_server_config_sends_trusted_user_headers(test_user: User) -> None:
+async def test_server_config_sends_trusted_user_headers(
+    test_db: Session, test_user: User
+) -> None:
     app = _app(
         slug="sites",
         name="Sites",
         provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
+        forward_user_context_headers=True,
     )
 
-    config = await ConnectorRuntimeService._server_config(app, test_user)
+    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
 
     assert config["headers"] == {
         "X-Provider": "configured",
         "X-Wegent-Username": test_user.user_name,
         "X-Wegent-User-Id": str(test_user.id),
     }
+
+
+@pytest.mark.asyncio
+async def test_oauth_server_config_uses_user_token_without_identity_headers(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    app = _app(slug="github", auth_type="oauth2")
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="github",
+        user_id=test_user.id,
+        access_token="github-user-token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=["repo"],
+        external_account_name="octocat",
+        expires_at=None,
+    )
+
+    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
+
+    assert config["headers"] == {"Authorization": "Bearer github-user-token"}
 
 
 @pytest.mark.asyncio

@@ -12,17 +12,28 @@ import JSZip from 'jszip'
 const require = createRequire(import.meta.url)
 const packageJson = require.resolve('dingtalk-workspace-cli/package.json')
 const packageRoot = dirname(packageJson)
+const rustHostTarget = () => {
+  const result = spawnSync('rustc', ['-vV'], { encoding: 'utf8' })
+  if (result.status !== 0) return null
+  return result.stdout.match(/^host:\s*(\S+)$/m)?.[1] ?? null
+}
+const detectedTarget =
+  platform === 'darwin'
+    ? rustHostTarget()
+    : {
+        'linux-x64': 'x86_64-unknown-linux-gnu',
+        'linux-arm64': 'aarch64-unknown-linux-gnu',
+        'win32-x64': 'x86_64-pc-windows-msvc',
+      }[`${platform}-${arch}`]
 const target =
   process.env.WEWORK_DWS_TARGET?.trim() ||
-  {
-    'darwin-arm64': 'aarch64-apple-darwin',
-    'darwin-x64': 'x86_64-apple-darwin',
-    'linux-x64': 'x86_64-unknown-linux-gnu',
-    'linux-arm64': 'aarch64-unknown-linux-gnu',
-    'win32-x64': 'x86_64-pc-windows-msvc',
-  }[`${platform}-${arch}`]
+  detectedTarget
 
-if (!target) throw new Error(`Unsupported DWS build platform: ${platform}-${arch}`)
+if (!target) {
+  throw new Error(
+    `Unsupported DWS build platform: ${platform}-${arch}. Set WEWORK_DWS_TARGET explicitly.`
+  )
+}
 
 const archives = {
   'aarch64-apple-darwin': 'dws-darwin-arm64.tar.gz',
