@@ -2,6 +2,8 @@ import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -41,6 +43,7 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
   defaultAppearance,
@@ -127,10 +130,36 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     tone: 'success' | 'error'
   } | null>(null)
   const currentRuntimeTask = pane.currentRuntimeTask
+  const activePaneProject = pane.currentProject
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: activePaneProject,
+  })
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: async input => {
+      await paneSession.send(input)
+    },
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+  const submitPaneInput = useCallback(
+    async (value?: string) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
+          return
+        }
+      }
+      return paneSession.send(value)
+    },
+    [connectorAuthGate, paneSession]
+  )
   const retryFailedMessage = paneSession.retryFailedMessage
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
@@ -174,6 +203,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     onModelSelectorOpenChange: open => {
       if (!open) pendingModelRetryRef.current = null
     },
+    onRefineTrialPrompt: refinePluginTrialPrompt,
   }
   const emptyTitle = activeConversationProject
     ? t('workbench.project_empty_title', {
@@ -406,7 +436,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     className="mb-2"
                   />
                 )}
-                {pendingRequestUserInput ? (
+                {connectorAuthGate.pending ? (
+                  <ConnectorAuthCard
+                    target={connectorAuthGate.pending.target}
+                    title={connectorAuthGate.pending.title}
+                    onSuccess={() => {
+                      void connectorAuthGate.completePending()
+                    }}
+                    onCancel={connectorAuthGate.clearPending}
+                  />
+                ) : pendingRequestUserInput ? (
                   <RequestUserInputCard
                     key={
                       requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
@@ -429,7 +468,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   <BufferedChatInput
                     value={paneSession.input}
                     onChange={paneSession.setInput}
-                    onSubmit={paneSession.send}
+                    onSubmit={submitPaneInput}
                     disabled={composerDisabled}
                     submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
@@ -535,7 +574,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
-                onSubmit={paneSession.send}
+                onSubmit={submitPaneInput}
                 disabled={composerDisabled}
                 submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}

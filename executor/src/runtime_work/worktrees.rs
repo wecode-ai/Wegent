@@ -451,11 +451,7 @@ struct Snapshot {
 fn snapshot_worktree(path: &Path, snapshot_dir: &Path) -> Result<Snapshot, String> {
     fs::create_dir_all(snapshot_dir).map_err(|error| error.to_string())?;
     let head = git_output(path, &["rev-parse", "HEAD"], None)?;
-    let common_dir = git_output(
-        path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        None,
-    )?;
+    let common_dir = git_common_dir(path)?;
     let index = snapshot_dir.join(format!(
         "snapshot-index-{}-{}",
         std::process::id(),
@@ -495,7 +491,7 @@ fn snapshot_worktree(path: &Path, snapshot_dir: &Path) -> Result<Snapshot, Strin
     Ok(Snapshot {
         reference,
         commit,
-        git_common_dir: common_dir,
+        git_common_dir: common_dir.display().to_string(),
     })
 }
 
@@ -600,13 +596,7 @@ fn discover_worktrees(state: &mut WorktreeState) {
 }
 
 fn source_repository_path(worktree_path: &Path) -> Option<String> {
-    let common_dir = git_output(
-        worktree_path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        None,
-    )
-    .ok()?;
-    let common_dir = PathBuf::from(common_dir);
+    let common_dir = git_common_dir(worktree_path).ok()?;
     if common_dir.file_name()?.to_str()? != ".git" {
         return None;
     }
@@ -617,6 +607,20 @@ fn source_repository_path(worktree_path: &Path) -> Option<String> {
             .display()
             .to_string(),
     )
+}
+
+fn git_common_dir(worktree_path: &Path) -> Result<PathBuf, String> {
+    let common_dir = PathBuf::from(git_output(
+        worktree_path,
+        &["rev-parse", "--git-common-dir"],
+        None,
+    )?);
+    let absolute = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        worktree_path.join(common_dir)
+    };
+    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
 }
 
 fn normalize_configured_root(value: &str) -> Result<String, String> {

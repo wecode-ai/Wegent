@@ -6,8 +6,8 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, IPvAnyAddress
 
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -131,6 +131,26 @@ async def get_old_task_ids(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def get_pod_owners_by_ip(
+    http_request: Request,
+    ip_address: IPvAnyAddress = Query(..., description="Pod IP address"),
+):
+    """Find Wegent executor Pod owners by an exact Pod IP."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        "+++ Received request to resolve Pod IP %s from %s",
+        ip_address,
+        client_ip,
+    )
+    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+    if not hasattr(executor, "get_pod_owners_by_ip"):
+        raise HTTPException(
+            status_code=501,
+            detail="Pod IP lookup is not supported by this executor",
+        )
+    return executor.get_pod_owners_by_ip(str(ip_address))
+
+
 def register(api_router: APIRouter) -> None:
     """Register wecode-specific routes into executor_manager's api_router."""
     api_router.add_api_route(
@@ -146,5 +166,10 @@ def register(api_router: APIRouter) -> None:
     api_router.add_api_route(
         "/executor/old-task-ids",
         get_old_task_ids,
+        methods=["GET"],
+    )
+    api_router.add_api_route(
+        "/executor/pod-owners",
+        get_pod_owners_by_ip,
         methods=["GET"],
     )

@@ -65,8 +65,8 @@ describe('userApis.getQuickAccess', () => {
   test('loads recent teams from an independent endpoint', async () => {
     ;(apiClient.get as jest.Mock).mockResolvedValueOnce([])
 
-    await userApis.getRecentTeams()
+    await userApis.getRecentTeams(true)
 
-    expect(apiClient.get).toHaveBeenCalledWith('/users/recent-teams')
+    expect(apiClient.get).toHaveBeenCalledWith('/users/recent-teams?is_code=true')
   })
 })

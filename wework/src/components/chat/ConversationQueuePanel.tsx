@@ -186,7 +186,7 @@ function QueueRow({
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
   const isSendingGuidance = isBusy && deliveryMode === 'guidance'
-  const showInlineInterrupt = mode === 'guidance' || mode === 'queue'
+  const showInlineInterrupt = Boolean(onInterrupt)
   const statusText =
     status === 'failed'
       ? (error ?? '发送失败')
@@ -237,7 +237,7 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        {mode === 'queue' && !isSendingGuidance && (
+        {mode === 'queue' && !isSendingGuidance && onGuide && (
           <button
             type="button"
             data-testid={`queue-guidance-button-${id}`}
@@ -262,7 +262,7 @@ function QueueRow({
             <span>{t('workbench.interrupt_and_send_short')}</span>
           </button>
         )}
-        {!isSendingGuidance && (
+        {!isSendingGuidance && onCancel && (
           <button
             type="button"
             data-testid={`queue-cancel-button-${id}`}
@@ -274,7 +274,7 @@ function QueueRow({
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
-        {mode === 'queue' && !isBusy && (
+        {mode === 'queue' && !isBusy && onEdit && (
           <ActionMenu
             ariaLabel="更多队列操作"
             testId={`queue-more-button-${id}`}

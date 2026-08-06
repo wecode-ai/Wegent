@@ -246,6 +246,49 @@ def test_list_regular_active_tasks_deduplicates_migrated_legacy_rows(test_db):
     assert tasks[0].name == "migrated-shard"
 
 
+def test_list_recent_owner_only_tasks_reads_only_current_user_shard(test_db):
+    user_id = 1096
+    now = datetime(2026, 8, 5, 12, 0, 0)
+    older = add_shard_resource(
+        test_db,
+        task_id_value=new_task_id(user_id, 1),
+        user_id=user_id,
+        name="older",
+        updated_at=now,
+    )
+    newer = add_shard_resource(
+        test_db,
+        task_id_value=new_task_id(user_id, 2),
+        user_id=user_id,
+        name="newer",
+        updated_at=now + timedelta(minutes=1),
+    )
+    add_legacy_resource(
+        test_db,
+        task_id_value=96,
+        user_id=user_id,
+        name="legacy-newest",
+        updated_at=now + timedelta(minutes=2),
+    )
+    add_shard_resource(
+        test_db,
+        task_id_value=new_task_id(user_id, 3),
+        user_id=user_id,
+        name="group-chat",
+        is_group_chat=True,
+        updated_at=now + timedelta(minutes=3),
+    )
+    store = ShardedTaskStore()
+
+    tasks = store.list_recent_owner_only_tasks(
+        test_db,
+        user_id=user_id,
+        limit=50,
+    )
+
+    assert [task.id for task in tasks] == [newer.id, older.id]
+
+
 def test_owned_task_ids_deduplicate_migrated_legacy_rows(test_db):
     add_migrated_legacy_resource(test_db, task_id_value=94, user_id=1094)
     store = ShardedTaskStore()

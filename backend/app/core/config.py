@@ -236,6 +236,15 @@ class Settings(BaseSettings):
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # GitHub OAuth App used by Wework connector authorization.
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_REDIRECT_URI: str = (
+        "http://localhost:8000/api/connector-apps/oauth/callback"
+    )
+    GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
+    CONNECTOR_OAUTH_STATE_SECRET: str = ""
+    CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
     # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
     # Optional bearer token for the upstream Sites Platform project API.
@@ -260,6 +269,7 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Rate limiting configuration for OpenAPI endpoints
     # Format: "requests/period" where period can be second, minute, hour, day
@@ -550,6 +560,14 @@ class Settings(BaseSettings):
     DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
+
+    # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_STORAGE_BUCKET: str = "wegent"
+    PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
+    PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200
+    PLUGIN_PUBLISH_ENABLED: bool = False
+    PLUGIN_PUBLISH_USER_IDS: list[int] = []
+    PLUGIN_LEGACY_UPLOAD_ENABLED: bool = False
 
     # Attachment encryption configuration
     # Enable/disable AES-256-CBC encryption for attachment binary data

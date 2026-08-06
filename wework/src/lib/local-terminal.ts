@@ -244,6 +244,12 @@ export async function writeLocalTerminal(sessionId: string, data: string): Promi
   })
 }
 
+export async function attachLocalTerminal(sessionId: string): Promise<void> {
+  await invoke('attach_local_terminal', {
+    sessionId,
+  })
+}
+
 export async function resizeLocalTerminal(
   sessionId: string,
   rows: number,
@@ -276,4 +282,28 @@ export function listenLocalTerminalExit(
   return listen<LocalTerminalExitPayload>('local-terminal-exit', event => {
     handler(event.payload)
   })
+}
+
+export async function connectLocalTerminal(
+  sessionId: string,
+  onOutput: (payload: LocalTerminalOutputPayload) => void,
+  onExit: (payload: LocalTerminalExitPayload) => void
+): Promise<UnlistenFn> {
+  const outputUnlisten = await listenLocalTerminalOutput(onOutput)
+  try {
+    const exitUnlisten = await listenLocalTerminalExit(onExit)
+    try {
+      await attachLocalTerminal(sessionId)
+      return () => {
+        outputUnlisten()
+        exitUnlisten()
+      }
+    } catch (error) {
+      exitUnlisten()
+      throw error
+    }
+  } catch (error) {
+    outputUnlisten()
+    throw error
+  }
 }

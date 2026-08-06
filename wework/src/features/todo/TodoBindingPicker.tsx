@@ -3,6 +3,7 @@ import { LibraryBig, Link2, ListTodo, Plus, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { track } from '@/telemetry/client'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -115,7 +116,9 @@ export function TodoBindingPicker({
         )
       }
       onBound(selectedOption.project, null)
+      track('feature_action_completed', { domain: 'task_binding', action: 'bind' })
     } catch (cause) {
+      track('operation_failed', { operation: 'task_binding_action' })
       setError(cause instanceof Error ? cause.message : '关联云项目失败')
     } finally {
       setSaving(false)
@@ -133,7 +136,9 @@ export function TodoBindingPicker({
           : selectedOption.api.bindTask(item.id, runtimeTask))
       }
       onBound(selectedOption.project, item)
+      track('feature_action_completed', { domain: 'task_binding', action: 'bind' })
     } catch (cause) {
+      track('operation_failed', { operation: 'task_binding_action' })
       setError(cause instanceof Error ? cause.message : '关联任务失败')
     } finally {
       setSaving(false)
@@ -157,7 +162,9 @@ export function TodoBindingPicker({
       if (!currentOption) throw new Error('关联的项目空间不可用')
       await currentOption.api.unbindCloudContext(runtimeTask)
       onBound(null, null)
+      track('feature_action_completed', { domain: 'task_binding', action: 'unbind' })
     } catch (cause) {
+      track('operation_failed', { operation: 'task_binding_action' })
       setError(cause instanceof Error ? cause.message : '解除关联失败')
     } finally {
       setSaving(false)
@@ -179,7 +186,10 @@ export function TodoBindingPicker({
           : selectedOption.api.bindTask(item.id, runtimeTask))
       }
       onBound(selectedOption.project, item)
+      track('board_item_created', { has_parent: false, source: 'cloud' })
+      track('feature_action_completed', { domain: 'task_binding', action: 'bind' })
     } catch (cause) {
+      track('operation_failed', { operation: 'task_binding_action' })
       setError(cause instanceof Error ? cause.message : '创建并关联任务失败')
     } finally {
       setSaving(false)

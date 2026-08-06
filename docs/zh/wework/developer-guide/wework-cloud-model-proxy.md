@@ -41,6 +41,7 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 - 使用 Kimi 支持的 `thinking` 字段，而不是通用的 `reasoning_effort`。
 - 在多轮消息和工具调用中保留 `reasoning_content`。
 - 可逆地保留 namespace tool 的身份，确保同名工具仍能路由到正确的执行器。
+- 保留 function parameters 顶层的 `type: "object"`，将顶层 `anyOf` 约束等价地下沉到 `allOf`，并为 `anyOf` 对象分支补齐类型，满足 Kimi 的工具 schema 校验。
 
 显式配置的 Anthropic Messages 不会被自动改写。运维人员必须在 Model CRD 中通过 `protocol` 或 `apiFormat` 明确选择 OpenAI Chat Completions；如果只保留 `env.model=claude` 且没有协议元数据，请求仍会按 Anthropic Messages 路由到 `/v1/messages`。
 

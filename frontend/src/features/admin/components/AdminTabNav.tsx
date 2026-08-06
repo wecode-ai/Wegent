@@ -33,6 +33,7 @@ import {
   Cable,
   FileText,
   Globe,
+  ChartNoAxesCombined,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -53,6 +54,7 @@ export type AdminTabId =
   | 'monitor'
   | 'device-monitor'
   | 'transition-pages'
+  | 'task-runs'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -88,6 +90,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'connector-apps', label: t('admin:tabs.connector_apps'), icon: Cable },
     { id: 'published-apps', label: t('wecode:admin_published_apps.tab_label'), icon: Globe },
+    { id: 'task-runs', label: t('admin:tabs.task_runs'), icon: ChartNoAxesCombined },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
     { id: 'transition-pages', label: t('tabs.transition_pages'), icon: FileText },

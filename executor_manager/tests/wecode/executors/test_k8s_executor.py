@@ -63,6 +63,21 @@ def test_get_pods_by_executor_name_prefers_k8s_namespace(mocker):
     )
 
 
+def test_get_pod_owners_by_ip_uses_configured_namespace(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    lookup = mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor.lookup_pod_owners_by_ip",
+        return_value={"status": "success", "pods": []},
+    )
+
+    result = executor.get_pod_owners_by_ip("10.0.0.8")
+
+    assert result == {"status": "success", "pods": []}
+    lookup.assert_called_once_with(core_v1, K8S_NAMESPACE, "10.0.0.8")
+
+
 def test_get_container_address_forwards_executor_namespace(mocker):
     executor = object.__new__(K8sExecutor)
     get_pods_by_executor_name = mocker.patch.object(

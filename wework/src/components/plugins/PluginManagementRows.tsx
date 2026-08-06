@@ -1,22 +1,19 @@
-import { Boxes, Globe, Sparkles, Trash2 } from 'lucide-react'
+import {
+  Boxes,
+  Copy,
+  Ellipsis,
+  Loader2,
+  MessageCirclePlus,
+  Trash2,
+  Upload,
+  UserCog,
+} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { InstalledPlugin } from '@/types/api'
-
-export interface InstalledSkillItem {
-  id: number
-  name: string
-  description: string
-  enabled: boolean
-  sourceType: 'system' | 'personal'
-}
-
-export interface InstalledMcpItem {
-  id: number
-  name: string
-  description: string
-  enabled: boolean
-  serverType: string
-}
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { resolvePluginLogo } from './plugin-assets'
+import type { PluginDistribution } from './pluginDistribution'
+import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
 
 export interface InstalledPluginItem {
   id: string | number
@@ -24,217 +21,256 @@ export interface InstalledPluginItem {
   description: string
   enabled: boolean
   version?: string | null
+  origin: 'created' | 'market'
+  sourceLabel: string
+  distribution: PluginDistribution
+  updateAvailable: boolean
   componentCounts: Record<string, number>
   raw: InstalledPlugin
 }
 
-export function InstalledSkillRow({
-  skill,
-  onToggle,
-  onUninstall,
-}: {
-  skill: InstalledSkillItem
-  onToggle: () => void
-  onUninstall: () => void
-}) {
-  const { t } = useTranslation('common')
-
-  return (
-    <article className="grid grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4">
-      <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-indigo-50 text-indigo-500 shadow-sm">
-        <Sparkles className="h-7 w-7" />
-      </div>
-      <div className="min-w-0">
-        <h2 className="truncate text-lg font-semibold leading-6">{skill.name}</h2>
-        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{skill.description}</p>
-      </div>
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="button"
-          aria-label={t('workbench.plugins_uninstall', '卸载')}
-          data-testid={`installed-skill-uninstall-${skill.id}`}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-red-500"
-          onClick={onUninstall}
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={skill.enabled}
-          aria-label={skill.name}
-          data-testid={`installed-skill-toggle-${skill.id}`}
-          className={[
-            'relative h-7 w-12 rounded-full transition-colors',
-            skill.enabled ? 'bg-blue-500' : 'bg-border',
-          ].join(' ')}
-          onClick={onToggle}
-        >
-          <span
-            className={[
-              'absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
-              skill.enabled ? 'translate-x-5' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
-      </div>
-    </article>
-  )
-}
-
-export function InstalledMcpRow({
-  mcp,
-  onToggle,
-  onUninstall,
-}: {
-  mcp: InstalledMcpItem
-  onToggle: () => void
-  onUninstall: () => void
-}) {
-  const { t } = useTranslation('common')
-
-  return (
-    <article className="grid grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4">
-      <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-emerald-50 text-emerald-600 shadow-sm">
-        <Globe className="h-7 w-7" />
-      </div>
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-lg font-semibold leading-6">{mcp.name}</h2>
-          <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
-            {mcp.serverType}
-          </span>
-        </div>
-        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{mcp.description}</p>
-      </div>
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="button"
-          aria-label={t('workbench.plugins_uninstall', '卸载')}
-          data-testid={`installed-mcp-uninstall-${mcp.id}`}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-red-500"
-          onClick={onUninstall}
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={mcp.enabled}
-          aria-label={mcp.name}
-          data-testid={`installed-mcp-toggle-${mcp.id}`}
-          className={[
-            'relative h-7 w-12 rounded-full transition-colors',
-            mcp.enabled ? 'bg-blue-500' : 'bg-border',
-          ].join(' ')}
-          onClick={onToggle}
-        >
-          <span
-            className={[
-              'absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
-              mcp.enabled ? 'translate-x-5' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
-      </div>
-    </article>
-  )
+const distributionPillClass: Record<PluginDistribution, string> = {
+  official: 'plugin-management-pill-official',
+  workspace: 'plugin-management-pill-workspace',
+  personal: 'plugin-management-pill-personal',
+  public: 'plugin-management-pill-public',
+  external: 'plugin-management-pill-external',
 }
 
 export function InstalledPluginRow({
   plugin,
+  marketplaceItem,
   onOpen,
+  onTry,
+  onPublish,
+  onShare,
+  onCopy,
   onToggle,
   onUninstall,
+  isUninstalling = false,
 }: {
   plugin: InstalledPluginItem
+  marketplaceItem?: PluginMarketplaceItem
   onOpen?: () => void
+  onTry?: () => void
+  onPublish?: () => void
+  onShare?: () => void
+  onCopy?: () => void
   onToggle: () => void
   onUninstall: () => void
+  isUninstalling?: boolean
 }) {
   const { t } = useTranslation('common')
-  const componentLabels = Object.entries(plugin.componentCounts)
-    .filter(([, count]) => count > 0)
-    .map(([key, count]) => `${key} ${count}`)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const shareRecipient = marketplaceItem?.accessRole === 'recipient'
+  const toggleLabel = plugin.enabled
+    ? t('workbench.plugins_disable_plugin', '停用插件')
+    : t('workbench.plugins_enable_plugin', '启用插件')
+  const logo = resolvePluginLogo({
+    pluginKey: plugin.raw.spec.source.pluginKey,
+    logo: plugin.raw.spec.interface?.logo,
+    composerIcon: plugin.raw.spec.interface?.composerIcon,
+  })
+  const distributionLabel =
+    plugin.distribution === 'official'
+      ? t('workbench.plugins_distribution_official', 'OpenAI官方')
+      : plugin.distribution === 'workspace'
+        ? t('workbench.plugins_distribution_workspace', '企业内部')
+        : plugin.distribution === 'personal'
+          ? t('workbench.plugins_distribution_personal', '个人创建')
+          : plugin.distribution === 'external'
+            ? t('workbench.plugins_distribution_external', '第三方市场')
+            : t('workbench.plugins_distribution_public', 'Wework官方')
+  const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
+
+  useEffect(() => {
+    if (!isMenuOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) {
+        setIsMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isMenuOpen])
+
+  const mainContent = (
+    <>
+      <div
+        data-testid={`installed-plugin-logo-frame-${plugin.id}`}
+        className={[
+          'plugin-management-logo',
+          logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+        ].join(' ')}
+      >
+        {logo.url ? (
+          <img src={logo.url} alt="" data-testid={`installed-plugin-logo-${plugin.id}`} />
+        ) : (
+          <Boxes className="h-5 w-5 text-text-muted" />
+        )}
+      </div>
+      <div className="min-w-0">
+        <strong className="block truncate text-base font-medium leading-5 text-text-primary">
+          {plugin.name}
+          <span
+            data-testid={`installed-plugin-origin-${plugin.id}`}
+            title={plugin.sourceLabel}
+            className={`plugin-management-pill ${distributionPillClass[plugin.distribution]}`}
+          >
+            {distributionLabel}
+          </span>
+          {plugin.updateAvailable && (
+            <span className="plugin-management-pill plugin-management-pill-official">
+              {t('workbench.plugins_update_available', '可更新')}
+            </span>
+          )}
+        </strong>
+        <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
+          {subtitle}
+        </small>
+      </div>
+    </>
+  )
 
   return (
     <article
-      role={onOpen ? 'button' : undefined}
-      tabIndex={onOpen ? 0 : undefined}
       data-testid={`installed-plugin-row-${plugin.id}`}
-      className="grid cursor-pointer grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4 rounded-xl transition-colors hover:bg-surface/70"
-      onClick={onOpen}
-      onKeyDown={event => {
-        if (!onOpen) return
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onOpen()
-        }
-      }}
+      className="plugin-management-row grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4"
     >
-      <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-violet-50 text-violet-600 shadow-sm">
-        <Boxes className="h-7 w-7" />
-      </div>
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-lg font-semibold leading-6">{plugin.name}</h2>
-          {plugin.version && (
-            <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
-              {plugin.version}
-            </span>
-          )}
+      {onOpen ? (
+        <button
+          type="button"
+          aria-label={`${t('workbench.plugins_view_plugin_detail', '查看 {{name}} 详情', { name: plugin.name })}`}
+          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
+          onClick={onOpen}
+        >
+          {mainContent}
+        </button>
+      ) : (
+        <div className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2">
+          {mainContent}
         </div>
-        <p className="mt-1 truncate text-base leading-6 text-text-secondary">
-          {plugin.description || componentLabels.join(' · ')}
-        </p>
-        {componentLabels.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {componentLabels.map(label => (
-              <span
-                key={label}
-                className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
+      )}
+      <div ref={actionsRef} className="relative flex items-center gap-[7px]">
+        {isUninstalling ? (
+          <span
+            role="status"
+            data-testid={`installed-plugin-uninstalling-${plugin.id}`}
+            className="inline-flex h-[30px] items-center gap-1.5 px-1.5 text-sm text-text-muted"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {t('workbench.plugins_uninstalling', '正在卸载')}
+          </span>
+        ) : onTry ? (
+          <button
+            type="button"
+            aria-label={`${t('workbench.plugins_try_now', '立即对话')} ${plugin.name}`}
+            title={t('workbench.plugins_try_now', '立即对话')}
+            data-testid={`installed-plugin-try-${plugin.id}`}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+            onClick={onTry}
+          >
+            <MessageCirclePlus className="h-[17px] w-[17px]" strokeWidth={2} />
+          </button>
+        ) : null}
+        {!isUninstalling && !shareRecipient && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={plugin.enabled}
+            aria-label={`${toggleLabel} ${plugin.name}`}
+            title={toggleLabel}
+            data-testid={`installed-plugin-toggle-${plugin.id}`}
+            className={[
+              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40',
+              plugin.enabled ? 'bg-emerald-600' : 'bg-border',
+            ].join(' ')}
+            onClick={onToggle}
+          >
+            <span
+              className={[
+                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                plugin.enabled ? 'translate-x-4' : 'translate-x-0',
+              ].join(' ')}
+            />
+          </button>
+        )}
+        {!isUninstalling && (
+          <button
+            type="button"
+            aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${plugin.name}`}
+            aria-expanded={isMenuOpen}
+            title={t('workbench.plugins_more_actions', '更多操作')}
+            data-testid={`installed-plugin-actions-${plugin.id}`}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+            onClick={() => setIsMenuOpen(open => !open)}
+          >
+            <Ellipsis className="h-[17px] w-[17px]" strokeWidth={2} />
+          </button>
+        )}
+        {!isUninstalling && isMenuOpen && (
+          <div
+            data-testid={`installed-plugin-actions-menu-${plugin.id}`}
+            className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
+          >
+            {onPublish && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-publish-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onPublish()
+                }}
               >
-                {label}
-              </span>
-            ))}
+                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {t('workbench.plugins_publish_to_marketplace', '发布')}
+              </button>
+            )}
+            {onShare && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-share-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onShare()
+                }}
+              >
+                <UserCog className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {t('workbench.plugins_manage_access', '管理权限')}
+              </button>
+            )}
+            {onCopy && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-copy-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onCopy()
+                }}
+              >
+                <Copy className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {t('workbench.plugins_copy_to_personal', '复制为个人插件')}
+              </button>
+            )}
+            {(onPublish || onShare || onCopy) && <div className="my-1 h-px bg-border/25" />}
+            <button
+              type="button"
+              data-testid={`installed-plugin-uninstall-${plugin.id}`}
+              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/20 dark:hover:bg-red-950/30"
+              onClick={() => {
+                setIsMenuOpen(false)
+                onUninstall()
+              }}
+            >
+              <Trash2 className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+              {t('workbench.plugins_uninstall_plugin_action', '卸载插件')}
+            </button>
           </div>
         )}
-      </div>
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="button"
-          aria-label={t('workbench.plugins_uninstall', '卸载')}
-          data-testid={`installed-plugin-uninstall-${plugin.id}`}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-red-500"
-          onClick={event => {
-            event.stopPropagation()
-            onUninstall()
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={plugin.enabled}
-          aria-label={plugin.name}
-          data-testid={`installed-plugin-toggle-${plugin.id}`}
-          className={[
-            'relative h-7 w-12 rounded-full transition-colors',
-            plugin.enabled ? 'bg-blue-500' : 'bg-border',
-          ].join(' ')}
-          onClick={event => {
-            event.stopPropagation()
-            onToggle()
-          }}
-        >
-          <span
-            className={[
-              'absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
-              plugin.enabled ? 'translate-x-5' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
       </div>
     </article>
   )

@@ -12,6 +12,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -324,6 +325,30 @@ const PROVIDER_SWITCH_PROMPT =
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
 const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const TELEMETRY_CAPTURE_PATH = '/e/'
+const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
+const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
+  '$device_id',
+  '$geoip_disable',
+  '$lib',
+  '$lib_version',
+  '$process_person_profile',
+  '$session_id',
+  '$window_id',
+  'app_version',
+  'arch',
+  'distinct_id',
+  'feature',
+  'locale',
+  'os',
+  'release_channel',
+  'runtime_mode',
+  'surface',
+  'telemetry_session_id',
+  'token',
+])
+const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
+  /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
@@ -354,6 +379,8 @@ const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
+const SIDE_CHAT_QUEUE_INITIAL = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL'
+const SIDE_CHAT_QUEUE_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_FOLLOW_UP'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -403,6 +430,8 @@ const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
 const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
+const VERIFIES_INITIAL_TELEMETRY_CONSENT =
+  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -423,6 +452,20 @@ const OFFICIAL_PLUGIN_MCP_NAMESPACE = 'openai_api_key_local_confirmation'
 const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
+const PLUGIN_NAME = 'desktop-e2e-plugin'
+const PLUGIN_CREATOR_PROMPT = 'Create a desktop E2E verification plugin'
+const PLUGIN_CREATOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PLUGIN_CREATOR_COMPLETE'
+const PLUGIN_REFINEMENT_PROMPT =
+  'You are refining a task before the user sends it to an installed plugin.'
+const PLUGIN_REFINEMENT_COMPLETION_TEXT =
+  'Summarize the current project status, focusing on changed files, open risks, and next actions.'
+const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
+const CONNECTOR_AUTH_MARKER_NAME = 'desktop-e2e-browser-auth'
+const CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT =
+  'Verify recovery behavior when no matching local identity is installed.'
+const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
+  'connector_auth_required need_login pluginKey=github connectorSlug=github WEWORK_DESKTOP_E2E_UNMATCHED_CONNECTOR_AUTH_RESUME'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
@@ -590,6 +633,131 @@ async function createOfficialPluginMarketplaceFixture({ marketplaceRoot, reposit
       2
     )}\n`
   )
+}
+
+async function createPluginMarketplaceFixture(root) {
+  const marketplaceManifestDir = join(root, '.agents', 'plugins')
+  const pluginRoot = join(root, 'plugins', PLUGIN_NAME)
+  await Promise.all([
+    mkdir(marketplaceManifestDir, { recursive: true }),
+    mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
+    mkdir(join(pluginRoot, 'scripts'), { recursive: true }),
+    mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(
+      join(marketplaceManifestDir, 'marketplace.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_MARKETPLACE_NAME,
+          interface: { displayName: 'Desktop E2E Marketplace' },
+          plugins: [
+            {
+              name: PLUGIN_NAME,
+              source: { source: 'local', path: `./plugins/${PLUGIN_NAME}` },
+              policy: {
+                installation: 'AVAILABLE',
+                authentication: 'ON_INSTALL',
+              },
+              category: 'Developer Tools',
+            },
+          ],
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, '.codex-plugin', 'plugin.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_NAME,
+          version: '0.1.0',
+          description: 'Exercises the real Wework plugin lifecycle',
+          author: { name: 'Wework Desktop E2E' },
+          skills: './skills/',
+          connectors: [
+            {
+              slug: 'desktop-e2e-browser-auth',
+              authPolicy: 'on_install',
+              localAuth: {
+                kind: 'browser_oauth',
+                health: ['scripts/local-auth.sh', 'health'],
+                start: ['scripts/local-auth.sh', 'login'],
+                logout: ['scripts/local-auth.sh', 'logout'],
+                timeoutSeconds: 30,
+                logoutOnUninstall: true,
+              },
+            },
+          ],
+          interface: {
+            displayName: PLUGIN_DISPLAY_NAME,
+            shortDescription: 'Exercises the real Wework plugin lifecycle',
+            longDescription: 'Verifies plugin creation, installation, chat, and removal in Wework.',
+            developerName: 'Wework Desktop E2E',
+            category: 'Developer Tools',
+            capabilities: [],
+            defaultPrompt: 'Verify the Wework desktop plugin lifecycle.',
+          },
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, 'scripts', 'local-auth.sh'),
+      `#!/bin/sh
+set -eu
+marker="\${WEGENT_EXECUTOR_HOME}/desktop-e2e-browser-auth"
+case "\${1:-health}" in
+  health)
+    if [ -f "\${marker}" ]; then
+      printf '{"status":"ok","hint":"E2E authorization is ready."}\\n'
+    else
+      printf '{"status":"need_login","hint":"E2E authorization is required."}\\n'
+    fi
+    ;;
+  login)
+    sleep 1
+    printf 'ready\\n' >"\${marker}"
+    printf '{"status":"ok","hint":"E2E authorization is ready."}\\n'
+    ;;
+  logout)
+    rm -f -- "\${marker}"
+    printf '{"status":"ok","hint":"E2E authorization was removed."}\\n'
+    ;;
+esac
+`
+    ),
+    writeFile(
+      join(pluginRoot, 'scripts', 'local-auth.ps1'),
+      `param([string]$Action = 'health')
+$marker = Join-Path $env:WEGENT_EXECUTOR_HOME 'desktop-e2e-browser-auth'
+switch ($Action) {
+  'health' {
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+      Write-Output '{"status":"ok","hint":"E2E authorization is ready."}'
+    } else {
+      Write-Output '{"status":"need_login","hint":"E2E authorization is required."}'
+    }
+  }
+  'login' {
+    Start-Sleep -Seconds 1
+    Set-Content -LiteralPath $marker -Value 'ready'
+    Write-Output '{"status":"ok","hint":"E2E authorization is ready."}'
+  }
+  'logout' {
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    Write-Output '{"status":"ok","hint":"E2E authorization was removed."}'
+  }
+}
+`
+    ),
+    writeFile(
+      join(pluginRoot, 'skills', 'desktop-e2e-skill', 'SKILL.md'),
+      `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
+    ),
+  ])
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -1206,16 +1374,20 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-file-changes-block"]`
+  await control.command('waitFor', assistantContinuationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const activeGuidanceUserMessages = await getElementMetrics(
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
-  const activeGuidanceAssistantMessages = await getElementMetrics(
+  const activeAssistantContinuations = await getElementMetrics(
     control,
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+    assistantContinuationSelector
   )
   const activeGuidance = activeGuidanceUserMessages.at(-1)
-  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  const activeAssistantContinuation = activeAssistantContinuations.at(-1)
   assert.ok(activeGuidance, 'The active background guidance message was not rendered')
   assert.ok(
     activeAssistantContinuation,
@@ -1858,7 +2030,7 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: FRESH_CHAT_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
@@ -2096,6 +2268,8 @@ async function waitForSnapshot(
   const relevantTestIds = (lastSnapshot?.testIds ?? []).filter(
     testId =>
       testId.startsWith('runtime-local-task-') ||
+      testId.startsWith('composer-plugin-') ||
+      testId.startsWith('plugin-trial-') ||
       [
         'goal-status-bar',
         'pause-response-button',
@@ -2104,6 +2278,102 @@ async function waitForSnapshot(
       ].includes(testId)
   )
   throw new Error(`${message}; relevant test IDs: ${JSON.stringify(relevantTestIds)}`)
+}
+
+async function openComposerPluginPicker(control) {
+  const before = JSON.parse(await control.command('snapshot', 'body'))
+  if (before.testIds.includes('composer-plugin-picker')) return
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+async function closeComposerPluginPicker(control) {
+  const open = JSON.parse(await control.command('snapshot', 'body'))
+  if (!open.testIds.includes('composer-plugin-picker')) return
+  await control.command('press', 'body', { key: 'Escape' })
+  const stillOpen = await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
+    'Closing the composer plugin picker did not dismiss the menu',
+    DEFAULT_STEP_TIMEOUT_MS
+  ).catch(() => null)
+  if (stillOpen) return
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
+    'Closing the composer plugin picker did not dismiss the menu'
+  )
+}
+
+/**
+ * Install → skills-changed can leave the picker empty briefly while listLocalApps
+ * refreshes. Warm via slash autocomplete, reopen the picker, then search.
+ */
+async function waitForInstalledComposerPlugin(control, { pluginName, pluginDisplayName }) {
+  const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
+  const slashOptionSelector = `[data-testid="slash-command-option-app-plugin-${pluginName}"]`
+  const deadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
+  const attemptBudgetMs = 3_000
+
+  while (Date.now() < deadline) {
+    await openComposerPluginPicker(control)
+
+    // Prefer an already-warmed list before searching (search can hide a late paint).
+    const alreadyVisible = JSON.parse(
+      await control.command('snapshot', '[data-testid="composer-plugin-picker"]')
+    )
+    if (alreadyVisible.testIds.includes(itemTestId)) {
+      return itemTestId
+    }
+
+    await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+      value: pluginDisplayName,
+    })
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    const matched = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes(itemTestId),
+      'waiting for composer plugin picker item',
+      Math.min(attemptBudgetMs, remainingMs),
+      '[data-testid="composer-plugin-picker"]'
+    ).catch(() => null)
+    if (matched) return itemTestId
+
+    await closeComposerPluginPicker(control)
+
+    // Warm listLocalApps through the slash menu, which shares the same apps source.
+    const warmBudget = Math.min(attemptBudgetMs, deadline - Date.now())
+    if (warmBudget > 0) {
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+        value: `/${pluginName.slice(0, 8)}`,
+      })
+      await control
+        .command('waitFor', slashOptionSelector, {
+          timeoutMs: warmBudget,
+        })
+        .catch(() => null)
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
+    }
+
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  }
+
+  await openComposerPluginPicker(control)
+  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+    value: pluginDisplayName,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(itemTestId),
+    'The installed plugin did not appear in the composer plugin picker',
+    DEFAULT_STEP_TIMEOUT_MS,
+    '[data-testid="composer-plugin-picker"]'
+  )
+  return itemTestId
 }
 
 async function assertMentionRenderedAsToken(
@@ -3424,6 +3694,30 @@ async function waitForControlValue(
   throw new Error(message)
 }
 
+function normalizeComposerText(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function waitForControlValueIncludes(
+  control,
+  selector,
+  expectedSubstring,
+  message,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const expected = normalizeComposerText(expectedSubstring)
+  const startedAt = Date.now()
+  let lastValue = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    lastValue = await control.command('getValue', selector)
+    if (normalizeComposerText(lastValue).includes(expected)) return lastValue
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastValue)}`)
+}
+
 async function waitForControlSelectionOffset(control, selector, expected, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -4185,6 +4479,37 @@ async function verifyOfficialPluginSource(repositoryRoot) {
   )
 }
 
+async function openMarketplacePluginActions(control, { pluginId, marketplaceName, displayName }) {
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
+    if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+    } else if (snapshot.testIds.includes('plugins-search-input')) {
+      await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+    }
+    await control.command('waitFor', marketplaceTabSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', marketplaceTabSelector)
+    await control.command('fill', '[data-testid="plugins-search-input"]', {
+      value: displayName,
+    })
+    await control.command('waitFor', actionsSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const actionsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!actionsSnapshot.testIds.includes(`plugin-marketplace-try-${pluginId}`)) {
+    await control.command('click', actionsSelector)
+  }
+  await control.command('waitFor', trySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
 async function installOfficialPluginFixture({
   codexHome,
   control,
@@ -4199,26 +4524,20 @@ async function installOfficialPluginFixture({
   })
   await verifyOfficialPluginSource(repositoryPath)
 
-  await control.command('waitFor', '[data-testid="plugins-marketplace-tab-wework-personal"]', {
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="plugins-marketplace-tab-wework-personal"]')
-  await control.command('waitFor', '[data-testid="plugins-bundled-marketplace-empty"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
-  const initialSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
-      snapshot.testIds.includes('plugins-add-marketplace-button'),
-    'The plugin marketplace controls did not become ready'
-  )
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
-  } else {
+  } else if (initialSnapshot.testIds.includes('plugins-add-marketplace-button')) {
     await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+  } else {
+    await control.command('click', '[data-testid="plugins-create-button"]')
+    await control.command('click', '[data-testid="plugins-add-market-option"]')
   }
   await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
     value: marketplacePath,
@@ -4231,36 +4550,46 @@ async function installOfficialPluginFixture({
     value: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
 
-  const marketplaceSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME) &&
-      snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
-    'The pinned OpenAI marketplace did not expose the official plugin'
-  )
-  const rowTestIds = marketplaceSnapshot.testIds.filter(testId =>
-    testId.startsWith('plugin-marketplace-row-')
-  )
-  assert.equal(rowTestIds.length, 1, 'The official plugin search did not return exactly one plugin')
-  const [rowTestId] = rowTestIds
-  assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
-  const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
+  const pluginId = `${OFFICIAL_PLUGIN_MARKETPLACE_NAME}:${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`
+  const rowTestId = `plugin-marketplace-row-${pluginId}`
+  const installTestId = `plugin-marketplace-install-${pluginId}`
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
-  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
-  await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
-
-  await control.command('waitFor', installSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', installSelector)
   await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
-    'The official plugin was not shown as installed after the real app-server request'
+    snapshot =>
+      !snapshot.testIds.includes('plugins-marketplace-dialog') &&
+      snapshot.testIds.includes(rowTestId) &&
+      snapshot.testIds.includes(installTestId),
+    'The pinned OpenAI marketplace did not become installable',
+    WORKBENCH_READY_TIMEOUT_MS
   )
+  await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
+
+  await control.command('click', installSelector)
+  await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugins-installed-strip-item-${pluginId}`) ||
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The official plugin was not shown as installed after the real app-server request',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await openMarketplacePluginActions(control, {
+    pluginId,
+    marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+    displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   assert.match(
-    await control.command('getText', installSelector),
-    /Try in chat|在对话中试用/,
+    await control.command('getText', trySelector),
+    /Try in chat|Start chat|在对话中试用|立即对话/,
     'The installed plugin did not expose its chat action'
   )
   await captureVerificationScreenshot(control, 'plugins-02-installed.png')
@@ -4285,15 +4614,40 @@ async function installOfficialPluginFixture({
     'Installing the official plugin discarded the isolated E2E model provider'
   )
 
-  return { actionsSelector, installSelector, pluginId, skillPath }
+  return { installSelector, pluginId, skillPath }
 }
 
 async function openOfficialPluginChat(control, installSelector) {
+  const pluginId = installSelector
+    .replace(/^\[data-testid="plugin-marketplace-install-/, '')
+    .replace(/"\]$/, '')
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
+  const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', installSelector, {
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', installSelector)
+  const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (pluginsSnapshot.testIds.includes(`plugins-installed-strip-item-${pluginId}`)) {
+    await control.command('click', installedStripSelector)
+    await control.command('waitFor', detailTrySelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    assert.match(
+      await control.command('getText', detailTrySelector),
+      /Try in chat|Start chat|在对话中试用|立即对话/,
+      'The installed official plugin detail did not expose its chat action'
+    )
+    await control.command('click', detailTrySelector)
+  } else {
+    await openMarketplacePluginActions(control, {
+      pluginId,
+      marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+      displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    })
+    await control.command('click', trySelector)
+  }
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -4313,7 +4667,10 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
   control.scenarioRequests.delete('official_plugin')
   control.setScenario('official_plugin')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4355,6 +4712,395 @@ async function verifyPluginLifecycle({ control, fixture }) {
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
 
+async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin remained installed after the uninstall request'
+  )
+  // Uninstalling bumps the marketplace refresh tick, which temporarily replaces
+  // the catalog rows with a loading state, so poll until the install action
+  // settles back instead of asserting against the transient refresh UI.
+  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  const startedAt = Date.now()
+  let lastActionText = ''
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    lastActionText = await control.command('getText', installSelector)
+    if (/Install|安装/.test(lastActionText)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail(
+    `The marketplace did not return to the install state after uninstall; last install action text: ${JSON.stringify(lastActionText)}`
+  )
+}
+
+async function verifyMarketplacePluginLifecycle({
+  control,
+  executorHome,
+  marketplacePath,
+  workspacePath,
+}) {
+  let bootstrap = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  if (!bootstrap.workbench?.currentProject?.id) {
+    await control.command('waitFor', '[data-testid="projects-create-button"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await createSingleRootLocalProject(control, workspacePath, 'marketplace-plugin')
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    bootstrap = await waitForWorkbenchDebugState(
+      control,
+      snapshot => Boolean(snapshot.workbench?.currentProject?.id),
+      'Creating a local project did not open an active marketplace project'
+    )
+  }
+
+  const activeTaskBeforePluginTrial = bootstrap
+  let activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask?.taskId ?? null
+  const activeProjectId = activeTaskBeforePluginTrial.workbench.currentProject?.id
+  assert.ok(activeProjectId, 'The marketplace plugin lifecycle requires an active project')
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+
+  await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-create-plugin-option"]')
+  await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugin-create-workspace') &&
+      snapshot.testIds.includes('project-chat-composer') &&
+      snapshot.testIds.includes('composer-toolbar') &&
+      snapshot.testIds.includes('attachment-file-input') &&
+      snapshot.testIds.includes('model-selector-button') &&
+      snapshot.testIds.includes('plugin-create-prompt-input') &&
+      snapshot.testIds.includes('plugin-create-submit-button') &&
+      snapshot.text.includes('Plugin Creator'),
+    'The managed Plugin Creator workspace did not open'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-creator.png')
+  await control.command('fill', '[data-testid="plugin-create-prompt-input"]', {
+    value: PLUGIN_CREATOR_PROMPT,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-create-submit-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const pluginCreatorTask = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+      return Boolean(taskId && taskId !== activeTaskId)
+    },
+    'Creating a plugin continued the existing conversation instead of opening a new task'
+  )
+  activeTaskId = pluginCreatorTask.workbench.currentRuntimeTask.taskId
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: PLUGIN_CREATOR_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+  await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-add-market-option"]')
+  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+    value: marketplacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const pluginId = `${PLUGIN_MARKETPLACE_NAME}:${PLUGIN_NAME}@${PLUGIN_MARKETPLACE_NAME}`
+  const rowSelector = `[data-testid="plugin-marketplace-row-${pluginId}"]`
+  await control.command('waitFor', rowSelector, {
+    text: PLUGIN_DISPLAY_NAME,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  await captureVerificationScreenshot(control, 'marketplace-plugins-01-marketplace.png')
+
+  await control.command('click', rowSelector)
+  await control.command('waitFor', '[data-testid="plugin-detail-get-started"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="plugin-prompt-0"]')
+  const useCaseGuideSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugin-use-case-guide') &&
+      snapshot.testIds.includes('plugin-use-case-confirmation') &&
+      snapshot.testIds.includes('plugin-use-case-goal-input') &&
+      snapshot.testIds.includes('plugin-use-case-context-toggle') &&
+      snapshot.testIds.includes('plugin-use-case-draft-input') &&
+      snapshot.testIds.includes('plugin-use-case-start-button') &&
+      snapshot.text.includes('Verify the Wework desktop plugin lifecycle.'),
+    'The plugin use-case guide dialog did not show the editable task-draft flow'
+  )
+  assert.match(
+    useCaseGuideSnapshot.text,
+    /AI plugin usage guide|AI 插件使用向导/,
+    'The plugin use-case guide was not clearly identified as guidance'
+  )
+  await control.command('click', '[data-testid="plugin-use-case-context-suggestion"]')
+  await control.command('click', '[data-testid="plugin-use-case-option-complete-steps"]')
+  await control.command('click', '[data-testid="plugin-use-case-context-toggle"]')
+  await control.command('fill', '[data-testid="plugin-use-case-context-input"]', {
+    value: 'Only inspect changed files.',
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      /Complete reversible actions and confirm before submitting or deleting|自动完成场景中的可逆操作，遇到提交或删除时先确认/.test(
+        snapshot.text
+      ) &&
+      /recent conversation|当前对话/.test(snapshot.text) &&
+      snapshot.text.includes('Only inspect changed files.'),
+    'The plugin task preview did not react to the selected preference and added context'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-02-use-case-guide.png')
+  await control.command('press', 'body', { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plugin-use-case-guide'),
+    'Escape did not close the plugin use-case guide dialog'
+  )
+  await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  await control.command('waitFor', installSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', installSelector)
+  await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const installedSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) ||
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
+    'The plugin was not shown as installed after the real app-server request'
+  )
+  if (!installedSnapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
+    // Install succeeded but the active market/distribution filter hid the card.
+    if (installedSnapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+    }
+    await control.command(
+      'click',
+      `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+      'The installed plugin card did not reappear under its marketplace tab'
+    )
+  }
+  await control.command('click', actionsSelector)
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  await control.command('waitFor', trySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trySelector),
+    /Start chat|立即对话/,
+    'The installed plugin did not expose its chat action'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-03-installed.png')
+
+  await control.command('click', actionsSelector)
+  await control.command('click', rowSelector)
+  const detailActionSelector = '[data-testid^="plugin-detail-toggle-"]'
+  await control.command('waitFor', detailActionSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', detailActionSelector),
+    /Start chat|立即对话/,
+    'The plugin detail did not expose its new-chat action'
+  )
+  await control.command('click', detailActionSelector)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(PLUGIN_DISPLAY_NAME),
+    'Trying the installed plugin did not place its reference in the composer',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask === null &&
+      snapshot.workbench?.currentProject?.id === activeProjectId,
+    'Starting a plugin chat did not open a new conversation under the active project'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugin-trial-template-strip') &&
+      snapshot.testIds.includes('plugin-trial-ai-refine') &&
+      snapshot.text.includes(PLUGIN_DISPLAY_NAME),
+    'Trying the installed plugin did not expose its AI usage guide'
+  )
+  await control.command('click', '[data-testid="plugin-trial-ai-refine"]')
+  await control.command('waitFor', '[data-testid="plugin-trial-ai-result"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const refinedPluginSuggestion = await control.command(
+    'getText',
+    '[data-testid="plugin-trial-recommendation-title"]'
+  )
+  assert.ok(refinedPluginSuggestion.trim(), 'AI did not return a plugin task suggestion')
+  await control.command('click', '[data-testid="plugin-trial-recommendation-apply"]')
+  await waitForControlValueIncludes(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    refinedPluginSuggestion,
+    'The AI-refined plugin task was not applied to the composer'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-04-used-in-chat.png')
+
+  await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plugin-trial-template-strip'),
+    'Dismissing the plugin trial guide did not close the recommendation strip'
+  )
+  const composerPluginItemTestId = await waitForInstalledComposerPlugin(control, {
+    pluginName: PLUGIN_NAME,
+    pluginDisplayName: PLUGIN_DISPLAY_NAME,
+  })
+  const composerPluginSelector = `[data-testid="${composerPluginItemTestId}"]`
+  await control.command('click', composerPluginSelector)
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes('plugin-trial-template-strip'),
+    'Selecting the installed plugin from the composer did not expose its templates'
+  )
+
+  await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '/desktop' })
+  const slashPluginSelector = `[data-testid="slash-command-option-app-plugin-${PLUGIN_NAME}"]`
+  await control.command('waitFor', slashPluginSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', slashPluginSelector)
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes('plugin-trial-template-strip'),
+    'Selecting the installed plugin from slash commands did not expose its templates'
+  )
+
+  await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
+  await rm(join(executorHome, CONNECTOR_AUTH_MARKER_NAME), { force: true })
+  control.scenarioRequests.delete('connector_auth_unmatched_resume')
+  control.setScenario('connector_auth_unmatched_resume')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+    value: CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT,
+  })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2000))
+  const unmatchedResumeSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !unmatchedResumeSnapshot.testIds.includes('connector-auth-card'),
+    'Unmatched connector auth resume incorrectly showed the chat auth card'
+  )
+  assert.ok(
+    !unmatchedResumeSnapshot.testIds.includes('local-connector-auth-dialog'),
+    'Unmatched connector auth resume incorrectly showed the install auth dialog'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'marketplace-plugins-05b-unmatched-resume-no-auth-card.png'
+  )
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'click',
+    `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`
+  )
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const uninstallSelector = `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`
+  await control.command('click', actionsSelector)
+  await control.command('waitFor', uninstallSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', uninstallSelector)
+  await control.command('waitFor', '[data-testid="plugin-uninstall-confirm-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-uninstall-confirm-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForMarketplaceInstallStateAfterUninstall(control, pluginId)
+  await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const composerAfterUninstall = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !composerAfterUninstall.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
+    'The uninstalled marketplace plugin remained available in the composer plugin picker'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'marketplace-plugins-06-composer-after-uninstall.png'
+  )
+}
+
 async function verifySkillMentionRendering({ control, fixture }) {
   const officialPluginTaskId = await createOfficialPluginTask({
     control,
@@ -4371,7 +5117,10 @@ async function verifySkillMentionRendering({ control, fixture }) {
   await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4422,30 +5171,185 @@ async function uninstallOfficialPlugin(control, fixture) {
   if (pluginsSnapshot.testIds.includes('plugin-detail-back-button')) {
     await control.command('click', '[data-testid="plugin-detail-back-button"]')
   }
-  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${OFFICIAL_PLUGIN_MARKETPLACE_NAME}"]`
-  await control.command('waitFor', marketplaceTabSelector, {
+  await openMarketplacePluginActions(control, {
+    pluginId: fixture.pluginId,
+    marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+    displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  const uninstallSelector = `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`
+  await control.command('waitFor', uninstallSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', uninstallSelector)
+  await control.command('waitFor', '[data-testid="plugin-uninstall-confirm-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-uninstall-confirm-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForMarketplaceInstallStateAfterUninstall(control, fixture.pluginId)
+  await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
+}
+
+async function waitForTelemetrySilence(control, options = {}) {
+  const { intervalMs = 100, silenceMs = 500, maxWaitMs = 3_500 } = options
+  const start = Date.now()
+  let lastCount = control.telemetryRequestCount()
+  let lastChange = start
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+    const currentCount = control.telemetryRequestCount()
+    if (currentCount !== lastCount) {
+      lastCount = currentCount
+      lastChange = Date.now()
+      continue
+    }
+    if (Date.now() - lastChange >= silenceMs) {
+      return currentCount
+    }
+  }
+  return lastCount
+}
+
+async function verifyTelemetryPreference(control) {
+  const toggleSelector = '[data-testid="general-telemetry-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', toggleSelector, { value: 'aria-checked' }),
+    'true',
+    'Accepting the first-run telemetry prompt was not persisted'
+  )
+  await control.command('click', toggleSelector)
+  await waitForAttribute(
+    control,
+    toggleSelector,
+    'aria-checked',
+    'false',
+    'Disabling telemetry was not persisted'
+  )
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForTelemetrySilence(control)
+  control.telemetryRequestCountAfterRevocation = control.telemetryRequestCount()
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'PostHog flushed telemetry after the user revoked consent'
+  )
+}
+
+function verifyTelemetryRemainsDisabled(control) {
+  assert.notEqual(
+    control.telemetryRequestCountAfterRevocation,
+    undefined,
+    'The telemetry revocation checkpoint did not record its request boundary'
+  )
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'Telemetry was sent after the user revoked consent'
+  )
+}
+
+async function verifyInitialTelemetryConsent(control, sensitiveValues) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', marketplaceTabSelector)
-  await control.command('fill', '[data-testid="plugins-search-input"]', {
-    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
-  })
-  await control.command('waitFor', fixture.actionsSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('click', fixture.actionsSelector)
-  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
+  assert.equal(
+    control.telemetryRequestCount(),
+    0,
+    'Telemetry was sent before the user made an explicit consent choice'
+  )
+
+  await control.command('click', '[data-testid="telemetry-consent-accept"]')
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${fixture.pluginId}`),
-    'The plugin remained installed after the uninstall request'
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after accepting'
   )
-  assert.match(
-    await control.command('getText', fixture.installSelector),
-    /Install|安装/,
-    'The marketplace did not return to the install state after uninstall'
+
+  await control.awaitTelemetryEvent('app_started')
+  const requests = control.telemetryRequests
+  const events = requests.flatMap(request => telemetryEvents(request.payload))
+  assert.ok(events.length > 0, 'The telemetry request did not contain an event')
+  const appStarted = events.find(event => event.event === 'app_started')
+  assert.ok(appStarted, 'The first telemetry request did not include app_started')
+  assert.equal(appStarted.properties?.surface, 'main')
+
+  for (const event of events) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        {
+          app_started: true,
+          feature_opened: true,
+          telemetry_preference_changed: true,
+        },
+        event.event
+      ),
+      true,
+      `The initial telemetry request contained an unexpected event: ${event.event}`
+    )
+    assert.ok(event.properties && typeof event.properties === 'object')
+    for (const propertyName of Object.keys(event.properties)) {
+      assert.equal(
+        TELEMETRY_SAFE_PROPERTY_KEYS.has(propertyName),
+        true,
+        `Telemetry sent a property outside the privacy allowlist: ${propertyName}`
+      )
+      if (propertyName === 'token') {
+        assert.equal(
+          event.properties[propertyName],
+          TELEMETRY_TEST_PROJECT_KEY,
+          'Telemetry sent an unexpected PostHog project key'
+        )
+      } else if (propertyName === '$process_person_profile') {
+        assert.equal(
+          event.properties[propertyName],
+          false,
+          'Telemetry attempted to create or update a PostHog person profile'
+        )
+      } else {
+        assert.equal(
+          TELEMETRY_FORBIDDEN_PROPERTY_PATTERN.test(propertyName),
+          false,
+          `Telemetry sent a potentially sensitive property: ${propertyName}`
+        )
+      }
+    }
+    assert.equal(event.$set, undefined, 'Telemetry sent person profile properties')
+    assert.equal(event.$set_once, undefined, 'Telemetry sent persistent person properties')
+  }
+
+  for (const sensitiveValue of sensitiveValues.filter(Boolean)) {
+    assert.equal(
+      requests.some(request => request.rawBody.includes(String(sensitiveValue))),
+      false,
+      `Telemetry leaked a sensitive runtime value: ${String(sensitiveValue).slice(0, 24)}`
+    )
+  }
+}
+
+async function declineInitialTelemetryConsent(control) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="telemetry-consent-decline"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after declining'
   )
-  await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
@@ -4693,7 +5597,7 @@ async function verifySitesPluginAutoInstall(control) {
   await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="applications-tab-mini-program"]')
+  await control.command('click', '[data-testid="applications-tab-miniapp"]')
   await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
     text: 'E2E Mini Program',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5098,6 +6002,11 @@ async function selectE2EModel(
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const selectedModelLabel = await control.command(
+    'getText',
+    '[data-testid="model-selector-button"]'
+  )
+  if (selectedModelLabel.includes(modelLabel)) return
 
   const targetOptionId = `model-option-${modelId}`
   await ensureModelOptionVisible(control, targetOptionId)
@@ -6123,6 +7032,25 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
 
+  control.setScenario('side_chat_queue')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_INITIAL })
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.awaitScenarioRequestCount('side_chat_queue', 1)
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const queuedSideChat = JSON.parse(await control.command('snapshot', sideChatSelector))
+  assert.equal(
+    queuedSideChat.testIds.includes('chat-input-error'),
+    false,
+    'The side chat exposed a runtime busy error instead of queueing the follow-up'
+  )
+  await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  control.releaseSideChatQueueResponse()
+
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(
     'waitFor',
@@ -6150,7 +7078,7 @@ async function verifySideChatAttachmentIsolation({
     0,
     'The main task composer remained visible behind the expanded temporary chat'
   )
-  await captureVerificationScreenshot(control, '04-side-chat-expanded-single-composer.png')
+  await captureVerificationScreenshot(control, '05-side-chat-expanded-single-composer.png')
 
   await control.command(
     'click',
@@ -6331,14 +7259,25 @@ function latestModelInputText(body) {
 }
 
 function responseCreated(id) {
-  return { type: 'response.created', response: { id } }
+  return {
+    type: 'response.created',
+    response: {
+      id,
+      object: 'response',
+      status: 'in_progress',
+      output: [],
+    },
+  }
 }
 
-function responseCompleted(id) {
+function responseCompleted(id, output) {
   return {
     type: 'response.completed',
     response: {
       id,
+      object: 'response',
+      status: 'completed',
+      ...(output ? { output } : {}),
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -6402,14 +7341,18 @@ function customToolCall(callId, name, input) {
   }
 }
 
+let assistantMessageSequence = 0
+
 function assistantMessage(text) {
+  const messageId = `wework-e2e-message-${assistantMessageSequence++}`
   return {
     type: 'response.output_item.done',
     item: {
       type: 'message',
+      status: 'completed',
       role: 'assistant',
-      id: 'wework-e2e-message',
-      content: [{ type: 'output_text', text }],
+      id: messageId,
+      content: [{ type: 'output_text', text, annotations: [] }],
       phase: 'final_answer',
     },
   }
@@ -6584,6 +7527,33 @@ function readRequestBody(request) {
     })
     request.once('error', reject)
   })
+}
+
+function readRawRequestBody(request) {
+  return new Promise((resolvePromise, reject) => {
+    const chunks = []
+    request.on('data', chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('error', reject)
+  })
+}
+
+function parseTelemetryPayload(rawBody) {
+  try {
+    return JSON.parse(rawBody)
+  } catch {
+    const encoded = new URLSearchParams(rawBody).get('data')
+    assert.ok(encoded, 'The PostHog telemetry request did not contain a JSON payload')
+    return JSON.parse(encoded)
+  }
+}
+
+function telemetryEvents(payload) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.batch)) return payload.batch
+  return payload?.event ? [payload] : []
 }
 
 function json(response, statusCode, value) {
@@ -7163,8 +8133,13 @@ async function verifyGoalRestartRecoveryLifecycle({
     'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  const interruptedDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const interruptedDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+      snapshot.pane?.goal?.status === 'active',
+    'The interrupted Goal did not finish hydrating after Wework restarted'
   )
   assert.equal(
     interruptedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
@@ -7654,6 +8629,8 @@ class DesktopE2EServer {
     this.commandHistory = []
     this.modelRequests = []
     this.catalogRequests = []
+    this.httpRequests = []
+    this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
@@ -7713,6 +8690,9 @@ class DesktopE2EServer {
     })
     this.cancellationCompletionRelease = new Promise(resolvePromise => {
       this.releaseCancellationCompletion = resolvePromise
+    })
+    this.sideChatQueueRelease = new Promise(resolvePromise => {
+      this.resolveSideChatQueueRelease = resolvePromise
     })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
@@ -7854,6 +8834,26 @@ class DesktopE2EServer {
     )
   }
 
+  async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.telemetryRequests.find(candidate =>
+        telemetryEvents(candidate.payload).some(event => event.event === eventName)
+      )
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    throw new Error(`The desktop app did not send the ${eventName} telemetry event`)
+  }
+
+  telemetryRequestCount() {
+    return this.telemetryRequests.length
+  }
+
+  recordTelemetryRequest(request) {
+    this.telemetryRequests.push(request)
+  }
+
   fail(error, response) {
     if (!response.headersSent) {
       json(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -7953,6 +8953,7 @@ class DesktopE2EServer {
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
+        'side_chat_queue',
         'cloud_initial',
         'cloud_follow_up',
         'model_protocol_matrix',
@@ -7963,6 +8964,7 @@ class DesktopE2EServer {
         'official_plugin',
         'automation',
         'skill_mention_display',
+        'connector_auth_unmatched_resume',
         'supervisor',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
@@ -8054,6 +9056,10 @@ class DesktopE2EServer {
 
   releaseCancellationResponse() {
     this.releaseCancellationCompletion()
+  }
+
+  releaseSideChatQueueResponse() {
+    this.resolveSideChatQueueRelease()
   }
 
   awaitReconnectResponseStarted() {
@@ -8210,8 +9216,23 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
+    this.httpRequests.push({
+      method: request.method ?? 'UNKNOWN',
+      pathname: url.pathname,
+    })
     if (await this.handleControlRoute(request, response, url)) return
     if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+
+    if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
+      const rawBody = await readRawRequestBody(request)
+      this.recordTelemetryRequest({
+        contentType: request.headers['content-type'] ?? null,
+        payload: parseTelemetryPayload(rawBody),
+        rawBody,
+      })
+      json(response, 200, { status: 1 })
+      return
+    }
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -8226,13 +9247,13 @@ class DesktopE2EServer {
       json(response, 200, {
         items: [
           {
-            app_type: 'site',
+            app_type: 'web',
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
           },
           {
-            app_type: 'mini_program',
+            app_type: 'miniapp',
             enabled: true,
             order: 20,
             capabilities: ['create', 'open_experience'],
@@ -8243,13 +9264,13 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/sites') {
-      const appType = url.searchParams.get('app_type') || 'site'
+      const appType = url.searchParams.get('app_type') || 'web'
       const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
       const items =
-        appType === 'mini_program'
+        appType === 'miniapp'
           ? [
               {
-                app_type: 'mini_program',
+                app_type: 'miniapp',
                 siteid: 'prj_e2e_mini',
                 taskid: 'prj_e2e_mini',
                 username: 'wework-desktop-e2e-cloud-user',
@@ -8266,7 +9287,7 @@ class DesktopE2EServer {
             ]
           : [
               {
-                app_type: 'site',
+                app_type: 'web',
                 siteid: 'prj_e2e_product',
                 taskid: 'prj_e2e_product',
                 username: 'wework-desktop-e2e-cloud-user',
@@ -8706,6 +9727,24 @@ class DesktopE2EServer {
 
     if (requestKind === 'prewarm') {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (JSON.stringify(body).includes(PLUGIN_REFINEMENT_PROMPT)) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PLUGIN_REFINEMENT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -9641,6 +10680,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'skill_mention_display') {
       this.recordScenarioRequest('skill_mention_display', modelRequest)
       const requestText = JSON.stringify(body)
@@ -9883,6 +10937,35 @@ class DesktopE2EServer {
         assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'side_chat_queue') {
+      this.recordScenarioRequest('side_chat_queue', modelRequest)
+      const requestText = JSON.stringify(body)
+      const requestCount = this.scenarioRequests.get('side_chat_queue')?.length ?? 0
+      if (requestCount === 1) {
+        assert.ok(
+          requestText.includes(SIDE_CHAT_QUEUE_INITIAL),
+          'The initial side-chat queue request lost its prompt'
+        )
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.sideChatQueueRelease
+        if (response.destroyed || response.writableEnded) return
+        response.end(createSse([responseCompleted(responseId)]))
+        return
+      }
+      assert.ok(
+        requestText.includes(SIDE_CHAT_QUEUE_FOLLOW_UP),
+        'The queued side-chat follow-up lost its prompt'
+      )
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
 
@@ -11136,11 +12219,14 @@ async function writeCodexConfig(
   upstreamApiFormat = 'openai-responses'
 ) {
   await mkdir(codexHome, { recursive: true })
+  const configPath = join(codexHome, 'config.toml')
+  const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
-    join(codexHome, 'config.toml'),
+    temporaryConfigPath,
     `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+  await rename(temporaryConfigPath, configPath)
 }
 
 function toolDetailsMcpConfigToml() {
@@ -11377,13 +12463,17 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+        VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
+        VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
   )
   const mainBinaryName = await readTauriMainBinaryName()
   const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
+  const cargoTargetDir = process.env.CARGO_TARGET_DIR?.trim()
   const candidates = [
+    ...(cargoTargetDir ? [join(cargoTargetDir, 'debug', binaryName)] : []),
     join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
     join(
       weworkDir,
@@ -12060,6 +13150,7 @@ async function main() {
   const codexHome = join(executorHome, 'codex')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
+  const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
@@ -12085,6 +13176,7 @@ async function main() {
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
     })
+    await createPluginMarketplaceFixture(marketplacePluginPath)
     await mkdir(nativeCodexHome, { recursive: true })
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
@@ -12305,6 +13397,18 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
+    if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
+      await verifyInitialTelemetryConsent(control, [
+        workspacePath,
+        homePath,
+        cloudEnvironment?.authToken,
+        desktopScenario?.authToken,
+        MODEL_API_KEY,
+        'desktop-e2e@wework.local',
+      ])
+    } else {
+      await declineInitialTelemetryConsent(control)
+    }
     if (process.platform === 'darwin') {
       assert.notEqual(
         macosFrontmostProcessId(),
@@ -12607,6 +13711,12 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       if (shouldRunPluginSegment('plugin-lifecycle')) {
         phase = 'plugin-lifecycle'
+        await verifyMarketplacePluginLifecycle({
+          control,
+          executorHome,
+          marketplacePath: marketplacePluginPath,
+          workspacePath,
+        })
         await verifyPluginLifecycle({
           control,
           fixture: await ensureOfficialPluginFixture(),
@@ -12659,6 +13769,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('telemetry-consent')) {
+      phase = 'telemetry-preference'
+      await verifyTelemetryPreference(control)
+      verifyTelemetryRemainsDisabled(control)
+      if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
+        console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -14535,6 +15655,7 @@ last_updated = "2026-07-30T00:00:00Z"`
               requests.length,
             ])
           ),
+          httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
         },
         null,

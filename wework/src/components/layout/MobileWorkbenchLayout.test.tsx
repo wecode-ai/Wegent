@@ -1478,7 +1478,7 @@ describe('MobileWorkbenchLayout', () => {
 
   test('renders chat runtime tasks as conversations in the mobile drawer', async () => {
     const onOpenRuntimeTask = vi.fn()
-    const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-06-20/hi-1'
 
     render(
       <MobileWorkbenchLayout

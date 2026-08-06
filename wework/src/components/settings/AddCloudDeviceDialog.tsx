@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createDeviceApi } from '@/api/devices'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
+import { track } from '@/telemetry/client'
 
 interface CloudDeviceDialogConnection {
   isConnected: boolean
@@ -55,10 +56,12 @@ export function AddCloudDeviceDialog({
     setError(null)
     try {
       await createCloudDeviceApi(cloudConnection).createCloudDevice()
+      track('feature_action_completed', { domain: 'cloud_device', action: 'create' })
       onCreatingChange?.(true)
       onClose()
       onCreated()
     } catch (e) {
+      track('operation_failed', { operation: 'cloud_device_action' })
       setError(e instanceof Error ? e.message : '创建失败，请重试')
       onCreatingChange?.(false)
     } finally {
@@ -75,8 +78,10 @@ export function AddCloudDeviceDialog({
         client_origin: window.location.origin,
       })
       setRemoteCommand(result)
+      track('feature_action_completed', { domain: 'cloud_device', action: 'create' })
       onCreated()
     } catch (e) {
+      track('operation_failed', { operation: 'cloud_device_action' })
       setError(e instanceof Error ? e.message : '生成远程设备命令失败，请重试')
     } finally {
       setRemoteLoading(false)

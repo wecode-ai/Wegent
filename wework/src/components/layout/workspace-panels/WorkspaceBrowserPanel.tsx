@@ -65,6 +65,7 @@ import {
   DEFAULT_UI_FONT_SIZE,
   resolveUiTypographyVariables,
 } from '@/features/appearance/typography'
+import { track } from '@/telemetry/client'
 
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
@@ -718,6 +719,7 @@ export function WorkspaceBrowserPanel({
   const activeRef = useRef(active)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
+  const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
@@ -730,6 +732,7 @@ export function WorkspaceBrowserPanel({
   const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -796,6 +799,22 @@ export function WorkspaceBrowserPanel({
     return subscribeEmbeddedBrowserDownloadEvents(download => {
       if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
       applyDownloadEvent(download)
+      if (
+        (download.status === 'finished' ||
+          download.status === 'failed' ||
+          download.status === 'deleted') &&
+        !trackedTerminalDownloadIdsRef.current.has(download.id)
+      ) {
+        trackedTerminalDownloadIdsRef.current.add(download.id)
+        track('browser_download_completed', {
+          result:
+            download.status === 'finished'
+              ? 'success'
+              : download.status === 'failed'
+                ? 'failure'
+                : 'cancelled',
+        })
+      }
     })
   }, [applyDownloadEvent])
 
@@ -1198,6 +1217,7 @@ export function WorkspaceBrowserPanel({
   }, [
     active,
     adoptNativeLabel,
+    browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1558,6 +1578,14 @@ export function WorkspaceBrowserPanel({
         return
       }
 
+      if (!nativeBrowserOpenRef.current) {
+        setStatus('loading')
+        setError(null)
+        setCurrentUrl(url)
+        setBrowserOpenAttempt(attempt => attempt + 1)
+        return
+      }
+
       void runBrowserCommand(() => reloadEmbeddedBrowser(label))
     },
     [embeddedBrowserAvailable, label, runBrowserCommand]
@@ -1584,7 +1612,6 @@ export function WorkspaceBrowserPanel({
       }
 
       if (nextUrl === activePageUrl) {
-        setStatus('ready')
         updatePageUrl(nextUrl)
         reloadCurrentUrl(nextUrl)
         return
@@ -1596,12 +1623,14 @@ export function WorkspaceBrowserPanel({
         setStatus('loading')
         void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
           setCurrentUrl(nextUrl)
+          track('browser_navigation_completed', { runtime: 'embedded' })
         })
         return
       }
 
       setCurrentUrl(nextUrl)
       setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+      track('browser_navigation_completed', { runtime: 'fallback' })
     },
     [
       activePageUrl,

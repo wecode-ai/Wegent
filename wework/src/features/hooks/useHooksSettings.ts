@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { hooksApi } from './hooksApi'
 import { subscribeLocalExecutorEvents } from '@/tauri/localExecutor'
 import type { HookDraft, ResolvedHookPlugin } from './hooksTypes'
+import { track } from '@/telemetry/client'
 
 export function useHooksSettings() {
   const [data, setData] = useState<ResolvedHookPlugin[]>([])
@@ -58,23 +59,49 @@ export function useHooksSettings() {
       ),
     []
   )
+  const runMutation = useCallback(
+    async <T>(
+      action: 'create' | 'update' | 'enable' | 'disable' | 'delete' | 'install' | 'test',
+      operation: () => Promise<T>
+    ) => {
+      try {
+        const result = await operation()
+        track('feature_action_completed', { domain: 'hook', action })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'hook_action' })
+        throw error
+      }
+    },
+    []
+  )
   return {
     data,
     loading,
     error,
     reload: load,
     create: async (draft: HookDraft) =>
-      replace(await serialize(draft.manifest.id, () => hooksApi.create(draft))),
+      replace(
+        await runMutation('create', () =>
+          serialize(draft.manifest.id, () => hooksApi.create(draft))
+        )
+      ),
     update: async (id: string, draft: HookDraft) =>
-      replace(await serialize(id, () => hooksApi.update(id, draft))),
+      replace(await runMutation('update', () => serialize(id, () => hooksApi.update(id, draft)))),
     setEnabled: async (id: string, enabled: boolean) =>
-      replace(await serialize(id, () => hooksApi.setEnabled(id, enabled))),
+      replace(
+        await runMutation(enabled ? 'enable' : 'disable', () =>
+          serialize(id, () => hooksApi.setEnabled(id, enabled))
+        )
+      ),
     remove: async (id: string) => {
-      await serialize(id, () => hooksApi.delete(id))
+      await runMutation('delete', () => serialize(id, () => hooksApi.delete(id)))
       setData(items => items.filter(item => item.manifest.id !== id))
     },
-    test: hooksApi.test,
+    test: (id: string, handlerId: string, cwd?: string) =>
+      runMutation('test', () => hooksApi.test(id, handlerId, cwd)),
     reveal: hooksApi.reveal,
-    install: async (path: string) => replace(await hooksApi.install(path)),
+    install: async (path: string) =>
+      replace(await runMutation('install', () => hooksApi.install(path))),
   }
 }

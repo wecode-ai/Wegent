@@ -1,13 +1,20 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
 import { AppearanceSettingsPage } from './AppearanceSettingsPage'
+
+const trackMock = vi.fn()
+
+vi.mock('@/telemetry/client', () => ({
+  track: (...args: unknown[]) => trackMock(...args),
+}))
 
 describe('AppearanceSettingsPage', () => {
   beforeEach(() => {
     localStorage.clear()
     document.documentElement.removeAttribute('style')
+    trackMock.mockReset()
   })
 
   test('uses neutral controls and a blue default accent instead of green', () => {
@@ -127,5 +134,25 @@ describe('AppearanceSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('appearance-background-separate-toggle'))
     expect(screen.getByTestId('appearance-background-blur-slider-dark')).toHaveValue('12')
+  })
+
+  test('tracks appearance mode and accent color changes', async () => {
+    render(
+      <AppearanceProvider>
+        <AppearanceSettingsPage />
+      </AppearanceProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('appearance-mode-dark'))
+    expect(trackMock).toHaveBeenCalledWith('setting_changed', {
+      setting: 'appearance_mode',
+      value: 'dark',
+    })
+
+    fireEvent.blur(screen.getByTestId('appearance-accent-input'))
+    expect(trackMock).toHaveBeenCalledWith('setting_changed', {
+      setting: 'accent_color',
+      value: '#2563eb',
+    })
   })
 })
