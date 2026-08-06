@@ -97,6 +97,7 @@ export interface WorkspaceBrowserPanelProps {
   openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
+  onNativeLabelChange?: (nativeLabel: string | null) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
@@ -723,6 +724,7 @@ export function WorkspaceBrowserTabPanel({
   openRequest,
   codeCommentCount = 0,
   onAddCodeComment,
+  onNativeLabelChange,
   onFaviconChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
@@ -809,9 +811,10 @@ export function WorkspaceBrowserTabPanel({
 
       nativeLabelRef.current = nativeLabel
       adoptedDownloadOwnerLabelRef.current = logicalLabel
+      onNativeLabelChange?.(nativeLabel)
       reconcileDownloadSnapshot(nativeLabel)
     },
-    [reconcileDownloadSnapshot]
+    [onNativeLabelChange, reconcileDownloadSnapshot]
   )
 
   useLayoutEffect(() => {
@@ -825,7 +828,7 @@ export function WorkspaceBrowserTabPanel({
       pageStateRequestGenerationRef.current += 1
       annotationRequestGenerationRef.current += 1
     }
-  }, [active, label])
+  }, [active, label, onNativeLabelChange])
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
@@ -926,6 +929,7 @@ export function WorkspaceBrowserTabPanel({
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
+      onNativeLabelChange?.(null)
       currentUrlRef.current = null
       activePageUrlRef.current = null
       annotationModeRef.current = false

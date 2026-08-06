@@ -29,13 +29,15 @@ describe('WorkspaceBrowserPanelContainer', () => {
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockResolvedValue(undefined)
   })
 
-  test('adds and selects a blank browser tab', () => {
+  test('adds and selects a blank browser tab', async () => {
     render(<WorkspaceBrowserPanel active label="workspace-browser-task-1" />)
 
     fireEvent.click(screen.getByTestId('browser-tab-add'))
 
-    expect(screen.getAllByRole('tab')).toHaveLength(2)
-    expect(screen.getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(2)
+      expect(screen.getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true')
+    })
   })
 
   test('opens user requests in a newly created tab', async () => {

@@ -96,9 +96,10 @@ export function closeBrowserTab(
 
 export function findBrowserTabForLru(
   tabs: BrowserTab[],
-  maxLiveWebviews = MAX_BROWSER_LIVE_WEBVIEWS
+  maxLiveWebviews = MAX_BROWSER_LIVE_WEBVIEWS,
+  excludeTabId?: string
 ): BrowserTab | null {
-  const liveTabs = tabs.filter(tab => !tab.suspended && tab.nativeLabel)
+  const liveTabs = tabs.filter(tab => !tab.suspended && tab.nativeLabel && tab.id !== excludeTabId)
   if (liveTabs.length < maxLiveWebviews) return null
 
   return (

@@ -8,9 +8,12 @@ import {
 } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import {
+  MAX_BROWSER_LIVE_WEBVIEWS,
   closeBrowserTab,
   createBrowserTab,
+  findBrowserTabForLru,
   selectBrowserTab,
+  suspendBrowserTab,
   type BrowserTab,
   type BrowserTabCollection,
 } from '@/features/browser-tabs/browserTabs'
@@ -30,6 +33,39 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
     tabId: string
   } | null>(null)
   const handledOpenRequestIdRef = useRef<string | null>(null)
+
+  const updateTab = useCallback((tabId: string, update: Partial<BrowserTab>) => {
+    setCollection(current => ({
+      ...current,
+      tabs: current.tabs.map(tab => (tab.id === tabId ? { ...tab, ...update } : tab)),
+    }))
+  }, [])
+
+  const reclaimCapacity = useCallback(
+    async (excludeTabId?: string) => {
+      const candidate = findBrowserTabForLru(
+        collection.tabs,
+        MAX_BROWSER_LIVE_WEBVIEWS,
+        excludeTabId
+      )
+      if (!candidate) {
+        return (
+          collection.tabs.filter(tab => !tab.suspended && tab.nativeLabel).length <
+          MAX_BROWSER_LIVE_WEBVIEWS
+        )
+      }
+
+      await closeEmbeddedBrowser(candidate.label).catch(error => {
+        console.error('Failed to suspend embedded browser tab:', error)
+      })
+      setCollection(current => ({
+        ...current,
+        tabs: current.tabs.map(tab => (tab.id === candidate.id ? suspendBrowserTab(tab) : tab)),
+      }))
+      return true
+    },
+    [collection.tabs]
+  )
 
   useEffect(() => {
     const request = openRequest
@@ -52,41 +88,41 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
         setOpenRequestTarget({ id: request.id, tabId: collection.activeTabId })
         return
       }
+      void Promise.resolve().then(async () => {
+        const canOpen = await reclaimCapacity(collection.activeTabId)
+        if (!canOpen || disposed) return
+        const seed = createBrowserTab(baseLabel)
+        const tab = createBrowserTab(baseLabel, {
+          id: seed.id,
+          label: baseLabel + '--tab-' + seed.id.slice(0, 8),
+          url: request.url,
+        })
+        setCollection(current => ({
+          tabs: [...current.tabs, tab],
+          activeTabId: tab.id,
+        }))
+        setOpenRequestTarget({ id: request.id, tabId: tab.id })
+      })
+    })
+    return () => {
+      disposed = true
+    }
+  }, [baseLabel, collection.activeTabId, openRequest, reclaimCapacity])
+
+  const addTab = useCallback(() => {
+    void reclaimCapacity(collection.activeTabId).then(canOpen => {
+      if (!canOpen) return
       const seed = createBrowserTab(baseLabel)
       const tab = createBrowserTab(baseLabel, {
         id: seed.id,
         label: baseLabel + '--tab-' + seed.id.slice(0, 8),
-        url: request.url,
       })
       setCollection(current => ({
         tabs: [...current.tabs, tab],
         activeTabId: tab.id,
       }))
-      setOpenRequestTarget({ id: request.id, tabId: tab.id })
     })
-    return () => {
-      disposed = true
-    }
-  }, [baseLabel, collection.activeTabId, openRequest])
-
-  const updateTab = useCallback((tabId: string, update: Partial<BrowserTab>) => {
-    setCollection(current => ({
-      ...current,
-      tabs: current.tabs.map(tab => (tab.id === tabId ? { ...tab, ...update } : tab)),
-    }))
-  }, [])
-
-  const addTab = useCallback(() => {
-    const seed = createBrowserTab(baseLabel)
-    const tab = createBrowserTab(baseLabel, {
-      id: seed.id,
-      label: baseLabel + '--tab-' + seed.id.slice(0, 8),
-    })
-    setCollection(current => ({
-      tabs: [...current.tabs, tab],
-      activeTabId: tab.id,
-    }))
-  }, [baseLabel])
+  }, [baseLabel, collection.activeTabId, reclaimCapacity])
 
   useEffect(() => {
     const handleNewTab = () => addTab()
@@ -192,6 +228,9 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
                       targetLabel: tab.label,
                     }
                   : null
+              }
+              onNativeLabelChange={nativeLabel =>
+                updateTab(tab.id, { nativeLabel, suspended: !nativeLabel ? true : tab.suspended })
               }
               onTitleChange={title => handleTitleChange(tab.id, title)}
               onFaviconChange={faviconUrl => handleFaviconChange(tab.id, faviconUrl)}

@@ -73,6 +73,19 @@ describe('browser tab state', () => {
     expect(findBrowserTabForLru([protectedTab, candidate], 2)?.id).toBe('candidate')
   })
 
+  test('skips the excluded tab when selecting an LRU candidate', () => {
+    const active = {
+      ...createBrowserTab('base', { id: 'active', now: 1 }),
+      nativeLabel: 'native-active',
+    }
+    const candidate = {
+      ...createBrowserTab('base', { id: 'candidate', now: 2 }),
+      nativeLabel: 'native-candidate',
+    }
+
+    expect(findBrowserTabForLru([active, candidate], 1, active.id)?.id).toBe('candidate')
+  })
+
   test('suspends a tab while preserving its navigation metadata', () => {
     const tab = {
       ...createBrowserTab('base', { id: 'tab', url: 'https://example.test/' }),
