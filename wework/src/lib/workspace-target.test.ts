@@ -54,16 +54,22 @@ describe('resolveWorkspaceTarget', () => {
 
     expect(
       createLocalAttachmentWorkspaceTarget(
-        '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png',
+        '/Users/me/.wework/workspace/attachments/draft/42/result.png',
         devices
       )
     ).toMatchObject({
       deviceId: 'device-local-real',
-      path: '/Users/me/.wegent-executor/workspace/attachments/draft/42',
+      path: '/Users/me/.wework/workspace/attachments/draft/42',
       workspaceSource: 'local',
     })
     expect(
       createLocalAttachmentWorkspaceTarget('/workspace/project/result.png', devices)
+    ).toBeNull()
+    expect(
+      createLocalAttachmentWorkspaceTarget(
+        '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png',
+        devices
+      )
     ).toBeNull()
   })
 

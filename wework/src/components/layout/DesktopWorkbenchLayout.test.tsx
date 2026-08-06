@@ -5763,9 +5763,9 @@ describe('DesktopWorkbenchLayout', () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const localDevice = createLocalSkillDevice()
-    const imagePath = '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png'
+    const imagePath = '/Users/me/.wework/workspace/attachments/draft/42/result.png'
     const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/Users/me/.wegent-executor/workspace/attachments/draft/42',
+      path: '/Users/me/.wework/workspace/attachments/draft/42',
       entries: [],
     })
     const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
@@ -5815,7 +5815,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
-      '/Users/me/.wegent-executor/workspace/attachments/draft/42'
+      '/Users/me/.wework/workspace/attachments/draft/42'
     )
     expect(readWorkspaceFileChunk).toHaveBeenCalledWith(localDevice.device_id, imagePath, 0)
   })

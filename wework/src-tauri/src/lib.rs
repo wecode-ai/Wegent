@@ -1900,20 +1900,10 @@ fn read_executor_process_device_id(expected_backend_url: Option<&str>) -> Option
                 })
             })
             .or_else(|| {
-                process_env_value(&tokens, "WECODE_HOME").and_then(|home| {
-                    read_device_config_for_backend(
-                        std::path::PathBuf::from(home)
-                            .join("wegent-executor")
-                            .join("device-config.json"),
-                        expected_backend_url,
-                    )
-                })
-            })
-            .or_else(|| {
                 process_env_value(&tokens, "HOME").and_then(|home| {
                     read_device_config_for_backend(
                         std::path::PathBuf::from(home)
-                            .join(".wegent-executor")
+                            .join(".wework")
                             .join("device-config.json"),
                         expected_backend_url,
                     )
@@ -2434,7 +2424,8 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to locate home directory: {error}"))?;
-    Ok(home.join(".wegent-executor"))
+    local_executor::migrate_legacy_executor_homes(&home)?;
+    Ok(home.join(".wework"))
 }
 
 fn executor_home_attachment_root(executor_home: &std::path::Path) -> std::path::PathBuf {
@@ -2522,19 +2513,15 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         candidates.push(executor_home.join("device_id"));
     }
     if let Some(home) = dirs::home_dir() {
-        if let Some(device_id) = read_device_config(
-            home.join(".wecode")
-                .join("wegent-executor")
-                .join("device-config.json"),
-        ) {
-            return Some(device_id);
+        if let Err(error) = local_executor::migrate_legacy_executor_homes(&home) {
+            log::warn!("Failed to migrate legacy Wework home: {error}");
+            return None;
         }
-        if let Some(device_id) =
-            read_device_config(home.join(".wegent-executor").join("device-config.json"))
+        if let Some(device_id) = read_device_config(home.join(".wework").join("device-config.json"))
         {
             return Some(device_id);
         }
-        candidates.push(home.join(".wegent-executor").join("device_id"));
+        candidates.push(home.join(".wework").join("device_id"));
     }
 
     for path in candidates {
@@ -4093,8 +4080,8 @@ mod tests {
     #[test]
     fn places_local_attachment_drafts_under_executor_home() {
         assert_eq!(
-            executor_home_attachment_root(std::path::Path::new("/Users/me/.wegent-executor")),
-            std::path::PathBuf::from("/Users/me/.wegent-executor/workspace/attachments/draft")
+            executor_home_attachment_root(std::path::Path::new("/Users/me/.wework")),
+            std::path::PathBuf::from("/Users/me/.wework/workspace/attachments/draft")
         );
     }
 
