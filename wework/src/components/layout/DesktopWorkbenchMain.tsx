@@ -610,10 +610,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(true))
-    return () => cancelAnimationFrame(frame)
-  }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
@@ -1463,9 +1459,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoOpen = environmentInfoDocked
     ? environmentInfoPinned
     : environmentInfoOverlayOpen
-  const setEnvironmentInfoOpen = environmentInfoDocked
-    ? onEnvironmentInfoPinnedChange
-    : onEnvironmentInfoOverlayOpenChange
+  const setEnvironmentInfoOpen = useCallback(
+    (open: boolean) => {
+      if (environmentInfoDocked) {
+        setEnvironmentInfoTransitionEnabled(true)
+        onEnvironmentInfoPinnedChange(open)
+        return
+      }
+      onEnvironmentInfoOverlayOpenChange(open)
+    },
+    [environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, onEnvironmentInfoPinnedChange]
+  )
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
