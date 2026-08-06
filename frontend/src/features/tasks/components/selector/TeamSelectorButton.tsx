@@ -73,7 +73,7 @@ export default function TeamSelectorButton({
     quickAccessMetaLoaded,
     systemRecommendedTeamIdSet,
   } = useTeamFavorites()
-  const { recentTeamIds, refreshRecentTeams } = useRecentTeams()
+  const { recentTeamIds, refreshRecentTeams } = useRecentTeams(currentMode)
 
   // Filter teams by bind_mode based on current mode
   const filteredTeamsByMode = useMemo(
