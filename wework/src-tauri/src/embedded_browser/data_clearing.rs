@@ -287,8 +287,9 @@ async fn clear_platform_webview_data(
     webview: &Webview<Wry>,
     data_kinds: DataKindSet,
 ) -> Result<(), String> {
-    use gtk::{gio::Cancellable, glib::TimeSpan};
-    use webkit2gtk::{prelude::*, WebsiteDataTypes};
+    use webkit2gtk::{
+        gio::Cancellable, glib::TimeSpan, prelude::*, WebsiteDataManagerExtManual, WebsiteDataTypes,
+    };
 
     let (sender, receiver) = oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
