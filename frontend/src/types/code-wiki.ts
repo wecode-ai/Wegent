@@ -189,6 +189,12 @@ export interface CodeWikiRunRecord {
    * conversation list, which is what makes hiding it safe.
    */
   task_id: number
+  /**
+   * What became of that task. Beside the version's own outcome because they are two
+   * facts and can honestly differ — a run that concluded leaves a published version
+   * behind even if its container then died.
+   */
+  task_status: string
 }
 
 export interface CodeWikiRunHistory {

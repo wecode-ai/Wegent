@@ -565,7 +565,7 @@ class WikiService:
         self,
         wiki_db: Session,
         payload: WikiContentWriteRequest,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Persist wiki generation contents with incremental write support.
 
@@ -574,6 +574,10 @@ class WikiService:
         - Incremental upsert behaviour (update existing sections, insert new ones)
         - Summary-aware status transitions and metadata bookkeeping with support for retries
         - Resilient writes regardless of current generation status so reruns can overwrite results
+
+        Returns:
+            Why the version was not published, when a code wiki run concluded and was
+            refused. ``None`` otherwise, including for every ordinary page write.
         """
         has_sections = bool(payload.sections)
         if not has_sections and not payload.summary and not payload.removed_paths:
@@ -831,7 +835,7 @@ class WikiService:
         )
 
         if finishes_a_code_wiki:
-            self._finish_code_wiki(wiki_db, generation, summary)
+            return self._finish_code_wiki(wiki_db, generation, summary)
 
     def get_generation_page(
         self,
@@ -902,22 +906,31 @@ class WikiService:
         wiki_db: Session,
         generation: WikiGeneration,
         summary: Optional[WikiContentSummary],
-    ) -> None:
+    ) -> Optional[str]:
         """Conclude a code wiki run once its final write is safely committed.
 
         Failures here are reported to the agent as a 5xx rather than swallowed. The
         version is committed either way, so a retried submission republishes it; a
         silent failure would leave a run stuck RUNNING with content nobody projects.
+
+        Returns:
+            Why the version was not published, or ``None`` when it was. The agent is
+            the only party that can still act on a refusal — it is running, its
+            checkout is there, and it can write what is missing and finish again —
+            and it was being told "marked as COMPLETED" while its work was discarded.
         """
         succeeded = summary is not None and summary.status == "COMPLETED"
         try:
-            finish_run(
+            result = finish_run(
                 wiki_db,
                 generation=generation,
                 succeeded=succeeded,
                 error_message=(summary.error_message if summary else "") or "",
                 head_commit=(summary.head_commit if summary else "") or "",
             )
+            if succeeded and result is not None and not result.published:
+                return result.reason
+            return None
         except Exception as exc:
             wiki_db.rollback()
             logger.error(

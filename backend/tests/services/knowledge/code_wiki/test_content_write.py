@@ -9,6 +9,7 @@ its RAG index entry and any stored citation — stable when the agent rewords a 
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -55,6 +56,24 @@ def _write(db: Session, generation: WikiGeneration, *sections: WikiContentSectio
 
 def _section(path: str | None, title: str, content: str = "body") -> WikiContentSection:
     return WikiContentSection(type="chapter", title=title, content=content, path=path)
+
+
+def _knowledge_base(db: Session):
+    """The run only concludes as a code wiki's when its kind_id names a real one."""
+    from app.models.kind import Kind
+
+    kind = Kind(
+        id=KIND_ID,
+        kind="KnowledgeBase",
+        name="kb-content-write",
+        namespace="default",
+        user_id=1,
+        json={"spec": {"name": "wiki", "kbType": "code_wiki"}},
+        is_active=True,
+    )
+    db.add(kind)
+    db.flush()
+    return kind
 
 
 def _pages(db: Session, generation_id: int) -> list[WikiContent]:
@@ -421,3 +440,59 @@ def test_writing_a_page_does_not_read_back_the_others(
     assert lookups, "the page lookup should still happen"
     # Every column but the body: matching needs the path in ext and the title.
     assert not any("wiki_contents.content" in s for s in lookups), lookups
+
+
+def test_concluding_a_run_reports_whether_it_was_published(
+    test_db: Session, generation: WikiGeneration
+):
+    """The write API answered 204 and said nothing, so an agent whose version the
+    gate refused was told its run had completed while its work was discarded — and it
+    is the only party that can still act, because it is running and its checkout is
+    there.
+    """
+    from unittest.mock import patch
+
+    from app.schemas.wiki import WikiContentSummary
+
+    _knowledge_base(test_db)
+    _write(test_db, generation, _section("index", "Index"))
+
+    with patch("app.services.wiki_service.finish_run") as finish:
+        finish.return_value = SimpleNamespace(
+            published=False,
+            reason="rebuild came back with 1 pages where 20 were published",
+        )
+        refusal = WikiService().save_generation_contents(
+            test_db,
+            WikiContentWriteRequest(
+                generation_id=generation.id,
+                sections=[],
+                summary=WikiContentSummary(status="COMPLETED"),
+            ),
+        )
+
+    assert refusal == "rebuild came back with 1 pages where 20 were published"
+
+
+def test_a_published_run_reports_no_refusal(
+    test_db: Session, generation: WikiGeneration
+):
+    from unittest.mock import patch
+
+    from app.schemas.wiki import WikiContentSummary
+
+    _knowledge_base(test_db)
+    _write(test_db, generation, _section("index", "Index"))
+
+    with patch("app.services.wiki_service.finish_run") as finish:
+        finish.return_value = SimpleNamespace(published=True, reason="")
+        refusal = WikiService().save_generation_contents(
+            test_db,
+            WikiContentWriteRequest(
+                generation_id=generation.id,
+                sections=[],
+                summary=WikiContentSummary(status="COMPLETED"),
+            ),
+        )
+
+    assert refusal is None

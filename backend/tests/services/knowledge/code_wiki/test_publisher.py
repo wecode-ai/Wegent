@@ -174,8 +174,9 @@ def test_a_rejected_version_leaves_the_pointer_and_pages_alone(
         effects=effects.build(),
     )
 
+    # An empty version: the only thing the gate still refuses, now that shrinking
+    # and renaming are reported rather than blocked.
     second = _generation(test_db, knowledge_base.id)
-    _page(test_db, second, "page-0", "body")
 
     result = publish_generation(
         test_db,
@@ -279,7 +280,7 @@ def test_rolling_back_is_publishing_an_older_version(
         generation=second,
         user_id=USER_ID,
         effects=effects.build(),
-        policy=PublishPolicy(max_removed_share=1.0),
+        policy=PublishPolicy(warn_removed_share=1.0),
     )
     assert _live_paths(test_db, knowledge_base.id) == {"index"}
 
@@ -451,8 +452,8 @@ def test_a_rejected_publish_still_settles_the_old_debt(
     )
     _update_spec_pending(test_db, knowledge_base, ["4242"])
 
+    # Empty, which is the only version the gate still refuses.
     collapsed = _generation(test_db, knowledge_base.id)
-    _page(test_db, collapsed, "index", "body")
     result = publish_generation(
         test_db,
         knowledge_base=knowledge_base,

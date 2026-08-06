@@ -4,11 +4,15 @@
 
 """Tests for the publish gate.
 
-The gate is what makes agent-declared deletion safe to allow: it lets a version remove
-pages while refusing one that removes most of them.
+The gate is advisory. One rule still refuses — a version holding no pages, which is a
+run that produced nothing rather than an empty repository — and everything else is
+measured, warned about and published.
 
-Removal is measured over paths, not counts, so the cases below pair a version with the
-set of paths currently published rather than with a number.
+The two measures below say different things and are kept apart on purpose. A rebuild
+is judged on how much came back, because its version starts empty and its paths carry
+no intent. An incremental version is seeded with every published page, so it is judged
+on which of them it dropped: a count would miss a version that renamed all of them,
+which deletes every document id and breaks every citation pointing at one.
 """
 
 from app.services.knowledge.code_wiki.projection_plan import PageSource
@@ -50,11 +54,24 @@ def test_a_version_that_produced_nothing_is_rejected():
     assert "nothing usable" in verdict.reason
 
 
-def test_dropping_most_of_the_wiki_is_rejected():
-    verdict = evaluate_publish_gate(_pages(2), published_paths=_published(10))
+def test_dropping_most_of_the_wiki_is_reported_by_either_measure():
+    """Both are warnings. Refusing a rebuild was the honest reading — its version
+    starts empty, so a run that stopped early genuinely comes back short — but it
+    blocked three consecutive runs while the wiki never updated once, and each shape
+    it rejected turned out to be restructuring rather than failure.
 
-    assert not verdict.passed
-    assert "80%" in verdict.reason
+    The two still say different things: a rebuild that shrank, an incremental run
+    that dropped paths.
+    """
+    rebuilt = evaluate_publish_gate(
+        _pages(2), published_paths=_published(10), rebuilt=True
+    )
+    incremental = evaluate_publish_gate(_pages(2), published_paths=_published(10))
+
+    assert rebuilt.passed
+    assert any("80% smaller" in warning for warning in rebuilt.warnings)
+    assert incremental.passed
+    assert any("removes 80%" in warning for warning in incremental.warnings)
 
 
 def test_a_moderate_removal_is_allowed():
@@ -64,14 +81,26 @@ def test_a_moderate_removal_is_allowed():
     assert verdict.passed
 
 
-def test_the_removal_limit_is_configurable():
-    strict = PublishPolicy(max_removed_share=0.1)
+def test_the_shrink_warning_threshold_is_configurable():
+    quiet = PublishPolicy(warn_shrink_share=0.9)
 
     verdict = evaluate_publish_gate(
-        _pages(8), published_paths=_published(10), policy=strict
+        _pages(2), published_paths=_published(10), rebuilt=True, policy=quiet
     )
 
-    assert not verdict.passed
+    assert verdict.passed
+    assert not any("smaller" in warning for warning in verdict.warnings)
+
+
+def test_the_removal_warning_threshold_is_configurable():
+    quiet = PublishPolicy(warn_removed_share=0.9)
+
+    verdict = evaluate_publish_gate(
+        _pages(2), published_paths=_published(10), policy=quiet
+    )
+
+    assert verdict.passed
+    assert not any("removes" in warning for warning in verdict.warnings)
 
 
 def test_growth_is_never_treated_as_removal():
@@ -106,19 +135,28 @@ def test_diagrams_can_be_made_blocking_by_policy():
 
 
 def test_a_rejection_still_carries_its_warnings():
-    """The verdict is stored to explain the rejection, so it must be complete."""
+    """The verdict is stored to explain the rejection, so it must be complete.
+
+    A minimum above one is the only way to provoke a refusal that still has warnings
+    to carry: the empty version that normally trips it has no pages to warn about.
+    """
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]
 
-    verdict = evaluate_publish_gate(pages, published_paths=_published(10))
+    verdict = evaluate_publish_gate(
+        pages,
+        published_paths=_published(10),
+        rebuilt=True,
+        policy=PublishPolicy(min_pages=2),
+    )
 
     assert not verdict.passed
     assert verdict.warnings
 
 
 def test_the_verdict_renders_for_storage():
-    verdict = evaluate_publish_gate(_pages(1), published_paths=_published(10))
+    verdict = evaluate_publish_gate([], published_paths=_published(10), rebuilt=True)
 
     stored = verdict.to_ext("2026-07-31T00:00:00")
 
@@ -138,10 +176,17 @@ def test_a_passing_verdict_renders_as_passed():
 # --- removal is about paths, not counts -------------------------------------
 
 
-def test_replacing_every_path_is_a_mass_deletion_even_at_the_same_size():
+def test_replacing_every_path_is_reported_though_the_size_is_unchanged():
     """The case counting cannot see. Ten pages become ten pages, and every one of
     them is a new document: the old ids are deleted, and every stored citation and
-    index entry pointing at them breaks."""
+    index entry pointing at them breaks.
+
+    Reported rather than refused. This used to be a rejection, on the reading that
+    replacing everything is a malfunction — but an incremental version is seeded with
+    every published page before the agent starts, so a path that is gone was dropped
+    by an explicit instruction. Nothing here is an accident to be caught, and the
+    rejection blocked deliberate restructuring outright.
+    """
     renamed = [
         PageSource(path=f"guide/page-{index}", title=f"Page {index}", content="body")
         for index in range(10)
@@ -149,8 +194,8 @@ def test_replacing_every_path_is_a_mass_deletion_even_at_the_same_size():
 
     verdict = evaluate_publish_gate(renamed, published_paths=_published(10))
 
-    assert not verdict.passed
-    assert "100%" in verdict.reason
+    assert verdict.passed
+    assert any("100%" in warning for warning in verdict.warnings), verdict.warnings
 
 
 def test_renaming_a_few_paths_is_still_allowed():
@@ -219,3 +264,95 @@ def test_the_diagram_policy_does_not_reject_over_a_missing_section_page():
 
     assert verdict.passed
     assert verdict.warnings
+
+
+# --- how loss is measured depends on how the version was made ----------------
+
+
+def _page(path: str):
+    from app.services.knowledge.code_wiki.projection_plan import PageSource
+
+    return PageSource(path=path, title=path, content="body")
+
+
+def test_a_rebuild_that_reorganises_the_wiki_is_allowed():
+    """The bug this split exists for.
+
+    A run wrote fifteen good pages under a new structure. Measured by path overlap
+    only one of the twenty published paths survived, so it was refused for "removing
+    95% of the published pages" — and no rebuild that renamed anything could ever
+    have been published, which is what rebuilding is for.
+    """
+    from app.services.knowledge.code_wiki.publish_gate import evaluate_publish_gate
+
+    verdict = evaluate_publish_gate(
+        [_page(f"new-{index}") for index in range(15)],
+        published_paths=[f"old/{index}" for index in range(20)],
+        rebuilt=True,
+    )
+
+    assert verdict.passed, verdict.reason
+
+
+def test_a_rebuild_that_came_back_almost_empty_is_reported_and_published():
+    """This used to be refused, and the refusal is what a wiki that never updated
+    was paying for. An agent that wrote one page against twenty now publishes it and
+    the warning says so — recoverable from the version store, which keeps the one it
+    replaced, though the document ids of the deleted pages are not recoverable.
+    """
+    from app.services.knowledge.code_wiki.publish_gate import evaluate_publish_gate
+
+    verdict = evaluate_publish_gate(
+        [_page("index")],
+        published_paths=[f"old/{index}" for index in range(20)],
+        rebuilt=True,
+    )
+
+    assert verdict.passed
+    assert any("came back with" in warning for warning in verdict.warnings)
+
+
+def test_a_version_holding_nothing_is_the_one_thing_still_refused():
+    """Not an empty repository — a run that produced nothing. Publishing it would
+    delete every page the wiki has.
+    """
+    from app.services.knowledge.code_wiki.publish_gate import evaluate_publish_gate
+
+    verdict = evaluate_publish_gate(
+        [], published_paths=[f"old/{index}" for index in range(20)], rebuilt=True
+    )
+
+    assert not verdict.passed
+    assert "produced nothing usable" in verdict.reason
+
+
+def test_a_large_incremental_removal_is_reported_and_allowed():
+    """An incremental version is seeded with every published page before the agent
+    starts, so it cannot be a truncated run: a path that is gone was dropped by an
+    explicit instruction. Refusing that blocked a deliberate restructure outright,
+    while catching no failure that could actually happen.
+    """
+    from app.services.knowledge.code_wiki.publish_gate import evaluate_publish_gate
+
+    verdict = evaluate_publish_gate(
+        [_page(f"renamed-{index}") for index in range(20)],
+        published_paths=[f"old/{index}" for index in range(20)],
+        rebuilt=False,
+    )
+
+    assert verdict.passed
+    assert any(
+        "removes 100%" in warning for warning in verdict.warnings
+    ), verdict.warnings
+
+
+def test_an_incremental_run_that_kept_everything_says_nothing():
+    from app.services.knowledge.code_wiki.publish_gate import evaluate_publish_gate
+
+    paths = [f"old/{index}" for index in range(20)]
+    verdict = evaluate_publish_gate(
+        [_page(path) for path in paths], published_paths=paths, rebuilt=False
+    )
+
+    assert verdict.passed
+    assert not any("removes" in warning for warning in verdict.warnings)

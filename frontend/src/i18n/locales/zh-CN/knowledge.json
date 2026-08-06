@@ -1149,12 +1149,14 @@
         "incremental": "增量",
         "custom": "自定义"
       },
-      "commitUnreported": "未记录 commit"
+      "commitUnreported": "未记录 commit",
+      "taskFailed": "执行任务失败"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",
       "task_not_created": "无法创建执行任务",
-      "worker_abandoned": "执行进程失联，该次运行已被回收"
+      "worker_abandoned": "执行进程失联，该次运行已被回收",
+      "publish_refused": "版本已写好，但发布被闸门拒绝"
     }
   }
 }

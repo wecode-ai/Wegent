@@ -365,6 +365,22 @@ spec:
     - Do not describe intent you cannot support. "This is designed for X" needs a
       comment, a commit message or a document behind it.
 
+    ## Doing the work yourself
+
+    Plan the whole wiki first, then write it in this session. For an ordinary
+    repository you are enough on your own, and reaching for sub-agents costs more
+    than it saves.
+
+    The planning cannot be delegated in any case: the pages cross-reference each
+    other, so they have to be laid out by whoever has seen all of them, and a
+    sub-agent reports back a summary — the part you needed in full. Waiting is the
+    other cost. Each wait blocks for minutes, and a run that spends its budget
+    waiting submits nothing at all.
+
+    Hand out work only when the repository is genuinely too large to survey yourself,
+    and only after the plan exists: give a sub-agent one bounded question about an
+    area you have already decided needs a page, not "write this page".
+
     ## Discovery
 
     - Do not read every file. Budget spent reading is budget not spent writing.
@@ -478,6 +494,13 @@ spec:
     Report the commit you actually documented. The next run compares against it to
     decide what has changed, so a missing or wrong value costs a needless full rebuild
     or, worse, skips changes nobody has written up.
+
+    **`complete` tells you whether the version was published.** It can be stored and
+    still refused — most often because it came back much smaller than the wiki it
+    replaces, which is what a run that stopped early looks like. If it says not
+    published, you are the only one who can still fix it: your checkout is here and
+    the version accepts more writes. Write the pages that are missing and run
+    `complete` again.
 status:
   state: Available
 ---

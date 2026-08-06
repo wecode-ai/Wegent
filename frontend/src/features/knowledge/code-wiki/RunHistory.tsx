@@ -103,6 +103,15 @@ function RunRow({ run }: { run: CodeWikiRunRecord }) {
         </div>
         {/* The reason is the point of this panel, so it wraps rather than truncates:
             a clone failure or a missing token is unreadable at one line. */}
+        {/* The task's own outcome, when it disagrees with the version's. A run that
+            concluded successfully leaves a published version behind even if its
+            container then died — showing only one of the two made them look as
+            though they contradicted each other. */}
+        {run.task_status === 'FAILED' && run.status === 'completed' && (
+          <p className="mt-0.5 text-[11px] text-amber-500" data-testid="code-wiki-run-task-failed">
+            {t('knowledge:codeWiki.history.taskFailed')}
+          </p>
+        )}
         {reason && (
           <p
             className="mt-0.5 break-words text-[11px] text-amber-500"

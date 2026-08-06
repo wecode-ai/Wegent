@@ -934,6 +934,7 @@ def get_code_wiki_history(
                 failure_code=record.failure_code,
                 published=record.published,
                 task_id=record.task_id,
+                task_status=record.task_status,
             )
             for record in run_history(db, knowledge_base)
         ]

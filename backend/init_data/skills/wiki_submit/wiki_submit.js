@@ -400,7 +400,17 @@ async function cmdComplete(args) {
     return 1
   }
 
-  console.log('✅ Wiki generation marked as COMPLETED')
+  // The server answers with what became of the version. It used to answer nothing,
+  // so a run whose version was refused was told it had completed while its work was
+  // discarded -- and this process is the only one that can still fix it.
+  if (result.published === false) {
+    console.error(`❌ Not published: ${result.reason || 'the publish gate refused this version'}`)
+    console.error('The pages are stored but readers still see the previous wiki.')
+    console.error('Write what is missing, then run complete again.')
+    return 1
+  }
+
+  console.log('✅ Wiki generation completed and published')
   return 0
 }
 

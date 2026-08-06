@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Codes the server states in its own words; anything else is external text. */
-const TRANSLATABLE = new Set(['task_ended_without_report', 'task_not_created', 'worker_abandoned'])
+const TRANSLATABLE = new Set([
+  'task_ended_without_report',
+  'task_not_created',
+  'worker_abandoned',
+  'publish_refused',
+])
 
 /**
  * Why a run failed, in the reader's language where that is possible.

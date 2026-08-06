@@ -567,6 +567,15 @@ class CodeWikiRunRecord(BaseModel):
             "of the conversation list, which is what makes hiding it safe."
         ),
     )
+    task_status: str = Field(
+        "",
+        description=(
+            "What became of that task. Reported beside the version's own outcome "
+            "because the two are different facts and can honestly differ: an agent "
+            "that concluded its run leaves a published version behind even if its "
+            "container then died."
+        ),
+    )
 
 
 class CodeWikiRunHistory(BaseModel):

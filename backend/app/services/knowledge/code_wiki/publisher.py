@@ -36,7 +36,12 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
-from app.models.wiki import WikiContent, WikiGeneration, WikiGenerationStatus
+from app.models.wiki import (
+    WikiContent,
+    WikiGeneration,
+    WikiGenerationStatus,
+    WikiGenerationType,
+)
 from app.services.knowledge.code_wiki.page_path import collation_key
 from app.services.knowledge.code_wiki.projection import (
     PENDING_INDEX_CLEANUP_KEY,
@@ -253,6 +258,9 @@ def publish_generation(
     verdict = evaluate_publish_gate(
         desired,
         published_paths=[page.path for page in existing],
+        # Which measure applies. A rebuild is judged on how much came back; an
+        # incremental run on which published paths it dropped.
+        rebuilt=generation.generation_type == WikiGenerationType.FULL,
         policy=policy,
     )
     if not verdict.passed:
