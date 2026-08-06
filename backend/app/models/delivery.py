@@ -92,6 +92,7 @@ class LoopNode(Base):
     device_id = Column(String(100), nullable=True)
     is_default = Column(Boolean, nullable=True)
     task_user_id = Column(Integer, nullable=True)
+    assignee_agent_id = Column(String(64), nullable=True, index=True)
     task_id = Column(String(255), nullable=True)
     task_title = Column(String(255), nullable=True)
     backend_task_id = Column(

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
+from app.models.kind import Kind
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
@@ -224,6 +225,42 @@ def test_cloud_project_board_config_supports_custom_statuses(
         f"/api/v1/loop-items/{task.json()['id']}", headers=_auth(test_token)
     )
     assert refreshed.json()["status"] == ""
+
+
+def test_cloud_project_ai_automation_is_shared_through_project_metadata(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "ai", "name": "AI automation"},
+    ).json()
+    assert created["ai_automation"] == {
+        "auto_retry_on_failure": False,
+        "max_retry_count": 1,
+    }
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "ai_automation": {
+                "auto_retry_on_failure": True,
+                "max_retry_count": 3,
+            },
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["ai_automation"] == {
+        "auto_retry_on_failure": True,
+        "max_retry_count": 3,
+    }
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+    match = next(item for item in listed.json()["items"] if item["id"] == created["id"])
+    assert match["ai_automation"]["auto_retry_on_failure"] is True
+    assert match["ai_automation"]["max_retry_count"] == 3
 
 
 def test_cloud_project_generates_key_when_omitted(
@@ -994,6 +1031,64 @@ def test_loop_item_tags_roundtrip(
     )
     assert untouched.status_code == 200
     assert untouched.json()["tags"] == ["产品需求"]
+
+
+def test_loop_item_ai_assignee_is_project_scoped_and_exclusive(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="api-cloud-dev-1",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "cloud"},
+                "metadata": {"name": "api-cloud-dev-1"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "aiowner", "name": "AI-owned work"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Reviewer",
+            "runtime": "codex",
+            "model": None,
+            "systemPrompt": "Verify before reporting completion.",
+            "executionEnvironment": "cloud",
+            "executionDeviceId": "api-cloud-dev-1",
+        },
+    ).json()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review this", "assignee_agent_id": agent["id"]},
+    )
+
+    assert item.status_code == 201
+    assert item.json()["assignee_agent_id"] == agent["id"]
+    assert item.json()["assignee_agent_name"] == "Reviewer"
+    assert item.json()["assignee_user_id"] is None
+
+    reassigned = test_client.patch(
+        f"/api/v1/loop-items/{item.json()['id']}",
+        headers=_auth(test_token),
+        json={"version": item.json()["version"], "assignee_user_id": test_user.id},
+    )
+    assert reassigned.status_code == 200
+    assert reassigned.json()["assignee_user_id"] == test_user.id
+    assert reassigned.json()["assignee_agent_id"] is None
 
 
 def test_cloud_project_owner_can_manage_members(

@@ -26,6 +26,7 @@ class LoopItemCreate(BaseModel):
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_agent_id: str | None = Field(default=None, max_length=64)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
@@ -40,6 +41,7 @@ class LoopItemUpdate(BaseModel):
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_agent_id: str | None = Field(default=None, max_length=64)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
@@ -70,6 +72,14 @@ class LoopItemResponse(BaseModel):
     status: str
     assignee_user_id: int | None
     assignee_name: str | None = None
+    assignee_agent_id: str | None = None
+    assignee_agent_name: str | None = None
+    ai_state: dict[str, Any] | None = None
+    execution_state: str | None = None
+    assignment_history: list[dict[str, Any]] = Field(default_factory=list)
+    approval: dict[str, Any] | None = None
+    queued_at: str | None = None
+    execution_note: str | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -91,10 +101,40 @@ class LoopItemResponse(BaseModel):
         if isinstance(value, dict) and "tags" not in value:
             metadata = value.get("metadata_json")
             tags = metadata.get("tags") if isinstance(metadata, dict) else None
-            return {**value, "tags": _normalize_tags(tags)}
+            ai_state = metadata.get("ai_state") if isinstance(metadata, dict) else None
+            assignment_history = (
+                metadata.get("assignment_history")
+                if isinstance(metadata, dict)
+                else None
+            )
+            approval = metadata.get("approval") if isinstance(metadata, dict) else None
+            return {
+                **value,
+                "tags": _normalize_tags(tags),
+                "ai_state": ai_state if isinstance(ai_state, dict) else None,
+                "execution_state": (
+                    metadata.get("execution_state")
+                    if isinstance(metadata, dict)
+                    else None
+                ),
+                "assignment_history": (
+                    assignment_history if isinstance(assignment_history, list) else []
+                ),
+                "approval": approval if isinstance(approval, dict) else None,
+                "queued_at": (
+                    metadata.get("queued_at") if isinstance(metadata, dict) else None
+                ),
+                "execution_note": (
+                    metadata.get("execution_note")
+                    if isinstance(metadata, dict)
+                    else None
+                ),
+            }
         return value
 
-    @field_validator("parent_id", "current_delivery_id", mode="before")
+    @field_validator(
+        "parent_id", "current_delivery_id", "assignee_agent_id", mode="before"
+    )
     @classmethod
     def normalize_empty_id(cls, value: object) -> object:
         return None if value == "" else value

@@ -335,8 +335,15 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
+    from app.services.loop_item_executions.wake import bind_socketio_loop
 
     sio = get_sio()
+    try:
+        import asyncio
+
+        bind_socketio_loop(asyncio.get_running_loop())
+    except RuntimeError:
+        pass
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 

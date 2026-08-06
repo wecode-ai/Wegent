@@ -4,7 +4,16 @@
 
 """Shared cloud project endpoints."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -30,13 +39,17 @@ from app.schemas.cloud_project import (
     LocalBindingCreate,
     LocalBindingResponse,
 )
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
+    LoopItemApproval,
+    LoopItemAssign,
     ProjectChatAgentCreate,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
+from app.services.loop_items import loop_item_service
 from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
@@ -143,6 +156,100 @@ def update_project_chat_agent(
         project_id=str(project_id),
         agent_id=agent_id,
         request=values,
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/assign",
+    response_model=LoopItemResponse,
+)
+def assign_loop_item(
+    project_id: int,
+    item_id: str,
+    values: LoopItemAssign,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Assign a task to a project member or to one of the project robots.
+
+    The assignment chain and the derived queue state live on the task itself;
+    there is no separate queue storage.
+    """
+
+    item = loop_item_service.assign(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/approve",
+    response_model=LoopItemResponse,
+)
+def approve_loop_item_run(
+    project_id: int,
+    item_id: str,
+    values: LoopItemApproval,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Approve a pending robot run. Only the robot creator can approve."""
+
+    item = loop_item_service.approve_run(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/reject",
+    response_model=LoopItemResponse,
+)
+def reject_loop_item_run(
+    project_id: int,
+    item_id: str,
+    values: LoopItemApproval,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Reject a pending robot run. Only the robot creator can reject."""
+
+    item = loop_item_service.reject_run(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
     )
 
 

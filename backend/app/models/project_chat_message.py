@@ -69,10 +69,10 @@ class ProjectChatMessage(Base):
             unique=True,
         ),
         Index(
-            "uq_project_chat_runtime",
+            "ix_project_chat_runtime",
             "runtime_device_id",
             "runtime_task_id",
-            unique=True,
+            "id",
         ),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
