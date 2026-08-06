@@ -46,9 +46,9 @@ WARMPOOL_MAX_IDLE_TIME = os.getenv("WARMPOOL_MAX_IDLE_TIME", "30m")
 
 # Enable warm pool claims for non-Git standard online executor tasks. These
 # tasks share the SandboxTemplate selected by WARMPOOL_TEMPLATE_NAME. It is
-# enabled by default whenever the shared warm pool is enabled.
+# disabled by default and must be enabled explicitly.
 EXECUTOR_WARMPOOL_ENABLED = (
-    os.getenv("EXECUTOR_WARMPOOL_ENABLED", "true").lower() == "true"
+    os.getenv("EXECUTOR_WARMPOOL_ENABLED", "false").lower() == "true"
 )
 
 # ==================== Executor Manager URLs ====================
