@@ -17,6 +17,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.services.task_run_metrics import (
     TaskRunMetricEvent,
     TaskRunMetricsStore,
+    task_run_failure_message,
     task_run_metrics_store,
 )
 
@@ -150,7 +151,9 @@ class TaskRunMetricHooks:
                     else _status_value(subtask.status)
                 ),
                 state_changed_at=item.state_changed_at,
-                error_message=subtask.error_message,
+                error_message=task_run_failure_message(
+                    subtask.error_message, subtask.result
+                ),
                 record_total=item.record_total
                 or (previous.record_total if previous else False),
                 sync_failure=item.sync_failure
@@ -213,7 +216,9 @@ def queue_bulk_subtask_status_metrics(
             created_at=subtask.created_at,
             status=status,
             state_changed_at=state_changed_at,
-            error_message=subtask.error_message,
+            error_message=task_run_failure_message(
+                subtask.error_message, subtask.result
+            ),
             record_total=previous.record_total if previous else False,
             sync_failure=True,
         )

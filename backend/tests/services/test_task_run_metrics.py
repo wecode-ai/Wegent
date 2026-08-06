@@ -17,6 +17,7 @@ from app.services.task_run_metrics import (
     TaskRunMetricEvent,
     failure_reason_id,
     normalize_failure_reason,
+    task_run_failure_message,
 )
 from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 
@@ -67,6 +68,41 @@ def test_normalize_failure_reason_removes_volatile_identifiers() -> None:
     assert first == "Executor failed for <number> and <uuid>"
     assert first == second
     assert failure_reason_id(first) == failure_reason_id(second)
+
+
+def test_task_run_failure_message_extracts_terminal_jsonl_error() -> None:
+    raw_message = "\n".join(
+        [
+            '{"type":"system","subtype":"hook_started"}',
+            '{"type":"result","subtype":"success","is_error":true,'
+            '"result":"API Error: 502 Bad Gateway"}',
+        ]
+    )
+
+    assert (
+        task_run_failure_message(raw_message, {"value": "partial output"})
+        == "API Error: 502 Bad Gateway"
+    )
+
+
+def test_task_run_failure_message_uses_result_for_generic_wrapper() -> None:
+    assert (
+        task_run_failure_message(
+            "Task failed with status: FAILED",
+            {"error_type": "execution_error", "value": "Invalid model ID"},
+        )
+        == "Invalid model ID"
+    )
+
+
+def test_task_run_failure_message_keeps_specific_error_over_partial_result() -> None:
+    assert (
+        task_run_failure_message(
+            "command timed out after 300s",
+            {"error_type": "runtime_error", "value": "partial assistant output"},
+        )
+        == "command timed out after 300s"
+    )
 
 
 def test_transaction_hooks_publish_failure_and_retry_after_commit(

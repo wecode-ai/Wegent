@@ -18,9 +18,17 @@ from redis.exceptions import RedisError
 from app.core.config import settings
 from app.models.subtask import SubtaskStatus
 
-KEY_PREFIX = "task-run-monitor:v1"
+KEY_PREFIX = "task-run-monitor:v2"
 UNKNOWN_REASON_ID = "unknown"
 MAX_REASON_LENGTH = 512
+_GENERIC_FAILURE_MESSAGES = frozenset(
+    {
+        "execution failed",
+        "task failed",
+        "task failed with status: failed",
+        "unknown error",
+    }
+)
 
 _UUID_PATTERN = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -335,6 +343,52 @@ def normalize_failure_reason(error_message: Optional[str]) -> Optional[str]:
     reason = _LONG_HEX_PATTERN.sub("<hex>", reason)
     reason = _LONG_NUMBER_PATTERN.sub("<number>", reason)
     return reason[:MAX_REASON_LENGTH]
+
+
+def task_run_failure_message(
+    error_message: Optional[str], result: object = None
+) -> Optional[str]:
+    """Return the actionable error instead of raw executor output."""
+    raw_message = error_message.strip() if error_message else ""
+    jsonl_error = _extract_jsonl_result_error(raw_message)
+    if jsonl_error:
+        return jsonl_error
+
+    result_error = _result_error_message(result)
+    if result_error and (
+        not raw_message or raw_message.casefold() in _GENERIC_FAILURE_MESSAGES
+    ):
+        return result_error
+    return raw_message or result_error
+
+
+def _extract_jsonl_result_error(raw_message: str) -> Optional[str]:
+    if not raw_message.startswith("{"):
+        return None
+    for line in reversed(raw_message.splitlines()):
+        try:
+            value = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict) or value.get("type") != "result":
+            continue
+        if value.get("is_error") is not True:
+            return None
+        message = value.get("result") or value.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        return None
+    return None
+
+
+def _result_error_message(result: object) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    for field in ("error_message", "error", "message", "value"):
+        value = result.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def failure_reason_id(reason: Optional[str]) -> str:

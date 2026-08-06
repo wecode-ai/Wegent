@@ -54,6 +54,7 @@ def _create_subtask(
     status: SubtaskStatus,
     created_at: datetime,
     error_message: str | None = None,
+    result: dict[str, Any] | None = None,
     role: SubtaskRole = SubtaskRole.ASSISTANT,
 ) -> Subtask:
     subtask = Subtask(
@@ -64,6 +65,7 @@ def _create_subtask(
         bot_ids=[],
         role=role,
         status=status,
+        result=result,
         error_message=error_message,
         created_at=created_at,
         updated_at=created_at,
@@ -129,6 +131,48 @@ def test_get_task_run_stats_combines_redis_metrics_with_mysql_failure_details(
     assert response.recent_failures[0].task_title == "Investigate failure"
     assert response.recent_failures[0].user_name == test_user.user_name
     assert response.data_as_of == now
+
+
+def test_get_task_run_stats_extracts_legacy_jsonl_failure_detail(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    now = datetime.now()
+    task = _create_task(test_db, test_user, "legacy-jsonl", "Legacy JSONL failure")
+    failed = _create_subtask(
+        test_db,
+        task,
+        status=SubtaskStatus.FAILED,
+        created_at=now,
+        error_message="\n".join(
+            [
+                '{"type":"system","subtype":"hook_started"}',
+                '{"type":"result","is_error":true,'
+                '"result":"API Error: 502 Bad Gateway"}',
+            ]
+        ),
+        result={"error_type": "runtime_error", "value": "API Error: 502 Bad Gateway"},
+    )
+    test_db.commit()
+    metrics_store = _FakeMetricsStore(
+        TaskRunMetricWindow(
+            total_runs=1,
+            failed_runs=1,
+            failure_reasons=[],
+            recent_failure_ids=[failed.id],
+            data_as_of=now,
+        )
+    )
+
+    response = get_task_run_stats(
+        test_db,
+        hours=24,
+        failure_reason_limit=10,
+        recent_failure_limit=20,
+        metrics_store=metrics_store,
+    )
+
+    assert response.recent_failures[0].error_message == "API Error: 502 Bad Gateway"
 
 
 def test_admin_task_run_stats_endpoint(

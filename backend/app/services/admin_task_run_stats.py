@@ -20,6 +20,7 @@ from app.schemas.admin_task_runs import (
 from app.services.task_run_metrics import (
     TaskRunMetricsStore,
     normalize_failure_reason,
+    task_run_failure_message,
     task_run_metrics_store,
 )
 
@@ -99,7 +100,9 @@ def _recent_failure(
         user_id=subtask.user_id,
         user_name=user.user_name if user else None,
         client_origin=task.client_origin,
-        error_message=normalize_failure_reason(subtask.error_message),
+        error_message=normalize_failure_reason(
+            task_run_failure_message(subtask.error_message, subtask.result)
+        ),
         created_at=subtask.created_at,
         updated_at=subtask.updated_at,
     )
