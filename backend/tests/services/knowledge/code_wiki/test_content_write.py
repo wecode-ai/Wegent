@@ -517,3 +517,77 @@ def test_an_ordinary_page_write_concludes_nothing(
     )
 
     assert outcome is None
+
+
+# --- who may read the version an agent is writing ----------------------------
+
+
+def _generation(db: Session, *, user_id: int) -> WikiGeneration:
+    record = WikiGeneration(
+        project_id=1,
+        kind_id=0,
+        user_id=user_id,
+        task_id=0,
+        team_id=1,
+        generation_type=WikiGenerationType.INCREMENTAL,
+        source_snapshot={},
+        status=WikiGenerationStatus.RUNNING,
+        completed_at=datetime(1970, 1, 1),
+    )
+    db.add(record)
+    db.flush()
+    return record
+
+
+def test_a_generation_belonging_to_another_account_is_refused(test_db, test_user):
+    """The last authorisation left on the internal router, and it had no test.
+
+    Its neighbours did: a file of them covered the public wiki endpoints, and when
+    those were removed it went with them. This check is the one that survived, and it
+    is the one that matters most -- an incremental version is a complete copy of a
+    published wiki, so reading someone else's is reading a wiki whose repository the
+    caller may have no access to at all. Authenticating a JWT says who is asking, not
+    what they may ask about.
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    from app.api.endpoints.wiki import _assert_caller_owns_generation
+
+    generation = _generation(test_db, user_id=test_user.id + 1)
+
+    with pytest.raises(HTTPException) as refused:
+        _assert_caller_owns_generation(test_db, test_user, generation.id)
+
+    assert refused.value.status_code == 403
+
+
+def test_a_caller_reading_their_own_generation_is_allowed(test_db, test_user):
+    from app.api.endpoints.wiki import _assert_caller_owns_generation
+
+    generation = _generation(test_db, user_id=test_user.id)
+
+    # Raises when refused; returning is the assertion.
+    _assert_caller_owns_generation(test_db, test_user, generation.id)
+
+
+def test_the_fixed_operator_token_is_not_scoped_to_one_generation(test_db):
+    """`None` means the internal token was used, which is an operator rather than a
+    person. Applying an ownership check to it would compare against no account."""
+    from app.api.endpoints.wiki import _assert_caller_owns_generation
+
+    generation = _generation(test_db, user_id=4242)
+
+    _assert_caller_owns_generation(test_db, None, generation.id)
+
+
+def test_a_generation_that_does_not_exist_reads_as_absent(test_db, test_user):
+    import pytest
+    from fastapi import HTTPException
+
+    from app.api.endpoints.wiki import _assert_caller_owns_generation
+
+    with pytest.raises(HTTPException) as refused:
+        _assert_caller_owns_generation(test_db, test_user, 999999)
+
+    assert refused.value.status_code == 404
