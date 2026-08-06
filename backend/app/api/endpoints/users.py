@@ -877,13 +877,15 @@ async def get_user_quick_access(
 
 @router.get("/recent-teams", response_model=list[QuickAccessTeam])
 async def get_user_recent_teams(
+    is_code: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get five recently used teams, filled by recently updated teams."""
+    """Get five recently used teams for code or non-code tasks."""
     teams = team_kinds_service.get_recent_accessible_teams(
         db,
         user_id=current_user.id,
+        is_code=is_code,
     )
     return [_quick_access_team_from_data(team) for team in teams]
 
