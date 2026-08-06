@@ -235,14 +235,14 @@ describe('ConnectionsSettingsPage', () => {
       disk: [],
     })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
-      codexHome: '/Users/crystal/.wegent-executor/codex',
-      configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+      codexHome: '/Users/crystal/.wework/codex',
+      configPath: '/Users/crystal/.wework/codex/config.toml',
       remoteAppsEnabled: false,
     })
     localCodexPluginApiMock.updateCodexLocalConfig.mockImplementation(patch =>
       Promise.resolve({
-        codexHome: '/Users/crystal/.wegent-executor/codex',
-        configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+        codexHome: '/Users/crystal/.wework/codex',
+        configPath: '/Users/crystal/.wework/codex/config.toml',
         remoteAppsEnabled: Boolean(patch.remoteAppsEnabled),
       })
     )

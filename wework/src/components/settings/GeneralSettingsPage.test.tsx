@@ -122,7 +122,7 @@ describe('GeneralSettingsPage', () => {
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
-      destinationPath: '/Users/test/.wegent-executor/codex',
+      destinationPath: '/Users/test/.wework/codex',
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
@@ -348,7 +348,7 @@ describe('GeneralSettingsPage', () => {
       .mockResolvedValueOnce({
         source: 'codex',
         sourcePath: '/Users/test/.codex',
-        destinationPath: '/Users/test/.wegent-executor/codex',
+        destinationPath: '/Users/test/.wework/codex',
         importedEntries: ['config.toml'],
       })
     render(<GeneralSettingsPage />)

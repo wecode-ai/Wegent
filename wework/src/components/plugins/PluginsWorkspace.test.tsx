@@ -175,7 +175,7 @@ function mockCodexAppServerInvoke(
   vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
     if (command === 'local_executor_codex_home_migration_status') {
       return Promise.resolve({
-        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        weworkCodexHome: '/Users/test/.wework/codex',
         nativeCodexHome: '/Users/test/.codex',
         weworkCodexHomeExists: true,
         nativeCodexHomeExists: false,
@@ -184,7 +184,7 @@ function mockCodexAppServerInvoke(
     }
     if (command === 'local_executor_migrate_native_codex_home') {
       return Promise.resolve({
-        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        weworkCodexHome: '/Users/test/.wework/codex',
         nativeCodexHome: '/Users/test/.codex',
         weworkCodexHomeExists: true,
         nativeCodexHomeExists: true,
@@ -1900,7 +1900,7 @@ describe('PluginsWorkspace', () => {
         {
           name: 'wework-personal',
           displayName: 'Personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           plugins: [
             {
               id: '202',
@@ -2136,7 +2136,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(invoke).mockImplementation((command: string) => {
       if (command === 'local_executor_codex_home_migration_status') {
         return Promise.resolve({
-          weworkCodexHome: '/Users/test/.wegent-executor/codex',
+          weworkCodexHome: '/Users/test/.wework/codex',
           nativeCodexHome: '/Users/test/.codex',
           weworkCodexHomeExists: true,
           nativeCodexHomeExists: false,
