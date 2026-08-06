@@ -396,7 +396,140 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert execution_request["prompt"] == payload["message"]
     assert payload["cloudProjectId"] == str(project.id)
     assert payload["ephemeral"] is True
+    assert payload["continuable"] is True
     assert payload["runtime"] == "codex"
+
+
+def test_claim_batch_moves_queued_to_claimed_within_capacity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot_b = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Bot B",
+        name="Bot B",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="cloud-device-1",
+        metadata_json={
+            "runtime": "codex",
+            "execution_mode": "auto",
+            "execution_environment": "cloud",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot_b)
+    test_db.commit()
+    executions = [
+        _make_execution(
+            test_db,
+            _make_item(test_db, project, test_user, title=f"Task {index}"),
+            bot if index % 2 == 0 else bot_b,
+            test_user,
+        )
+        for index in range(4)
+    ]
+
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        device_capacity=2,
+        batch_size=4,
+    )
+
+    assert len(claimed) == 2
+    assert [row.status for row in claimed] == ["claimed", "claimed"]
+    assert all(row.lease_expires_at is not None for row in claimed)
+    assert {row.agent_id for row in claimed} == {bot.id, bot_b.id}
+    # Capacity 2 -> the remaining runs stay queued.
+    test_db.refresh(executions[2])
+    test_db.refresh(executions[3])
+    assert executions[2].status == "queued"
+    assert executions[3].status == "queued"
+
+
+def test_claim_batch_respects_serial_per_robot(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    first = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    second = _make_execution(
+        test_db, _make_item(test_db, project, test_user, title="Second"), bot, test_user
+    )
+
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        device_capacity=4,
+        batch_size=4,
+    )
+    assert len(claimed) == 1
+    assert claimed[0].id == first.id
+    test_db.refresh(second)
+    assert second.status == "queued"
+
+
+def test_mark_running_advances_claimed_only(test_db: Session, test_user: User) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    first = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    second = _make_execution(
+        test_db, _make_item(test_db, project, test_user, title="Second"), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        device_capacity=2,
+        batch_size=2,
+    )
+    assert len(claimed) == 1
+    # second is still queued; mark_running must not touch it.
+    advanced = loop_item_execution_service.mark_running(
+        test_db,
+        execution_ids=[claimed[0].id, second.id],
+    )
+    assert advanced == 1
+    test_db.refresh(claimed[0])
+    test_db.refresh(second)
+    assert claimed[0].status == "running"
+    assert second.status == "queued"
+
+
+def test_claimed_lease_expiry_requeues_run(test_db: Session, test_user: User) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        lease_seconds=60,
+    )
+    assert len(claimed) == 1
+    expired = claimed[0].lease_expires_at - timedelta(seconds=120)
+    claimed[0].lease_expires_at = expired
+    test_db.commit()
+
+    requeued, failed = loop_item_execution_service.recovery_scan(
+        test_db,
+        now=expired + timedelta(seconds=120),
+        lease_seconds=60,
+    )
+    assert (requeued, failed) == (1, 0)
+    test_db.refresh(claimed[0])
+    assert claimed[0].status == "queued"
 
 
 def test_claimed_run_builds_complete_model_config_matching_app_send(

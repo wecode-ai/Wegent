@@ -321,6 +321,12 @@ class ProjectChatService:
         }
         if request.model is not None:
             metadata["model"] = request.model
+        reply_to_message_id, root_message_id = self._resolve_reply_context(
+            db,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            reply_to_message_id=request.reply_to_message_id,
+        )
         row = ProjectChatMessage(
             message_id=message_id,
             client_message_id=request.client_message_id,
@@ -332,12 +338,56 @@ class ProjectChatService:
             message_type="text",
             content=request.content,
             metadata_json=metadata,
+            reply_to_message_id=reply_to_message_id,
+            thread_root_message_id=root_message_id,
             status="completed",
         )
         db.add(row)
         db.commit()
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row), created=True)
+
+    def _resolve_reply_context(
+        self,
+        db: Session,
+        *,
+        project_id: str,
+        task_id: str | None,
+        reply_to_message_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Validate a one-level reply target and resolve its thread root.
+
+        The reply target must live in the same project/task thread. The root is
+        the target's own root (or the target itself when it is a top-level
+        comment), so every message in one card shares the same session root.
+        """
+        if not reply_to_message_id:
+            return None, None
+        target = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == reply_to_message_id,
+                ProjectChatMessage.project_id == project_id,
+                ProjectChatMessage.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if target is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "reply target message not found",
+            )
+        target_task_id = target.task_id
+        if (task_id is None) != (target_task_id is None) or (
+            task_id is not None
+            and target_task_id is not None
+            and task_id != target_task_id
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "reply target belongs to a different task thread",
+            )
+        return reply_to_message_id, target.thread_root_message_id or target.message_id
 
     def start_agent_response(
         self,
@@ -418,6 +468,12 @@ class ProjectChatService:
             content="",
             metadata_json=metadata,
             trigger_message_id=request.trigger_message_id,
+            reply_to_message_id=trigger.message_id if trigger else None,
+            thread_root_message_id=(
+                (trigger.thread_root_message_id or trigger.message_id)
+                if trigger
+                else None
+            ),
             agent_id=request.agent_id,
             runtime_device_id=request.runtime_device_id,
             runtime_task_id=request.runtime_task_id,
@@ -685,6 +741,9 @@ class ProjectChatService:
                 content=text,
                 metadata_json=metadata,
                 trigger_message_id=parent.message_id,
+                reply_to_message_id=parent.message_id,
+                thread_root_message_id=parent.thread_root_message_id
+                or parent.message_id,
                 agent_id=parent.agent_id,
                 runtime_device_id=parent.runtime_device_id,
                 runtime_task_id=parent.runtime_task_id,
@@ -1205,6 +1264,8 @@ class ProjectChatService:
             content=row.content,
             metadata=row.metadata_json if isinstance(row.metadata_json, dict) else {},
             trigger_message_id=row.trigger_message_id,
+            reply_to_message_id=row.reply_to_message_id,
+            root_message_id=row.thread_root_message_id,
             agent_id=row.agent_id,
             runtime_address=runtime_address,
             status=row.status,

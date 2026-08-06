@@ -27,13 +27,19 @@ logger = logging.getLogger(__name__)
 
 STATUS_PENDING_APPROVAL = "pending_approval"
 STATUS_QUEUED = "queued"
+STATUS_CLAIMED = "claimed"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = {STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED}
-ACTIVE_STATUSES = {STATUS_PENDING_APPROVAL, STATUS_QUEUED, STATUS_RUNNING}
+ACTIVE_STATUSES = {
+    STATUS_PENDING_APPROVAL,
+    STATUS_QUEUED,
+    STATUS_CLAIMED,
+    STATUS_RUNNING,
+}
 
 PRIORITY_WEIGHTS = {
     "none": 0,
@@ -343,6 +349,150 @@ class LoopItemExecutionService:
             return None
         db.refresh(candidate)
         return candidate
+
+    def claim_batch_for_device(
+        self,
+        db: Session,
+        *,
+        execution_device_id: str,
+        environment: str,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        device_capacity: int = 1,
+        batch_size: int = 16,
+    ) -> list[LoopItemExecution]:
+        """Atomically claim a batch of queued runs for one device.
+
+        The caller holds the per-device lock, so this is the single consumer
+        path for a device. Runs move to `claimed` (taken but not yet handed to
+        the executor); `mark_running` advances them once the execution subtask
+        actually starts. Capacity is measured on `running` plus `claimed`
+        (already taken by this pass) so the device is never over-subscribed
+        across consumers.
+        """
+
+        occupied = (
+            db.query(func.count(LoopItemExecution.id))
+            .filter(
+                LoopItemExecution.execution_device_id == execution_device_id,
+                LoopItemExecution.execution_environment == environment,
+                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
+            )
+            .scalar()
+            or 0
+        )
+        if occupied >= device_capacity:
+            return []
+        occupied_agents = {
+            agent_id
+            for (agent_id,) in db.query(LoopItemExecution.agent_id)
+            .filter(
+                LoopItemExecution.execution_device_id == execution_device_id,
+                LoopItemExecution.execution_environment == environment,
+                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
+            )
+            .all()
+        }
+        candidates = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.execution_device_id == execution_device_id,
+                LoopItemExecution.execution_environment == environment,
+                LoopItemExecution.status == STATUS_QUEUED,
+                (
+                    LoopItemExecution.agent_id.notin_(occupied_agents)
+                    if occupied_agents
+                    else True
+                ),
+            )
+            .order_by(
+                LoopItemExecution.priority_weight.desc(),
+                LoopItemExecution.queued_at.asc(),
+                LoopItemExecution.id.asc(),
+            )
+            .limit(batch_size)
+            .all()
+        )
+        if not candidates:
+            return []
+        slots = max(0, device_capacity - occupied)
+        claimable: list[int] = []
+        seen_agents: set[str] = set()
+        for candidate in candidates:
+            if len(claimable) >= slots:
+                break
+            if candidate.agent_id in seen_agents:
+                continue
+            seen_agents.add(candidate.agent_id)
+            claimable.append(candidate.id)
+        if not claimable:
+            return []
+        now = utcnow()
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id.in_(claimable),
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .update(
+                {
+                    "status": STATUS_CLAIMED,
+                    "started_at": now,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        if updated == 0:
+            return []
+        db.expire_all()
+        rows = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id.in_(claimable))
+            .all()
+        )
+        by_id = {row.id: row for row in rows}
+        return [
+            by_id[execution_id] for execution_id in claimable if execution_id in by_id
+        ]
+
+    def mark_running(
+        self,
+        db: Session,
+        *,
+        execution_ids: list[int],
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ) -> int:
+        """Advance claimed runs to running once their execution has started.
+
+        Returns the number of runs actually advanced. A run that was already
+        reclaimed by the lease watchdog (back to queued) or cancelled is left
+        untouched, so the caller must not start a runtime task for it.
+        """
+
+        if not execution_ids:
+            return 0
+        now = utcnow()
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id.in_(execution_ids),
+                LoopItemExecution.status == STATUS_CLAIMED,
+            )
+            .update(
+                {
+                    "status": STATUS_RUNNING,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        return updated
 
     def claim_next_unbound_local(
         self,
@@ -733,6 +883,7 @@ class LoopItemExecutionService:
             "title": title,
             **({"modelId": model} if model else {}),
             "ephemeral": True,
+            "continuable": True,
             "cloudProjectId": str(getattr(item, "cloud_project_id", "")),
             "executionRequest": execution_request,
             "additionalContext": {
@@ -865,7 +1016,7 @@ class LoopItemExecutionService:
         stale_rows = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.status == STATUS_RUNNING,
+                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
                 LoopItemExecution.lease_expires_at.is_not(None),
                 LoopItemExecution.lease_expires_at < stale_threshold,
             )

@@ -519,6 +519,7 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId?: string
         cloudProjectId?: string
         ephemeral?: boolean
+        continuable?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
@@ -691,6 +692,7 @@ export function useWorkbenchRuntimeMessaging({
             }
           : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
+        ...(options?.continuable ? { continuable: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
         ...(options?.initialSupervisor ? { initialSupervisor: options.initialSupervisor } : {}),
@@ -1234,6 +1236,7 @@ export function useWorkbenchRuntimeMessaging({
         modelSelection: options.modelSelection,
         additionalContext: options.additionalContext,
         ephemeral: options.hiddenFromSidebar,
+        continuable: options.continuable,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,

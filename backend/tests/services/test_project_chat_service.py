@@ -1454,6 +1454,157 @@ def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     assert task.status == "in_review"
 
 
+def test_reply_thread_resolves_root_and_carries_reply_to(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    root = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            content="Root comment",
+        ),
+    ).message
+    reply = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            content="First reply",
+            replyToMessageId=root.message_id,
+        ),
+    ).message
+    nested = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            content="Reply to a reply",
+            replyToMessageId=reply.message_id,
+        ),
+    ).message
+
+    assert root.reply_to_message_id is None
+    assert root.root_message_id is None
+    assert reply.reply_to_message_id == root.message_id
+    assert reply.root_message_id == root.message_id
+    assert nested.reply_to_message_id == reply.message_id
+    assert nested.root_message_id == root.message_id
+
+
+def test_agent_response_copies_trigger_thread_context(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    root = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            content="Root comment",
+        ),
+    ).message
+    reply = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            content="Reply",
+            replyToMessageId=root.message_id,
+        ),
+    ).message
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            triggerMessageId=reply.message_id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-1",
+        ),
+    )
+
+    assert response.reply_to_message_id == reply.message_id
+    assert response.root_message_id == root.message_id
+
+
+def test_reply_target_must_live_in_the_same_task(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    first_task = LoopItem(
+        cloud_project_id=project.id,
+        title="First",
+        description="",
+        created_by_user_id=test_user.id,
+    )
+    second_task = LoopItem(
+        cloud_project_id=project.id,
+        title="Second",
+        description="",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add_all([first_task, second_task])
+    test_db.commit()
+    test_db.refresh(first_task)
+    test_db.refresh(second_task)
+
+    root = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=first_task.id,
+            content="Root comment",
+        ),
+    ).message
+    with pytest.raises(HTTPException) as exc:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                taskId=second_task.id,
+                content="Wrong task reply",
+                replyToMessageId=root.message_id,
+            ),
+        )
+    assert exc.value.status_code == 422
+
+
+def test_reply_target_missing_raises_404(test_db: Session, test_user: User) -> None:
+    project = create_project(test_db, test_user)
+    with pytest.raises(HTTPException) as exc:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                content="Missing target reply",
+                replyToMessageId="missing-message",
+            ),
+        )
+    assert exc.value.status_code == 404
+
+
 def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     test_db: Session, test_user: User
 ) -> None:

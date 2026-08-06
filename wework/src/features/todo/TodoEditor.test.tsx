@@ -59,7 +59,6 @@ function editorElement(item: CloudLoopItem) {
       allItems={[item]}
       onUpdated={vi.fn()}
       onAddChild={vi.fn()}
-      onStartConversation={vi.fn()}
       onClose={vi.fn()}
       api={api}
       currentUserId={1}

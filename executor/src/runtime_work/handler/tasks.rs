@@ -122,6 +122,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        // Hidden-but-continuable runs (task comments) must keep the Wework-side
+        // link out of the sidebar while still creating a durable Codex thread
+        // (a rollout) so a follow-up can resume the same session after restart.
+        let continuable = bool_field(&payload, "continuable").unwrap_or(false);
         if let (Some(project_key), Some(project_name)) = (
             request.runtime_project_key.as_deref(),
             request.runtime_project_name.as_deref(),
@@ -150,7 +154,11 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
-        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        link.ephemeral =
+            request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
+        if continuable {
+            request.ephemeral = false;
+        }
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
@@ -342,8 +350,24 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
-        let direct_thread_id = ephemeral.then(|| thread_id.clone());
-        let resume_thread_id = (!ephemeral).then_some(thread_id);
+        // A send that targets an already-bound task is a follow-up turn. Resume
+        // the Codex thread up front so a thread without a durable rollout (for
+        // example a legacy ephemeral run) rejects the send instead of failing
+        // after acceptance; the caller can then start a fresh continuable run.
+        // After a successful resume the thread is loaded and subscribed, so the
+        // turn itself sends directly into the same session.
+        let (direct_thread_id, resume_thread_id) = if let Some(link) = link_for_send {
+            match self.resume_codex_thread_for_action(link, &thread_id).await {
+                Ok(resumed_thread_id) => (Some(resumed_thread_id), None),
+                Err(error) => return Ok(task_action_failure(link, error)),
+            }
+        } else {
+            let thread_mode = follow_up_thread_mode(ephemeral);
+            (
+                (thread_mode == FollowUpThreadMode::Direct).then(|| thread_id.clone()),
+                (thread_mode == FollowUpThreadMode::Resume).then_some(thread_id),
+            )
+        };
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.spawn_turn(SpawnTurnRequest {
@@ -870,6 +894,20 @@ fn runtime_guidance_failure(
         "taskId": local_task_id,
         "runtime": "codex",
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FollowUpThreadMode {
+    Direct,
+    Resume,
+}
+
+pub(super) fn follow_up_thread_mode(ephemeral: bool) -> FollowUpThreadMode {
+    if ephemeral {
+        FollowUpThreadMode::Direct
+    } else {
+        FollowUpThreadMode::Resume
+    }
 }
 
 pub(super) fn resolve_codex_turn_id(

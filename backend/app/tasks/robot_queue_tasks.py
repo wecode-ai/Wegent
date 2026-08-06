@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Optional
 
+import celery.signals
 from prometheus_client import Counter, Gauge
 from sqlalchemy.orm import Session
 
@@ -56,6 +57,10 @@ ROBOT_QUEUE_FAILED_TOTAL = Counter(
     "robot_queue_failed_total",
     "Robot queue runs marked failed",
 )
+
+ROBOT_CONSUMER_INTERVAL_SECONDS = 1.0
+ROBOT_CONSUMER_BACKOFF_MAX_SECONDS = 10.0
+ROBOT_CONSUMER_BATCH_SIZE = 16
 
 # The Socket.IO server is a process singleton bound to the event loop that
 # first created it. Celery runs each task on a fresh loop via asyncio.run, so
@@ -127,8 +132,60 @@ def scan_robot_queue(self) -> dict:
                 raise
 
 
+@celery_app.task(
+    bind=True,
+    name="app.tasks.robot_queue_tasks.execute_robot_task",
+    max_retries=0,
+)
+def execute_robot_task(self, execution_id: int) -> dict:
+    """Run one claimed cloud/local execution on its bound device.
+
+    The consumer loop only claims (queued -> claimed) and hands the work here;
+    this subtask advances claimed -> running, performs the runtime RPC and
+    writes back. A run that was reclaimed by the lease watchdog in between is
+    skipped instead of double-executed.
+    """
+
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        execution = db.get(LoopItemExecution, execution_id)
+        if execution is None:
+            return {"status": "missing", "execution_id": execution_id}
+        advanced = loop_item_execution_service.mark_running(
+            db, execution_ids=[execution_id]
+        )
+        if advanced != 1:
+            return {
+                "status": "skipped",
+                "reason": "execution is no longer claimed",
+                "execution_id": execution_id,
+            }
+        # mark_running updates the row out-of-band; refresh so heartbeat and
+        # dispatch observe the running state instead of the stale claim.
+        db.expire_all()
+        execution = db.get(LoopItemExecution, execution_id)
+        try:
+            _robot_queue_loop().run_until_complete(_dispatch_execution(db, execution))
+            ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
+            return {"status": "dispatched", "execution_id": execution_id}
+        except Exception as exc:
+            logger.exception(
+                "[RobotQueue] execute_robot_task failed execution=%s",
+                execution_id,
+            )
+            loop_item_execution_service.fail(
+                db,
+                execution_id=execution_id,
+                error=str(exc)[:2000],
+                requeue=True,
+            )
+            ROBOT_QUEUE_FAILED_TOTAL.inc()
+            return {"status": "failed", "execution_id": execution_id}
+
+
 def _queued_devices(db: Session) -> list[tuple[str, str]]:
-    """Distinct bound devices with queued runs, for both execution environments."""
+    """Distinct bound devices with queued/claimed runs, both environments."""
 
     from sqlalchemy import select
 
@@ -138,7 +195,7 @@ def _queued_devices(db: Session) -> list[tuple[str, str]]:
             LoopItemExecution.execution_environment,
         )
         .where(
-            LoopItemExecution.status == "queued",
+            LoopItemExecution.status.in_(["queued", "claimed"]),
             LoopItemExecution.execution_device_id.is_not(None),
             LoopItemExecution.execution_device_id != "",
         )
@@ -167,6 +224,40 @@ def _device_owner_user_id(db: Session, device_id: str) -> Optional[int]:
         .first()
     )
     return row.user_id if row and row.user_id else None
+
+
+async def _routing_user_for_device(db: Session, device_id: str) -> Optional[int]:
+    """Return an online user that can route RPCs to this device."""
+
+    sample = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.execution_device_id == device_id,
+            LoopItemExecution.status.in_(["queued", "claimed"]),
+        )
+        .first()
+    )
+    if sample is None:
+        return None
+    sample_agent = db.get(ProjectChatAgent, sample.agent_id)
+    sample_creator = (
+        db.get(User, sample_agent.created_by_user_id)
+        if sample_agent and sample_agent.created_by_user_id
+        else None
+    )
+    device_owner = _device_owner_user_id(db, device_id)
+    candidate_users = {
+        user_id
+        for user_id in (
+            device_owner,
+            sample_creator.id if sample_creator else None,
+        )
+        if user_id
+    }
+    for candidate in candidate_users:
+        if await _device_online(candidate, device_id):
+            return candidate
+    return None
 
 
 async def _dispatch_queued_executions(db: Session) -> int:
@@ -320,6 +411,89 @@ async def dispatch_queues_background() -> None:
             await _dispatch_queued_executions(db)
     except Exception:
         logger.exception("[RobotQueue] Background queue dispatch failed")
+
+
+async def _consumer_pass(db: Session) -> int:
+    """One consumer pass: claim queued runs per device and hand them to the
+    execution subtask. Device locks distribute devices across workers, so
+    multiple consumers scale without a global scan lock."""
+
+    handled = 0
+    for device_id, environment in _queued_devices(db):
+        with distributed_lock.acquire_context(
+            f"robot_exec:{device_id}",
+            expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
+        ) as acquired:
+            if not acquired:
+                continue
+            routing_user_id = await _routing_user_for_device(db, device_id)
+            if routing_user_id is None:
+                # Device offline or no identity online; leave runs queued.
+                continue
+            capacity = (
+                settings.ROBOT_CLOUD_DEVICE_SLOTS
+                if environment == "cloud"
+                else settings.ROBOT_LOCAL_DEVICE_SLOTS
+            )
+            executions = loop_item_execution_service.claim_batch_for_device(
+                db,
+                execution_device_id=device_id,
+                environment=environment,
+                device_capacity=capacity,
+                batch_size=ROBOT_CONSUMER_BATCH_SIZE,
+            )
+            for execution in executions:
+                execute_robot_task.apply_async(args=[execution.id])
+            handled += len(executions)
+    return handled
+
+
+def _run_robot_consumer() -> None:
+    """Long-running consumer loop started per Celery worker process."""
+
+    import time
+
+    from app.db.session import get_db_session
+
+    # The process-global `_robot_queue_loop()` is shared by Celery task
+    # threads (scan/execute); a second thread cannot run_until_complete on it
+    # while a task is using it ("event loop is already running"). The consumer
+    # owns its own loop and never touches the socketio singleton (it only
+    # claims and enqueues subtasks).
+    consumer_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(consumer_loop)
+
+    backoff = ROBOT_CONSUMER_INTERVAL_SECONDS
+    while True:
+        try:
+            with get_db_session() as db:
+                handled = consumer_loop.run_until_complete(_consumer_pass(db))
+            backoff = (
+                ROBOT_CONSUMER_INTERVAL_SECONDS
+                if handled
+                else min(backoff + 1.0, ROBOT_CONSUMER_BACKOFF_MAX_SECONDS)
+            )
+        except Exception:
+            logger.exception("[RobotQueue] Consumer pass failed")
+            backoff = min(backoff + 1.0, ROBOT_CONSUMER_BACKOFF_MAX_SECONDS)
+        time.sleep(backoff)
+
+
+@celery.signals.worker_ready.connect
+def _start_robot_consumer(**kwargs: object) -> None:
+    """Spawn one consumer thread per Celery worker process."""
+
+    if not settings.ROBOT_QUEUE_SCHEDULER_ENABLED:
+        return
+    import threading
+
+    thread = threading.Thread(
+        target=_run_robot_consumer,
+        name="robot-queue-consumer",
+        daemon=True,
+    )
+    thread.start()
+    logger.info("[RobotQueue] Consumer thread started")
 
 
 async def _online_local_device(db: Session, user_id: int) -> Optional[str]:

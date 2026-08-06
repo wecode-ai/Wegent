@@ -1176,6 +1176,7 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
+  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string

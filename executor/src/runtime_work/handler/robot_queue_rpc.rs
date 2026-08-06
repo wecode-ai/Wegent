@@ -163,6 +163,7 @@ fn build_local_payload(execution: &crate::task_runtime::LocalExecution) -> Value
         "message": prompt,
         "title": execution.task_title,
         "ephemeral": true,
+        "continuable": true,
         "cloudProjectId": execution.cloud_project_id,
         "executionRequest": {
             "task_id": task_id,

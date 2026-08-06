@@ -12,23 +12,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
-import {
-  DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
-  DESKTOP_MESSAGE_LIST_CLASS,
-} from '@/components/layout/desktopChatLayout'
+import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import {
   buildTaskAiInitialPrompt,
   mergeProjectChatMessages,
   startTaskAiRun,
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
+import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -67,6 +66,11 @@ export function TaskActivityView({
     scopeKey: `task-activity-${project.id}`,
     persistSelection: false,
   })
+  const attachmentSelection = useWorkbenchAttachments({
+    uploadAttachment: services.attachmentApi?.uploadAttachment,
+    deleteAttachment: services.attachmentApi?.deleteAttachment,
+    scopeKey: `task-activity-${project.id}`,
+  })
   const {
     models: availableModels,
     selectedModel,
@@ -85,19 +89,23 @@ export function TaskActivityView({
       isModelSelectionReady: true,
       trialTemplates: [],
       selectedSkills: [],
-      attachments: [],
-      uploadingFiles: new Map(),
-      errors: new Map(),
+      attachments: attachmentSelection.attachments,
+      uploadingFiles: attachmentSelection.uploadingFiles,
+      errors: attachmentSelection.errors,
+      isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       isOptionsLocked: false,
       setSelectedModel,
       setSelectedModelOption,
       toggleSkill: () => {},
-      handleFileSelect: async () => {},
-      removeAttachment: async () => {},
+      handleFileSelect: attachmentSelection.handleFileSelect,
+      addExistingAttachment: attachmentSelection.addExistingAttachment,
+      removeAttachment: attachmentSelection.removeAttachment,
+      resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
     }),
     [
+      attachmentSelection,
       availableModels,
       project.id,
       selectedModel,
@@ -109,14 +117,14 @@ export function TaskActivityView({
   const [messages, setMessages] = useState<ProjectChatMessage[]>([])
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
+  const [cardAiErrors, setCardAiErrors] = useState<Record<string, string>>({})
+  const [newCommentDraft, setNewCommentDraft] = useState('')
   const [loading, setLoading] = useState(Boolean(client))
   const [sending, setSending] = useState(false)
   const [cancellingMessageId, setCancellingMessageId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const endRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const followBottomRef = useRef(true)
+  const followCardRef = useRef<string | null>(null)
   const refreshedRunIds = useRef(new Set<string>())
   const compact = rail || linear
 
@@ -171,36 +179,55 @@ export function TaskActivityView({
     }
   }, [client, project.id, t, task.id])
 
-  // Follow the newest comment the same way the task conversation page does:
-  // stay pinned to the bottom while the user is there (including streaming
-  // AI chunks), stop following once the user scrolls up, and jump back to the
-  // bottom on send or on an initial load.
-  const scrollTaskCommentsToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  // Newest parent comments render at the top, so newly sent comments are
+  // visible without scrolling the list to its end.
+  const scrollTaskCommentsToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
     const scroller = findTaskCommentScrollContainer(listRef.current)
     if (scroller) {
       if (typeof scroller.scrollTo === 'function') {
-        scroller.scrollTo({ top: scroller.scrollHeight, behavior })
+        scroller.scrollTo({ top: 0, behavior })
       } else {
-        scroller.scrollTop = scroller.scrollHeight
+        scroller.scrollTop = 0
       }
-    } else {
-      endRef.current?.scrollIntoView?.({ block: 'end' })
     }
   }, [])
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      if (followBottomRef.current) scrollTaskCommentsToBottom()
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [compact, loading, messages, scrollTaskCommentsToBottom])
+  // Card replies grow inside their own card; keep the card's bottom visible
+  // (where the new reply and the streaming AI response appear) instead of
+  // jumping to the end of the whole comment list.
+  const revealCardBottom = useCallback((cardId: string, behavior: ScrollBehavior = 'auto') => {
+    const card = listRef.current?.querySelector<HTMLElement>(
+      `[data-testid="cloud-task-activity-card-${cardId}"]`
+    )
+    const scroller = findTaskCommentScrollContainer(listRef.current)
+    if (!card || !scroller) return
+    const scrollerRect = scroller.getBoundingClientRect()
+    const cardRect = card.getBoundingClientRect()
+    if (cardRect.bottom > scrollerRect.bottom) {
+      scroller.scrollTo({
+        top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
+        behavior,
+      })
+    }
+  }, [])
 
   useEffect(() => {
     const scroller = findTaskCommentScrollContainer(listRef.current)
     if (!scroller) return
     const updateFollowState = () => {
-      const distance = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
-      followBottomRef.current = distance <= 48
+      if (followCardRef.current) {
+        const card = listRef.current?.querySelector<HTMLElement>(
+          `[data-testid="cloud-task-activity-card-${followCardRef.current}"]`
+        )
+        if (!card) {
+          followCardRef.current = null
+          return
+        }
+        const cardBottom = card.getBoundingClientRect().bottom
+        const scrollerBottom = scroller.getBoundingClientRect().bottom
+        if (cardBottom > scrollerBottom + 24) followCardRef.current = null
+        return
+      }
     }
     scroller.addEventListener('scroll', updateFollowState, { passive: true })
     return () => scroller.removeEventListener('scroll', updateFollowState)
@@ -268,6 +295,39 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (followCardRef.current) {
+        revealCardBottom(followCardRef.current)
+        const rootId = followCardRef.current
+        const followedRoot = threadMessages.find(message => message.messageId === rootId)
+        const followed = followedRoot
+          ? {
+              root: followedRoot,
+              replies: threadMessages.filter(message => message.rootMessageId === rootId),
+            }
+          : null
+        if (!followed) {
+          followCardRef.current = null
+          return
+        }
+        const lastRun = [followed.root, ...followed.replies]
+          .filter(message => message.sender.type === 'agent')
+          .at(-1)
+        if (
+          lastRun &&
+          ['completed', 'failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(
+            lastRun.status
+          )
+        ) {
+          followCardRef.current = null
+        }
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [compact, loading, messages, revealCardBottom, threadMessages])
+
   const assignedAgent = useMemo(
     () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
     [agents, task.assignee_agent_id]
@@ -280,11 +340,59 @@ export function TaskActivityView({
   const aiTerminalFailure = ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(
     task.ai_state?.status ?? ''
   )
+  const commentCards = useMemo(() => {
+    const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
+    const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
+    for (const message of threadMessages) {
+      const rootId = message.rootMessageId ?? message.messageId
+      if (!rootId || rootId === message.messageId) {
+        const card = { root: message, replies: [] }
+        byRoot.set(message.messageId, card)
+        ordered.push(card)
+      } else {
+        const card = byRoot.get(rootId)
+        if (card) {
+          card.replies.push(message)
+        } else {
+          const orphan = { root: message, replies: [] }
+          byRoot.set(rootId, orphan)
+          ordered.push(orphan)
+        }
+      }
+    }
+    // Newest parent comment first; replies stay chronological inside each card.
+    return ordered.sort((left, right) => right.root.sequenceNumber - left.root.sequenceNumber)
+  }, [threadMessages])
 
-  async function sendMessage() {
-    const text = draft.trim()
-    if (!(await sendText(text))) return
-    setDraft('')
+  function cardSessionAddress(card: {
+    root: ProjectChatMessage
+    replies: ProjectChatMessage[]
+  }): { runtimeDeviceId: string; runtimeTaskId: string } | null {
+    const agentRuns = [card.root, ...card.replies].filter(
+      message =>
+        message.sender.type === 'agent' &&
+        Boolean(message.runtimeAddress?.deviceId) &&
+        Boolean(message.runtimeAddress?.taskId)
+    )
+    const latest = agentRuns.at(-1)
+    return latest?.runtimeAddress
+      ? {
+          runtimeDeviceId: latest.runtimeAddress.deviceId,
+          runtimeTaskId: latest.runtimeAddress.taskId,
+        }
+      : null
+  }
+
+  function cardSessionActive(card: { root: ProjectChatMessage; replies: ProjectChatMessage[] }) {
+    const session = cardSessionAddress(card)
+    if (!session) return false
+    return [card.root, ...card.replies].some(
+      message =>
+        message.sender.type === 'agent' &&
+        message.status === 'streaming' &&
+        message.runtimeAddress?.deviceId === session.runtimeDeviceId &&
+        message.runtimeAddress?.taskId === session.runtimeTaskId
+    )
   }
 
   async function acceptTask() {
@@ -391,8 +499,19 @@ export function TaskActivityView({
     }
   }
 
-  async function sendText(text: string): Promise<boolean> {
-    if (!client || !text || sending) return false
+  async function sendCardReply(
+    card: {
+      root: ProjectChatMessage
+      replies: ProjectChatMessage[]
+    },
+    text: string,
+    attachments: Attachment[]
+  ): Promise<CardCommentSendResult> {
+    const rootId = card.root.messageId
+    if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
+    if (cardSessionActive(card)) {
+      return { ok: false, error: t('workbench.runtime_task_running_message') }
+    }
     setSending(true)
     setError(null)
     try {
@@ -405,10 +524,83 @@ export function TaskActivityView({
         clientMessageId: crypto.randomUUID(),
         text,
         mentions: activeMentions,
+        // Card composer replies are always one-level replies under the parent
+        // comment.
+        replyToMessageId: rootId,
         model: selectedModel?.name ?? null,
       })
-      followBottomRef.current = true
+      // Card replies must never trigger the list-bottom follow: switch to
+      // following this card synchronously so the message-change effect cannot
+      // scroll the whole comment list to its end during the AI start.
+      followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
+      setCardAiErrors(current => ({ ...current, [rootId]: '' }))
+      if (assignedAgent) {
+        // The comment is already posted; keep the input cleared and let the
+        // AI start settle in the background, surfacing failures in the card.
+        void startTaskAiRun({
+          client,
+          services,
+          runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
+          project,
+          task,
+          agent: assignedAgent,
+          prompt: text,
+          trigger: message,
+          messages,
+          replyTo: cardSessionAddress(card),
+          threadRootId: rootId,
+          attachments,
+          models: availableModels,
+          selectedModel,
+          selectedModelOptions,
+          onError: message => setCardAiErrors(current => ({ ...current, [rootId]: message })),
+          onMessages: incoming =>
+            setMessages(current => mergeProjectChatMessages(current, incoming)),
+          onTaskUpdated,
+          startFailedText: t('workbench.project_chat_agent_start_failed'),
+        })
+      }
+      revealCardBottom(rootId)
+      return { ok: true }
+    } catch (cause) {
+      return {
+        ok: false,
+        error: cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'),
+      }
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function sendNewComment(): Promise<boolean> {
+    const text = newCommentDraft.trim()
+    const attachments = attachmentSelection.attachments
+    if (!client || !text || sending) return false
+    if (!attachmentSelection.isAttachmentReadyToSend) {
+      setError(t('workbench.task_activity_attachment_uploading'))
+      return false
+    }
+    setSending(true)
+    setError(null)
+    try {
+      const activeMentions = assignedAgent
+        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+        : []
+      const message = await client.send({
+        projectId: project.id,
+        taskId: task.id,
+        clientMessageId: crypto.randomUUID(),
+        text,
+        mentions: activeMentions,
+        replyToMessageId: null,
+        model: selectedModel?.name ?? null,
+      })
+      followCardRef.current = message.messageId
+      setMessages(current => mergeProjectChatMessages(current, [message]))
+      setNewCommentDraft('')
+      attachmentSelection.resetAttachments()
+      scrollTaskCommentsToTop()
       if (assignedAgent) {
         await startTaskAiRun({
           client,
@@ -420,6 +612,8 @@ export function TaskActivityView({
           prompt: text,
           trigger: message,
           messages,
+          replyTo: null,
+          attachments,
           models: availableModels,
           selectedModel,
           selectedModelOptions,
@@ -538,7 +732,9 @@ export function TaskActivityView({
             </span>
           ) : null}
           {assignedAgent &&
-          (task.execution_state === 'queued' || task.execution_state === 'assigned') &&
+          (task.execution_state === 'queued' ||
+            task.execution_state === 'claimed' ||
+            task.execution_state === 'assigned') &&
           task.status !== 'in_review' ? (
             <button
               type="button"
@@ -625,14 +821,110 @@ export function TaskActivityView({
                   : t('workbench.task_activity_empty_without_ai')}
               </p>
             </div>
+          ) : linear ? (
+            <div className="flex flex-col">
+              {commentCards.map(card => {
+                const rootId = card.root.messageId
+                return (
+                  <article
+                    key={rootId}
+                    data-testid={`cloud-task-activity-card-${rootId}`}
+                    className="task-detail-comment-card"
+                  >
+                    <ChatMessage
+                      message={card.root}
+                      mine={
+                        card.root.sender.type === 'user' &&
+                        String(card.root.sender.id) ===
+                          String(chatCurrentUserId ?? currentUserId ?? '')
+                      }
+                      compact
+                      plain
+                      taskAiState={task.ai_state}
+                      onOpenExecution={
+                        card.root.runtimeAddress
+                          ? () =>
+                              setExecutionDetail({
+                                address: card.root.runtimeAddress!,
+                                senderName: card.root.sender.name,
+                                runId:
+                                  typeof card.root.metadata.run_id === 'string'
+                                    ? card.root.metadata.run_id
+                                    : null,
+                                modelName:
+                                  typeof card.root.metadata.model === 'string'
+                                    ? card.root.metadata.model
+                                    : null,
+                                runStatus: resolveMessageRunStatus(task.ai_state, card.root),
+                              })
+                          : undefined
+                      }
+                      onStopExecution={
+                        card.root.runtimeAddress ? () => void stopRuntimeTask(card.root) : undefined
+                      }
+                      stopping={cancellingMessageId === card.root.messageId}
+                    />
+                    {card.replies.length > 0 ? (
+                      <div
+                        className="task-detail-comment-replies"
+                        data-testid={`cloud-task-activity-replies-${rootId}`}
+                      >
+                        {card.replies.map(reply => (
+                          <ChatMessage
+                            key={reply.messageId}
+                            message={reply}
+                            mine={
+                              reply.sender.type === 'user' &&
+                              String(reply.sender.id) ===
+                                String(chatCurrentUserId ?? currentUserId ?? '')
+                            }
+                            compact
+                            plain
+                            taskAiState={task.ai_state}
+                            onOpenExecution={
+                              reply.runtimeAddress
+                                ? () =>
+                                    setExecutionDetail({
+                                      address: reply.runtimeAddress!,
+                                      senderName: reply.sender.name,
+                                      runId:
+                                        typeof reply.metadata.run_id === 'string'
+                                          ? reply.metadata.run_id
+                                          : null,
+                                      modelName:
+                                        typeof reply.metadata.model === 'string'
+                                          ? reply.metadata.model
+                                          : null,
+                                      runStatus: resolveMessageRunStatus(task.ai_state, reply),
+                                    })
+                                : undefined
+                            }
+                            onStopExecution={
+                              reply.runtimeAddress ? () => void stopRuntimeTask(reply) : undefined
+                            }
+                            stopping={cancellingMessageId === reply.messageId}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                    <CardCommentComposer
+                      rootId={rootId}
+                      projectId={project.id}
+                      disabled={!client}
+                      placeholder={t('workbench.task_activity_inline_placeholder')}
+                      aiError={cardAiErrors[rootId] || null}
+                      onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                    />
+                  </article>
+                )
+              })}
+            </div>
           ) : (
             <div
               className={
                 rail
                   ? 'flex flex-col divide-y divide-border/70 pb-4'
-                  : linear
-                    ? 'flex flex-col divide-y divide-border/70'
-                    : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
+                  : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
               }
             >
               {threadMessages.map(message => (
@@ -669,7 +961,6 @@ export function TaskActivityView({
                   stopping={cancellingMessageId === message.messageId}
                 />
               ))}
-              <div ref={endRef} />
             </div>
           )}
         </div>
@@ -681,47 +972,25 @@ export function TaskActivityView({
             !compact && 'pt-2'
           )}
         >
-          {compact ? (
-            <div className="task-detail-comment-chat-input">
-              <ChatInput
-                value={draft}
-                disabled={!client}
-                onChange={setDraft}
-                onSubmit={() => sendMessage()}
-                submitDisabled={!draft.trim() || sending}
-                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
-                placeholder={
-                  assignedAgent
-                    ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
-                    : t('workbench.task_activity_placeholder')
-                }
-                variant="desktop"
-                projectChat={commentProjectChat}
-                showProjectWorkBar={false}
-                inputTestId="cloud-task-activity-composer"
-              />
-            </div>
-          ) : (
-            <div className={cn(DESKTOP_CHAT_CONTENT_WIDTH_CLASS, 'relative')}>
-              <ChatInput
-                value={draft}
-                disabled={!client}
-                onChange={setDraft}
-                onSubmit={() => sendMessage()}
-                submitDisabled={!draft.trim() || sending}
-                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
-                placeholder={
-                  assignedAgent
-                    ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
-                    : t('workbench.task_activity_placeholder')
-                }
-                variant="desktop"
-                projectChat={commentProjectChat}
-                showProjectWorkBar={false}
-                inputTestId="cloud-task-activity-composer"
-              />
-            </div>
-          )}
+          <div className="task-detail-comment-chat-input">
+            <ChatInput
+              value={newCommentDraft}
+              disabled={!client}
+              onChange={setNewCommentDraft}
+              onSubmit={() => void sendNewComment()}
+              submitDisabled={!newCommentDraft.trim() || sending}
+              error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+              placeholder={
+                assignedAgent
+                  ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
+                  : t('workbench.task_activity_placeholder')
+              }
+              variant="desktop"
+              projectChat={commentProjectChat}
+              showProjectWorkBar={false}
+              inputTestId="cloud-task-activity-composer"
+            />
+          </div>
         </footer>
       </section>
       {executionDetail ? (
@@ -751,6 +1020,7 @@ function ChatMessage({
   message,
   mine,
   compact = false,
+  plain = false,
   taskAiState,
   onOpenExecution,
   onStopExecution,
@@ -759,6 +1029,8 @@ function ChatMessage({
   message: ProjectChatMessage
   mine: boolean
   compact?: boolean
+  /** Render inside a parent comment card without the outer card border. */
+  plain?: boolean
   taskAiState?: CloudLoopItem['ai_state']
   onOpenExecution?: () => void
   onStopExecution?: () => void
@@ -843,7 +1115,7 @@ function ChatMessage({
   )
 
   if (compact) {
-    if (isAgent) {
+    if (isAgent && !plain) {
       return (
         <article
           data-testid={`cloud-task-activity-message-${message.messageId}`}
@@ -895,7 +1167,9 @@ function ChatMessage({
             </span>
             <span className="shrink-0 text-xs text-text-muted">
               {isAgent
-                ? t('workbench.task_activity_ai_execution')
+                ? isSubagent
+                  ? t('workbench.task_activity_subagent_execution')
+                  : t('workbench.task_activity_ai_execution')
                 : t('workbench.task_activity_comment')}
             </span>
             <span className="ml-auto shrink-0 text-xs text-text-muted">
@@ -903,6 +1177,14 @@ function ChatMessage({
             </span>
           </div>
           <div className="mt-1 text-sm leading-6">{body}</div>
+          {isAgent ? (
+            <ExecutionStatusBadge
+              status={runStatus}
+              onOpenExecution={onOpenExecution}
+              onStopExecution={onStopExecution}
+              stopping={stopping}
+            />
+          ) : null}
         </div>
       </article>
     )

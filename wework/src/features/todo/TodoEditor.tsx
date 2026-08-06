@@ -478,7 +478,6 @@ export interface TodoEditorEditProps {
   project?: CloudProject
   onUpdated: (item: CloudLoopItem) => void
   onAddChild: () => void
-  onStartConversation: () => void
 }
 
 export type TodoEditorProps = {
@@ -1414,14 +1413,6 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           {twoColumn && !isCreate ? (
             <>
-              <button
-                type="button"
-                data-testid="cloud-todo-start-task"
-                onClick={() => editProps?.onStartConversation()}
-                className="mr-2 h-8 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
-              >
-                开始对话
-              </button>
               {dirty || saving ? (
                 <button
                   type="button"
@@ -1587,7 +1578,6 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {!isAITableEdit ? (
                 <div className={cn(twoColumn ? 'mt-0' : 'mt-3 min-h-[240px]')}>
-                  {twoColumn ? <h3 className="task-detail-section-label">描述</h3> : null}
                   <div
                     className={cn(
                       twoColumn && 'task-detail-desc',
@@ -1598,6 +1588,9 @@ export function TodoEditor(props: TodoEditorProps) {
                       value={description}
                       onChange={setDescription}
                       onPasteFiles={pasteAttachments}
+                      readAttachment={attachmentId =>
+                        props.api.readLoopItemAttachment(attachmentId)
+                      }
                     />
                   </div>
                   {twoColumn ? (
@@ -2085,14 +2078,6 @@ export function TodoEditor(props: TodoEditorProps) {
               </>
             ) : (
               <>
-                <button
-                  type="button"
-                  data-testid="cloud-todo-start-task"
-                  onClick={() => editProps?.onStartConversation()}
-                  className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
-                >
-                  开始对话
-                </button>
                 {dirty && (
                   <button
                     type="button"

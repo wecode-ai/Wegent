@@ -1669,7 +1669,9 @@ class LoopItemService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.loop_item_id == item.id,
-                LoopItemExecution.status.in_({"pending_approval", "queued", "running"}),
+                LoopItemExecution.status.in_(
+                    {"pending_approval", "queued", "claimed", "running"}
+                ),
             )
             .all()
         )

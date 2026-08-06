@@ -130,6 +130,9 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   /** Keep task-scoped automation out of the global conversation sidebar. */
   hiddenFromSidebar?: boolean
+  /** Keep the underlying Codex thread durable so a follow-up can resume the
+   * same executor session after an app restart, even while hidden. */
+  continuable?: boolean
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']

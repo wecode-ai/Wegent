@@ -184,6 +184,7 @@ class ProjectChatSend(ProjectChatSchema):
     task_id: str | None = Field(default=None, max_length=64)
     content: str = Field(min_length=1, max_length=100_000)
     mentions: list[ProjectChatMention] = Field(default_factory=list, max_length=64)
+    reply_to_message_id: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=255)
 
 
@@ -224,6 +225,8 @@ class ProjectChatMessageView(ProjectChatSchema):
     content: str
     metadata: dict[str, Any]
     trigger_message_id: str | None
+    reply_to_message_id: str | None
+    root_message_id: str | None
     agent_id: str | None
     runtime_address: dict[str, str] | None
     status: str

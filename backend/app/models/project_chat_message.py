@@ -38,6 +38,8 @@ class ProjectChatMessage(Base):
     metadata_json = Column("metadata", JSON, nullable=True)
 
     trigger_message_id = Column(String(64), nullable=True)
+    reply_to_message_id = Column(String(64), nullable=True)
+    thread_root_message_id = Column(String(64), nullable=True)
     agent_id = Column(String(128), nullable=True)
     runtime_device_id = Column(String(255), nullable=True)
     runtime_task_id = Column(String(255), nullable=True)
@@ -62,6 +64,7 @@ class ProjectChatMessage(Base):
         ),
         Index("ix_project_chat_project_order", "project_id", "id"),
         Index("ix_project_chat_task_order", "task_id", "id"),
+        Index("ix_project_chat_thread_order", "thread_root_message_id", "id"),
         Index(
             "uq_project_chat_trigger_agent",
             "trigger_message_id",

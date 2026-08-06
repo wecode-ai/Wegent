@@ -75,11 +75,12 @@ function createClient(): ProjectChatClient {
 async function run(input: Parameters<typeof startTaskAiRun>[0]) {
   const runtime = createRuntime()
   const client = createClient()
+  const bindTask = vi.fn(async () => undefined)
   await startTaskAiRun({
     client,
     services: {
       deliveryApi: {
-        bindTask: vi.fn(async () => undefined),
+        bindTask,
         getLoopItem: vi.fn(async () => task),
       },
     },
@@ -96,7 +97,61 @@ async function run(input: Parameters<typeof startTaskAiRun>[0]) {
     onMessages: vi.fn(),
     startFailedText: '启动失败',
   })
-  return { runtime, client }
+  return { runtime, client, bindTask }
+}
+
+async function runWith(
+  input: Parameters<typeof startTaskAiRun>[0],
+  overrides: {
+    task?: CloudLoopItem
+    continuationAccepted?: boolean
+    continuationError?: string
+    replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
+    messages?: ProjectChatMessage[]
+    threadRootId?: string | null
+  } = {}
+) {
+  const taskUnderRun = overrides.task ?? task
+  const runtime = {
+    createProjectRuntimeTask: vi.fn(async (_prompt, options) => {
+      const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    }),
+    sendRuntimePaneMessage: vi.fn(async (_input, options) => {
+      if (overrides.continuationError) {
+        options?.onError?.(overrides.continuationError)
+        return false
+      }
+      return overrides.continuationAccepted ?? true
+    }),
+  }
+  const client = createClient()
+  const bindTask = vi.fn(async () => undefined)
+  await startTaskAiRun({
+    client,
+    services: {
+      deliveryApi: {
+        bindTask,
+        getLoopItem: vi.fn(async () => taskUnderRun),
+      },
+    },
+    runtime,
+    project,
+    task: taskUnderRun,
+    agent: input.agent,
+    prompt: '请开始执行任务',
+    messages: overrides.messages ?? [],
+    models: input.models,
+    selectedModel: input.selectedModel,
+    selectedModelOptions: input.selectedModelOptions,
+    replyTo: overrides.replyTo,
+    threadRootId: overrides.threadRootId,
+    onError: vi.fn(),
+    onMessages: vi.fn(),
+    startFailedText: '启动失败',
+  })
+  return { runtime, client, bindTask }
 }
 
 describe('startTaskAiRun model resolution', () => {
@@ -174,5 +229,147 @@ describe('startTaskAiRun model resolution', () => {
     expect(options.executionModel).toBeUndefined()
     expect(options.modelSelection).toBeUndefined()
     expect(options.modelId).toBeUndefined()
+  })
+
+  it('continues the replied AI message session when replyTo is provided', async () => {
+    const { runtime, client, bindTask } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' } }
+    )
+
+    const sendArgs = runtime.sendRuntimePaneMessage.mock.calls[0][0] as Record<string, unknown>
+    expect(sendArgs).toMatchObject({
+      address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+      message: '请开始执行任务',
+    })
+    // The session already carries its environment and thread context, so a
+    // reply only sends the message text.
+    expect(sendArgs).not.toHaveProperty('additionalContext')
+    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ onError: expect.any(Function) })
+    )
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(bindTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        triggerMessageId: undefined,
+        agentId: 'agent-1',
+        runtimeDeviceId: 'device-1',
+        runtimeTaskId: 'parent-session-1',
+      })
+    )
+  })
+
+  it('starts a fresh hidden run for a new comment even when the task has a previous binding', async () => {
+    const previouslyBoundTask = {
+      ...task,
+      ai_state: {
+        status: 'completed',
+        runtime_device_id: 'device-1',
+        runtime_task_id: 'old-session-1',
+      },
+    } as unknown as CloudLoopItem
+    const { runtime, client, bindTask } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { task: previouslyBoundTask }
+    )
+
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '请开始执行任务',
+      expect.objectContaining({
+        cloudProjectId: '11',
+        hiddenFromSidebar: true,
+        continuable: true,
+      })
+    )
+    expect(bindTask).toHaveBeenCalledWith(
+      'WEG-1',
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      'Implement feature'
+    )
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeDeviceId: 'device-1',
+        runtimeTaskId: 'runtime-task-1',
+      })
+    )
+  })
+
+  it('falls back to a fresh hidden run when the replied session cannot be resumed', async () => {
+    const { runtime, client } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      {
+        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
+        continuationAccepted: false,
+      }
+    )
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '请开始执行任务',
+      expect.objectContaining({
+        cloudProjectId: '11',
+        hiddenFromSidebar: true,
+        continuable: true,
+      })
+    )
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeDeviceId: 'device-1',
+        runtimeTaskId: 'runtime-task-1',
+      })
+    )
+  })
+
+  it('does not start a second run when the bound turn is still running', async () => {
+    const { runtime, client } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      {
+        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
+        continuationError: 'runtime task is already running',
+      }
+    )
+
+    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledOnce()
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+  })
+
+  it('scopes rebuilt-session history to the owning comment thread', async () => {
+    const ownRoot: ProjectChatMessage = {
+      ...agentMessage,
+      sequenceNumber: 1,
+      messageId: 'thread-1',
+      sender: { type: 'user', id: 'user-1', name: 'Ada' },
+      type: 'text',
+      content: '本线程的评论',
+      status: 'completed',
+    }
+    const otherRoot: ProjectChatMessage = {
+      ...agentMessage,
+      sequenceNumber: 2,
+      messageId: 'thread-2',
+      sender: { type: 'user', id: 'user-2', name: 'Bob' },
+      type: 'text',
+      content: '别人的评论',
+      status: 'completed',
+    }
+    const { runtime } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      {
+        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
+        continuationAccepted: false,
+        messages: [ownRoot, otherRoot],
+        threadRootId: 'thread-1',
+      }
+    )
+
+    const options = runtime.createProjectRuntimeTask.mock.calls[0][1] as {
+      additionalContext: { projectChatHistory: { value: string } }
+    }
+    const history = options.additionalContext.projectChatHistory.value
+    expect(history).toContain('本线程的评论')
+    expect(history).not.toContain('别人的评论')
   })
 })

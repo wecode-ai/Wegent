@@ -279,3 +279,124 @@ def test_queue_scan_falls_back_to_creator_online_when_device_owner_offline(
     assert emit_rpc.await_args.kwargs["user_id"] == test_user.id
     test_db.refresh(execution)
     assert execution.status == "running"
+
+
+def test_execute_robot_task_advances_claimed_and_dispatches(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="local",
+        device_capacity=1,
+    )
+    assert len(claimed) == 1
+    execution = claimed[0]
+
+    emit_rpc = AsyncMock(
+        return_value={
+            "emitted": True,
+            "result": {"taskId": f"codex-queue-{execution.id}"},
+        }
+    )
+    online = AsyncMock(return_value=True)
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
+        ),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(execution.id)
+
+    assert result["status"] == "dispatched"
+    test_db.refresh(execution)
+    assert execution.status == "running"
+    assert execution.runtime_task_id == f"codex-queue-{execution.id}"
+    emit_rpc.assert_awaited_once()
+
+
+def test_execute_robot_task_skips_reclaimed_execution(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="local",
+        device_capacity=1,
+    )
+    assert len(claimed) == 1
+    # The lease watchdog reclaimed it back to queued before the subtask ran.
+    claimed[0].status = "queued"
+    test_db.commit()
+
+    emit_rpc = AsyncMock(return_value={"emitted": True})
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(claimed[0].id)
+
+    assert result["status"] == "skipped"
+    emit_rpc.assert_not_awaited()
+
+
+def test_execute_robot_task_fails_and_requeues(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="local",
+        device_capacity=1,
+    )
+    assert len(claimed) == 1
+
+    emit_rpc = AsyncMock(return_value={"emitted": False})
+    online = AsyncMock(return_value=True)
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
+        ),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(claimed[0].id)
+
+    assert result["status"] == "failed"
+    test_db.refresh(claimed[0])
+    assert claimed[0].status == "queued"
+    assert claimed[0].retry_attempt == 1

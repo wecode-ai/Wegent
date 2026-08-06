@@ -89,7 +89,7 @@
   color: rgb(var(--color-text-muted));
   font-size: var(--text-sm);
   padding: 14px 0;
-  margin: 10px 0 22px;
+  margin: 10px 0 0;
   border-top: 1px solid rgb(var(--color-border));
   border-bottom: 1px solid rgb(var(--color-border));
 }
@@ -115,15 +115,16 @@
   margin: 30px 0 12px;
 }
 
-.task-detail-desc .tiptap {
+.task-detail-desc .bn-editor {
   min-height: 0;
   font-size: var(--task-detail-body-font-size);
   line-height: 1.75;
   color: rgb(var(--color-text-primary));
-  white-space: pre-line;
+  background: transparent;
+  border-radius: 0;
 }
 
-.task-detail-desc.is-collapsed .tiptap {
+.task-detail-desc.is-collapsed .bn-editor {
   max-height: calc(var(--task-detail-body-font-size) * 1.75 * 3);
   overflow: hidden;
 }
@@ -137,23 +138,6 @@
 
 .task-detail-desc-toggle:hover {
   color: rgb(var(--color-text-primary));
-}
-
-.task-detail-desc .tiptap h1,
-.task-detail-desc .tiptap h2,
-.task-detail-desc .tiptap h3,
-.task-detail-desc .tiptap h4 {
-  margin: 18px 0 6px;
-  font-size: var(--task-detail-body-font-size);
-}
-
-.task-detail-desc .tiptap blockquote {
-  border-left: 3px solid rgb(135 82 234);
-  background: rgba(135, 82, 234, 0.06);
-  padding: 10px 14px;
-  border-radius: 0 8px 8px 0;
-  margin: 12px 0;
-  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-comments {
@@ -171,6 +155,106 @@
 
 .task-detail-comments-list {
   padding: 0 4px;
+}
+
+.task-detail-comment-card {
+  margin: 14px 0;
+  padding: 12px 14px 10px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 16px;
+  background: rgb(var(--color-background));
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.task-detail-comment-card .task-detail-ai-run-card {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.task-detail-comment-replies {
+  margin-top: 6px;
+  border-top: 1px solid rgb(var(--color-border));
+}
+
+.task-detail-comment-replies .task-detail-ai-run-card {
+  margin: 0;
+  padding: 10px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.task-detail-comment-replies > article + article {
+  border-top: 1px solid rgb(var(--color-border));
+}
+
+.task-detail-comment-card-composer {
+  margin-top: 4px;
+}
+
+.task-detail-comment-inline-composer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+
+.task-detail-comment-inline-composer input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  line-height: 20px;
+  outline: none;
+}
+
+.task-detail-comment-inline-composer input::placeholder {
+  color: rgb(var(--color-text-muted));
+}
+
+.task-detail-comment-inline-composer input:disabled {
+  opacity: 0.6;
+}
+
+.task-detail-comment-inline-error {
+  margin: 2px 0 0;
+  color: rgb(var(--color-destructive));
+  font-size: var(--text-xs);
+}
+
+.task-detail-comment-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(var(--color-muted));
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+}
+
+.task-detail-comment-target-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-base);
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.task-detail-comment-target-chip button:hover {
+  color: rgb(var(--color-text-primary));
 }
 
 .task-detail-ai-run-card {

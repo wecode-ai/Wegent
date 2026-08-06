@@ -28,6 +28,8 @@ export interface ProjectChatMessage {
   content: string
   metadata: Record<string, unknown>
   triggerMessageId?: string | null
+  replyToMessageId?: string | null
+  rootMessageId?: string | null
   agentId?: string | null
   runtimeAddress?: RuntimeTaskAddress | null
   status: 'streaming' | 'completed' | 'failed' | 'cancelled'
@@ -55,6 +57,7 @@ export interface ProjectChatClient {
     clientMessageId: string
     text: string
     mentions?: ProjectChatMention[]
+    replyToMessageId?: string | null
     model?: string | null
   }) => Promise<ProjectChatMessage>
   startAgentResponse: (input: {
@@ -180,6 +183,7 @@ export function createProjectChatClient(options: ProjectChatClientOptions): Proj
         clientMessageId: input.clientMessageId,
         content: input.text,
         mentions: input.mentions ?? [],
+        replyToMessageId: input.replyToMessageId ?? null,
         model: input.model ?? null,
       })
     },

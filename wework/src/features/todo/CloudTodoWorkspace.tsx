@@ -62,10 +62,7 @@ import { CloudProjectManageView } from './CloudProjectManageView'
 import { ProjectQueueView } from './ProjectQueueView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
-import {
-  ProjectSpaceChatSidebar,
-  type ProjectSpaceChatLaunchRequest,
-} from './ProjectSpaceChatSidebar'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { TaskSearchPanel } from './TaskSearchPanel'
@@ -711,8 +708,6 @@ export function CloudTodoWorkspace({
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
-  const [conversationLaunchRequest, setConversationLaunchRequest] =
-    useState<ProjectSpaceChatLaunchRequest | null>(null)
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [aitableGroupFilter, setAitableGroupFilter] = useState('')
@@ -1362,22 +1357,6 @@ export function CloudTodoWorkspace({
     }
   }, [apiForProjectId, selectedItem, selectedProjectId])
 
-  function openTaskConversation(item: CloudLoopItem) {
-    selectProject(item.cloud_project_id)
-    setConversationLaunchRequest({
-      id: Date.now(),
-      item: {
-        id: item.id,
-        title: item.title,
-        description: item.description,
-        status: item.status,
-      },
-      localProjectId: null,
-    })
-    setSelectedItem(null)
-    setProjectAssistantOpen(true)
-  }
-
   async function moveItem(itemId: string, columnKey: string, beforeItemId: string | null = null) {
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
@@ -1896,7 +1875,6 @@ export function CloudTodoWorkspace({
                     aria-label="与 AI 沟通"
                     title="与 AI 沟通"
                     onClick={() => {
-                      setConversationLaunchRequest(null)
                       setProjectAssistantOpen(true)
                     }}
                     className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
@@ -2314,13 +2292,11 @@ export function CloudTodoWorkspace({
         </main>
         {selectedProject && projectAssistantOpen ? (
           <ProjectSpaceChatSidebar
-            key={`${selectedProject.id}:${conversationLaunchRequest?.id ?? 'project'}`}
+            key={`${selectedProject.id}:project`}
             project={selectedProject}
             localProjects={localProjects}
-            launchRequest={conversationLaunchRequest}
             onClose={() => {
               setProjectAssistantOpen(false)
-              setConversationLaunchRequest(null)
             }}
           />
         ) : null}
@@ -2370,7 +2346,6 @@ export function CloudTodoWorkspace({
           allItems={detailAllItems}
           onClose={() => setSelectedItem(null)}
           onAddChild={() => openTodoCreation(selectedItem)}
-          onStartConversation={() => openTaskConversation(selectedItem)}
           onUpdated={updated => {
             setItems(current => current.map(item => (item.id === updated.id ? updated : item)))
             setDetailItems(current =>

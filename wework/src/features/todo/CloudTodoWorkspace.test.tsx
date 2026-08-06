@@ -9,23 +9,12 @@ import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
     project,
-    launchRequest,
     onClose,
   }: {
     project: { id: number; name: string }
-    launchRequest?: {
-      item: { id: string; description: string }
-      localProjectId: number | null
-    } | null
     onClose: () => void
   }) => (
-    <div
-      data-testid="project-space-chat-sidebar"
-      data-project-id={project.id}
-      data-item-id={launchRequest?.item.id}
-      data-description={launchRequest?.item.description}
-      data-local-project-id={launchRequest?.localProjectId ?? ''}
-    >
+    <div data-testid="project-space-chat-sidebar" data-project-id={project.id}>
       {project.name}
       <button type="button" data-testid="mock-project-space-chat-close" onClick={onClose}>
         关闭
@@ -1444,56 +1433,6 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
-  })
-
-  it('offers a conversation for a completed TODO', async () => {
-    const workbenchServices = services()
-    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
-      items: [{ ...item, status: 'completed' as const }],
-    }))
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-
-    expect(screen.getByTestId('cloud-todo-start-task')).toHaveTextContent('开始对话')
-    expect(screen.getByTestId('cloud-todo-detail-title')).toBeEnabled()
-  })
-
-  it('opens a task conversation in the project sidebar with an optional Wework project', async () => {
-    const workbenchServices = services()
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[{ id: 91, name: 'Wegent 本地项目', tasks: [] }]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-start-task'))
-
-    const sidebar = screen.getByTestId('project-space-chat-sidebar')
-    expect(sidebar).toHaveAttribute('data-project-id', '11')
-    expect(sidebar).toHaveAttribute('data-item-id', item.id)
-    expect(sidebar).toHaveAttribute('data-description', item.description)
-    expect(sidebar).toHaveAttribute('data-local-project-id', '')
-
-    await userEvent.click(screen.getByTestId('mock-project-space-chat-close'))
-    await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
-
-    const reopenedSidebar = screen.getByTestId('project-space-chat-sidebar')
-    expect(reopenedSidebar).not.toHaveAttribute('data-item-id')
-    expect(reopenedSidebar).not.toHaveAttribute('data-description')
-    expect(reopenedSidebar).toHaveAttribute('data-local-project-id', '')
   })
 
   it('offers every board status when editing a completed TODO', async () => {

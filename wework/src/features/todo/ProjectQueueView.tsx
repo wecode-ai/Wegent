@@ -9,7 +9,14 @@ import { cn } from '@/lib/utils'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
-const QUEUE_STATES = new Set(['assigned', 'pending_approval', 'queued', 'running', 'failed'])
+const QUEUE_STATES = new Set([
+  'assigned',
+  'pending_approval',
+  'queued',
+  'claimed',
+  'running',
+  'failed',
+])
 
 function isInQueue(item: CloudLoopItem): boolean {
   if (item.status === 'completed' || item.status === 'in_review') return false
@@ -18,7 +25,7 @@ function isInQueue(item: CloudLoopItem): boolean {
 }
 
 function executionInQueue(execution: LocalLoopItemExecution): boolean {
-  return ['pending_approval', 'queued', 'running'].includes(execution.status)
+  return ['pending_approval', 'queued', 'claimed', 'running'].includes(execution.status)
 }
 
 function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
@@ -59,6 +66,11 @@ function QueueStateChip({ state }: { state?: string | null }) {
     queued: {
       label: t('workbench.queue_state_queued'),
       className: 'bg-sky-500/10 text-sky-700',
+      Icon: Inbox,
+    },
+    claimed: {
+      label: t('workbench.queue_state_claimed', '已领取'),
+      className: 'bg-indigo-500/10 text-indigo-700',
       Icon: Inbox,
     },
     running: {

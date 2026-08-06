@@ -287,55 +287,6 @@ describe('ProjectSpaceChatSidebar', () => {
     )
   })
 
-  it('opens a task draft with its mention and binds the created conversation', async () => {
-    const address = { deviceId: 'device-1', taskId: 'task-conversation' }
-    mocks.createProjectRuntimeTask.mockResolvedValue(address)
-
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        launchRequest={{
-          id: 1,
-          item: {
-            id: 'WEG-18',
-            title: '修复登录流程',
-            description: '结合现有代码定位问题',
-            status: 'in_progress',
-          },
-          localProjectId: null,
-        }}
-        onClose={vi.fn()}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-        'data-initial-input',
-        '[$任务:WEG-18](cloud://projects/11/todos/WEG-18)\n\n任务描述：\n结合现有代码定位问题\n\n补充说明：\n'
-      )
-    )
-    expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('')
-
-    await userEvent.click(screen.getByTestId('mock-chat-send'))
-
-    await waitFor(() =>
-      expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
-        '管理当前项目',
-        expect.objectContaining({
-          project: null,
-          cloudProjectId: '11',
-          additionalContext: expect.objectContaining({
-            projectSpaceTask: expect.objectContaining({
-              value: expect.stringContaining('cloud://projects/11/todos/WEG-18'),
-            }),
-          }),
-        })
-      )
-    )
-    expect(mocks.bindTask).toHaveBeenCalledWith('WEG-18', address, '修复登录流程')
-  })
-
   it('resizes the project conversation sidebar and remembers the width', async () => {
     render(
       <ProjectSpaceChatSidebar
