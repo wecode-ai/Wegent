@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+[project]
+name = "wegent"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Root project metadata for uv workspace defaults"
+
 # Root-level pyproject.toml for shared tool configurations
 # This ensures consistent formatting when running black/isort from the root directory
 
