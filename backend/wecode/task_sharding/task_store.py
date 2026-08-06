@@ -8,7 +8,7 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, Callable
 
-from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy import and_, exists, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -547,6 +547,37 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         if limit is not None:
             tasks = tasks[:limit]
         return tasks
+
+    def list_recent_owner_only_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        client_origin: str | None = None,
+    ) -> list[TaskResource]:
+        """Return recent private Tasks from the current user's task shard."""
+        if limit <= 0:
+            return []
+
+        model = task_model_for_user(user_id)
+        approved_member_exists = exists().where(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == model.id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        query = db.query(model).filter(
+            model.user_id == user_id,
+            model.kind == "Task",
+            model.is_active == TaskResource.STATE_ACTIVE,
+            model.is_group_chat.is_(False),
+            ~approved_member_exists,
+        )
+        if client_origin:
+            query = query.filter(model.client_origin == client_origin)
+        return (
+            query.order_by(model.updated_at.desc(), model.id.desc()).limit(limit).all()
+        )
 
     def list_kind_resources(
         self,

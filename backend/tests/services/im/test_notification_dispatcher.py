@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -68,8 +69,28 @@ def _create_session(
     )
 
 
+def _set_dingtalk_binding(
+    test_user: Any,
+    *,
+    channel_id: int,
+    sender_id: str,
+    sender_staff_id: str | None = None,
+) -> None:
+    test_user.preferences = json.dumps(
+        {
+            "im_channels": {
+                str(channel_id): {
+                    "channel_type": "dingtalk",
+                    "sender_id": sender_id,
+                    "sender_staff_id": sender_staff_id,
+                }
+            }
+        }
+    )
+
+
 @pytest.mark.asyncio
-async def test_dingtalk_notification_decrypts_channel_secret(
+async def test_dingtalk_notification_uses_channel_binding_staff_id(
     test_db: Session,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -87,7 +108,13 @@ async def test_dingtalk_notification_decrypts_channel_secret(
         user_id=test_user.id,
         channel_id=9401,
         channel_type="dingtalk",
-        sender_id="staff-1",
+        sender_id="union-id-from-private-session",
+    )
+    _set_dingtalk_binding(
+        test_user,
+        channel_id=9401,
+        sender_id="union-id-from-channel-binding",
+        sender_staff_id="staff-1",
     )
     test_db.commit()
     calls: list[dict[str, Any]] = []
@@ -117,6 +144,42 @@ async def test_dingtalk_notification_decrypts_channel_secret(
         "client_secret": "ding-client-secret",
     }
     assert calls[1] == {"user_ids": ["staff-1"], "content": "已切换"}
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_notification_requires_channel_binding(
+    test_db: Session,
+    test_user,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9404,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9404,
+        channel_type="dingtalk",
+        sender_id="invalid-session-id",
+    )
+    test_db.commit()
+
+    result = await im_notification_dispatcher.send_text(
+        test_db,
+        session,
+        "已切换",
+    )
+
+    assert result == {
+        "success": False,
+        "channel_id": 9404,
+        "channel_type": "dingtalk",
+        "error": "Missing DingTalk recipient binding",
+    }
 
 
 @pytest.mark.asyncio

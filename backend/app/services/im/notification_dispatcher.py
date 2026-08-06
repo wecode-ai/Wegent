@@ -134,7 +134,7 @@ class IMNotificationDispatcher:
 
             config = _get_channel_config(channel)
             if session.channel_type == "dingtalk":
-                return await self._send_dingtalk(session, config, text)
+                return await self._send_dingtalk(db, session, config, text)
             if session.channel_type == "telegram":
                 return await self._send_telegram(session, config, text)
             if session.channel_type == "discord":
@@ -231,11 +231,15 @@ class IMNotificationDispatcher:
 
     async def _send_dingtalk(
         self,
+        db: Session,
         session: IMPrivateSession,
         config: dict[str, Any],
         text: str,
     ) -> dict[str, Any]:
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
+        from app.services.subscription.notification_service import (
+            subscription_notification_service,
+        )
 
         client_id = _config_value(config, "client_id", "clientId")
         client_secret = _config_value(config, "client_secret", "clientSecret")
@@ -247,9 +251,30 @@ class IMNotificationDispatcher:
                 "error": "Missing DingTalk credentials",
             }
 
+        binding = subscription_notification_service.get_user_im_bindings(
+            db,
+            user_id=session.user_id,
+        ).get(str(session.channel_id))
+        if binding is None or binding.channel_type != "dingtalk":
+            return {
+                "success": False,
+                "channel_id": session.channel_id,
+                "channel_type": session.channel_type,
+                "error": "Missing DingTalk recipient binding",
+            }
+
+        recipient_id = binding.sender_staff_id or binding.sender_id
+        if not recipient_id:
+            return {
+                "success": False,
+                "channel_id": session.channel_id,
+                "channel_type": session.channel_type,
+                "error": "Missing DingTalk recipient ID",
+            }
+
         sender = DingTalkRobotSender(client_id, client_secret)
         result = await sender.send_text_message(
-            user_ids=[session.sender_id],
+            user_ids=[recipient_id],
             content=text,
         )
         return {
