@@ -288,7 +288,7 @@ async fn clear_platform_webview_data(
     data_kinds: DataKindSet,
 ) -> Result<(), String> {
     use webkit2gtk::{
-        gio::Cancellable, glib::TimeSpan, prelude::*, WebsiteDataManagerExtManual, WebsiteDataTypes,
+        gio::Cancellable, glib::TimeSpan, WebContextExt, WebViewExt, WebsiteDataManagerExtManual,
     };
 
     let (sender, receiver) = oneshot::channel();
