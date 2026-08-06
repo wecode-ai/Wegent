@@ -1781,6 +1781,68 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('sweeps a runtime task title after it is updated', async () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-06/title-update'
+    const runtimeWork = (title: string) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'friendly-title-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title,
+              runtime: 'codex' as const,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('friendly-title-sheen-test')
+    const initialProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('原始标题'),
+    })
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const { rerender } = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(screen.getByTestId('runtime-local-task-title-friendly-title-task')).not.toHaveClass(
+      'is-updated'
+    )
+
+    const updatedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('AI 优化后的标题'),
+    })
+    lifecycleStore.syncRuntimeWork(updatedProps.runtimeWork)
+    rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...updatedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-local-task-title-friendly-title-task')).toHaveClass(
+        'is-updated'
+      )
+    })
+    expect(
+      screen.getByTestId('runtime-local-task-title-shimmer-friendly-title-task')
+    ).toBeInTheDocument()
+  })
+
   test('removes pinned chat tasks from the task section without highlighted styling', () => {
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pinned'
     renderSidebar({

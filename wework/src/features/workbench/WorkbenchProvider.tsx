@@ -235,6 +235,7 @@ export function WorkbenchProvider({
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
+  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   const remoteProjectSyncSignatureRef = useRef('')
   const projectActivationSignatureRef = useRef('')
@@ -1054,21 +1055,6 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
-    const project = state.currentProject
-      ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-      : null
-    if (project) {
-      writeLastProjectId(user.id, project.id)
-      dispatch({
-        type: 'project_workspace_selected',
-        project,
-        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
-      })
-      navigateTo('/')
-      requestNewChatComposerFocus()
-      return
-    }
-
     writeLastProjectId(user.id, null)
     dispatch({
       type: 'project_cleared',
@@ -1081,14 +1067,7 @@ export function WorkbenchProvider({
     })
     navigateTo('/')
     requestNewChatComposerFocus()
-  }, [
-    state.currentProject,
-    state.devices,
-    state.projects,
-    state.runtimeWork,
-    state.standaloneDeviceId,
-    user,
-  ])
+  }, [state.devices, state.standaloneDeviceId, user])
 
   const listLocalSkills = useCallback(
     async (forceReload = false) => {
@@ -1481,6 +1460,29 @@ export function WorkbenchProvider({
       })
     })
   })
+  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
+    const normalizedTitle = title.trim()
+    if (!normalizedTitle) return
+    const trackingApis = [
+      resolvedServices.projectSpaceApis?.local,
+      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
+    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+    if (!trackingApis.length) return
+    const key = `${address.deviceId}:${address.taskId}`
+    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
+    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
+    void Promise.allSettled(
+      trackingApis.map(api => api!.updateTaskTrackingTitle(address, normalizedTitle))
+    ).then(results => {
+      if (results.every(result => result.status === 'rejected')) {
+        trackingTitleSignaturesRef.current.delete(key)
+        console.warn('[Wework] Failed to synchronize project task title', {
+          address,
+          errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+        })
+      }
+    })
+  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -1524,6 +1526,14 @@ export function WorkbenchProvider({
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
+          onRuntimeTaskTitleUpdated: (address, payload) => {
+            dispatch({
+              type: 'runtime_task_title_updated',
+              address,
+              title: payload.title,
+            })
+            syncRuntimeTaskTitle(address, payload.title)
+          },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
             setRuntimeConversationGoal(address, goal)
@@ -1554,6 +1564,7 @@ export function WorkbenchProvider({
       refreshRuntimeWorkLists,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
     ]
   )

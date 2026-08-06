@@ -3831,7 +3831,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('restores the last used project before starting a new task', async () => {
+  test('starts a standalone task even when a project was last used', async () => {
     writeLastProjectId(1, 7)
     renderWorkbench(<ProjectSendProbe />)
 
@@ -3841,11 +3841,12 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('start new chat'))
 
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    expect(readLastProjectId(1)).toBeNull()
   })
 
-  test('starts a new task in the project of the last opened task', async () => {
+  test('starts a standalone task after opening a project task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 
     await waitFor(() =>
@@ -3858,8 +3859,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     await userEvent.click(screen.getByText('start new chat'))
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    expect(readLastProjectId(1)).toBeNull()
   })
 
   test('keeps a standalone new task unassigned when starting another new task', async () => {
@@ -4378,7 +4380,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     )
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
   })
 
@@ -9347,6 +9349,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       return vi.fn()
     })
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -9385,7 +9388,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus },
+        local: { updateTaskTrackingStatus, updateTaskTrackingTitle },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -9419,6 +9422,21 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
         expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
         'succeeded'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeTaskTitleUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'friendly-title',
+        deviceId: 'device-1',
+        title: '修复登录回调',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        '修复登录回调'
       )
     )
   })

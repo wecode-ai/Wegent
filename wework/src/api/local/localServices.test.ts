@@ -90,6 +90,9 @@ describe('createLocalAppServices', () => {
     })
     const models = await services.modelApi.listModels()
 
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
+      includeHidden: true,
+    })
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
@@ -114,10 +117,18 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
-    expect(modelIds).not.toContain('gpt-5.5')
-    expect(modelIds).not.toContain('Sol')
-    expect(modelIds).not.toContain('Terra')
-    expect(modelIds).not.toContain('Luna')
+    expect(modelIds).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex-spark',
+      ])
+    )
+    expect(modelIds).not.toContain('gpt-5.2')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',

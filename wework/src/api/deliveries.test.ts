@@ -101,4 +101,21 @@ describe('createDeliveryApi task tracking', () => {
     })
     expect(patch).toHaveBeenCalledOnce()
   })
+
+  test('synchronizes a friendly runtime title to the bound task', async () => {
+    const renamedItem = { ...trackedItem, title: '修复登录回调', version: 2 }
+    const context = { loop_item_id: trackedItem.id } as CloudTaskContext
+    const get = vi.fn().mockResolvedValueOnce(context).mockResolvedValueOnce(trackedItem)
+    const patch = vi.fn().mockResolvedValue(renamedItem)
+    const api = createDeliveryApi(clientWith({ get, patch }))
+
+    await expect(
+      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
+    ).resolves.toEqual(renamedItem)
+
+    expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
+      version: 1,
+      title: '修复登录回调',
+    })
+  })
 })

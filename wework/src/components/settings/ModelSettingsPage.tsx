@@ -11,7 +11,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
@@ -21,6 +21,8 @@ import { createModelApi } from '@/api/models'
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import type { CodexOfficialModelList } from '@/features/model-settings/codexOfficialModels'
 import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
@@ -59,8 +61,10 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { updateAppPreferences } from '@/tauri/appPreferences'
 import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { DeviceInfo } from '@/types/devices'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { CustomModelCapabilitiesForm } from './CustomModelCapabilitiesForm'
@@ -2109,6 +2113,104 @@ interface ModelSettingsPageProps {
   onOpenCloudSettings?: () => void
 }
 
+function FriendlyTaskTitleSettings() {
+  const { t } = useTranslation('common')
+  const workbench = useContext(WorkbenchContext)
+  const appPreferences = useAppPreferencesState()
+  const models = workbench?.projectChat.models ?? []
+  const preferences = {
+    enabled: appPreferences?.preferences.friendlyTaskTitlesEnabled ?? false,
+    modelName: appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? '',
+    modelType: appPreferences?.preferences.friendlyTaskTitleModel?.modelType ?? null,
+  }
+
+  const selectedKey = `${preferences.modelType ?? ''}:${preferences.modelName}`
+  const save = (next: typeof preferences) => {
+    const selectedModel = models.find(
+      model => `${model.type}:${model.name}` === `${next.modelType ?? ''}:${next.modelName}`
+    )
+    const execution = selectedModel ? selectedModelExecutionFields(selectedModel, {}) : null
+    void updateAppPreferences({
+      friendlyTaskTitlesEnabled: next.enabled && Boolean(selectedModel),
+      friendlyTaskTitleModel: selectedModel
+        ? {
+            modelName: selectedModel.name,
+            modelType: selectedModel.type,
+            executionModelId: execution?.modelId ?? '',
+            executionModelType: execution?.modelType ?? null,
+            options: execution?.modelOptions,
+          }
+        : null,
+    })
+  }
+
+  return (
+    <section
+      data-testid="friendly-task-title-settings"
+      className="rounded-lg border border-border bg-background px-4 py-3"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-text-primary">
+            {t('workbench.friendly_task_titles_title', '使用友好标题')}
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t(
+              'workbench.friendly_task_titles_desc',
+              '创建任务后，用你选择的模型在本机异步生成简洁标题；不会经过 Wegent 业务后端。'
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          data-testid="friendly-task-titles-toggle"
+          role="switch"
+          aria-checked={preferences.enabled}
+          disabled={!preferences.modelName}
+          onClick={() => save({ ...preferences, enabled: !preferences.enabled })}
+          className={[
+            'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+            preferences.enabled ? 'bg-primary' : 'bg-muted',
+          ].join(' ')}
+          aria-label={t('workbench.friendly_task_titles_title', '使用友好标题')}
+        >
+          <span
+            aria-hidden="true"
+            className={[
+              'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
+              preferences.enabled ? 'translate-x-5' : 'translate-x-0.5',
+            ].join(' ')}
+          />
+        </button>
+      </div>
+      <label className="mt-3 grid gap-1 text-xs text-text-secondary">
+        {t('workbench.friendly_task_titles_model', '标题模型')}
+        <select
+          data-testid="friendly-task-title-model-select"
+          value={selectedKey}
+          onChange={event => {
+            const [modelType, ...nameParts] = event.target.value.split(':')
+            const modelName = nameParts.join(':')
+            save({
+              enabled: Boolean(modelName) && preferences.enabled,
+              modelName,
+              modelType: modelName ? (modelType as UnifiedModel['type']) : null,
+            })
+          }}
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+        >
+          <option value="">{t('workbench.friendly_task_titles_model_empty', '请选择模型')}</option>
+          {models.map(model => (
+            <option key={`${model.type}:${model.name}`} value={`${model.type}:${model.name}`}>
+              {modelLabel(model)}
+            </option>
+          ))}
+        </select>
+      </label>
+    </section>
+  )
+}
+
 export function ModelSettingsPage({
   runtime = 'codex',
   onOpenCloudSettings,
@@ -2337,6 +2439,9 @@ export function ModelSettingsPage({
           />
         </div>
         <div className="mt-8">
+          <FriendlyTaskTitleSettings />
+        </div>
+        <div className="mt-8">
           <CodexAuthSettingsSection isConnected={false}>
             <DisconnectedCloudCodexSyncSection
               onOpenCloudSettings={onOpenCloudSettings}
@@ -2384,6 +2489,9 @@ export function ModelSettingsPage({
           cloudConnection={cloudConnection}
           onOpenCloudSettings={onOpenCloudSettings}
         />
+      </div>
+      <div className="mt-8">
+        <FriendlyTaskTitleSettings />
       </div>
 
       <div className="mt-8">

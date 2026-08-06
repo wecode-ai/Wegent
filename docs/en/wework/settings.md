@@ -32,6 +32,23 @@ Common macOS shortcuts include:
 local custom models, and cloud models remain available according to their own configuration. If
 no source provides a model, the picker displays **No models available**.
 
+## Friendly titles
+
+Under **Settings → Models**, enable **Use friendly titles** and select an available model. Wework
+then generates a concise title asynchronously for each new task. Creation never waits for that
+model: the task starts with the original user-provided title, and its display name is replaced
+when generation finishes with a brief shimmer.
+
+Title generation uses a separate lightweight model call. It does not add a message to the task
+conversation or change the main task's running, completed, or failed state. A manually renamed
+task is not overwritten later. If generation fails, the original title remains and the task still
+starts normally.
+
+Ordinary new tasks are standalone by default. Opening a project task earlier does not
+automatically add a new task to a remote project or board. Wework synchronizes only tasks that
+were explicitly linked to a project space; after friendly-title generation, those local or cloud
+board items receive the updated title.
+
 ## Custom Codex models
 
 In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
