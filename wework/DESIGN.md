@@ -683,6 +683,12 @@ semantics for all three.
   terminal should be fitted and resized; after activation, window focus, or
   document visibility restoration, refresh the buffered xterm rows so the
   existing session remains visible.
+- PTY output must not be streamed before the renderer is ready to receive it.
+  A terminal session starts reading from the PTY only after the embedded
+  terminal registers its output listeners and explicitly attaches via
+  `attach_local_terminal`; the embedded component reuses the underlying xterm
+  resource while the session stays mounted and defers disposal so re-mounts do
+  not drop early shell output.
 - Workspace IDEs and native editors launch only from the titlebar “Open
   location” control, including its local-editor picker and remote code-server
   behavior.
