@@ -309,6 +309,11 @@ async def lifespan(app: FastAPI):
     # Load system initialization state once per process after startup data exists.
     _load_system_initialization_state(logger)
 
+    from app.services.task_run_metric_hooks import task_run_metric_hooks
+
+    task_run_metric_hooks.register()
+    logger.info("✓ Task run metric transaction hooks registered")
+
     # Start background jobs
     logger.info("Starting background jobs...")
     start_background_jobs(app)
@@ -466,7 +471,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
 
         # Step 4: Stop background jobs
-        stop_background_jobs(app)
+        await stop_background_jobs(app)
+        task_run_metric_hooks.unregister()
         logger.info("✓ Background jobs stopped")
 
         # Step 5: Stop scheduler backend
