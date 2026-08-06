@@ -10,17 +10,30 @@ describe('createProjectChatAgentApi', () => {
       patch: vi.fn(async () => ({})),
     } as unknown as HttpClient
     const api = createProjectChatAgentApi(client)
-    const input = { name: 'Reviewer', runtime: 'codex' as const, model: null, systemPrompt: '' }
+    const input = {
+      name: 'Reviewer',
+      runtime: 'codex' as const,
+      model: null,
+      systemPrompt: '',
+      visibility: 'public' as const,
+      executionEnvironment: 'cloud' as const,
+      executionMode: 'manual_approval' as const,
+    }
 
     await api.list('123')
     await api.create('123', input)
-    await api.update('123', '456', { version: 1, name: 'Builder' })
+    await api.update('123', '456', {
+      version: 1,
+      name: 'Builder',
+      executionMode: 'auto',
+    })
 
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/chat-agents')
     expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/chat-agents', input)
     expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/123/chat-agents/456', {
       version: 1,
       name: 'Builder',
+      executionMode: 'auto',
     })
   })
 })

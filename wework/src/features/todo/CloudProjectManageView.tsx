@@ -12,7 +12,9 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isSupportedModelFamily } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
+import type { UnifiedModel } from '@/types/api'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import {
@@ -60,6 +62,8 @@ export function CloudProjectManageView({
   aitableApi,
   dwsApi,
   projectChatAgentApi,
+  deviceApi,
+  modelApi,
   project,
   boardCardDisplay,
   onProjectUpdated,
@@ -68,6 +72,8 @@ export function CloudProjectManageView({
   aitableApi?: AITableApi
   dwsApi?: DwsApi
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
+  deviceApi?: WorkbenchServices['deviceApi']
+  modelApi?: WorkbenchServices['modelApi']
   project: CloudProject
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
@@ -87,6 +93,17 @@ export function CloudProjectManageView({
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState('')
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
+  const [agentVisibility, setAgentVisibility] =
+    useState<ProjectChatAgent['visibility']>('creator_admin')
+  const [agentExecutionEnvironment, setAgentExecutionEnvironment] =
+    useState<ProjectChatAgent['executionEnvironment']>('local')
+  const [agentExecutionMode, setAgentExecutionMode] =
+    useState<ProjectChatAgent['executionMode']>('auto')
+  const [agentExecutionDeviceId, setAgentExecutionDeviceId] = useState<string>('')
+  const [availableDevices, setAvailableDevices] = useState<
+    Array<{ device_id: string; device_type?: string; status?: string }>
+  >([])
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
@@ -134,6 +151,22 @@ export function CloudProjectManageView({
   }, [api, project.id])
 
   useEffect(() => {
+    if (!deviceApi?.listDevices) return
+    let active = true
+    deviceApi
+      .listDevices()
+      .then(devices => {
+        if (active) setAvailableDevices(devices)
+      })
+      .catch(() => {
+        if (active) setAvailableDevices([])
+      })
+    return () => {
+      active = false
+    }
+  }, [deviceApi])
+
+  useEffect(() => {
     if (!projectChatAgentApi) return
     let active = true
     void projectChatAgentApi
@@ -150,6 +183,24 @@ export function CloudProjectManageView({
       active = false
     }
   }, [project.id, projectChatAgentApi, t])
+
+  useEffect(() => {
+    if (!modelApi) return
+    let active = true
+    void modelApi
+      .listModels()
+      .then(response => {
+        if (active) setAvailableModels(response.data.filter(isSupportedModelFamily))
+      })
+      .catch(() => {
+        // Model options are optional; the form still shows the default and the
+        // currently configured model even when the list is unavailable.
+        if (active) setAvailableModels([])
+      })
+    return () => {
+      active = false
+    }
+  }, [modelApi])
 
   useEffect(() => {
     if (!isAITable || !aitableApi) return
@@ -221,7 +272,7 @@ export function CloudProjectManageView({
   }
 
   async function createChatAgent() {
-    if (agentBusy) return
+    if (agentBusy || !projectChatAgentApi) return
     setAgentBusy(true)
     try {
       if (!projectChatAgentApi) throw new Error(t('workbench.project_chat_cloud_required'))
@@ -230,6 +281,10 @@ export function CloudProjectManageView({
         runtime: 'codex',
         model: null,
         systemPrompt: '',
+        visibility: 'creator_admin',
+        executionEnvironment: 'local',
+        executionMode: 'auto',
+        executionDeviceId: null,
       })
       setChatAgents(current => [...current, agent])
     } catch (cause) {
@@ -264,6 +319,10 @@ export function CloudProjectManageView({
     setAgentName(agent.name)
     setAgentModel(agent.model ?? '')
     setAgentSystemPrompt(agent.systemPrompt)
+    setAgentVisibility(agent.visibility)
+    setAgentExecutionEnvironment(agent.executionEnvironment)
+    setAgentExecutionMode(agent.executionMode)
+    setAgentExecutionDeviceId(agent.executionDeviceId ?? '')
   }
 
   async function saveChatAgent() {
@@ -275,6 +334,10 @@ export function CloudProjectManageView({
         name: agentName.trim(),
         model: agentModel.trim() || null,
         systemPrompt: agentSystemPrompt,
+        visibility: agentVisibility,
+        executionEnvironment: agentExecutionEnvironment,
+        executionMode: agentExecutionMode,
+        executionDeviceId: agentExecutionDeviceId || null,
       })
       setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
       setEditingChatAgent(null)
@@ -674,6 +737,19 @@ export function CloudProjectManageView({
                     <span className="block truncate text-xs text-text-muted">
                       {agent.runtime}
                       {agent.model ? ` · ${agent.model}` : ''}
+                      {' · '}
+                      {agent.executionEnvironment === 'cloud'
+                        ? t('workbench.project_chat_agent_env_cloud')
+                        : t('workbench.project_chat_agent_env_local')}
+                      {' · '}
+                      {agent.executionMode === 'manual_approval'
+                        ? t('workbench.project_chat_agent_mode_manual')
+                        : t('workbench.project_chat_agent_mode_auto')}
+                      {agent.createdByUserName
+                        ? ` · ${t('workbench.project_chat_agent_creator', {
+                            name: agent.createdByUserName,
+                          })}`
+                        : ''}
                     </span>
                   </span>
                   <button
@@ -709,13 +785,23 @@ export function CloudProjectManageView({
                 placeholder={t('workbench.project_chat_agent_name')}
                 className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
               />
-              <input
+              <select
                 data-testid="cloud-project-chat-agent-model"
                 value={agentModel}
                 onChange={event => setAgentModel(event.target.value)}
-                placeholder={t('workbench.project_chat_agent_model')}
+                aria-label={t('workbench.project_chat_agent_model')}
                 className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
-              />
+              >
+                <option value="">{t('workbench.project_chat_agent_model_default')}</option>
+                {agentModel && !availableModels.some(model => model.name === agentModel) ? (
+                  <option value={agentModel}>{agentModel}</option>
+                ) : null}
+                {availableModels.map(model => (
+                  <option key={model.name} value={model.name}>
+                    {model.displayName ?? model.name}
+                  </option>
+                ))}
+              </select>
               <textarea
                 data-testid="cloud-project-chat-agent-system-prompt"
                 value={agentSystemPrompt}
@@ -724,6 +810,104 @@ export function CloudProjectManageView({
                 rows={3}
                 className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none"
               />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">
+                    {t('workbench.project_chat_agent_visibility')}
+                  </span>
+                  <select
+                    data-testid="cloud-project-chat-agent-visibility"
+                    value={agentVisibility}
+                    onChange={event =>
+                      setAgentVisibility(event.target.value as ProjectChatAgent['visibility'])
+                    }
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  >
+                    <option value="private">
+                      {t('workbench.project_chat_agent_visibility_private')}
+                    </option>
+                    <option value="creator_admin">
+                      {t('workbench.project_chat_agent_visibility_creator_admin')}
+                    </option>
+                    <option value="public">
+                      {t('workbench.project_chat_agent_visibility_public')}
+                    </option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">
+                    {t('workbench.project_chat_agent_environment')}
+                  </span>
+                  <select
+                    data-testid="cloud-project-chat-agent-environment"
+                    value={agentExecutionEnvironment}
+                    onChange={event => {
+                      const next = event.target.value as ProjectChatAgent['executionEnvironment']
+                      setAgentExecutionEnvironment(next)
+                      setAgentExecutionDeviceId(current => {
+                        const currentDevice = availableDevices.find(
+                          device => device.device_id === current
+                        )
+                        if (!currentDevice) return ''
+                        const matches =
+                          next === 'local'
+                            ? currentDevice.device_type === 'local' ||
+                              currentDevice.device_type === 'app'
+                            : currentDevice.device_type === 'cloud' ||
+                              currentDevice.device_type === 'remote'
+                        return matches ? current : ''
+                      })
+                    }}
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  >
+                    <option value="local">{t('workbench.project_chat_agent_env_local')}</option>
+                    <option value="cloud">{t('workbench.project_chat_agent_env_cloud')}</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">
+                    {t('workbench.project_chat_agent_mode')}
+                  </span>
+                  <select
+                    data-testid="cloud-project-chat-agent-mode"
+                    value={agentExecutionMode}
+                    onChange={event =>
+                      setAgentExecutionMode(event.target.value as ProjectChatAgent['executionMode'])
+                    }
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  >
+                    <option value="auto">{t('workbench.project_chat_agent_mode_auto')}</option>
+                    <option value="manual_approval">
+                      {t('workbench.project_chat_agent_mode_manual')}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <label className="block">
+                <span className="mb-1 block text-xs text-text-muted">
+                  {t('workbench.project_chat_agent_device')}
+                </span>
+                <select
+                  data-testid="cloud-project-chat-agent-device"
+                  value={agentExecutionDeviceId}
+                  onChange={event => setAgentExecutionDeviceId(event.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                >
+                  <option value="">{t('workbench.project_chat_agent_device_select')}</option>
+                  {availableDevices
+                    .filter(device =>
+                      agentExecutionEnvironment === 'local'
+                        ? device.device_type === 'local' || device.device_type === 'app'
+                        : device.device_type === 'cloud' || device.device_type === 'remote'
+                    )
+                    .map(device => (
+                      <option key={device.device_id} value={device.device_id}>
+                        {device.device_id}
+                        {device.status ? `（${device.status}）` : ''}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"

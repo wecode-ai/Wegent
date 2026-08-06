@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 
 const WEBSITE_PROJECT = {
   id: '896185331840201807',
@@ -31,9 +30,10 @@ const WEBSITE_TODO = {
   parent_id: null,
   created_by_user_id: 9001,
   assignee_user_id: null,
+  assignee_agent_id: 'agent-codex-helper',
   title: '接入新版登录页',
   description: '',
-  status: 'in_progress',
+  status: 'in_review',
   priority: 'high',
   due_at: null,
   sort_order: 0,
@@ -42,6 +42,18 @@ const WEBSITE_TODO = {
   created_at: '2026-07-25T00:00:00',
   updated_at: '2026-07-25T00:00:00',
   completed_at: null,
+}
+const PROJECT_AI = {
+  id: 'agent-codex-helper',
+  projectId: WEBSITE_PROJECT.id,
+  name: 'Codex Helper',
+  runtime: 'codex',
+  model: null,
+  systemPrompt: '你是官网改版项目空间里的 AI 协作者。',
+  status: 'active',
+  version: 1,
+  createdAt: '2026-07-25T00:00:00',
+  updatedAt: '2026-07-25T00:00:00',
 }
 const WEBSITE_FILE = {
   id: '1906534447060216960',
@@ -107,6 +119,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         })
         return true
       }
+      const chatAgentsMatch = url.pathname.match(
+        /^\/api\/v1\/cloud-projects\/([^/]+)\/chat-agents$/
+      )
+      if (request.method === 'GET' && chatAgentsMatch) {
+        json(response, 200, chatAgentsMatch[1] === WEBSITE_PROJECT.id ? [PROJECT_AI] : [])
+        return true
+      }
       const filesMatch = url.pathname.match(/^\/api\/v1\/cloud-projects\/([^/]+)\/files$/)
       if (request.method === 'GET' && filesMatch) {
         json(response, 200, {
@@ -118,148 +137,59 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-
-      // Scene 1: the @ menu exposes the direct cloud space row and the project
-      // space list entry; the retired entries are gone.
-      await control.command('fill', COMPOSER_SELECTOR, { value: '@' })
-      await control.command('waitFor', '[data-testid="mention-cloud-space-direct-action"]', {
+      // The Multica-style task activity surface lives inside task
+      // detail. Project-level chat remains an AI conversation button instead
+      // of a top-level group-chat tab, and task comments do not open a separate
+      // side drawer.
+      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="mention-cloud-projects-action"]', {
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const menuSnapshot = await snapshot(control)
-      assert.ok(
-        !menuSnapshot.testIds.includes('mention-cloud-space'),
-        'The retired cloud space drill entry is still rendered'
-      )
-      assert.ok(
-        !menuSnapshot.testIds.includes('mention-cloud-create-action'),
-        'The retired create action is still rendered'
-      )
-      await capture(control, 'cloud-space-mention-01-menu-entries.png')
-
-      // Scene 2: the direct row inserts the generic cloud://projects chip
-      // without binding anything.
-      await control.command('click', '[data-testid="mention-cloud-space-direct-action"]')
-      const directSnapshot = await snapshot(control)
-      assert.ok(
-        !directSnapshot.testIds.includes('mention-cloud-space-direct-action'),
-        'Selecting the direct row did not close the mention menu'
-      )
-      assert.ok(
-        directSnapshot.text.includes('项目空间'),
-        'The direct row did not insert the generic 项目空间 mention chip'
-      )
-      assert.ok(
-        !directSnapshot.testIds.includes('transient-notice'),
-        'The generic reference unexpectedly bound a cloud context'
-      )
-      await capture(control, 'cloud-space-mention-02-direct-chip.png')
-
-      // Scene 3: the project space list drills into every accessible project.
-      await control.command('fill', COMPOSER_SELECTOR, { value: '@' })
-      await control.command('waitFor', '[data-testid="mention-cloud-projects-action"]', {
+      await control.command('click', '[data-testid="workspace-tab-add-board"]')
+      await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="mention-cloud-projects-action"]')
-      await control.command(
-        'waitFor',
-        `[data-testid="cloud-reference-option-cloud-project-space-${WEBSITE_PROJECT.id}"]`,
-        { timeoutMs: uiTimeoutMs }
-      )
-      const drillSnapshot = await snapshot(control)
-      assert.ok(
-        drillSnapshot.testIds.includes(
-          `cloud-reference-option-cloud-project-space-${MOBILE_PROJECT.id}`
-        ),
-        'The project space drill did not list every accessible cloud project'
-      )
-      assert.ok(
-        drillSnapshot.testIds.includes('mention-cloud-back-action'),
-        'The project space drill lost its back row'
-      )
-      await capture(control, 'cloud-space-mention-03-project-list.png')
-
-      // Scene 4: selecting a project inserts the mention chip and binds the space.
-      await control.command(
-        'click',
-        `[data-testid="cloud-reference-option-cloud-project-space-${WEBSITE_PROJECT.id}"]`
-      )
-      await control.command('waitFor', '[data-testid="transient-notice"]', {
-        text: '已绑定项目空间',
+      await control.command('click', `[data-testid="cloud-sidebar-project-${WEBSITE_PROJECT.id}"]`)
+      await control.command('waitFor', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      const boundSnapshot = await snapshot(control)
-      assert.ok(
-        boundSnapshot.text.includes('项目空间:官网改版'),
-        'Selecting a project did not insert the 项目空间 mention chip'
-      )
-
-      // Scene 5: the bound space candidates surface through plain query
-      // filtering, todos carry their status badge.
-      await control.command('fill', COMPOSER_SELECTOR, { value: '@GW' })
-      await control.command('waitFor', '[data-testid="cloud-reference-option-cloud-todo-GW-1"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-ask-ai"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const spaceSnapshot = await snapshot(control)
-      assert.ok(
-        spaceSnapshot.testIds.includes('cloud-reference-status-cloud-todo-GW-1'),
-        'The todo row did not render its status badge'
+      const projectSnapshot = await snapshot(control)
+      assert.equal(
+        projectSnapshot.testIds.includes('cloud-project-chat-view'),
+        false,
+        'The retired project group-chat tab is still rendered'
       )
-      await capture(control, 'cloud-space-mention-04-bound-filter.png')
-      await control.command('click', '[data-testid="cloud-reference-option-cloud-todo-GW-1"]')
-      const todoSnapshot = await snapshot(control)
-      assert.ok(
-        todoSnapshot.text.includes('任务:GW'),
-        'Selecting a todo did not insert the 任务 mention chip'
+      assert.equal(
+        projectSnapshot.text.includes('群聊'),
+        false,
+        'The project header still exposes group chat copy'
       )
-
-      // Scene 6: the typed scope pins the direct row above filtered projects.
-      await control.command('fill', COMPOSER_SELECTOR, { value: '@项目空间:官' })
-      await control.command(
-        'waitFor',
-        `[data-testid="cloud-reference-option-cloud-project-space-${WEBSITE_PROJECT.id}"]`,
-        { timeoutMs: uiTimeoutMs }
+      await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
+      await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="cloud-todo-detail-activity-rail"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', `[data-testid="cloud-task-activity-${WEBSITE_TODO.id}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const detailSnapshot = await snapshot(control)
+      assert.equal(
+        detailSnapshot.testIds.includes(`task-discussion-${WEBSITE_TODO.id}`),
+        false,
+        'Task activity opened the old discussion side drawer'
       )
-      const colonSnapshot = await snapshot(control)
-      assert.ok(
-        colonSnapshot.testIds.includes('mention-cloud-space-direct-action'),
-        'The typed scope lost the pinned direct row'
-      )
-      assert.ok(
-        !colonSnapshot.testIds.includes(
-          `cloud-reference-option-cloud-project-space-${MOBILE_PROJECT.id}`
-        ),
-        'The @项目空间: keyword did not filter the project list'
-      )
-      await capture(control, 'cloud-space-mention-05-typed-scope.png')
-
-      // Scene 7: a non-matching typed phrase keeps only the direct row, which
-      // still inserts the generic chip.
-      await control.command('fill', COMPOSER_SELECTOR, { value: '@项目空间 新建项目' })
-      const emptyScopeSnapshot = await snapshot(control)
-      assert.ok(
-        emptyScopeSnapshot.testIds.includes('mention-cloud-space-direct-action'),
-        'The typed scope without matches lost the direct row'
-      )
-      assert.ok(
-        !emptyScopeSnapshot.testIds.some(testId =>
-          testId.startsWith('cloud-reference-option-cloud-project-space-')
-        ),
-        'A non-matching typed phrase still listed project candidates'
-      )
-      assert.ok(
-        !emptyScopeSnapshot.testIds.includes('mention-cloud-create-action'),
-        'The retired create action reappeared in the typed scope'
-      )
-      await control.command('click', '[data-testid="mention-cloud-space-direct-action"]')
-      const genericChipSnapshot = await snapshot(control)
-      assert.ok(
-        genericChipSnapshot.text.includes('项目空间'),
-        'The direct row in the typed scope did not insert the generic chip'
-      )
+      await capture(control, 'cloud-space-mention-06-task-detail-activity.png')
     },
 
     diagnostics() {

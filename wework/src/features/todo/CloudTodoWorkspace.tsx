@@ -59,6 +59,7 @@ import {
   type BoardCardDisplaySettings,
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
+import { ProjectQueueView } from './ProjectQueueView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import {
@@ -69,11 +70,10 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
-import { ProjectGroupChatView } from './ProjectGroupChatView'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 
-type ProjectView = 'board' | 'table' | 'chat' | 'files' | 'manage'
+type ProjectView = 'board' | 'table' | 'files' | 'queue' | 'manage'
 type RootView = 'projects' | 'my-work'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
@@ -697,7 +697,6 @@ export function CloudTodoWorkspace({
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [selectedItem, setSelectedItem] = useState<CloudLoopItem | null>(null)
-  const [threadItem, setThreadItem] = useState<CloudLoopItem | null>(null)
   // Items of the detail drawer's project when it differs from the board project,
   // so the drawer can stay open without switching the board view.
   const [detailItems, setDetailItems] = useState<CloudLoopItem[]>([])
@@ -746,7 +745,6 @@ export function CloudTodoWorkspace({
 
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
-    setThreadItem(null)
     setBoardParentId(null)
     setNativeGroupFilter('')
     setNativeBoardQuery('')
@@ -881,6 +879,10 @@ export function CloudTodoWorkspace({
     [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
+  const selectedProjectAgentApi =
+    selectedProject?.location === 'local'
+      ? services.localProjectChatAgentApi
+      : services.projectChatAgentApi
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
@@ -1083,9 +1085,6 @@ export function CloudTodoWorkspace({
     : selectedProject
   const createTodoApi = createTodoProject ? apiForProjectId(createTodoProject.id) : undefined
   const boardParent = items.find(item => item.id === boardParentId) ?? null
-  const threadProject = threadItem
-    ? projects.find(project => project.id === threadItem.cloud_project_id)
-    : undefined
   const boardLayerCount = items.filter(item => item.parent_id === boardParentId).length
   const boardBreadcrumb: CloudLoopItem[] = []
   let breadcrumbItem = boardParent
@@ -1768,6 +1767,22 @@ export function CloudTodoWorkspace({
                     >
                       看板
                     </button>
+                    {selectedProject.project_store === 'backend' &&
+                    selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-queue-view"
+                        onClick={() => setProjectView('queue')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'queue'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        队列
+                      </button>
+                    ) : null}
                     {isAITableProject && aitableApi ? (
                       <button
                         type="button"
@@ -1783,22 +1798,6 @@ export function CloudTodoWorkspace({
                         数据视图
                       </button>
                     ) : null}
-                    {selectedProject.location === 'cloud' &&
-                      selectedProject.access_role !== 'RestrictedAnalyst' && (
-                        <button
-                          type="button"
-                          data-testid="cloud-project-group-chat-view"
-                          onClick={() => setProjectView('chat')}
-                          className={cn(
-                            'rounded-md px-3.5 py-1 text-sm',
-                            projectView === 'chat'
-                              ? 'bg-background font-medium text-text-primary shadow-sm'
-                              : 'text-text-secondary hover:text-text-primary'
-                          )}
-                        >
-                          群聊
-                        </button>
-                      )}
                     {selectedProject.access_role !== 'RestrictedAnalyst' && (
                       <button
                         type="button"
@@ -1841,11 +1840,12 @@ export function CloudTodoWorkspace({
                       className="h-8 cursor-pointer bg-transparent text-xs outline-none"
                     >
                       <option value="board">看板</option>
+                      {selectedProject.project_store === 'backend' &&
+                      selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                        <option value="queue">队列</option>
+                      ) : null}
                       {isAITableProject && aitableApi ? (
                         <option value="table">数据视图</option>
-                      ) : null}
-                      {selectedProject.access_role !== 'RestrictedAnalyst' ? (
-                        <option value="chat">群聊</option>
                       ) : null}
                       {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                         <option value="files">文件</option>
@@ -1924,25 +1924,40 @@ export function CloudTodoWorkspace({
                   </>
                 )}
               </header>
-              {projectView === 'chat' && selectedProject.location === 'cloud' ? (
-                <ProjectGroupChatView
-                  key={selectedProject.id}
-                  client={services.projectChatClient}
-                  project={selectedProject}
-                  currentUserId={user.id}
-                  members={projectMembers[selectedProject.id] ?? []}
-                  onManageAgents={() => setProjectView('manage')}
-                />
-              ) : projectView === 'files' && selectedProjectApi ? (
+              {projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
                 <AITableView api={aitableApi} project={selectedProject} />
+              ) : projectView === 'queue' &&
+                selectedProjectApi &&
+                selectedProject.project_store === 'backend' ? (
+                <ProjectQueueView
+                  api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
+                  projectChatAgentApi={selectedProjectAgentApi}
+                  executionApi={
+                    selectedProject.location === 'local'
+                      ? services.localLoopItemExecutionApi
+                      : undefined
+                  }
+                  project={selectedProject}
+                  currentUserId={selectedProject.current_user_id}
+                  onOpenTask={item => {
+                    setDetailItems(current =>
+                      current.some(existing => existing.id === item.id)
+                        ? current
+                        : [...current, item]
+                    )
+                    setSelectedItem(item)
+                  }}
+                />
               ) : projectView === 'manage' && selectedProjectApi ? (
                 <CloudProjectManageView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
-                  projectChatAgentApi={services.projectChatAgentApi}
+                  projectChatAgentApi={selectedProjectAgentApi}
+                  deviceApi={services.deviceApi}
+                  modelApi={services.modelApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated =>
@@ -2210,9 +2225,12 @@ export function CloudTodoWorkspace({
                                         setArchiveError(null)
                                         setArchiveItem(item)
                                       }}
-                                      onOpenThread={
+                                      onOpenActivity={
                                         selectedProject.location === 'cloud'
-                                          ? () => setThreadItem(item)
+                                          ? () => {
+                                              if (item.can_view_detail !== false)
+                                                setSelectedItem(item)
+                                            }
                                           : undefined
                                       }
                                       display={boardCardDisplay}
@@ -2305,9 +2323,12 @@ export function CloudTodoWorkspace({
       )}
       {selectedItem && selectedItem.can_view_detail !== false && selectedItemApi && (
         <TodoEditor
-          key={`${selectedItem.id}:${selectedItem.version}`}
+          key={selectedItem.id}
           mode="edit"
           api={selectedItemApi}
+          projectChatAgentApi={selectedProjectAgentApi}
+          projectChatClient={services.projectChatClient}
+          currentUserId={user.id}
           aitableApi={
             projects.find(project => project.id === selectedItem.cloud_project_id)
               ?.task_provider === 'dingtalk_aitable'
@@ -2320,15 +2341,6 @@ export function CloudTodoWorkspace({
           onClose={() => setSelectedItem(null)}
           onAddChild={() => openTodoCreation(selectedItem)}
           onStartConversation={() => openTaskConversation(selectedItem)}
-          onOpenGroupChat={
-            projects.find(project => project.id === selectedItem.cloud_project_id)?.location ===
-            'cloud'
-              ? () => {
-                  setThreadItem(selectedItem)
-                  setSelectedItem(null)
-                }
-              : undefined
-          }
           onUpdated={updated => {
             setItems(current => current.map(item => (item.id === updated.id ? updated : item)))
             setDetailItems(current =>
@@ -2341,22 +2353,6 @@ export function CloudTodoWorkspace({
           }}
         />
       )}
-      {threadProject && threadItem ? (
-        <div
-          data-testid="cloud-task-thread-panel"
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl border-l border-border bg-background shadow-xl"
-        >
-          <ProjectGroupChatView
-            key={`${threadProject.id}:${threadItem.id}`}
-            client={services.projectChatClient}
-            project={threadProject}
-            task={threadItem}
-            currentUserId={user.id}
-            members={projectMembers[threadProject.id] ?? []}
-            onClose={() => setThreadItem(null)}
-          />
-        </div>
-      ) : null}
       {createProjectOpen && (
         <ProjectDialog
           availableApis={availableProjectSpaceApis}
@@ -2383,6 +2379,7 @@ export function CloudTodoWorkspace({
         <TodoEditor
           mode="create"
           api={createTodoApi}
+          projectChatAgentApi={selectedProjectAgentApi}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}
@@ -2403,6 +2400,7 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
+            if (item.assignee_agent_id) setSelectedItem(item)
           }}
         />
       )}

@@ -1304,6 +1304,10 @@ export function WorkbenchProvider({
   }, [stableRefreshWorkLists])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
+  const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
+    await executorClient.runtime.cancelRuntimeTask(address)
+    void refreshWorkLists()
+  })
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -1639,6 +1643,7 @@ export function WorkbenchProvider({
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
+    cancelRuntimeTask: stableCancelRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -1725,6 +1730,7 @@ export function WorkbenchProvider({
       startStandaloneChat: stableStartStandaloneChat,
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,
+      cancelRuntimeTask: stableCancelRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -1801,6 +1807,7 @@ export function WorkbenchProvider({
       stableArchiveProjectsConversations,
       stableArchiveRuntimeTask,
       stableBindRuntimeTaskToImSessions,
+      stableCancelRuntimeTask,
       stableCancelRuntimePaneTask,
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,

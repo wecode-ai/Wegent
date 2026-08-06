@@ -1,0 +1,145 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import '@/i18n'
+import type { CloudProject } from '@/api/deliveries'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { ProjectQueueView } from './ProjectQueueView'
+
+const project = {
+  id: '11',
+  name: 'Wework',
+  current_user_id: 1,
+} as unknown as CloudProject
+
+function services(): WorkbenchServices {
+  return {
+    deliveryApi: {
+      listLoopItems: vi.fn(async () => ({
+        items: [
+          {
+            id: 'T-1',
+            cloud_project_id: '11',
+            title: 'Queue me',
+            status: 'in_progress',
+            execution_state: 'assigned',
+            assignment_history: [
+              {
+                by_user_id: 2,
+                to_type: 'user',
+                to_id: '1',
+                to_name: 'local',
+                action: 'assign',
+                at: '2026-08-05T00:00:00Z',
+              },
+            ],
+          },
+          {
+            id: 'T-2',
+            cloud_project_id: '11',
+            title: 'Done',
+            status: 'completed',
+            execution_state: 'completed',
+          },
+        ],
+      })),
+    },
+    projectChatAgentApi: {
+      list: vi.fn(async () => [
+        {
+          id: 'bot-1',
+          projectId: '11',
+          name: 'Local Bot',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'public',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          createdByUserId: 1,
+          createdByUserName: 'local',
+          version: 1,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+    },
+  } as unknown as WorkbenchServices
+}
+
+describe('ProjectQueueView', () => {
+  it('renders derived queues for the current user and visible robots', async () => {
+    const mock = services()
+    const listLoopItems = mock.deliveryApi!.listLoopItems as ReturnType<typeof vi.fn>
+    listLoopItems.mockImplementation(async (projectId: string | number, filters?: object) => {
+      const assigneeId = (filters as { assigneeId?: string | number } | undefined)?.assigneeId
+      if (assigneeId === 'bot-1') {
+        return {
+          items: [
+            {
+              id: 'T-3',
+              cloud_project_id: '11',
+              title: 'Bot queued task',
+              status: 'pending',
+              execution_state: 'queued',
+              assignment_history: [
+                {
+                  by_user_id: 2,
+                  to_type: 'agent',
+                  to_id: 'bot-1',
+                  to_name: 'Local Bot',
+                  action: 'assign',
+                  at: '2026-08-05T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        }
+      }
+      return {
+        items: [
+          {
+            id: 'T-1',
+            cloud_project_id: '11',
+            title: 'Queue me',
+            status: 'in_progress',
+            execution_state: 'assigned',
+            assignment_history: [
+              {
+                by_user_id: 2,
+                to_type: 'user',
+                to_id: '1',
+                to_name: 'local',
+                action: 'assign',
+                at: '2026-08-05T00:00:00Z',
+              },
+            ],
+          },
+          {
+            id: 'T-2',
+            cloud_project_id: '11',
+            title: 'Done',
+            status: 'completed',
+            execution_state: 'completed',
+          },
+        ],
+      }
+    })
+
+    render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
+    expect(screen.getByTestId('project-queue-column-bot-1')).toBeInTheDocument()
+    expect(screen.getByText('Queue me')).toBeInTheDocument()
+    expect(screen.getByText('Bot queued task')).toBeInTheDocument()
+    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+})

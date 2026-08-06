@@ -389,7 +389,8 @@ export function useWorkbenchRuntimeMessaging({
     (
       message: string,
       sourceAttachments?: Attachment[],
-      projectOverride?: ProjectWithTasks | null
+      projectOverride?: ProjectWithTasks | null,
+      deviceOverride?: string | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
@@ -399,7 +400,8 @@ export function useWorkbenchRuntimeMessaging({
         state.selectedDeviceWorkspaceId
       )
       const activeDeviceId =
-        activeProject && selectedProjectWorkspace
+        deviceOverride ||
+        (activeProject && selectedProjectWorkspace
           ? selectedProjectWorkspace.deviceId
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
@@ -407,7 +409,7 @@ export function useWorkbenchRuntimeMessaging({
                 state.devices,
                 state.standaloneDeviceId
               ),
-            })
+            }))
 
       const payload: ChatSendPayload = {
         team_id: state.defaultTeam.id,
@@ -513,15 +515,23 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        modelSelection?: ModelSelectionConfig | null
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
-      const selectedModel =
-        modelSelection.getSelectedModel?.() ??
-        modelSelection.selectedModel ??
-        resolveAutomaticModel(modelSelection.models)
-      const selectedModelOptions =
-        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+      const overrideSelection = options?.modelSelection
+      const selectedModel = overrideSelection
+        ? (modelSelection.models.find(
+            model =>
+              model.name === overrideSelection.modelName &&
+              (!overrideSelection.modelType || model.type === overrideSelection.modelType)
+          ) ?? null)
+        : (modelSelection.getSelectedModel?.() ??
+          modelSelection.selectedModel ??
+          resolveAutomaticModel(modelSelection.models))
+      const selectedModelOptions = overrideSelection
+        ? (overrideSelection.options ?? {})
+        : (modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions)
       const runtime = inferRuntimeName(selectedModel)
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -648,13 +658,15 @@ export function useWorkbenchRuntimeMessaging({
             ? { collaborationMode: options.collaborationMode }
             : {}),
         },
-        modelSelection: selectedModel
-          ? {
-              modelName: selectedModel.name,
-              modelType: selectedModel.type,
-              options: selectedModelOptions,
-            }
-          : null,
+        modelSelection:
+          options?.modelSelection ??
+          (selectedModel
+            ? {
+                modelName: selectedModel.name,
+                modelType: selectedModel.type,
+                options: selectedModelOptions,
+              }
+            : null),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
@@ -1142,7 +1154,12 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      const prepared = buildSendPayload(message, options.attachments, options.project)
+      const prepared = buildSendPayload(
+        message,
+        options.attachments,
+        options.project,
+        options.deviceId
+      )
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',
@@ -1170,16 +1187,20 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      const payload = options.modelId
-        ? { ...prepared.payload, force_override_bot_model: options.modelId }
-        : prepared.payload
+      const payload = options.executionModel
+        ? applyExecutionModelOverride(prepared.payload, options.executionModel)
+        : options.modelId
+          ? { ...prepared.payload, force_override_bot_model: options.modelId }
+          : prepared.payload
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
         initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
+        modelSelection: options.modelSelection,
         additionalContext: options.additionalContext,
+        ephemeral: options.hiddenFromSidebar,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
@@ -1422,6 +1443,26 @@ function modelSelectionFromCreateRequest(
     modelType: request.modelType ?? null,
     options: request.modelOptions ?? {},
   }
+}
+
+export function applyExecutionModelOverride(
+  payload: ChatSendPayload,
+  executionModel: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
+): ChatSendPayload {
+  const next: ChatSendPayload = { ...payload }
+  delete next.force_override_bot_model
+  delete next.force_override_bot_model_type
+  delete next.model_options
+  if (executionModel.modelId) {
+    next.force_override_bot_model = executionModel.modelId
+  }
+  if (executionModel.modelType) {
+    next.force_override_bot_model_type = executionModel.modelType
+  }
+  if (executionModel.modelOptions && Object.keys(executionModel.modelOptions).length > 0) {
+    next.model_options = executionModel.modelOptions
+  }
+  return next
 }
 
 function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {

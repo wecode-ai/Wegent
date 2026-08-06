@@ -5,23 +5,30 @@ import {
   ExternalLink,
   Hash,
   LoaderCircle,
-  MessageCircle,
   MessageSquareText,
+  Square,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { ChatInput } from '@/components/chat/ChatInput'
+import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
   DESKTOP_MESSAGE_LIST_CLASS,
 } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
+import {
+  buildTaskAiInitialPrompt,
+  mergeProjectChatMessages,
+  startTaskAiRun,
+} from './taskAiExecution'
+import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -32,6 +39,7 @@ interface TaskActivityViewProps {
   // rail mode: fill a fixed-height side column with an internally scrolling
   // message list and a composer pinned to the bottom
   rail?: boolean
+  linear?: boolean
 }
 
 export function TaskActivityView({
@@ -41,21 +49,76 @@ export function TaskActivityView({
   currentUserId,
   onTaskUpdated,
   rail = false,
+  linear = false,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
-  const { services, createProjectRuntimeTask, openRuntimeTask, sendRuntimePaneMessage } =
+  const { services, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
+  const [executionDetail, setExecutionDetail] = useState<{
+    address: RuntimeTaskAddress
+    senderName: string
+    runId: string | null
+    modelName: string | null
+    runStatus: string | null
+  } | null>(null)
+  const modelSelection = useWorkbenchModels({
+    api: services.modelApi,
+    locked: false,
+    scopeKey: `task-activity-${project.id}`,
+    persistSelection: false,
+  })
+  const {
+    models: availableModels,
+    selectedModel,
+    selectedModelOptions,
+    setSelectedModel,
+    setSelectedModelOption,
+  } = modelSelection
+  const commentProjectChat = useMemo<ProjectChatControls>(
+    () => ({
+      scopeKey: `task-activity-${project.id}`,
+      models: availableModels,
+      skills: [],
+      selectedModel,
+      activeModel: null,
+      selectedModelOptions,
+      isModelSelectionReady: true,
+      trialTemplates: [],
+      selectedSkills: [],
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+      isOptionsLocked: false,
+      setSelectedModel,
+      setSelectedModelOption,
+      toggleSkill: () => {},
+      handleFileSelect: async () => {},
+      removeAttachment: async () => {},
+      listLocalSkills: async () => [],
+      listLocalApps: async () => [],
+    }),
+    [
+      availableModels,
+      project.id,
+      selectedModel,
+      selectedModelOptions,
+      setSelectedModel,
+      setSelectedModelOption,
+    ]
+  )
   const [messages, setMessages] = useState<ProjectChatMessage[]>([])
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(Boolean(client))
   const [sending, setSending] = useState(false)
+  const [cancellingMessageId, setCancellingMessageId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const reviewedResponseIds = useRef(new Set<string>())
-  const initialRunStarted = useRef(false)
-  const runStatusStarted = useRef(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  const followBottomRef = useRef(true)
+  const refreshedRunIds = useRef(new Set<string>())
+  const compact = rail || linear
 
   useEffect(() => {
     if (!services.projectChatAgentApi) return
@@ -81,7 +144,7 @@ export function TaskActivityView({
         task.id,
         0,
         message => {
-          if (active) setMessages(current => mergeMessages(current, [message]))
+          if (active) setMessages(current => mergeProjectChatMessages(current, [message]))
         },
         chunk => {
           if (active) setMessages(current => appendAgentChunk(current, chunk))
@@ -94,7 +157,7 @@ export function TaskActivityView({
         }
         unsubscribe = subscription.unsubscribe
         setChatCurrentUserId(subscription.snapshot.currentUserId)
-        setMessages(current => mergeMessages(current, subscription.snapshot.messages))
+        setMessages(current => mergeProjectChatMessages(current, subscription.snapshot.messages))
         setLoading(false)
       })
       .catch(cause => {
@@ -108,26 +171,98 @@ export function TaskActivityView({
     }
   }, [client, project.id, t, task.id])
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView?.({ block: 'end' })
-  }, [messages])
+  // Follow the newest comment the same way the task conversation page does:
+  // stay pinned to the bottom while the user is there (including streaming
+  // AI chunks), stop following once the user scrolls up, and jump back to the
+  // bottom on send or on an initial load.
+  const scrollTaskCommentsToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const scroller = findTaskCommentScrollContainer(listRef.current)
+    if (scroller) {
+      if (typeof scroller.scrollTo === 'function') {
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior })
+      } else {
+        scroller.scrollTop = scroller.scrollHeight
+      }
+    } else {
+      endRef.current?.scrollIntoView?.({ block: 'end' })
+    }
+  }, [])
 
   useEffect(() => {
-    if (!task || !services.deliveryApi || task.status === 'completed') return
-    const completedResponse = messages.find(
-      message =>
-        message.taskId === task.id &&
-        message.sender.type === 'agent' &&
-        message.status === 'completed' &&
-        !reviewedResponseIds.current.has(message.messageId)
-    )
-    if (!completedResponse || task.status === 'in_review') return
-    reviewedResponseIds.current.add(completedResponse.messageId)
+    const frame = requestAnimationFrame(() => {
+      if (followBottomRef.current) scrollTaskCommentsToBottom()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [compact, loading, messages, scrollTaskCommentsToBottom])
+
+  useEffect(() => {
+    const scroller = findTaskCommentScrollContainer(listRef.current)
+    if (!scroller) return
+    const updateFollowState = () => {
+      const distance = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+      followBottomRef.current = distance <= 48
+    }
+    scroller.addEventListener('scroll', updateFollowState, { passive: true })
+    return () => scroller.removeEventListener('scroll', updateFollowState)
+  }, [compact, loading, messages.length])
+
+  useEffect(() => {
+    if (
+      !services.deliveryApi ||
+      typeof services.deliveryApi.getLoopItem !== 'function' ||
+      task.status === 'completed'
+    ) {
+      return
+    }
+    const terminalResponse = messages.find(message => {
+      if (message.taskId !== task.id || message.sender.type !== 'agent') return false
+      if (message.status !== 'completed' && message.status !== 'failed') return false
+      return !refreshedRunIds.current.has(message.messageId)
+    })
+    if (!terminalResponse) {
+      if (task.ai_state?.status === 'running') {
+        console.info('[Wework] Task activity waiting for terminal AI message', {
+          taskId: task.id,
+          taskStatus: task.status,
+          aiStatus: task.ai_state.status,
+          aiMessageId: task.ai_state.project_chat_message_id,
+          runtimeDeviceId: task.ai_state.runtime_device_id,
+          runtimeTaskId: task.ai_state.runtime_task_id,
+          agentMessages: messages
+            .filter(message => message.taskId === task.id && message.sender.type === 'agent')
+            .map(message => ({
+              messageId: message.messageId,
+              status: message.status,
+              runtimeTaskId: message.runtimeAddress?.taskId,
+            })),
+        })
+      }
+      return
+    }
+    refreshedRunIds.current.add(terminalResponse.messageId)
+    console.info('[Wework] Task activity terminal AI message received; refreshing task', {
+      taskId: task.id,
+      messageId: terminalResponse.messageId,
+      messageStatus: terminalResponse.status,
+      runtimeDeviceId: terminalResponse.runtimeAddress?.deviceId,
+      runtimeTaskId: terminalResponse.runtimeAddress?.taskId,
+    })
     void services.deliveryApi
-      .updateLoopItem(task.id, { version: task.version, status: 'in_review' })
-      .then(updated => onTaskUpdated?.(updated))
-      .catch(cause => setError(cause instanceof Error ? cause.message : '更新待确认状态失败'))
-  }, [messages, onTaskUpdated, services.deliveryApi, task])
+      .getLoopItem(task.id)
+      .then(updated => {
+        console.info('[Wework] Task activity refreshed task after terminal AI message', {
+          taskId: updated.id,
+          taskStatus: updated.status,
+          aiStatus: updated.ai_state?.status,
+          aiMessageId: updated.ai_state?.project_chat_message_id,
+          runtimeTaskId: updated.ai_state?.runtime_task_id,
+        })
+        onTaskUpdated?.(updated)
+      })
+      .catch(cause => {
+        setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
+      })
+  }, [messages, onTaskUpdated, services.deliveryApi, t, task.id, task.status])
 
   const threadMessages = useMemo(
     () => messages.filter(message => message.taskId === task.id),
@@ -137,11 +272,123 @@ export function TaskActivityView({
     () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
     [agents, task.assignee_agent_id]
   )
+  const activeUserId = currentUserId ?? chatCurrentUserId
+  const isBotCreator = assignedAgent
+    ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
+    : false
+  const awaitingApproval = task.execution_state === 'pending_approval'
+  const aiTerminalFailure = ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(
+    task.ai_state?.status ?? ''
+  )
 
   async function sendMessage() {
     const text = draft.trim()
     if (!(await sendText(text))) return
     setDraft('')
+  }
+
+  async function acceptTask() {
+    if (!services.deliveryApi) return
+    setError(null)
+    try {
+      const updated = await services.deliveryApi.updateLoopItem(task.id, {
+        version: task.version,
+        status: 'completed',
+      })
+      onTaskUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.task_activity_accept_failed'))
+    }
+  }
+
+  async function approveTaskRun() {
+    if (!services.deliveryApi || !project) return
+    setError(null)
+    try {
+      const updated = await services.deliveryApi.approveLoopItemRun(
+        project.id,
+        task.id,
+        task.version
+      )
+      onTaskUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.task_activity_approve_failed'))
+    }
+  }
+
+  async function rejectTaskRun() {
+    if (!services.deliveryApi || !project) return
+    const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt')) ?? undefined
+    if (reason === undefined) return
+    setError(null)
+    try {
+      const updated = await services.deliveryApi.rejectLoopItemRun(
+        project.id,
+        task.id,
+        task.version,
+        reason.trim() || undefined
+      )
+      onTaskUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.task_activity_reject_failed'))
+    }
+  }
+
+  async function stopRuntimeTask(message: ProjectChatMessage) {
+    if (!message.runtimeAddress || cancellingMessageId) return
+    setCancellingMessageId(message.messageId)
+    setError(null)
+    try {
+      await cancelRuntimeTask(message.runtimeAddress)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.task_activity_stop_failed'))
+    } finally {
+      setCancellingMessageId(null)
+    }
+  }
+
+  function focusContinueComment() {
+    document.querySelector<HTMLElement>('[data-testid="cloud-task-activity-composer"]')?.focus()
+  }
+
+  async function rerunTaskAi() {
+    if (!client || !assignedAgent || sending) return
+    setSending(true)
+    setError(null)
+    try {
+      const lastRequestedModelName = [...messages]
+        .filter(
+          message => message.sender.type === 'user' && typeof message.metadata.model === 'string'
+        )
+        .at(-1)?.metadata.model
+      const rerunModel =
+        typeof lastRequestedModelName === 'string'
+          ? (availableModels.find(model => model.name === lastRequestedModelName) ?? null)
+          : null
+      await startTaskAiRun({
+        client,
+        services,
+        runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
+        project,
+        task,
+        agent: assignedAgent,
+        prompt: buildTaskAiInitialPrompt(task),
+        messages,
+        models: availableModels,
+        selectedModel: rerunModel,
+        selectedModelOptions: {},
+        onError: setError,
+        onMessages: incoming => setMessages(current => mergeProjectChatMessages(current, incoming)),
+        onTaskUpdated,
+        startFailedText: t('workbench.project_chat_agent_start_failed'),
+      })
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : t('workbench.project_chat_agent_start_failed')
+      )
+    } finally {
+      setSending(false)
+    }
   }
 
   async function sendText(text: string): Promise<boolean> {
@@ -158,11 +405,30 @@ export function TaskActivityView({
         clientMessageId: crypto.randomUUID(),
         text,
         mentions: activeMentions,
+        model: selectedModel?.name ?? null,
       })
-      setMessages(current => mergeMessages(current, [message]))
+      followBottomRef.current = true
+      setMessages(current => mergeProjectChatMessages(current, [message]))
       if (assignedAgent) {
-        runStatusStarted.current = false
-        await runAssignedAgent(assignedAgent, text, message)
+        await startTaskAiRun({
+          client,
+          services,
+          runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
+          project,
+          task,
+          agent: assignedAgent,
+          prompt: text,
+          trigger: message,
+          messages,
+          models: availableModels,
+          selectedModel,
+          selectedModelOptions,
+          onError: setError,
+          onMessages: incoming =>
+            setMessages(current => mergeProjectChatMessages(current, incoming)),
+          onTaskUpdated,
+          startFailedText: t('workbench.project_chat_agent_start_failed'),
+        })
       }
       return true
     } catch (cause) {
@@ -173,375 +439,340 @@ export function TaskActivityView({
     return false
   }
 
-  useEffect(() => {
-    if (
-      loading ||
-      !task ||
-      !assignedAgent ||
-      threadMessages.length > 0 ||
-      initialRunStarted.current
-    ) {
-      return
-    }
-    initialRunStarted.current = true
-    const taskPrompt = [
-      `请开始执行任务 ${task.id}：${task.title}`,
-      task.description.trim(),
-      '完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。',
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-    void sendText(taskPrompt)
-  }, [assignedAgent, loading, task, threadMessages.length])
-
-  async function runAssignedAgent(
-    agent: ProjectChatAgent,
-    prompt: string,
-    trigger: ProjectChatMessage
-  ) {
-    if (!client) return
-    const previousRuntime = [...messages]
-      .reverse()
-      .find(
-        message =>
-          message.taskId === task.id &&
-          message.agentId === agent.id &&
-          message.runtimeAddress?.deviceId &&
-          message.runtimeAddress?.taskId
-      )?.runtimeAddress
-    if (previousRuntime) {
-      let response: ProjectChatMessage | null = await client.startAgentResponse({
-        projectId: project.id,
-        taskId: task.id,
-        triggerMessageId: trigger.messageId,
-        agentId: agent.id,
-        runtimeDeviceId: previousRuntime.deviceId,
-        runtimeTaskId: previousRuntime.taskId,
-      })
-      setMessages(current => mergeMessages(current, response ? [response] : []))
-      if (
-        task &&
-        services.deliveryApi &&
-        task.status !== 'in_progress' &&
-        !runStatusStarted.current
-      ) {
-        runStatusStarted.current = true
-        const updated = await services.deliveryApi.updateLoopItem(task.id, {
-          version: task.version,
-          status: 'in_progress',
-        })
-        onTaskUpdated?.(updated)
-      }
-      const sent = await sendRuntimePaneMessage(
-        {
-          address: previousRuntime,
-          message: prompt,
-          ephemeral: true,
-          additionalContext: {
-            projectChatHistory: {
-              kind: 'untrusted',
-              value: formatProjectChatHistory(messages, trigger),
-            },
-          },
-        },
-        { onError: setError }
-      )
-      if (!sent && response) {
-        response = await client.failAgentResponse({
-          projectId: project.id,
-          taskId: task.id,
-          messageId: response.messageId,
-          error: t('workbench.project_chat_agent_start_failed'),
-        })
-        setMessages(current => mergeMessages(current, response ? [response] : []))
-      }
-      return
-    }
-    let response: ProjectChatMessage | null = null
-    const address = await createProjectRuntimeTask(prompt, {
-      project: null,
-      modelId: agent.model,
-      collaborationMode: 'default',
-      cloudProjectId: String(project.id),
-      hiddenFromSidebar: true,
-      additionalContext: {
-        ...projectSpaceChatRuntimeContext(project),
-        projectChatHistory: {
-          kind: 'untrusted',
-          value: formatProjectChatHistory(messages, trigger),
-        },
-        projectChat: {
-          kind: 'application',
-          value: [
-            `This run was started by task activity ${trigger.messageId}.`,
-            `Reply to task cloud://projects/${project.id}/todos/${task.id}.`,
-            'Your final response is a reviewable task comment. Report actual changes, verification, unfinished work, and risks.',
-          ].join('\n'),
-        },
-        projectChatAgent: {
-          kind: 'application',
-          value: agent.systemPrompt
-            ? `You are ${agent.name}, the AI owner of this project task.\n${agent.systemPrompt}`
-            : `You are ${agent.name}, the AI owner of this project task.`,
-        },
-      },
-      onError: setError,
-      onRuntimeTaskOptimisticOpen: async address => {
-        if (task) await services.deliveryApi?.bindTask(task.id, address, task.title)
-        if (
-          task &&
-          services.deliveryApi &&
-          task.status !== 'in_progress' &&
-          !runStatusStarted.current
-        ) {
-          runStatusStarted.current = true
-          const updated = await services.deliveryApi.updateLoopItem(task.id, {
-            version: task.version,
-            status: 'in_progress',
-          })
-          onTaskUpdated?.(updated)
-        }
-        response = await client.startAgentResponse({
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: trigger.messageId,
-          agentId: agent.id,
-          runtimeDeviceId: address.deviceId,
-          runtimeTaskId: address.taskId,
-        })
-        setMessages(current => mergeMessages(current, response ? [response] : []))
-      },
-    })
-    if (!address) {
-      if (response) {
-        try {
-          const failed = await client.failAgentResponse({
-            projectId: project.id,
-            taskId: task.id,
-            messageId: response.messageId,
-            error: t('workbench.project_chat_agent_start_failed'),
-          })
-          if (failed) setMessages(current => mergeMessages(current, [failed]))
-        } catch (cause) {
-          console.warn('[Wework] Failed to close rejected project chat AI run', cause)
-        }
-      }
-      setError(t('workbench.project_chat_agent_start_failed'))
-    }
-  }
-
   return (
-    <section
-      data-testid={`cloud-task-activity-${task.id}`}
-      className={
-        rail ? 'flex h-full min-h-0 flex-col max-md:block' : 'mt-8 border-t border-border pt-6'
-      }
-    >
-      <header
+    <>
+      <section
+        data-testid={`cloud-task-activity-${task.id}`}
         className={cn(
-          'flex min-h-8 items-center gap-3',
-          rail && 'shrink-0 bg-muted/40 px-[18px] pb-[10px] pt-[14px]'
+          rail && 'flex h-full min-h-0 flex-col max-md:block',
+          linear && 'task-detail-comments',
+          !compact && 'mt-8 border-t border-border pt-6'
         )}
       >
-        <span
+        <header
           className={cn(
-            'flex h-7 w-7 items-center justify-center rounded-lg bg-muted text-text-secondary',
-            rail && 'hidden'
+            'flex min-h-8 items-center gap-3',
+            rail && 'shrink-0 bg-muted/40 px-[18px] pb-[10px] pt-[14px]',
+            linear && 'task-detail-comments-head'
           )}
         >
-          <Hash className="h-4 w-4" />
-        </span>
-        <span className="min-w-0">
           <span
-            className={cn('block font-semibold text-text-primary', rail ? 'text-base' : 'text-sm')}
+            className={cn(
+              'flex h-7 w-7 items-center justify-center rounded-lg bg-muted text-text-secondary',
+              compact && 'hidden'
+            )}
           >
-            {rail ? '评论' : t('workbench.task_activity_title')}
+            <Hash className="h-4 w-4" />
           </span>
-        </span>
-        {rail && threadMessages.length > 0 ? (
-          <span className="text-sm text-text-muted">
-            {t('workbench.task_activity_count', { count: threadMessages.length })}
+          <span className="min-w-0">
+            <span
+              className={cn(
+                'block font-semibold text-text-primary',
+                compact ? 'text-base' : 'text-sm'
+              )}
+            >
+              {compact ? '评论' : t('workbench.task_activity_title')}
+            </span>
           </span>
-        ) : null}
-        <span className="flex-1" />
-        {rail ? (
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
-          >
-            <ArrowDownUp className="h-3.5 w-3.5" />
-            最新
-          </button>
-        ) : null}
-        {assignedAgent ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-700">
-            <Bot className="h-3.5 w-3.5" />
-            {assignedAgent.name}
-          </span>
-        ) : null}
-        {task.status === 'in_review' && services.deliveryApi ? (
-          <button
-            type="button"
-            data-testid={`cloud-task-activity-accept-${task.id}`}
-            onClick={() => {
-              void services.deliveryApi
-                ?.updateLoopItem(task.id, { version: task.version, status: 'completed' })
-                .then(updated => onTaskUpdated?.(updated))
-                .catch(cause => setError(cause instanceof Error ? cause.message : '验收失败'))
-            }}
-            className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
-          >
-            {t('workbench.task_activity_accept')}
-          </button>
-        ) : null}
-      </header>
-
-      <div
-        className={rail ? 'min-h-0 flex-1 overflow-y-auto px-[18px] pb-4 pt-0.5' : 'min-h-48 py-3'}
-      >
-        {loading ? (
-          <div className="flex min-h-48 items-center justify-center text-sm text-text-muted">
-            <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-            {t('workbench.project_chat_loading')}
-          </div>
-        ) : threadMessages.length === 0 ? (
-          <div className="flex min-h-48 flex-col items-center justify-center text-center">
-            <MessageSquareText className="h-8 w-8 text-text-muted" />
-            <p className="mt-3 text-sm font-medium text-text-primary">
-              {t('workbench.task_activity_empty')}
-            </p>
-            <p className="mt-1 max-w-sm text-xs leading-5 text-text-muted">
-              {assignedAgent
-                ? t('workbench.task_activity_empty_with_ai', { name: assignedAgent.name })
-                : t('workbench.task_activity_empty_without_ai')}
-            </p>
-          </div>
-        ) : (
-          <div
-            className={
-              rail
-                ? 'flex flex-col divide-y divide-border/70 pb-4'
-                : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
-            }
-          >
-            {threadMessages.map(message => (
-              <ChatMessage
-                key={message.messageId}
-                message={message}
-                mine={
-                  message.sender.type === 'user' &&
-                  String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
-                }
-                rail={rail}
-                onOpenExecution={
-                  message.runtimeAddress
-                    ? () => void openRuntimeTask(message.runtimeAddress!)
-                    : undefined
-                }
-              />
-            ))}
-            <div ref={endRef} />
-          </div>
-        )}
-      </div>
-
-      <footer
-        className={rail ? 'shrink-0 border-t border-border bg-background px-[18px] py-3' : 'pt-2'}
-      >
-        {rail ? (
-          <>
-            <div className="flex items-center gap-3">
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-transparent bg-muted px-3.5 py-2 focus-within:border-blue-500/40 focus-within:bg-background">
-                <input
-                  data-testid="cloud-task-activity-composer"
-                  value={draft}
-                  disabled={!client}
-                  onChange={event => setDraft(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      void sendMessage()
-                    }
-                  }}
-                  placeholder="说点什么..."
-                  className="min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-text-muted disabled:cursor-not-allowed"
-                />
+          {compact && threadMessages.length > 0 ? (
+            <span className="text-sm text-text-muted">
+              {t('workbench.task_activity_count', { count: threadMessages.length })}
+            </span>
+          ) : null}
+          <span className="flex-1" />
+          {compact ? (
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
+            >
+              <ArrowDownUp className="h-3.5 w-3.5" />
+              最新
+            </button>
+          ) : null}
+          {assignedAgent ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-700">
+              <Bot className="h-3.5 w-3.5" />
+              {assignedAgent.name}
+            </span>
+          ) : null}
+          {awaitingApproval && isBotCreator ? (
+            <div
+              data-testid={`cloud-task-activity-approval-${task.id}`}
+              className="flex items-center gap-1.5"
+            >
+              <button
+                type="button"
+                data-testid={`cloud-task-activity-reject-${task.id}`}
+                onClick={() => void rejectTaskRun()}
+                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-red-600"
+              >
+                {t('workbench.task_activity_reject')}
+              </button>
+              <button
+                type="button"
+                data-testid={`cloud-task-activity-approve-${task.id}`}
+                onClick={() => void approveTaskRun()}
+                className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
+              >
+                {t('workbench.task_activity_approve')}
+              </button>
+            </div>
+          ) : null}
+          {awaitingApproval && !isBotCreator ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700">
+              {t('workbench.task_activity_awaiting_approval')}
+            </span>
+          ) : null}
+          {task.execution_state === 'cancelled' ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-700">
+              {t('workbench.task_activity_cancelled')}
+            </span>
+          ) : null}
+          {task.execution_note ? (
+            <span
+              data-testid={`cloud-task-activity-execution-note-${task.id}`}
+              className="inline-flex max-w-56 items-center gap-1.5 truncate rounded-full bg-muted px-2.5 py-1 text-xs text-text-secondary"
+              title={task.execution_note}
+            >
+              {task.execution_note}
+            </span>
+          ) : null}
+          {assignedAgent &&
+          (task.execution_state === 'queued' || task.execution_state === 'assigned') &&
+          task.status !== 'in_review' ? (
+            <button
+              type="button"
+              data-testid={`cloud-task-activity-run-now-${task.id}`}
+              disabled={!client || sending}
+              onClick={() => void rerunTaskAi()}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
+            >
+              {t('workbench.task_activity_run_now')}
+            </button>
+          ) : null}
+          {task.status === 'in_review' ? (
+            <div
+              data-testid={`cloud-task-activity-review-actions-${task.id}`}
+              className="flex items-center gap-1.5"
+            >
+              <button
+                type="button"
+                data-testid={`cloud-task-activity-continue-${task.id}`}
+                onClick={focusContinueComment}
+                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                {t('workbench.task_activity_continue')}
+              </button>
+              {assignedAgent ? (
                 <button
                   type="button"
-                  disabled={!draft.trim() || sending || !client}
-                  onClick={() => void sendMessage()}
-                  className="rounded-full px-2.5 py-1 text-sm font-medium text-text-muted transition enabled:hover:bg-blue-600 enabled:hover:text-background disabled:opacity-60"
+                  data-testid={`cloud-task-activity-rerun-${task.id}`}
+                  disabled={!client || sending}
+                  onClick={() => void rerunTaskAi()}
+                  className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
                 >
-                  发送
+                  {t('workbench.task_activity_rerun')}
                 </button>
-              </div>
+              ) : null}
+              {services.deliveryApi ? (
+                <button
+                  type="button"
+                  data-testid={`cloud-task-activity-accept-${task.id}`}
+                  onClick={() => void acceptTask()}
+                  className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
+                >
+                  {t('workbench.task_activity_accept')}
+                </button>
+              ) : null}
             </div>
-            {(error || !client) && (
-              <p className="mt-2 px-1 text-xs text-destructive">
-                {error ?? t('workbench.project_chat_cloud_required')}
+          ) : null}
+          {assignedAgent && aiTerminalFailure && task.status !== 'in_review' ? (
+            <button
+              type="button"
+              data-testid={`cloud-task-activity-rerun-${task.id}`}
+              disabled={!client || sending}
+              onClick={() => void rerunTaskAi()}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
+            >
+              {t('workbench.task_activity_rerun')}
+            </button>
+          ) : null}
+        </header>
+
+        <div
+          ref={listRef}
+          data-testid="cloud-task-activity-list"
+          className={cn(
+            rail && 'min-h-0 flex-1 overflow-y-auto px-[18px] pb-4 pt-0.5',
+            linear && 'task-detail-comments-list',
+            !compact && 'min-h-48 py-3'
+          )}
+        >
+          {loading ? (
+            <div className="flex min-h-48 items-center justify-center text-sm text-text-muted">
+              <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+              {t('workbench.project_chat_loading')}
+            </div>
+          ) : threadMessages.length === 0 ? (
+            <div className="flex min-h-48 flex-col items-center justify-center text-center">
+              <MessageSquareText className="h-8 w-8 text-text-muted" />
+              <p className="mt-3 text-sm font-medium text-text-primary">
+                {t('workbench.task_activity_empty')}
               </p>
-            )}
-          </>
-        ) : (
-          <div className={cn(DESKTOP_CHAT_CONTENT_WIDTH_CLASS, 'relative')}>
-            <ChatInput
-              value={draft}
-              disabled={!client}
-              onChange={setDraft}
-              onSubmit={() => sendMessage()}
-              submitDisabled={!draft.trim() || sending}
-              error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
-              placeholder={
-                assignedAgent
-                  ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
-                  : t('workbench.task_activity_placeholder')
+              <p className="mt-1 max-w-sm text-xs leading-5 text-text-muted">
+                {assignedAgent
+                  ? t('workbench.task_activity_empty_with_ai', { name: assignedAgent.name })
+                  : t('workbench.task_activity_empty_without_ai')}
+              </p>
+            </div>
+          ) : (
+            <div
+              className={
+                rail
+                  ? 'flex flex-col divide-y divide-border/70 pb-4'
+                  : linear
+                    ? 'flex flex-col divide-y divide-border/70'
+                    : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
               }
-              variant="desktop"
-              showProjectWorkBar={false}
-              composerMode="message-only"
-              composerInputTestId="cloud-task-activity-composer"
-            />
-          </div>
-        )}
-      </footer>
-    </section>
+            >
+              {threadMessages.map(message => (
+                <ChatMessage
+                  key={message.messageId}
+                  message={message}
+                  mine={
+                    message.sender.type === 'user' &&
+                    String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
+                  }
+                  compact={compact}
+                  taskAiState={task.ai_state}
+                  onOpenExecution={
+                    message.runtimeAddress
+                      ? () =>
+                          setExecutionDetail({
+                            address: message.runtimeAddress!,
+                            senderName: message.sender.name,
+                            runId:
+                              typeof message.metadata.run_id === 'string'
+                                ? message.metadata.run_id
+                                : null,
+                            modelName:
+                              typeof message.metadata.model === 'string'
+                                ? message.metadata.model
+                                : null,
+                            runStatus: resolveMessageRunStatus(task.ai_state, message),
+                          })
+                      : undefined
+                  }
+                  onStopExecution={
+                    message.runtimeAddress ? () => void stopRuntimeTask(message) : undefined
+                  }
+                  stopping={cancellingMessageId === message.messageId}
+                />
+              ))}
+              <div ref={endRef} />
+            </div>
+          )}
+        </div>
+
+        <footer
+          className={cn(
+            rail && 'shrink-0 border-t border-border bg-background px-[18px] py-3',
+            linear && 'task-detail-comment-bar',
+            !compact && 'pt-2'
+          )}
+        >
+          {compact ? (
+            <div className="task-detail-comment-chat-input">
+              <ChatInput
+                value={draft}
+                disabled={!client}
+                onChange={setDraft}
+                onSubmit={() => sendMessage()}
+                submitDisabled={!draft.trim() || sending}
+                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                placeholder={
+                  assignedAgent
+                    ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
+                    : t('workbench.task_activity_placeholder')
+                }
+                variant="desktop"
+                projectChat={commentProjectChat}
+                showProjectWorkBar={false}
+                composerMode="default"
+                composerInputTestId="cloud-task-activity-composer"
+              />
+            </div>
+          ) : (
+            <div className={cn(DESKTOP_CHAT_CONTENT_WIDTH_CLASS, 'relative')}>
+              <ChatInput
+                value={draft}
+                disabled={!client}
+                onChange={setDraft}
+                onSubmit={() => sendMessage()}
+                submitDisabled={!draft.trim() || sending}
+                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                placeholder={
+                  assignedAgent
+                    ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
+                    : t('workbench.task_activity_placeholder')
+                }
+                variant="desktop"
+                projectChat={commentProjectChat}
+                showProjectWorkBar={false}
+                composerMode="default"
+                composerInputTestId="cloud-task-activity-composer"
+              />
+            </div>
+          )}
+        </footer>
+      </section>
+      {executionDetail ? (
+        <RuntimeTaskExecutionOverlay
+          address={executionDetail.address}
+          senderName={executionDetail.senderName}
+          runId={executionDetail.runId}
+          modelName={executionDetail.modelName}
+          runStatus={executionDetail.runStatus}
+          onClose={() => setExecutionDetail(null)}
+        />
+      ) : null}
+    </>
   )
 }
 
-function formatProjectChatHistory(
-  current: ProjectChatMessage[],
-  trigger: ProjectChatMessage
+function resolveMessageRunStatus(
+  taskAiState: CloudLoopItem['ai_state'] | undefined,
+  message: ProjectChatMessage
 ): string {
-  const lines = mergeMessages(current, [trigger])
-    .filter(message => message.status === 'completed' && message.content.trim())
-    .slice(-40)
-    .map(message => {
-      const role =
-        message.sender.type === 'agent' ? `AI ${message.sender.name}` : message.sender.name
-      return `[${role}] ${message.content.trim()}`
-    })
-  return [
-    '<project_chat_history order="oldest-first">',
-    lines.join('\n').slice(-20_000),
-    '</project_chat_history>',
-    'Use this shared project-chat history to resolve references to earlier messages. Do not claim that only the current message is visible.',
-  ].join('\n')
+  return taskAiState?.project_chat_message_id === message.messageId && taskAiState.status
+    ? taskAiState.status
+    : message.status
 }
 
 function ChatMessage({
   message,
   mine,
-  rail = false,
+  compact = false,
+  taskAiState,
   onOpenExecution,
+  onStopExecution,
+  stopping = false,
 }: {
   message: ProjectChatMessage
   mine: boolean
-  rail?: boolean
+  compact?: boolean
+  taskAiState?: CloudLoopItem['ai_state']
   onOpenExecution?: () => void
+  onStopExecution?: () => void
+  stopping?: boolean
 }) {
   const { t } = useTranslation('common')
   const text = message.content
   const isAgent = message.sender.type === 'agent'
+  const isSubagent = message.metadata.kind === 'task_ai_subagent'
+  const runId = typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null
+  const modelName = typeof message.metadata.model === 'string' ? message.metadata.model : null
+  const runStatus = resolveMessageRunStatus(taskAiState, message)
   const mentionedAgents = Array.isArray(message.metadata.mentions)
     ? message.metadata.mentions.filter(
         mention =>
@@ -553,7 +784,9 @@ function ChatMessage({
   const body = (
     <>
       {text ? (
-        <div className={cn('min-w-0 text-text-primary', rail ? 'text-sm leading-6' : 'text-chat')}>
+        <div
+          className={cn('min-w-0 text-text-primary', compact ? 'text-sm leading-6' : 'text-chat')}
+        >
           {isAgent ? (
             <AssistantMarkdown content={text} isStreaming={message.status === 'streaming'} />
           ) : (
@@ -565,7 +798,7 @@ function ChatMessage({
           {t('workbench.project_chat_processing_ellipsis')}
         </span>
       ) : null}
-      {isAgent && message.status === 'completed' ? (
+      {isAgent && !compact && message.status === 'completed' ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
           <Check className="h-3 w-3" /> {t('workbench.project_chat_completed')}
         </span>
@@ -575,13 +808,13 @@ function ChatMessage({
           <Bot className="h-3 w-3" /> {t('workbench.project_chat_ai_received')}
         </span>
       ) : null}
-      {isAgent && message.status === 'streaming' ? (
+      {isAgent && !compact && message.status === 'streaming' ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
           <LoaderCircle className="h-3 w-3 animate-spin" />
           {t('workbench.project_chat_processing')}
         </span>
       ) : null}
-      {isAgent && onOpenExecution ? (
+      {isAgent && !compact && onOpenExecution ? (
         <button
           type="button"
           data-testid={`cloud-task-activity-open-execution-${message.messageId}`}
@@ -589,7 +822,7 @@ function ChatMessage({
           className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary"
         >
           <ExternalLink className="h-3.5 w-3.5" />
-          查看执行细节
+          {t('workbench.task_activity_view_execution')}
         </button>
       ) : null}
     </>
@@ -598,7 +831,7 @@ function ChatMessage({
     <span
       className={cn(
         'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-        rail
+        compact
           ? isAgent
             ? 'bg-violet-600 text-background'
             : 'bg-muted text-text-secondary'
@@ -611,8 +844,45 @@ function ChatMessage({
     </span>
   )
 
-  // rail mode: flat Xiaohongshu-style comment row instead of a bordered card
-  if (rail) {
+  if (compact) {
+    if (isAgent) {
+      return (
+        <article
+          data-testid={`cloud-task-activity-message-${message.messageId}`}
+          data-side="left"
+          className="task-detail-ai-run-card"
+        >
+          <div className="task-detail-ai-run-header">
+            {avatar}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold text-text-primary">
+                  {message.sender.name}
+                </span>
+                <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                  {isSubagent
+                    ? t('workbench.task_activity_subagent_execution')
+                    : t('workbench.task_activity_ai_execution')}
+                </span>
+              </div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                <span>{message.createdAt.slice(5, 16).replace('T', ' ')}</span>
+                {runId ? <span>Run {runId.slice(0, 8)}</span> : null}
+                {modelName ? <span>{modelName}</span> : null}
+              </div>
+            </div>
+            <ExecutionStatusBadge
+              status={runStatus}
+              onOpenExecution={onOpenExecution}
+              onStopExecution={onStopExecution}
+              stopping={stopping}
+            />
+          </div>
+          <div className="task-detail-ai-run-body">{body}</div>
+        </article>
+      )
+    }
+
     return (
       <article
         data-testid={`cloud-task-activity-message-${message.messageId}`}
@@ -635,15 +905,6 @@ function ChatMessage({
             </span>
           </div>
           <div className="mt-1 text-sm leading-6">{body}</div>
-          <div className="mt-[7px] flex items-center gap-4 text-xs text-text-muted">
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded px-1 py-0.5 transition hover:bg-muted hover:text-text-primary"
-            >
-              <MessageCircle className="h-3.5 w-3.5" />
-              回复
-            </button>
-          </div>
         </div>
       </article>
     )
@@ -665,6 +926,7 @@ function ChatMessage({
             {isAgent
               ? t('workbench.task_activity_ai_execution')
               : t('workbench.task_activity_comment')}
+            {isAgent && modelName ? ` · ${modelName}` : ''}
           </span>
         </span>
       </header>
@@ -673,13 +935,83 @@ function ChatMessage({
   )
 }
 
-function mergeMessages(
-  current: ProjectChatMessage[],
-  incoming: ProjectChatMessage[]
-): ProjectChatMessage[] {
-  const byId = new Map(current.map(message => [message.messageId, message]))
-  incoming.forEach(message => byId.set(message.messageId, message))
-  return [...byId.values()].sort((left, right) => left.sequenceNumber - right.sequenceNumber)
+function ExecutionStatusBadge({
+  status,
+  onOpenExecution,
+  onStopExecution,
+  stopping = false,
+}: {
+  status: string
+  onOpenExecution?: () => void
+  onStopExecution?: () => void
+  stopping?: boolean
+}) {
+  const { t } = useTranslation('common')
+  const terminal = [
+    'completed',
+    'failed',
+    'interrupted',
+    'stalled',
+    'cancelled',
+    'canceled',
+  ].includes(status)
+  const statusContent =
+    status === 'completed' ? (
+      <>
+        <Check className="h-3 w-3" />
+        {t('workbench.project_chat_completed')}
+      </>
+    ) : ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(status) ? (
+      <>
+        <ExternalLink className="h-3.5 w-3.5" />
+        {t('workbench.task_activity_failed')}
+      </>
+    ) : (
+      <>
+        <LoaderCircle className="h-3 w-3 animate-spin" />
+        {t('workbench.project_chat_processing')}
+      </>
+    )
+
+  return (
+    <span
+      className={cn(
+        'task-detail-execution-pill',
+        status === 'failed' && 'is-failed',
+        !onOpenExecution && 'is-static'
+      )}
+    >
+      <button
+        type="button"
+        disabled={!onOpenExecution}
+        onClick={onOpenExecution}
+        className="task-detail-execution-main"
+      >
+        <span className="task-detail-execution-status">{statusContent}</span>
+        <span className="task-detail-execution-hover">
+          <ExternalLink className="h-3.5 w-3.5" />
+          {t('workbench.task_activity_view_execution')}
+        </span>
+      </button>
+      <button
+        type="button"
+        disabled={terminal || !onStopExecution || stopping}
+        title={t('workbench.task_activity_stop_execution')}
+        aria-label={t('workbench.task_activity_stop_execution')}
+        className="task-detail-execution-stop"
+        onClick={event => {
+          event.stopPropagation()
+          onStopExecution?.()
+        }}
+      >
+        {stopping ? (
+          <LoaderCircle className="h-3 w-3 animate-spin" />
+        ) : (
+          <Square className="h-3 w-3" />
+        )}
+      </button>
+    </span>
+  )
 }
 
 function appendAgentChunk(
@@ -687,8 +1019,8 @@ function appendAgentChunk(
   chunk: ProjectChatMessage
 ): ProjectChatMessage[] {
   const existing = current.find(message => message.messageId === chunk.messageId)
-  if (!existing) return mergeMessages(current, [chunk])
-  return mergeMessages(current, [
+  if (!existing) return mergeProjectChatMessages(current, [chunk])
+  return mergeProjectChatMessages(current, [
     {
       ...existing,
       content:
@@ -699,4 +1031,20 @@ function appendAgentChunk(
       updatedAt: chunk.updatedAt,
     },
   ])
+}
+
+function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  if (!element) return null
+  let current: HTMLElement | null = element
+  while (current) {
+    const overflowY = window.getComputedStyle(current).overflowY
+    if (
+      current.scrollHeight > current.clientHeight + 1 &&
+      (overflowY === 'auto' || overflowY === 'scroll')
+    ) {
+      return current
+    }
+    current = current.parentElement
+  }
+  return null
 }

@@ -1371,7 +1371,7 @@ function getDeviceUnavailableActionTitle(
 ) {
   const status = getSidebarDeviceStatusLabel(t, deviceState.status)
   return formatSidebarTemplate(
-    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法新建项目对话：{{device}}'),
+    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法新建 AI 对话：{{device}}'),
     { status, device: getSidebarDeviceName(deviceState) }
   )
 }
@@ -2034,7 +2034,7 @@ function ProjectItem({
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
-      : t('workbench.new_project_chat', '新建项目对话')
+      : t('workbench.new_project_chat', '新建 AI 对话')
   const archiveConversationCount = allRuntimeTaskItems.length
   const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
   const persistedProjectPinned = runtimeProjectWork?.project.pinned ?? false

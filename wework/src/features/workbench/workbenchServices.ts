@@ -16,6 +16,10 @@ import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
+import type {
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
@@ -128,6 +132,8 @@ export interface WorkbenchServices {
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
+  localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {

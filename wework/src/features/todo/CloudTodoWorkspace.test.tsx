@@ -667,8 +667,6 @@ describe('CloudTodoWorkspace', () => {
         priority: item.priority,
         status: item.status,
         parent_id: 'WEG-2',
-        assignee_user_id: null,
-        assignee_agent_id: null,
         due_at: null,
         tags: [],
       })
@@ -716,7 +714,8 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getAllByText('Implement cloud MCP').length).toBeGreaterThan(0)
     expect(screen.getByText('Implement cloud delivery')).toBeInTheDocument()
     expect(screen.getAllByText('local').length).toBeGreaterThan(0)
-    expect(screen.getByText('自动加入')).toBeInTheDocument()
+    expect(screen.getByText('参与者')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeInTheDocument()
   })
 
   it('hides the board card activity shortcut and shows activity inside task detail', async () => {
@@ -1126,6 +1125,68 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toBeInTheDocument()
   })
 
+  it('limits project AI management to one active AI', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'agent-1',
+          projectId: project.id,
+          name: '项目 AI',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          createdByUserId: 1,
+          createdByUserName: 'local',
+          version: 1,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+      create: vi.fn(async () => ({
+        id: 'agent-2',
+        projectId: project.id,
+        name: '项目 AI',
+        runtime: 'codex',
+        model: null,
+        systemPrompt: '',
+        status: 'active',
+        visibility: 'creator_admin',
+        executionEnvironment: 'local',
+        executionMode: 'auto',
+        createdByUserId: 1,
+        createdByUserName: 'local',
+        version: 1,
+        createdAt: '',
+        updatedAt: '',
+      })),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    const addButton = await screen.findByTestId('cloud-project-chat-agent-add')
+
+    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toHaveTextContent(
+      '项目 AI'
+    )
+    expect(addButton).not.toBeDisabled()
+    await userEvent.click(addButton)
+    expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledTimes(1)
+  })
+
   it('opens the global search with Command+K and opens a task result', async () => {
     render(
       <CloudTodoWorkspace
@@ -1378,8 +1439,6 @@ describe('CloudTodoWorkspace', () => {
         parent_id: null,
         priority: 'high',
         status: 'in_progress',
-        assignee_user_id: null,
-        assignee_agent_id: null,
         due_at: null,
         tags: [],
       })

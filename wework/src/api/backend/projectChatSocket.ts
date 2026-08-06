@@ -55,14 +55,18 @@ export interface ProjectChatClient {
     clientMessageId: string
     text: string
     mentions?: ProjectChatMention[]
+    model?: string | null
   }) => Promise<ProjectChatMessage>
   startAgentResponse: (input: {
     projectId: string
     taskId?: string
-    triggerMessageId: string
+    triggerMessageId?: string
     agentId: string
     runtimeDeviceId: string
     runtimeTaskId: string
+    prompt?: string
+    autoRetry?: boolean
+    model?: string | null
   }) => Promise<ProjectChatMessage>
   failAgentResponse: (input: {
     projectId: string
@@ -176,10 +180,21 @@ export function createProjectChatClient(options: ProjectChatClientOptions): Proj
         clientMessageId: input.clientMessageId,
         content: input.text,
         mentions: input.mentions ?? [],
+        model: input.model ?? null,
       })
     },
     startAgentResponse(input) {
-      return emitWithAck<ProjectChatMessage>(client, AGENT_START_EVENT, input)
+      return emitWithAck<ProjectChatMessage>(client, AGENT_START_EVENT, {
+        projectId: input.projectId,
+        taskId: input.taskId,
+        triggerMessageId: input.triggerMessageId,
+        agentId: input.agentId,
+        runtimeDeviceId: input.runtimeDeviceId,
+        runtimeTaskId: input.runtimeTaskId,
+        prompt: input.prompt,
+        autoRetry: input.autoRetry ?? false,
+        model: input.model ?? null,
+      })
     },
     failAgentResponse(input) {
       return emitWithAck<ProjectChatMessage>(client, AGENT_FAILED_EVENT, input)

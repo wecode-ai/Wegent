@@ -51,6 +51,47 @@ export interface CloudLoopItem {
   can_edit?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
+  assignee_agent_id?: string | null
+  assignee_agent_name?: string | null
+  execution_id?: number | null
+  execution_state?: string | null
+  assignment_history?: Array<{
+    by_user_id: number
+    to_type: 'user' | 'agent' | null
+    to_id: string | null
+    to_name?: string | null
+    action: 'assign' | 'reassign' | 'unassign'
+    at: string
+  }>
+  approval?: {
+    status: 'pending' | 'approved' | 'rejected'
+    requested_at?: string
+    approved_by_user_id?: number
+    approved_at?: string
+    rejected_by_user_id?: number
+    rejected_at?: string
+    reason?: string | null
+  } | null
+  queued_at?: string | null
+  execution_note?: string | null
+  ai_state?: {
+    run_id?: string
+    status?: string
+    agent_id?: string | null
+    agent_name?: string | null
+    trigger_message_id?: string | null
+    project_chat_message_id?: string | null
+    runtime_device_id?: string | null
+    runtime_task_id?: string | null
+    started_at?: string | null
+    heartbeat_at?: string | null
+    lease_expires_at?: string | null
+    completed_at?: string | null
+    updated_at?: string | null
+    last_error?: string | null
+    auto_retry?: boolean
+    auto_retry_count?: number
+  } | null
   title: string
   description: string
   status: string
@@ -118,6 +159,10 @@ export interface CloudProject {
       name: string
       color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
     }>
+  }
+  ai_automation?: {
+    auto_retry_on_failure: boolean
+    max_retry_count: number
   }
   created_by_user_id: number
   current_user_id?: number
@@ -280,8 +325,22 @@ export function createDeliveryApi(client: HttpClient) {
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
     },
-    listLoopItems(projectId: CloudProjectIdInput): Promise<{ items: CloudLoopItem[] }> {
-      return client.get(`/v1/cloud-projects/${projectId}/loop-items`)
+    listLoopItems(
+      projectId: CloudProjectIdInput,
+      filters?: {
+        assigneeType?: 'user' | 'agent'
+        assigneeId?: string | number
+        executionState?: string
+      }
+    ): Promise<{ items: CloudLoopItem[] }> {
+      const query = new URLSearchParams()
+      if (filters?.assigneeType) query.set('assignee_type', filters.assigneeType)
+      if (filters?.assigneeId !== undefined && filters.assigneeId !== null) {
+        query.set('assignee_id', String(filters.assigneeId))
+      }
+      if (filters?.executionState) query.set('execution_state', filters.executionState)
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
@@ -319,6 +378,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'priority'
           | 'parent_id'
           | 'assignee_user_id'
+          | 'assignee_agent_id'
           | 'due_at'
           | 'tags'
         >
@@ -327,6 +387,41 @@ export function createDeliveryApi(client: HttpClient) {
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
+    },
+    assignLoopItem(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      data: {
+        version: number
+        assigneeType: 'user' | 'agent'
+        assigneeId: string | number
+      }
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/assign`,
+        data
+      )
+    },
+    approveLoopItemRun(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      version: number
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/approve`,
+        { version }
+      )
+    },
+    rejectLoopItemRun(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      version: number,
+      reason?: string
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/reject`,
+        { version, reason: reason ?? null }
+      )
     },
     archiveLoopItem(itemId: string): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)

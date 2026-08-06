@@ -123,7 +123,12 @@ import {
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
-import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -2789,6 +2794,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   )
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request)
+  const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
 
@@ -2845,6 +2852,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deviceApi,
     deliveryApi,
     externalIssueApi,
+    localProjectChatAgentApi,
+    localLoopItemExecutionApi,
     aitableApi,
     dwsApi,
     projectSpaceApis: {
