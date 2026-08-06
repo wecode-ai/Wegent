@@ -462,16 +462,21 @@ fn normalize_function_parameters(parameters: Option<&Value>, kimi_k3_compat: boo
     if kimi_k3_compat {
         // Moonshot requires function parameters to declare an object type, while anyOf
         // schemas must declare types only on their branches.
+        ensure_function_parameters_object_type(&mut normalized);
         normalize_kimi_k3_schema(&mut normalized);
         nest_root_any_of_constraint(&mut normalized);
     }
-    let object = normalized
+    ensure_function_parameters_object_type(&mut normalized);
+    normalized
+}
+
+fn ensure_function_parameters_object_type(schema: &mut Value) {
+    let object = schema
         .as_object_mut()
         .expect("normalized function parameters must be an object");
     if object.get("type").and_then(Value::as_str) != Some("object") {
         object.insert("type".to_owned(), Value::String("object".to_owned()));
     }
-    normalized
 }
 
 fn normalize_kimi_k3_schema(schema: &mut Value) {
@@ -2535,6 +2540,56 @@ mod tests {
             .expect("nested anyOf")
             .iter()
             .all(|branch| branch["type"] == "object"));
+    }
+
+    #[test]
+    fn normalizes_untyped_root_any_of_schema_for_kimi_k3() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "anyOf": [{"required": ["title"]}]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("anyOf").is_none());
+        assert_eq!(parameters["allOf"][0]["anyOf"][0]["type"], "object");
+    }
+
+    #[test]
+    fn preserves_existing_root_all_of_when_nesting_any_of_for_kimi_k3() {
+        let existing_constraint = json!({
+            "type": "object",
+            "required": ["project_id"]
+        });
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "type": "object",
+                    "allOf": [existing_constraint.clone()],
+                    "anyOf": [{"required": ["title"]}]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+        let all_of = parameters["allOf"].as_array().expect("root allOf");
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(all_of.len(), 2);
+        assert_eq!(all_of[0], existing_constraint);
+        assert_eq!(all_of[1]["anyOf"][0]["type"], "object");
     }
 
     #[test]
