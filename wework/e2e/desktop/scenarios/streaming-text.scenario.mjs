@@ -6,8 +6,8 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
-const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_FINAL_TO_COMMENTARY'
-const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_COMMENTARY'
+const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
+const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
@@ -39,7 +39,7 @@ const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="
 const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
-const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
+const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
 const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
 const HISTORY_PARAGRAPHS = Array.from(
   { length: 28 },
@@ -446,17 +446,12 @@ async function waitForBottom(control, description, timeoutMs) {
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
 }
 
-function activeAssistantContentLength(snapshot) {
-  const contentLength = snapshot?.pane?.messageSummary?.activeAssistantMessage?.contentLength
-  return typeof contentLength === 'number' ? contentLength : null
-}
-
 async function waitForRenderedAppend(control, previousContentLength, timeoutMs) {
   const startedAt = Date.now()
-  let snapshot
+  let processText = ''
   while (Date.now() - startedAt < timeoutMs) {
-    snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if ((activeAssistantContentLength(snapshot) ?? 0) > previousContentLength) {
+    processText = await control.command('getText', PROCESS_TEXT_SELECTOR)
+    if (processText.length > previousContentLength) {
       return getSingleElementMetrics(
         control,
         SCROLLER_SELECTOR,
@@ -466,9 +461,7 @@ async function waitForRenderedAppend(control, previousContentLength, timeoutMs) 
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error(
-    `The rendered streaming append did not increase active assistant content from ${previousContentLength} characters; latest snapshot: ${JSON.stringify(
-      snapshot
-    )}`
+    `The rendered streaming append did not increase process text from ${previousContentLength} characters; latest text: ${processText}`
   )
 }
 
@@ -784,7 +777,11 @@ export function createDesktopScenario({
 
       if (requestContainsPhaseFlipPrompt(body)) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(sse(phaseFlipEvents(responseId)))
+        const events = phaseFlipEvents(responseId)
+        await writeSseEvents(response, events.slice(0, 4))
+        await new Promise(resolve => setTimeout(resolve, 1_000))
+        await writeSseEvents(response, events.slice(4))
+        response.end()
         return true
       }
 
@@ -837,25 +834,34 @@ export function createDesktopScenario({
         text: PHASE_FLIP_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        0,
+        'Provisional assistant text was rendered as final content before the turn completed'
+      )
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
         { stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      assert.equal(
-        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
-        0,
-        'The reclassified commentary remained visible as final assistant content'
-      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: PHASE_FLIP_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
       const phaseFlipSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
       assert.equal(
         phaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
         1,
-        'The reclassified commentary was rendered more than once'
+        'The terminal final content was rendered more than once'
       )
-      await capture(control, 'streaming-text-00-reclassified-commentary-once.png')
+      assert.equal(
+        Number(await control.command('getElementCount', PROCESS_TEXT_SELECTOR)),
+        0,
+        'The promoted final content remained duplicated in the process section'
+      )
+      await capture(control, 'streaming-text-00-process-promoted-to-final-once.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1129,7 +1135,7 @@ export function createDesktopScenario({
         'The latest user message after sending'
       )
       releaseStart()
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
@@ -1147,8 +1153,8 @@ export function createDesktopScenario({
         'The assistant text after the streaming tool call lost its prefix'
       )
       assert.ok(
-        streamingSnapshot.testIds.includes('assistant-message-content'),
-        'The phase-less streaming response was not rendered as assistant content'
+        streamingSnapshot.testIds.includes('process-text-block'),
+        'The phase-less streaming response was not rendered as process content'
       )
       assert.ok(
         !streamingSnapshot.text.includes(APPEND_MARKER),
@@ -1218,12 +1224,9 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-12-user-scrolled-up.png')
 
-      const streamingBeforeAppend = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      )
-      const previousContentLength = activeAssistantContentLength(streamingBeforeAppend)
+      const previousContentLength = (await control.command('getText', PROCESS_TEXT_SELECTOR)).length
       assert.ok(
-        previousContentLength !== null,
+        previousContentLength > 0,
         'The streaming response disappeared before the later content arrived'
       )
       await control.command('startScrollStabilitySampling', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
@@ -1314,7 +1317,7 @@ export function createDesktopScenario({
         'The streaming conversation before switching tasks',
         5_000
       )
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: APPEND_MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
@@ -1329,7 +1332,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
@@ -1357,7 +1360,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
