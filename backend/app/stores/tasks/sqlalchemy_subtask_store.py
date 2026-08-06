@@ -13,6 +13,7 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
 from app.stores.tasks.interfaces import TaskAccessStore
 from shared.models.db.enums import ContextType
 
@@ -30,6 +31,22 @@ class SqlAlchemySubtaskStore:
             return query
         return query.filter(
             Subtask.task_id.in_(self._owner_task_id_select(owner_user_id=owner_user_id))
+        )
+
+    @staticmethod
+    def _queue_bulk_status_metrics(
+        db: Session,
+        query,
+        *,
+        status: SubtaskStatus,
+    ) -> None:
+        metric_query = query.filter(Subtask.role == SubtaskRole.ASSISTANT)
+        if status != SubtaskStatus.FAILED:
+            metric_query = metric_query.filter(Subtask.status == SubtaskStatus.FAILED)
+        queue_bulk_subtask_status_metrics(
+            db,
+            metric_query.all(),
+            status=status,
         )
 
     def _owner_task_id_select(self, *, owner_user_id: int):
@@ -966,7 +983,6 @@ class SqlAlchemySubtaskStore:
         completed_at: Optional[datetime] = None,
     ) -> Subtask:
         subtask.status = status
-        subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         if completed_at is not None:
             subtask.completed_at = completed_at
@@ -982,8 +998,6 @@ class SqlAlchemySubtaskStore:
         self, db: Session, *, subtask: Subtask, error_message: str
     ) -> Subtask:
         subtask.error_message = error_message
-        if subtask.status == SubtaskStatus.FAILED:
-            subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         return subtask
 
@@ -1010,10 +1024,6 @@ class SqlAlchemySubtaskStore:
     def update_fields(self, db: Session, *, subtask: Subtask, **fields: Any) -> Subtask:
         for field, value in fields.items():
             setattr(subtask, field, value)
-        if "status" in fields or (
-            "error_message" in fields and subtask.status == SubtaskStatus.FAILED
-        ):
-            subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         if "result" in fields:
             flag_modified(subtask, "result")
@@ -1073,11 +1083,11 @@ class SqlAlchemySubtaskStore:
     ) -> int:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=SubtaskStatus.DELETE)
         return query.update(
             {
                 Subtask.executor_deleted_at: True,
                 Subtask.status: SubtaskStatus.DELETE,
-                Subtask.status_changed_at: datetime.now(),
                 Subtask.updated_at: datetime.now(),
             },
             synchronize_session="fetch",
@@ -1093,10 +1103,10 @@ class SqlAlchemySubtaskStore:
     ) -> int:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=status)
         return query.update(
             {
                 Subtask.status: status,
-                Subtask.status_changed_at: datetime.now(),
                 Subtask.updated_at: datetime.now(),
             },
             synchronize_session=False,
@@ -1117,7 +1127,6 @@ class SqlAlchemySubtaskStore:
             return 0
         values: dict[Any, Any] = {
             Subtask.status: to_status,
-            Subtask.status_changed_at: datetime.now(),
             Subtask.updated_at: datetime.now(),
         }
         if progress is not None:
@@ -1129,6 +1138,7 @@ class SqlAlchemySubtaskStore:
             Subtask.status.in_(from_statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=to_status)
         return query.update(values, synchronize_session="fetch")
 
     def delete(self, db: Session, *, subtask: Subtask) -> None:

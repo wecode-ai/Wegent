@@ -103,7 +103,7 @@ class TaskRunMetricEvent:
     subtask_id: int
     created_at: datetime
     status: SubtaskStatus
-    status_changed_at: datetime
+    state_changed_at: datetime
     error_message: Optional[str]
     record_total: bool = False
     sync_failure: bool = False
@@ -257,49 +257,13 @@ class TaskRunMetricsStore:
             data_as_of=_timestamp_to_datetime(as_of_value),
         )
 
-    def get_cursor(self, name: str) -> Optional[str]:
-        """Return a reconciliation cursor."""
-        try:
-            return self._client.get(self._cursor_key(name))
-        except RedisError as exc:
-            raise TaskRunMetricsUnavailable("Redis metric cursor read failed") from exc
-
-    def set_cursor(self, name: str, value: str) -> None:
-        """Persist a reconciliation cursor after a successful Redis update."""
-        try:
-            self._client.set(self._cursor_key(name), value)
-        except RedisError as exc:
-            raise TaskRunMetricsUnavailable("Redis metric cursor write failed") from exc
-
-    def acquire_reconcile_lock(self, token: str, expire_seconds: int) -> bool:
-        """Acquire the cross-process reconciliation lock."""
-        try:
-            return bool(
-                self._client.set(
-                    self._reconcile_lock_key(), token, nx=True, ex=expire_seconds
-                )
-            )
-        except RedisError as exc:
-            raise TaskRunMetricsUnavailable("Redis metric lock failed") from exc
-
-    def release_reconcile_lock(self, token: str) -> None:
-        """Release a reconciliation lock only when the caller still owns it."""
-        script = (
-            "if redis.call('GET', KEYS[1]) == ARGV[1] then "
-            "return redis.call('DEL', KEYS[1]) else return 0 end"
-        )
-        try:
-            self._client.eval(script, 1, self._reconcile_lock_key(), token)
-        except RedisError as exc:
-            raise TaskRunMetricsUnavailable("Redis metric unlock failed") from exc
-
     def _queue_failure_sync(
         self, pipeline, event: TaskRunMetricEvent, now_timestamp: str
     ) -> None:
         reason = normalize_failure_reason(event.error_message)
         reason_id = failure_reason_id(reason)
         desired_failed = event.status == SubtaskStatus.FAILED
-        changed_at_us = int(event.status_changed_at.timestamp() * 1_000_000)
+        changed_at_us = int(event.state_changed_at.timestamp() * 1_000_000)
         state = json.dumps(
             {
                 "failed": desired_failed,
@@ -327,7 +291,7 @@ class TaskRunMetricsStore:
                 "1" if desired_failed else "0",
                 reason_id,
                 reason or "",
-                event.status_changed_at.timestamp(),
+                event.state_changed_at.timestamp(),
                 changed_at_us,
                 state,
                 self._retention_seconds,
@@ -360,12 +324,6 @@ class TaskRunMetricsStore:
 
     def _as_of_key(self) -> str:
         return f"{self._key_prefix}:as-of"
-
-    def _cursor_key(self, name: str) -> str:
-        return f"{self._key_prefix}:reconcile-cursor:{name}"
-
-    def _reconcile_lock_key(self) -> str:
-        return f"{self._key_prefix}:reconcile-lock"
 
 
 def normalize_failure_reason(error_message: Optional[str]) -> Optional[str]:

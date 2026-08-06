@@ -248,9 +248,6 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
-    TASK_RUN_METRICS_RECONCILE_INTERVAL_SECONDS: int = 60
-    TASK_RUN_METRICS_RECONCILE_BATCH_SIZE: int = 50000
-    TASK_RUN_METRICS_RECONCILE_MAX_BATCHES: int = 10
 
     # Rate limiting configuration for OpenAPI endpoints
     # Format: "requests/period" where period can be second, minute, hour, day

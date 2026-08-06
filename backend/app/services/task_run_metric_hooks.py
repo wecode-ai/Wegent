@@ -7,7 +7,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterable
 
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
@@ -31,6 +31,7 @@ class _TrackedSubtask:
     subtask: Subtask
     record_total: bool
     sync_failure: bool
+    state_changed_at: datetime
     deleted: bool = False
 
 
@@ -89,12 +90,11 @@ class TaskRunMetricHooks:
         for subtask in session.new:
             if not isinstance(subtask, Subtask) or not _is_assistant(subtask.role):
                 continue
-            if subtask.status_changed_at is None:
-                subtask.status_changed_at = now
             tracked[id(subtask)] = _TrackedSubtask(
                 subtask=subtask,
                 record_total=True,
                 sync_failure=_status_value(subtask.status) == SubtaskStatus.FAILED,
+                state_changed_at=now,
             )
 
         for subtask in session.dirty:
@@ -111,12 +111,12 @@ class TaskRunMetricHooks:
                 continue
             if not (_is_assistant(subtask.role) or _was_assistant(state)):
                 continue
-            subtask.status_changed_at = now
             previous = tracked.get(id(subtask))
             tracked[id(subtask)] = _TrackedSubtask(
                 subtask=subtask,
                 record_total=previous.record_total if previous else False,
                 sync_failure=True,
+                state_changed_at=now,
             )
 
         for subtask in session.deleted:
@@ -127,6 +127,7 @@ class TaskRunMetricHooks:
                 subtask=subtask,
                 record_total=previous.record_total if previous else False,
                 sync_failure=True,
+                state_changed_at=now,
                 deleted=True,
             )
 
@@ -140,7 +141,6 @@ class TaskRunMetricHooks:
             if not subtask.id or not subtask.created_at:
                 continue
             previous = committed.get(subtask.id)
-            status_changed_at = subtask.status_changed_at or datetime.now()
             committed[subtask.id] = TaskRunMetricEvent(
                 subtask_id=subtask.id,
                 created_at=subtask.created_at,
@@ -149,7 +149,7 @@ class TaskRunMetricHooks:
                     if item.deleted
                     else _status_value(subtask.status)
                 ),
-                status_changed_at=status_changed_at,
+                state_changed_at=item.state_changed_at,
                 error_message=subtask.error_message,
                 record_total=item.record_total
                 or (previous.record_total if previous else False),
@@ -168,7 +168,7 @@ class TaskRunMetricHooks:
             self._store.record_events(committed.values())
         except Exception:
             logger.exception(
-                "Failed to publish committed task run metrics; reconciliation will retry"
+                "Failed to publish committed task run metrics; statistics may be incomplete"
             )
 
     @staticmethod
@@ -191,6 +191,32 @@ def _status_value(status: Any) -> SubtaskStatus:
     if isinstance(status, SubtaskStatus):
         return status
     return SubtaskStatus(status)
+
+
+def queue_bulk_subtask_status_metrics(
+    session: Session,
+    subtasks: Iterable[Subtask],
+    *,
+    status: SubtaskStatus,
+) -> None:
+    """Queue metrics for a bulk status update that bypasses ORM flush hooks."""
+    committed: dict[int, TaskRunMetricEvent] = session.info.setdefault(
+        _COMMITTED_EVENTS_KEY, {}
+    )
+    state_changed_at = datetime.now()
+    for subtask in subtasks:
+        if not _is_assistant(subtask.role) or not subtask.id or not subtask.created_at:
+            continue
+        previous = committed.get(subtask.id)
+        committed[subtask.id] = TaskRunMetricEvent(
+            subtask_id=subtask.id,
+            created_at=subtask.created_at,
+            status=status,
+            state_changed_at=state_changed_at,
+            error_message=subtask.error_message,
+            record_total=previous.record_total if previous else False,
+            sync_failure=True,
+        )
 
 
 task_run_metric_hooks = TaskRunMetricHooks(SessionLocal, task_run_metrics_store)

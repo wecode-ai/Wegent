@@ -101,7 +101,7 @@ def _recent_failure(
         client_origin=task.client_origin,
         error_message=normalize_failure_reason(subtask.error_message),
         created_at=subtask.created_at,
-        updated_at=subtask.status_changed_at or subtask.updated_at,
+        updated_at=subtask.updated_at,
     )
 
 

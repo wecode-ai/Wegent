@@ -18,6 +18,7 @@ from app.services.task_run_metrics import (
     failure_reason_id,
     normalize_failure_reason,
 )
+from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 
 
 class _RecordingMetricsStore:
@@ -110,5 +111,32 @@ def test_transaction_hooks_do_not_publish_rolled_back_events(
         test_db.rollback()
 
         assert store.events == []
+    finally:
+        hooks.unregister()
+
+
+def test_bulk_status_update_queues_failure_removal_after_commit(
+    test_db: Session, test_user: User
+) -> None:
+    metrics_store = _RecordingMetricsStore()
+    hooks = TaskRunMetricHooks(test_db, metrics_store)  # type: ignore[arg-type]
+    hooks.register()
+    try:
+        task = _create_task(test_db, test_user)
+        test_db.add(_new_subtask(task, SubtaskStatus.FAILED))
+        test_db.commit()
+
+        subtask_store = SqlAlchemySubtaskStore()
+        subtask_store.mark_task_messages_status(
+            test_db,
+            task_id=task.id,
+            status=SubtaskStatus.DELETE,
+        )
+        test_db.commit()
+
+        assert len(metrics_store.events) == 2
+        assert metrics_store.events[1].record_total is False
+        assert metrics_store.events[1].sync_failure is True
+        assert metrics_store.events[1].status == SubtaskStatus.DELETE
     finally:
         hooks.unregister()
