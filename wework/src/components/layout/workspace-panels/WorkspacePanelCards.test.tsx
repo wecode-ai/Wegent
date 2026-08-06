@@ -507,6 +507,7 @@ describe('WorkspacePanelCards', () => {
   })
 
   test('closes local terminal sessions when the workspace panel unmounts', async () => {
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const { unmount } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
 
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
@@ -515,9 +516,14 @@ describe('WorkspacePanelCards', () => {
     unmount()
 
     expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
+    expect(consoleInfo).toHaveBeenCalledWith('Closing local terminal session', {
+      sessionId: 'local-terminal-1',
+      reason: 'workspace-panel-unmount',
+    })
   })
 
   test('closes local terminal sessions when the workspace target changes', async () => {
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const nextProject = {
       ...project,
       id: 8,
@@ -538,6 +544,10 @@ describe('WorkspacePanelCards', () => {
     rerender(<WorkspacePanelCards currentProject={nextProject} devices={[]} />)
 
     expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
+    expect(consoleInfo).toHaveBeenCalledWith('Closing local terminal session', {
+      sessionId: 'local-terminal-1',
+      reason: 'workspace-target-changed',
+    })
     expect(screen.queryByTestId('embedded-local-terminal')).not.toBeInTheDocument()
   })
 

@@ -12,6 +12,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: 85,
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,

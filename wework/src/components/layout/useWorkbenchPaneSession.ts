@@ -1443,15 +1443,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       )
 
-      const optimisticTurnId = activeAssistantMessage?.subtaskId
-      if (optimisticTurnId) {
-        appendOptimisticRuntimeConversationGuidance(
-          currentRuntimeTask,
-          optimisticTurnId,
-          queuedMessage
-        )
-      }
-
       try {
         const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
         const messageAttachments = queuedMessage.attachments ?? []
@@ -1467,7 +1458,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         })
         if (result.sent) {
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
-          if (result.turnId && result.turnId !== optimisticTurnId) {
+          if (result.turnId) {
             appendOptimisticRuntimeConversationGuidance(
               currentRuntimeTask,
               result.turnId,
@@ -1510,7 +1501,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [
       currentRuntimeTask,
-      activeAssistantMessage?.subtaskId,
       paneStatus.isBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
