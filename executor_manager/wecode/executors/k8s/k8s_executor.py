@@ -35,6 +35,9 @@ from executor_manager.wecode.config.config import (
     WARMPOOL_TEMPLATE_NAME,
 )
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
+from executor_manager.wecode.executors.k8s.pod_lookup import (
+    lookup_pod_owners_by_ip,
+)
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import get_metadata_field
@@ -1633,6 +1636,17 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error listing Kubernetes pods: {e}")
         return 0
+
+    def get_pod_owners_by_ip(self, ip_address: str) -> Dict[str, Any]:
+        """Find Wegent executor Pods and owners by Pod IP."""
+        core_v1 = self._get_core_v1_api()
+        if core_v1 is None:
+            return {
+                "status": "failed",
+                "error_msg": "Failed to get Kubernetes API client",
+                "pods": [],
+            }
+        return lookup_pod_owners_by_ip(core_v1, K8S_NAMESPACE, ip_address)
 
     def get_pods_by_executor_name(
         self,
