@@ -24,6 +24,7 @@ import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import type { AITableApi, AITableDescription, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudProject } from '@/api/deliveries'
+import { track } from '@/telemetry/client'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -466,8 +467,10 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
           item.id === record.id ? { ...item, cells: { ...item.cells, ...updated.cells } } : item
         )
       )
+      track('feature_action_completed', { action: 'update', domain: 'table_record' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '保存单元格失败')
+      track('operation_failed', { operation: 'table_action' })
     }
   }
 
@@ -479,8 +482,10 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
       if (!seed) throw new Error('当前表格没有可写字段')
       const created = await api.createRecord(project.id, { [seed.id]: '' })
       setRecords(current => [...current, created])
+      track('feature_action_completed', { action: 'create', domain: 'table_record' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '新增记录失败')
+      track('operation_failed', { operation: 'table_action' })
     } finally {
       setMutationBusy(false)
     }
@@ -493,8 +498,10 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
     try {
       await api.deleteRecord(project.id, record.id)
       setRecords(current => current.filter(item => item.id !== record.id))
+      track('feature_action_completed', { action: 'delete', domain: 'table_record' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除记录失败')
+      track('operation_failed', { operation: 'table_action' })
     } finally {
       setMutationBusy(false)
     }
@@ -530,8 +537,10 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
       await api.createField(project.id, { name, type: newFieldType })
       setNewFieldName('')
       await load(query || undefined)
+      track('feature_action_completed', { action: 'create', domain: 'table_field' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '新增字段失败')
+      track('operation_failed', { operation: 'table_action' })
     } finally {
       setAddingField(false)
     }
@@ -543,8 +552,10 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
     try {
       await api.deleteField(project.id, field.id)
       await load(query || undefined)
+      track('feature_action_completed', { action: 'delete', domain: 'table_field' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除字段失败')
+      track('operation_failed', { operation: 'table_action' })
     }
   }
 

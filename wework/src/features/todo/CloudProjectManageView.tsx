@@ -11,6 +11,7 @@ import type {
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import {
@@ -182,7 +183,9 @@ export function CloudProjectManageView({
     try {
       const updated = await updateProject({ visibility: next, version })
       setVisibility(updated.visibility ?? next)
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setVisibility(previous)
       setError(cause instanceof Error ? cause.message : '更新项目权限失败')
     } finally {
@@ -206,7 +209,9 @@ export function CloudProjectManageView({
           show_date: next.showDate,
         },
       })
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setDisplay(previous)
       setError(cause instanceof Error ? cause.message : '保存卡片显示设置失败')
     } finally {
@@ -225,7 +230,9 @@ export function CloudProjectManageView({
         board_config: { group_by: project.board_config?.group_by ?? 'status', statuses: next },
       })
       setStatuses(updated.board_config?.statuses ?? next)
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setStatuses(previous)
       setError(cause instanceof Error ? cause.message : '保存状态设置失败')
     } finally {
@@ -240,7 +247,9 @@ export function CloudProjectManageView({
       const member = await api.addCloudProjectMember(project.id, user.id, memberRole)
       setMembers(current => [...current, member])
       setMemberQuery('')
+      track('feature_action_completed', { domain: 'project_space', action: 'member_invite' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '添加成员失败')
     } finally {
       setSavingUserId(null)
@@ -256,7 +265,12 @@ export function CloudProjectManageView({
       setMembers(current =>
         current.map(item => (item.user_id === updated.user_id ? updated : item))
       )
+      track('feature_action_completed', {
+        domain: 'project_space',
+        action: 'member_role_change',
+      })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '更新成员失败')
     }
   }
@@ -266,7 +280,9 @@ export function CloudProjectManageView({
     try {
       await api.removeCloudProjectMember(project.id, member.user_id)
       setMembers(current => current.filter(item => item.user_id !== member.user_id))
+      track('feature_action_completed', { domain: 'project_space', action: 'member_remove' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '移除成员失败')
     }
   }

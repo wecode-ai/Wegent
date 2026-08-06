@@ -10,6 +10,8 @@ export interface AppPreferences {
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
   experimentalFeaturesEnabled: boolean
+  telemetryConsentAsked: boolean
+  telemetryEnabled: boolean
   supervisorPrinciples: string
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
@@ -66,6 +68,8 @@ export interface AppPreferencesPatch {
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
   experimentalFeaturesEnabled?: boolean
+  telemetryConsentAsked?: boolean
+  telemetryEnabled?: boolean
   supervisorPrinciples?: string
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
@@ -112,6 +116,8 @@ export const defaultAppPreferences: AppPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   experimentalFeaturesEnabled: false,
+  telemetryConsentAsked: false,
+  telemetryEnabled: false,
   supervisorPrinciples: '',
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
@@ -187,6 +193,14 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
         : defaultAppPreferences.experimentalFeaturesEnabled,
+    telemetryConsentAsked:
+      typeof record.telemetryConsentAsked === 'boolean'
+        ? record.telemetryConsentAsked
+        : defaultAppPreferences.telemetryConsentAsked,
+    telemetryEnabled:
+      typeof record.telemetryEnabled === 'boolean'
+        ? record.telemetryEnabled
+        : defaultAppPreferences.telemetryEnabled,
     supervisorPrinciples:
       typeof record.supervisorPrinciples === 'string'
         ? record.supervisorPrinciples

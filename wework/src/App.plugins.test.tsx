@@ -71,7 +71,7 @@ vi.mock('@/api/local/codexPlugins', async importOriginal => {
     createLocalCodexPluginApi: () => ({
       ...actual.createLocalCodexPluginApi(),
       codexHomeMigrationStatus: vi.fn().mockResolvedValue({
-        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        weworkCodexHome: '/Users/test/.wework/codex',
         nativeCodexHome: '/Users/test/.codex',
         weworkCodexHomeExists: true,
         nativeCodexHomeExists: true,

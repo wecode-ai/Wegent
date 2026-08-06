@@ -142,7 +142,7 @@ function isRuntimeChatPath(path: string) {
     if (parts[index] !== 'workspace' || parts[index + 1] !== 'chats') continue
     const previous = parts[index - 1]
     if (!previous) return true
-    return previous === 'wegent-executor' || previous === '.wegent-executor'
+    return previous === '.wework'
   }
   return parts[0] === 'workspace' && parts[1] === 'chats'
 }

@@ -277,7 +277,7 @@ describe('LocalRuntimeInitializer', () => {
         })
     )
     readLogMock.mockResolvedValue({
-      path: '~/.wegent-executor/logs/executor.log',
+      path: '~/.wework/logs/executor.log',
       content: 'executor waiting for stdio via Tauri runtime detail',
       truncated: true,
       lineCount: 20,
@@ -288,7 +288,7 @@ describe('LocalRuntimeInitializer', () => {
       sidecarSource: 'configured',
       sidecarPath: '/Applications/Wework.app/Contents/MacOS/wegent-executor',
       currentDir: '/Applications/Wework.app/Contents/MacOS',
-      executorHome: '~/.wegent-executor',
+      executorHome: '~/.wework',
       backendUrl: 'https://cloud.example.com',
       socketUrl: 'wss://socket.example.com',
       hasBackendAuthToken: true,
@@ -361,9 +361,7 @@ describe('LocalRuntimeInitializer', () => {
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining('Current working directory: /Applications/Wework.app/Contents/MacOS')
     )
-    expect(writeText).toHaveBeenCalledWith(
-      expect.stringContaining('Executor home: ~/.wegent-executor')
-    )
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Executor home: ~/.wework'))
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining('Backend URL: https://cloud.example.com')
     )
@@ -391,7 +389,7 @@ describe('LocalRuntimeInitializer', () => {
     vi.useFakeTimers()
     ensureMock.mockImplementation(() => new Promise(() => undefined))
     readLogMock.mockResolvedValue({
-      path: '~/.wegent-executor/logs/executor.log',
+      path: '~/.wework/logs/executor.log',
       content: 'executor native clipboard path',
       truncated: false,
       lineCount: 1,
@@ -402,7 +400,7 @@ describe('LocalRuntimeInitializer', () => {
       sidecarSource: 'bundled',
       sidecarPath: 'wegent-executor',
       currentDir: '/tmp/wework',
-      executorHome: '~/.wegent-executor',
+      executorHome: '~/.wework',
       backendUrl: null,
       socketUrl: null,
       hasBackendAuthToken: false,
@@ -514,7 +512,7 @@ describe('LocalRuntimeInitializer', () => {
     )
 
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
-    expect(screen.getByText('~/.wegent-executor/logs/executor.log')).toBeInTheDocument()
+    expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
 

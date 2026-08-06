@@ -9,11 +9,26 @@ import {
   type MouseEvent,
 } from 'react'
 import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
+import { track } from '@/telemetry/client'
 
 const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MENU_WIDTH = 240
 const EMBEDDED_BROWSER_OCCLUSION_ID = 'workspace-add-menu'
+const WORKSPACE_PANEL_TYPES = new Set([
+  'review',
+  'terminal',
+  'browser',
+  'chat',
+  'files',
+  'desktop',
+] as const)
+
+function workspacePanelType(id: string) {
+  return WORKSPACE_PANEL_TYPES.has(id as never)
+    ? (id as 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop')
+    : 'other'
+}
 
 export interface WorkspaceAddMenuItem {
   id: string
@@ -138,6 +153,7 @@ export function WorkspaceAddMenu({
     setOpen(false)
     setPosition(null)
     await item.onSelect()
+    track('workspace_panel_added', { panel: workspacePanelType(item.id) })
   }
 
   return (

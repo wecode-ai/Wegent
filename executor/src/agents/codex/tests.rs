@@ -1192,7 +1192,7 @@ fn persistent_process_does_not_inherit_request_model_overrides() {
 }
 
 #[test]
-fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
+fn codex_run_state_uses_commentary_agent_delta_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1219,13 +1219,13 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
 
 #[test]
-fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+fn codex_run_state_uses_reclassified_commentary_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     for message in [
@@ -1276,13 +1276,13 @@ fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
 
 #[test]
-fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
     let mut state = CodexRunState::default();
 
     for message in [
@@ -1321,7 +1321,7 @@ fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: "Final answer.".to_owned()
+            content: "I will inspect.".to_owned()
         }
     );
 }
@@ -1421,7 +1421,7 @@ fn item_notification_cannot_replace_the_active_turn() {
 }
 
 #[test]
-fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
+fn codex_run_state_uses_commentary_channel_delta_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1448,7 +1448,7 @@ fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
