@@ -1540,7 +1540,7 @@
     "context_settings_terminal_injection": "注入 Terminal 信息",
     "context_settings_terminal_injection_description": "开启后，发送消息或追加指令时会把当前工作区最近的 Terminal 输出作为应用上下文提供给 Wework。",
     "context_settings_compaction_threshold": "上下文压缩阈值",
-    "context_settings_compaction_threshold_description": "上下文使用量超过该百分比时，上下文指示器会显示提示引导你压缩上下文。取值范围 1 到 100。",
+    "context_settings_compaction_threshold_description": "上下文使用量达到或超过该百分比时，上下文指示器会显示提示引导你压缩上下文。取值范围 1 到 100。",
     "context_settings_wework_instructions_title": "Wework 自定义指令",
     "context_settings_wework_instructions_description": "这些内容会写入 Wework 的本地指令配置，并影响之后启动的新任务。",
     "context_settings_wework_instructions_placeholder": "添加 Wework 自定义指令...",

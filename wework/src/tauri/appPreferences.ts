@@ -5,7 +5,7 @@ export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
 
-function clampContextCompactionThreshold(value: number): number {
+export function clampContextCompactionThreshold(value: number): number {
   return Math.min(
     CONTEXT_COMPACTION_THRESHOLD_MAX,
     Math.max(CONTEXT_COMPACTION_THRESHOLD_MIN, Math.round(value))

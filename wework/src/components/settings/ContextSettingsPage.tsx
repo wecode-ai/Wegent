@@ -7,6 +7,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import {
+  clampContextCompactionThreshold,
   CONTEXT_COMPACTION_THRESHOLD_MAX,
   CONTEXT_COMPACTION_THRESHOLD_MIN,
   defaultAppPreferences,
@@ -141,12 +142,10 @@ export function ContextSettingsPage() {
   }
 
   const commitCompactionThreshold = async () => {
-    const parsed = Number.parseInt(compactionThresholdDraft, 10)
+    const raw = compactionThresholdDraft.trim()
+    const parsed = raw === '' ? NaN : Number(raw)
     const nextValue = Number.isFinite(parsed)
-      ? Math.min(
-          CONTEXT_COMPACTION_THRESHOLD_MAX,
-          Math.max(CONTEXT_COMPACTION_THRESHOLD_MIN, parsed)
-        )
+      ? clampContextCompactionThreshold(parsed)
       : preferences.contextCompactionThreshold
     setCompactionThresholdDraft(String(nextValue))
     if (nextValue === preferences.contextCompactionThreshold) return

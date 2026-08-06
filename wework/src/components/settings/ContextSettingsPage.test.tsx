@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
@@ -62,6 +62,7 @@ vi.mock('@/tauri/appPreferences', () => ({
   },
   CONTEXT_COMPACTION_THRESHOLD_MIN: 1,
   CONTEXT_COMPACTION_THRESHOLD_MAX: 100,
+  clampContextCompactionThreshold: (value: number) => Math.min(100, Math.max(1, Math.round(value))),
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
 }))
@@ -119,6 +120,18 @@ describe('ContextSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ contextCompactionThreshold: 90 })
     })
     expect(input).toHaveValue(90)
+  })
+
+  test('rounds the full numeric input before saving the threshold', async () => {
+    render(<ContextSettingsPage />)
+
+    const input = await screen.findByTestId('context-compaction-threshold-input')
+    fireEvent.change(input, { target: { value: '90.6' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ contextCompactionThreshold: 91 })
+    })
   })
 
   test('loads and saves Wework custom instructions', async () => {

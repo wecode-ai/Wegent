@@ -1541,7 +1541,7 @@
     "context_settings_terminal_injection": "Inject Terminal information",
     "context_settings_terminal_injection_description": "When enabled, Wework includes recent Terminal output from the current workspace as application context when you send a message or guidance to Wework.",
     "context_settings_compaction_threshold": "Context compaction threshold",
-    "context_settings_compaction_threshold_description": "When the context window exceeds this percentage, the context indicator shows a hint prompting you to compact the context. Value from 1 to 100.",
+    "context_settings_compaction_threshold_description": "When the context window reaches or exceeds this percentage, the context indicator shows a hint prompting you to compact the context. Value from 1 to 100.",
     "context_settings_wework_instructions_title": "Wework custom instructions",
     "context_settings_wework_instructions_description": "These instructions are written to Wework's local instruction config and affect new tasks.",
     "context_settings_wework_instructions_placeholder": "Add Wework custom instructions...",
