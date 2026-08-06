@@ -11,6 +11,8 @@ import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -147,6 +149,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
 
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
@@ -612,6 +615,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => cancelAnimationFrame(frame)
   }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: currentProject,
+  })
   const sendPaneInput = paneSession.send
   const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
@@ -695,7 +702,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [runtimeWorkApi, t]
   )
 
-  const submitPaneInput = useCallback(
+  const sendPaneInputWithContext = useCallback(
     (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
       const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
@@ -754,6 +761,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       services,
       setPendingCloudContext,
     ]
+  )
+
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: input => sendPaneInputWithContext(input),
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+
+  const submitPaneInput = useCallback(
+    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
+          return
+        }
+      }
+      return sendPaneInputWithContext(value, options)
+    },
+    [connectorAuthGate, paneSession, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
@@ -1822,8 +1851,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onModelSelectorOpenChange: open => {
         if (!open) pendingModelRetryRef.current = null
       },
+      onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
-    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
+    [
+      modelSelectorOpenSignal,
+      projectChat,
+      refinePluginTrialPrompt,
+      retryFailedMessageAfterModelSelect,
+    ]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
@@ -2751,7 +2786,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               <ChevronRight className="h-4 w-4" aria-hidden="true" />
                             </button>
                           )}
-                          {!rightPanelExpanded && (
+                          {connectorAuthGate.pending ? (
+                            <ConnectorAuthCard
+                              target={connectorAuthGate.pending.target}
+                              title={connectorAuthGate.pending.title}
+                              onSuccess={() => {
+                                void connectorAuthGate.completePending()
+                              }}
+                              onCancel={connectorAuthGate.clearPending}
+                            />
+                          ) : !rightPanelExpanded ? (
                             <>
                               {showConversationDeviceBanner ? (
                                 <ConversationDeviceOfflineBanner
@@ -2878,7 +2922,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 </>
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     </>

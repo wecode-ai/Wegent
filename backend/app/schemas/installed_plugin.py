@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.device import DeviceCapabilitySyncResponse
 
@@ -40,6 +41,54 @@ class PluginMCPComponent(BaseModel):
     server: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PluginLocalAuthArtifactDefinition(BaseModel):
+    """Immutable platform artifact used by a managed local auth tool."""
+
+    url: str
+    sha256: str
+    archive: Literal["tar_gz", "zip"]
+    binaryPath: str
+
+
+class PluginLocalAuthToolDefinition(BaseModel):
+    """Bundled or host-managed CLI used by local connector authentication."""
+
+    id: str
+    source: Literal["bundled", "managed"]
+    version: Optional[str] = None
+    artifacts: Dict[str, PluginLocalAuthArtifactDefinition] = Field(
+        default_factory=dict
+    )
+
+
+class PluginLocalAuthDefinition(BaseModel):
+    """Device-side authentication commands for a plugin connector."""
+
+    kind: Literal["local_qr", "browser_oauth"] = "local_qr"
+    health: List[str] = Field(default_factory=list)
+    start: List[str] = Field(default_factory=list)
+    poll: List[str] = Field(default_factory=list)
+    logout: List[str] = Field(default_factory=list)
+    tool: Optional[PluginLocalAuthToolDefinition] = None
+    qrField: str = "qr_path"
+    statusField: str = "status"
+    okValues: List[str] = Field(default_factory=lambda: ["ok"])
+    pollIntervalSeconds: int = 2
+    timeoutSeconds: int = 45
+    logoutOnUninstall: bool = True
+
+
+class PluginConnectorComponent(BaseModel):
+    """Cloud or device connector required by a plugin."""
+
+    slug: str
+    authPolicy: Literal["on_install", "on_use", "optional"] = "optional"
+    localAuth: Optional[PluginLocalAuthDefinition] = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
 class InstalledPluginComponents(BaseModel):
     """Cross-runtime plugin component inventory."""
 
@@ -48,6 +97,7 @@ class InstalledPluginComponents(BaseModel):
     agents: List[PluginPathComponent] = Field(default_factory=list)
     hooks: List[PluginPathComponent] = Field(default_factory=list)
     mcps: List[PluginMCPComponent] = Field(default_factory=list)
+    connectors: List[PluginConnectorComponent] = Field(default_factory=list)
     lsps: List[PluginPathComponent] = Field(default_factory=list)
     monitors: List[PluginPathComponent] = Field(default_factory=list)
     bins: List[PluginPathComponent] = Field(default_factory=list)
@@ -110,12 +160,42 @@ class InstalledPluginSpec(BaseModel):
     interface: Optional[PluginInterface] = None
     packageRef: Optional[InstalledPluginPackageRef] = None
     sourcePayload: Optional[Dict[str, Any]] = None
+    origin: Literal["created", "market"] = "market"
+    pluginId: Optional[int] = None
+    releaseId: Optional[int] = None
+    desiredVersion: Optional[str] = None
+    updatePolicy: Literal["manual"] = "manual"
+    sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
+    sourceLabel: str = "Wegent 官方"
+    visibility: Literal["personal", "workspace", "public"] = "workspace"
 
 
 class InstalledPluginStatus(BaseModel):
     """Runtime status for an InstalledPlugin CRD."""
 
     state: str = "Available"
+    devices: List["PluginDeviceInstallationItem"] = Field(default_factory=list)
+
+
+class PluginDeviceInstallationItem(BaseModel):
+    """Materialized installation state for one device."""
+
+    deviceId: str
+    desiredReleaseId: int
+    actualReleaseId: Optional[int] = None
+    state: Literal[
+        "pending",
+        "downloading",
+        "installing",
+        "installed",
+        "failed",
+        "uninstalling",
+    ]
+    errorCode: Optional[str] = None
+    errorMessage: Optional[str] = None
+    attemptCount: int = 0
+    lastSyncAt: Optional[datetime] = None
+    updatedAt: datetime
 
 
 class InstalledPlugin(BaseModel):
@@ -141,6 +221,7 @@ class InstalledPluginUpdateRequest(BaseModel):
     componentStates: Optional[Dict[str, bool]] = None
     displayName: Optional[str] = None
     description: Optional[str] = None
+    releaseId: Optional[int] = None
 
 
 class PluginUploadInfo(BaseModel):
@@ -199,6 +280,18 @@ class PluginMarketplaceItem(BaseModel):
     )
     manifest: Dict[str, Any] = Field(default_factory=dict)
     ownerUserId: int
+    ownerDisplayName: str = ""
+    accessRole: Literal["catalog", "owner", "recipient"] = "catalog"
+    allowCopy: bool = False
+    grantUserCount: int = 0
+    grantNamespaceCount: int = 0
+    latestReleaseId: Optional[int] = None
+    listingType: Literal["plugin", "skill"] = "plugin"
+    origin: Literal["market"] = "market"
+    sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
+    sourceLabel: str = "Wegent 官方"
+    updateAvailable: bool = False
+    currentDeviceInstallation: Optional["PluginDeviceInstallationItem"] = None
 
 
 class PluginMarketplaceListResponse(BaseModel):
@@ -218,6 +311,170 @@ class PluginMarketplaceInstallResponse(BaseModel):
 
     plugin: InstalledPlugin
     sync: Optional[DeviceCapabilitySyncResponse] = None
+
+
+class PluginMarketplaceCapabilities(BaseModel):
+    """User-specific marketplace operations enabled by server policy."""
+
+    canPublish: bool = False
+    canSharePersonalPlugins: bool = True
+
+
+class PluginReleaseItem(BaseModel):
+    """Published immutable release exposed by the marketplace API."""
+
+    id: int
+    pluginId: int
+    version: str
+    releaseNotes: str = ""
+    checksum: str
+    sizeBytes: int
+    publishedAt: Optional[datetime] = None
+
+
+class PluginReleaseListResponse(BaseModel):
+    items: List[PluginReleaseItem]
+
+
+class PluginSubmissionInitRequest(BaseModel):
+    slug: str
+    displayName: str
+    version: str
+    filename: str
+    sha256: str = Field(min_length=64, max_length=64)
+    sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
+    listingType: Literal["plugin", "skill"] = "plugin"
+    purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
+    # Unified publish scope. When set, purpose is derived:
+    # personal -> restricted_share (auto-approve); workspace/public -> marketplace_publish (review).
+    visibility: Optional[Literal["personal", "workspace", "public"]] = None
+    targets: List["PluginAccessTarget"] = Field(default_factory=list)
+    allowCopy: bool = False
+
+    @model_validator(mode="after")
+    def resolve_purpose_from_visibility(self) -> "PluginSubmissionInitRequest":
+        if self.visibility is None:
+            return self
+        if self.visibility == "personal":
+            self.purpose = "restricted_share"
+            return self
+        self.purpose = "marketplace_publish"
+        if self.targets:
+            raise ValueError("targets are only allowed when visibility is personal")
+        if self.allowCopy:
+            raise ValueError("allowCopy is only allowed when visibility is personal")
+        return self
+
+
+class PluginSubmissionInitResponse(BaseModel):
+    submissionId: int
+    pluginId: int
+    releaseId: int
+    uploadUrl: str
+    expiresAt: datetime
+
+
+class PluginSubmissionItem(BaseModel):
+    id: int
+    pluginId: int
+    releaseId: int
+    purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
+    status: Literal[
+        "uploading",
+        "scanning",
+        "pending",
+        "approved",
+        "rejected",
+        "cancelled",
+    ]
+    reviewNote: str = ""
+    submittedAt: datetime
+    reviewedAt: Optional[datetime] = None
+
+
+class PluginSubmissionCompleteResponse(BaseModel):
+    submission: PluginSubmissionItem
+    plugin: Optional[PluginMarketplaceItem] = None
+
+
+class PluginAccessTarget(BaseModel):
+    entityType: Literal["user", "namespace"]
+    entityId: str = Field(..., min_length=1, max_length=100)
+    displayName: str = ""
+
+
+class PluginAccessUpdateRequest(BaseModel):
+    scope: Literal["private", "restricted"]
+    targets: List[PluginAccessTarget] = Field(default_factory=list)
+    allowCopy: bool = False
+
+
+class PluginAccessResponse(BaseModel):
+    pluginId: int
+    scope: Literal["private", "restricted"]
+    targets: List[PluginAccessTarget] = Field(default_factory=list)
+    allowCopy: bool = False
+    revocationPendingCount: int = 0
+
+
+class PluginCopyResponse(BaseModel):
+    sourcePluginId: int
+    sourceReleaseId: int
+    sourcePluginName: str
+    sourceDisplayName: str
+    version: str
+    sha256: str
+    downloadUrl: str
+    expiresAt: datetime
+
+
+class PluginSubmissionListResponse(BaseModel):
+    items: List[PluginSubmissionItem]
+
+
+class PluginSubmissionReviewRequest(BaseModel):
+    approved: bool
+    note: str = Field(default="", max_length=5000)
+
+
+class PluginVisibilityGrantRequest(BaseModel):
+    entityType: Literal["user", "namespace"]
+    entityId: str = Field(..., min_length=1, max_length=100)
+
+
+class PluginUpstreamCreateRequest(BaseModel):
+    slug: str
+    displayName: str
+    marketplaceName: str
+    remotePluginId: str
+    upstreamUrl: str
+    licenseInfo: str = ""
+    listingType: Literal["plugin", "skill"] = "plugin"
+    syncPolicy: Literal["auto_after_scan", "review_required"] = "auto_after_scan"
+
+
+class PluginUpstreamUpdateRequest(BaseModel):
+    syncPolicy: Literal["auto_after_scan", "review_required"]
+
+
+class PluginUpstreamItem(BaseModel):
+    id: int
+    pluginId: int
+    provider: str
+    marketplaceName: str
+    remotePluginId: str
+    upstreamUrl: str
+    licenseInfo: str
+    syncEnabled: bool
+    syncPolicy: Literal["auto_after_scan", "review_required"]
+    lastSeenVersion: Optional[str] = None
+    lastCheckedAt: Optional[datetime] = None
+    lastSyncedAt: Optional[datetime] = None
+    lastError: Optional[str] = None
+
+
+class PluginUpstreamListResponse(BaseModel):
+    items: List[PluginUpstreamItem]
 
 
 PluginMarketplacePublishResponse.model_rebuild()

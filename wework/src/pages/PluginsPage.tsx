@@ -16,6 +16,8 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getRuntimeConfig } from '@/config/runtime'
+import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
@@ -36,20 +38,20 @@ function PluginsWorkspaceRouteFallback({
       data-testid="plugins-route-loading"
       className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary"
     >
-      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl">
-        <div
-          className={[
-            'mx-auto flex h-12 max-w-[1420px] items-center pl-20 pr-5 md:h-[52px] md:pr-7',
-            sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
-          ].join(' ')}
-        >
-          {topBarLeftActions}
-        </div>
-      </div>
-      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-5 pb-14 pt-5 md:px-8 md:pt-4">
-        <section className="space-y-1.5">
-          <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">插件</h1>
-          <p className="text-lg leading-6 text-text-secondary">通过插件扩展 WeWork 能力</p>
+      <div
+        className={[
+          'mx-auto flex w-full max-w-[1120px] flex-col gap-7 px-5 pb-14 pt-6 md:px-10 md:pt-7',
+          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+        ].join(' ')}
+      >
+        {topBarLeftActions ? (
+          <div className="flex min-h-8 items-center gap-2">{topBarLeftActions}</div>
+        ) : null}
+        <section className="space-y-2">
+          <h1 className="heading-medium text-text-primary">插件市场</h1>
+          <p className="text-base leading-6 text-text-secondary">
+            发现并接入开发工具、企业数据和专业方法。
+          </p>
         </section>
         <div className="h-11 w-full animate-pulse rounded-full bg-surface" />
         <div className="space-y-8 border-t border-border pt-8">
@@ -81,7 +83,7 @@ function PluginsWorkspaceRouteFallback({
   )
 }
 
-export function PluginsPage() {
+export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
@@ -287,9 +289,12 @@ export function PluginsPage() {
           }
         >
           <PluginsWorkspace
-            cloudMarketplaceAvailable={cloudConnection.isConnected}
-            cloudApiBaseUrl={cloudConnection.apiBaseUrl ?? undefined}
-            cloudToken={cloudConnection.token ?? undefined}
+            pluginReference={parsePluginDetailRoute(routeSearch)}
+            cloudMarketplaceAvailable={true}
+            cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
+            cloudToken={cloudConnection.token}
+            projectName={state.currentProject?.name}
+            hasConversationContext={Boolean(state.currentRuntimeTask)}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
               !isMobile && sidebarCollapsed && !isTauri ? (

@@ -106,7 +106,7 @@ jobs:
     name: Test Executor
     needs: changes
     if: needs.changes.outputs.executor == 'true'
-    runs-on: ubuntu-latest-m
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read

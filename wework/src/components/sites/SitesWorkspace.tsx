@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { AlertCircle, Loader2, Plus, RefreshCw, Search } from 'lucide-react'
+import { ApiError } from '@/api/http'
 import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
@@ -34,6 +35,18 @@ interface ApplicationCollectionOptions {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+}
+
+function isSecurityCheckingError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.errorCode === 'SECURITY_CHECKING') return true
+  const detail = recordValue(error.detail)
+  const nestedError = recordValue(detail?.error)
+  return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
 function getInitialAppType(): SiteAppType {
@@ -244,16 +257,17 @@ export function SitesWorkspace({
 
   const publish = async (site: Site) => {
     if (deletingSiteId === site.siteid) return
+    const nextNetwork = site.network === 'outer' || site.external_url ? 'inner' : 'outer'
     setPublishingIds(current => new Set(current).add(site.siteid))
     collection.setItems(current =>
       current.map(item =>
-        item.app_type === 'site' && item.siteid === site.siteid
+        item.app_type === 'web' && item.siteid === site.siteid
           ? { ...item, publish_status: 'publishing', last_publish_error: null }
           : item
       )
     )
     try {
-      const published = await api.publishSite(site.siteid)
+      const published = await api.updateSiteNetwork(site.siteid, nextNetwork)
       collection.setItems(current =>
         current.map(item => (item.siteid === site.siteid ? published : item))
       )
@@ -261,12 +275,18 @@ export function SitesWorkspace({
     } catch (error) {
       collection.setItems(current =>
         current.map(item =>
-          item.app_type === 'site' && item.siteid === site.siteid
-            ? {
-                ...item,
-                publish_status: 'failed',
-                last_publish_error: errorMessage(error, t('publish_failed', '发布失败')),
-              }
+          item.app_type === 'web' && item.siteid === site.siteid
+            ? isSecurityCheckingError(error)
+              ? {
+                  ...item,
+                  publish_status: 'scanning',
+                  last_publish_error: null,
+                }
+              : {
+                  ...item,
+                  publish_status: 'failed',
+                  last_publish_error: errorMessage(error, t('publish_failed', '发布失败')),
+                }
             : item
         )
       )

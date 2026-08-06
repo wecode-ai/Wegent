@@ -10,6 +10,7 @@ mod connectors;
 mod events;
 pub mod fork_transfer;
 mod handler;
+pub(crate) mod local_connector_auth;
 mod notification_mapping;
 mod response;
 mod runtime_handle_messages;

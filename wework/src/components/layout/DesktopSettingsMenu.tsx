@@ -363,14 +363,14 @@ export function DesktopSettingsMenu({
           ) : null}
           {!wegentQuotaLoading && !wegentQuotaError ? (
             wegentUsage.status === 'available' ? (
-              <div className="space-y-0.5 text-xs leading-5 text-text-secondary">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0 whitespace-nowrap">{wegentUsage.sourceText}</span>
-                  <span className="shrink-0 whitespace-nowrap font-semibold text-text-primary">
+              <div className="space-y-1 text-xs leading-5 text-text-secondary">
+                <div className="min-w-0">
+                  <div>{wegentUsage.sourceText}</div>
+                  <div className="break-words font-semibold text-text-primary">
                     {wegentUsage.value}
-                  </span>
+                  </div>
                 </div>
-                <div className="text-text-muted">{wegentUsage.detail}</div>
+                <div className="break-words text-text-muted">{wegentUsage.detail}</div>
               </div>
             ) : (
               <div className="py-1 text-sm leading-[18px] text-text-secondary">

@@ -732,6 +732,7 @@ export function WorkspaceBrowserPanel({
   const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -1216,6 +1217,7 @@ export function WorkspaceBrowserPanel({
   }, [
     active,
     adoptNativeLabel,
+    browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1576,6 +1578,14 @@ export function WorkspaceBrowserPanel({
         return
       }
 
+      if (!nativeBrowserOpenRef.current) {
+        setStatus('loading')
+        setError(null)
+        setCurrentUrl(url)
+        setBrowserOpenAttempt(attempt => attempt + 1)
+        return
+      }
+
       void runBrowserCommand(() => reloadEmbeddedBrowser(label))
     },
     [embeddedBrowserAvailable, label, runBrowserCommand]
@@ -1602,7 +1612,6 @@ export function WorkspaceBrowserPanel({
       }
 
       if (nextUrl === activePageUrl) {
-        setStatus('ready')
         updatePageUrl(nextUrl)
         reloadCurrentUrl(nextUrl)
         return

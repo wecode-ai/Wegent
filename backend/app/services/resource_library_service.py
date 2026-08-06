@@ -123,6 +123,7 @@ class ResourceLibraryService:
         limit: int,
         cursor: str | None = None,
         target_namespace: str = "default",
+        system_only: bool = False,
     ) -> ResourceLibraryDiscoveryList:
         kinds = (
             [RESOURCE_KIND_BY_TYPE[resource_type]]
@@ -151,9 +152,10 @@ class ResourceLibraryService:
             Kind.kind.in_(system_kinds),
             Kind.is_active == True,
         )
-        candidates = union_all(
-            published_candidates,
-            system_candidates,
+        candidates = (
+            system_candidates
+            if system_only
+            else union_all(published_candidates, system_candidates)
         ).subquery()
         query = (
             db.query(

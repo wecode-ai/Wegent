@@ -62,6 +62,36 @@ def test_discover_install_and_list_personal_installs(test_client, test_db, test_
     assert [item["listing_id"] for item in installed.json()["items"]] == [skill.id]
 
 
+def test_discovery_can_be_limited_to_system_resources(
+    test_client, test_db, test_token, test_user
+):
+    system_skill = _system_skill(test_db, name="system-only-api-skill")
+    user_skill = _system_skill(test_db, name="published-user-api-skill")
+    user_skill.user_id = test_user.id
+    test_db.commit()
+    published = test_client.post(
+        "/api/resource-library/listings",
+        json={
+            "resource_type": "skill",
+            "source_id": user_skill.id,
+            "name": user_skill.name,
+            "display_name": "Published User Skill",
+            "tags": ["technical_development"],
+            "version": "1.0.0",
+        },
+        headers=_headers(test_token),
+    )
+
+    response = test_client.get(
+        "/api/resource-library/listings?resource_type=skill&system_only=true",
+        headers=_headers(test_token),
+    )
+
+    assert published.status_code == 200
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [system_skill.id]
+
+
 def test_marketplace_tags_endpoint_returns_default_catalog(test_client, test_token):
     response = test_client.get(
         "/api/resource-library/tags",
