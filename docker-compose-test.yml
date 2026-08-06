@@ -1,0 +1,372 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+#  mysql:
+#    image: mysql:9.4
+#    container_name: wegent-mysql
+#    restart: always
+#    command:
+#      - --sort_buffer_size=16M
+#    environment:
+#      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+#      MYSQL_DATABASE: ${MYSQL_DATABASE:-task_manager}
+#      MYSQL_USER: ${MYSQL_USER:-task_user}
+#      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-task_password}
+#    ports:
+#      - "${MYSQL_PORT:-3306}:3306"
+#    volumes:
+#      - mysql_data:/var/lib/mysql
+#    networks:
+#      - wegent-network
+#    healthcheck:
+#      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#      start_period: 30s
+#
+#  redis:
+#    image: redis:7
+#    container_name: wegent-redis
+#    restart: always
+#    ports:
+#      - "${REDIS_PORT:-6379}:6379"
+#    volumes:
+#      - redis_data:/data
+#    networks:
+#      - wegent-network
+#    healthcheck:
+#      test: ["CMD", "redis-cli", "ping"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#      start_period: 10s
+
+  elasticsearch:
+    image: elastic/elasticsearch:8.18.8
+    container_name: wegent-elasticsearch
+    restart: always
+    profiles:
+      - rag
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}"
+    ports:
+      - "${ES_PORT:-9200}:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+#  backend:
+#    # build:
+#      # dockerfile: docker/backend/Dockerfile
+#    image: ghcr.io/wecode-ai/wegent-backend:${WEGENT_IMAGE_TAG:-latest}
+#    pull_policy: ${DOCKER_PULL_POLICY:-always}
+#    container_name: wegent-backend
+#    restart: always
+#    ports:
+#      - "${BACKEND_PORT:-8000}:8000"
+#    volumes:
+#      - ./logs/backend:/app/logs
+#    environment:
+#      # Logging configuration
+#      LOG_FILE_ENABLED: ${LOG_FILE_ENABLED:-true}
+#      LOG_DIR: /app/logs
+#      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+#      # Disable litellm network request for model cost map to prevent startup blocking
+#      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+#      ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
+#      DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
+#      CHECK_SYSTEM_INITIALIZATION_STATUS: "${CHECK_SYSTEM_INITIALIZATION_STATUS:-True}"
+#      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+#      EXECUTOR_CANCEL_TASK_URL: ${EXECUTOR_CANCEL_TASK_URL:-http://executor_manager:8001/executor-manager/tasks/cancel}
+#      EXECUTOR_DELETE_TASK_URL: ${EXECUTOR_DELETE_TASK_URL:-http://executor_manager:8001/executor-manager/executor/delete}
+#      EXECUTOR_MANAGER_URL: ${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
+#      SECRET_KEY: ${BACKEND_SECRET_KEY:-your-secret-key-here}
+#      ALGORITHM: ${BACKEND_ALGORITHM:-HS256}
+#      ACCESS_TOKEN_EXPIRE_MINUTES: ${BACKEND_ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+#      SITES_API_BASE_URL: ${SITES_API_BASE_URL:-}
+#      SITES_API_TOKEN: ${SITES_API_TOKEN:-}
+#      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+#      APPEND_CHAT_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CHAT_TASK_EXPIRE_HOURS:-2}
+#      APPEND_CODE_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CODE_TASK_EXPIRE_HOURS:-2}
+#      CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: ${BACKEND_CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+#      CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: ${BACKEND_CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+#      INIT_DATA_DIR: ${BACKEND_INIT_DATA_DIR:-/app/init_data}
+#      INIT_DATA_ENABLED: "${BACKEND_INIT_DATA_ENABLED:-True}"
+#      BUILTIN_PLUGINS_DIR: ${BACKEND_BUILTIN_PLUGINS_DIR:-/app/init_data/plugins}
+#      MAX_UPLOAD_FILE_SIZE_MB: ${BACKEND_MAX_UPLOAD_FILE_SIZE_MB:-50}
+#      MAX_EXTRACTED_TEXT_LENGTH: ${BACKEND_MAX_EXTRACTED_TEXT_LENGTH:-1000000}
+#      TEAM_SHARE_BASE_URL: ${TEAM_SHARE_BASE_URL:-http://localhost:3000/chat}
+#      TASK_SHARE_BASE_URL: ${TASK_SHARE_BASE_URL:-http://localhost:3000}
+#      TEAM_SHARE_QUERY_PARAM: ${TEAM_SHARE_QUERY_PARAM:-teamShare}
+#      WEGENT_SOCKET_URL: ${WEGENT_SOCKET_URL:-http://localhost:8000}
+#      # Chat Shell Configuration (uncomment to use HTTP mode)
+#      CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
+#      CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
+#      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+#      # Internal URL for MCP and other internal service calls (use container name in Docker)
+#      BACKEND_INTERNAL_URL: http://backend:8000
+#      # Knowledge Runtime URL for RAG operations
+#      KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
+#      # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime
+#      # For remote mode, set to: {"default":"remote"}
+#      RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-local}
+#      # Task Dispatch Configuration
+#      # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
+#      TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}
+#      # OpenTelemetry Configuration (uncomment to enable)
+#      # OTEL_ENABLED: "true"
+#      # OTEL_SERVICE_NAME: "wegent-backend"
+#      # OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317"
+#      # OTEL_TRACES_SAMPLER_ARG: "1.0"
+#    depends_on:
+#      mysql:
+#        condition: service_healthy
+#      redis:
+#        condition: service_healthy
+#    networks:
+#      - wegent-network
+#
+#  frontend:
+#    # build:
+#    #   dockerfile: docker/frontend/Dockerfile
+#    image: ghcr.io/wecode-ai/wegent-web:${WEGENT_IMAGE_TAG:-latest}
+#    pull_policy: ${DOCKER_PULL_POLICY:-always}
+#    container_name: wegent-frontend
+#    restart: always
+#    ports:
+#      - "${WEGENT_FRONTEND_PORT:-3000}:3000"
+#    environment:
+#      - NODE_ENV=${NODE_ENV:-production}
+#      # API Configuration
+#      - RUNTIME_INTERNAL_API_URL=${RUNTIME_INTERNAL_API_URL:-http://backend:8000}
+#      - RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-${WEGENT_SOCKET_URL:-http://localhost:8000}}
+#      - RUNTIME_SOCKET_DIRECT_URL=${WEGENT_SOCKET_URL:-http://localhost:8000}
+#      - RUNTIME_WEWORK_CODE_URL=${RUNTIME_WEWORK_CODE_URL:-}
+#      # Feature Flags
+#      # - RUNTIME_ENABLE_CHAT_CONTEXT=false
+#      # - RUNTIME_LOGIN_MODE=all
+#      # - RUNTIME_OIDC_LOGIN_TEXT=
+#      # - RUNTIME_ENABLE_DISPLAY_QUOTAS=enable
+#      # - RUNTIME_ENABLE_WIKI=true
+#      # URLs
+#      # - RUNTIME_VSCODE_LINK_TEMPLATE=
+#      # - RUNTIME_FEEDBACK_URL=https://github.com/wecode-ai/wegent/issues/new
+#      # - RUNTIME_DOCS_URL=https://github.com/wecode-ai/Wegent
+#      # OpenTelemetry Configuration (uncomment to enable)
+#      # - RUNTIME_OTEL_ENABLED=false
+#      # - RUNTIME_OTEL_SERVICE_NAME=wegent-frontend
+#      # - RUNTIME_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
+#    depends_on:
+#      - backend
+#    networks:
+#      - wegent-network
+#
+#  chat_shell:
+#    image: ghcr.io/wecode-ai/wegent-chat-shell:${WEGENT_IMAGE_TAG:-latest}
+#    pull_policy: ${DOCKER_PULL_POLICY:-always}
+#    container_name: wegent-chat-shell
+#    restart: always
+#    ports:
+#      - "${CHAT_SHELL_PORT:-8100}:8100"
+#    environment:
+#      # Disable litellm network request for model cost map to prevent startup blocking
+#      - LITELLM_LOCAL_MODEL_COST_MAP=True
+#      - HOST=${CHAT_SHELL_HOST:-0.0.0.0}
+#      - CHAT_SHELL_MODE=${CHAT_SHELL_MODE:-http}
+#      - CHAT_SHELL_STORAGE_TYPE=${CHAT_SHELL_STORAGE_TYPE:-remote}
+#      - CHAT_SHELL_REMOTE_STORAGE_URL=${CHAT_SHELL_REMOTE_STORAGE_URL:-http://backend:8000/api/internal}
+#      - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+#      - CHAT_SHELL_INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+#      - EXECUTOR_MANAGER_URL=${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
+#      # OpenTelemetry Configuration (uncomment to enable)
+#      # - OTEL_ENABLED=true
+#      # - OTEL_SERVICE_NAME=wegent-chat-shell
+#      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+#    depends_on:
+#      - backend
+#    networks:
+#      - wegent-network
+#    healthcheck:
+#      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 3
+#      start_period: 10s
+
+  executor_manager:
+    # build:
+    #   dockerfile: docker/executor_manager/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-executor-manager:${WEGENT_IMAGE_TAG:-latest}
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    container_name: wegent-executor-manager
+    restart: always
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "=== Pulling executor image: $${EXECUTOR_IMAGE} ===" >&2
+        if docker pull $${EXECUTOR_IMAGE} 2>&1; then
+          echo "=== Successfully pulled executor image ===" >&2
+        else
+          echo "=== Failed to pull executor image, will use cached version ===" >&2
+        fi
+        echo "=== Starting executor manager ===" >&2
+        exec uvicorn main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "${EXECUTOR_MANAGER_PORT:-8001}:8001"
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - TASK_API_DOMAIN=${TASK_API_DOMAIN:-http://backend:8000}
+      - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
+      - MAX_CONCURRENT_TASKS=${EXECUTOR_MAX_CONCURRENT_TASKS:-30}
+      - CALLBACK_HOST=${EXECUTOR_CALLBACK_HOST:-http://executor_manager:8001}
+      - NETWORK=${EXECUTOR_NETWORK:-wegent-network}
+      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:${WEGENT_IMAGE_TAG:-latest}}
+      - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
+      - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
+      - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
+      - DOCKER_HOST_ADDR=${DOCKER_HOST_ADDR:-host.docker.internal}
+      # Seccomp Configuration
+      # Set to 'true' (default) to enable seccomp (default Docker behavior)
+      # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)
+      # Leave empty to auto-detect based on kernel version
+      - ENABLE_SECCOMP=${ENABLE_SECCOMP:-true}
+      # Task Dispatch Configuration
+      # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
+      - TASK_DISPATCH_MODE=${TASK_DISPATCH_MODE:-push}
+      # Service pool name for this instance (used for queue isolation)
+      - SERVICE_POOL=${SERVICE_POOL:-default}
+      # JWT secret for verifying backend tokens (must match backend SECRET_KEY)
+      - JWT_SECRET_KEY=${BACKEND_SECRET_KEY:-your-secret-key-here}
+      - JWT_ALGORITHM=${BACKEND_ALGORITHM:-HS256}
+      # Set to 'true' to require JWT authentication on /tasks/receive
+      - TASK_RECEIVE_AUTH_REQUIRED=${TASK_RECEIVE_AUTH_REQUIRED:-false}
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-executor-manager
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      # - OTEL_TRACES_SAMPLER_ARG=1.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - backend
+      - redis
+    networks:
+      - wegent-network
+
+  knowledge_runtime:
+    image: ghcr.io/wecode-ai/wegent-knowledge-runtime:${WEGENT_IMAGE_TAG:-latest}
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
+    container_name: wegent-knowledge-runtime
+    restart: always
+    profiles:
+      - rag
+    ports:
+      - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # Backend URL for fetching content
+      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
+      # Content fetching timeout in seconds
+      - CONTENT_FETCH_TIMEOUT=${CONTENT_FETCH_TIMEOUT:-120}
+      # Logging configuration
+      - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
+      - LOG_DIR=${LOG_DIR:-/app/logs}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Internal service token. Must match Backend's INTERNAL_SERVICE_TOKEN.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+      # Database connection for config resolution (reference-mode)
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-knowledge-runtime
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    depends_on:
+      - backend
+    volumes:
+      - ./logs/knowledge_runtime:/app/logs
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/internal/rag/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  knowledge_doc_converter:
+    image: ghcr.io/wecode-ai/wegent-knowledge-doc-converter:${WEGENT_IMAGE_TAG:-latest}
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
+    container_name: wegent-knowledge-doc-converter
+    restart: always
+    profiles:
+      - rag
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
+      BACKEND_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_PARSE_METHOD: ${MINERU_PARSE_METHOD:-ocr}
+      MINERU_LANG_LIST: ${MINERU_LANG_LIST:-ch}
+      WORKER_CONVERSION_S3_ENABLED: ${WORKER_CONVERSION_S3_ENABLED:-false}
+      WORKER_CONVERSION_S3_ENDPOINT: ${WORKER_CONVERSION_S3_ENDPOINT:-}
+      WORKER_CONVERSION_S3_ACCESS_KEY: ${WORKER_CONVERSION_S3_ACCESS_KEY:-}
+      WORKER_CONVERSION_S3_SECRET_KEY: ${WORKER_CONVERSION_S3_SECRET_KEY:-}
+      WORKER_CONVERSION_S3_BUCKET_NAME: ${WORKER_CONVERSION_S3_BUCKET_NAME:-}
+      WORKER_CONVERSION_S3_REGION_NAME: ${WORKER_CONVERSION_S3_REGION_NAME:-us-east-1}
+      LOG_FILE_ENABLED: ${LOG_FILE_ENABLED:-true}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
+      PROMETHEUS_PORT: ${PROMETHEUS_PORT:-9090}
+      PROMETHEUS_PATH: ${PROMETHEUS_PATH:-/metrics}
+      # Multimodal analysis (video/image → Gemini → Markdown). Off by default;
+      # set MULTIMODAL_ENABLED=true to opt the worker into the multimodal queue.
+      KNOWLEDGE_CONVERSION_QUEUE: ${KNOWLEDGE_CONVERSION_QUEUE:-knowledge_conversion}
+      CELERY_QUEUE: ${CELERY_QUEUE:-knowledge_conversion,knowledge_multimodal_conversion}
+      MULTIMODAL_ENABLED: ${MULTIMODAL_ENABLED:-false}
+      MULTIMODAL_QUEUE: ${MULTIMODAL_QUEUE:-knowledge_multimodal_conversion}
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:${PROMETHEUS_PORT:-9090}"
+    volumes:
+      - ./logs/knowledge_doc_converter:/app/logs
+    networks:
+      - wegent-network
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  es_data:
+    driver: local
+
+networks:
+  wegent-network:
+    driver: bridge
+    external: false
+    name: wegent-network

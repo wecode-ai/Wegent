@@ -211,14 +211,13 @@ class TestWikiGenerationAuth:
         strictly, so 0 asks for a generation belonging to nobody and cancels nothing
         — a refusal that the test above could not tell apart from the intended one.
         """
+        from app.api.endpoints import wiki as wiki_endpoints
         from app.services import wiki_service as wiki_service_module
 
         project = _create_project(test_db)
         generation = _create_generation(test_db, project_id=project.id)
         monkeypatch.setattr(
-            wiki_service_module.WikiService,
-            "check_user_project_access",
-            lambda self, project, user: True,
+            wiki_endpoints, "user_can_read_project", lambda project, user: True
         )
         seen = {}
         monkeypatch.setattr(
