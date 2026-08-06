@@ -2224,6 +2224,7 @@ function ProjectItem({
                   <ProjectFolderIcon
                     project={project}
                     remote={isRuntimeRemoteProject(runtimeProjectWork)}
+                    open={expanded}
                     className="h-3.5 w-3.5 shrink-0"
                   />
                 )}

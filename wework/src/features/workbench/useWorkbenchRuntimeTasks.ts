@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
@@ -267,9 +268,11 @@ export function useWorkbenchRuntimeTasks({
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
+        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
       }
       const failedResult = results.find(result => !result.response?.accepted)
       if (!failedResult) return { status: 'archived' }
+      track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',
         error:

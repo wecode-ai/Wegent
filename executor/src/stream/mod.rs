@@ -212,6 +212,26 @@ pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
     collect_claude_stream_summary(output).outcome
 }
 
+pub(crate) fn extract_claude_result_error(output: &str) -> Option<String> {
+    for line in output.lines().rev().map(str::trim) {
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("result") {
+            continue;
+        }
+        return match extract_result_outcome(&value) {
+            Some(ExecutionOutcome::Failed { message })
+            | Some(ExecutionOutcome::Cancelled { message }) => Some(message),
+            _ => None,
+        };
+    }
+    None
+}
+
 pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut current_assistant_text = String::new();
     let mut final_text = String::new();

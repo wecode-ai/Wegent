@@ -21,6 +21,7 @@ import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 
 type FeedbackCategory =
   | 'report'
@@ -321,7 +322,19 @@ function TaskFeedbackDialogContent({
       })
       setSubmitted(response)
       setPhase('done')
+      const attachmentCount = attachments.length
+      track('feedback_submitted', {
+        attachment_count:
+          attachmentCount === 0
+            ? '0'
+            : attachmentCount === 1
+              ? '1'
+              : attachmentCount <= 5
+                ? '2-5'
+                : '6+',
+      })
     } catch {
+      track('operation_failed', { operation: 'feedback' })
       setError(
         t('workbench.feedback_contact_developer_with_report', {
           reportId: preview.reportId,

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties, HTMLProps, ReactNode } from 'react'
 import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from 'lucide-react'
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { track } from '@/telemetry/client'
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
 import css from 'react-syntax-highlighter/dist/esm/languages/prism/css'
 import diff from 'react-syntax-highlighter/dist/esm/languages/prism/diff'
@@ -110,6 +111,7 @@ export function MarkdownCodeBlock({
 
   const handleCopy = async () => {
     await copyCodeText(text)
+    track('ai_output_action_completed', { action: 'copy', source: 'chat' })
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
   }

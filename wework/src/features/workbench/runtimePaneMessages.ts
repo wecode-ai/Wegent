@@ -39,6 +39,8 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
   onAssistantStart?: (turnId: string) => void
+  onAssistantFirstToken?: (turnId: string) => void
+  onAssistantResponseSize?: (turnId: string, responseSizeBytes: number) => void
   onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
@@ -55,6 +57,12 @@ export interface RuntimeTaskStreamHandlers {
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
   onAssistantStart?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantFirstToken?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantResponseSize?: (
+    address: RuntimeTaskAddress,
+    turnId: string,
+    responseSizeBytes: number
+  ) => void
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
     turnId: string,
@@ -105,6 +113,9 @@ export function createRuntimeConversationStreamHandlers(
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
       onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantFirstToken: turnId => handlers.onAssistantFirstToken?.(address, turnId),
+      onAssistantResponseSize: (turnId, responseSizeBytes) =>
+        handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
       onAssistantSettled: (turnId, outcome) =>
         handlers.onAssistantSettled?.(address, turnId, outcome),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
@@ -145,6 +156,7 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
+  const firstTokenSent = new Set<string>()
 
   const streamHandlers: ChatStreamHandlers = {
     scope: {
@@ -214,6 +226,12 @@ export function createRuntimeTaskStreamHandlers(
       if (contextUsage) {
         handlers.onContextUsageUpdated?.(contextUsage)
       }
+      if (payload.content || reasoningChunk) {
+        if (!firstTokenSent.has(identity.subtaskId)) {
+          firstTokenSent.add(identity.subtaskId)
+          handlers.onAssistantFirstToken?.(identity.subtaskId)
+        }
+      }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
         hasReasoningChunk: Boolean(reasoningChunk),
@@ -271,6 +289,16 @@ export function createRuntimeTaskStreamHandlers(
         blocks,
         fileChanges,
       })
+      const assistantText =
+        typeof payload.result?.value === 'string' && payload.result.value.trim()
+          ? payload.result.value
+          : undefined
+      if (assistantText) {
+        handlers.onAssistantResponseSize?.(
+          identity.subtaskId,
+          new TextEncoder().encode(assistantText).byteLength
+        )
+      }
       handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
       handlers.onRefreshWorkLists?.()
     },

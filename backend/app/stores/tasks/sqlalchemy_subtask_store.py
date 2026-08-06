@@ -13,7 +13,8 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
-from app.stores.tasks.interfaces import TaskAccessStore
+from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
+from app.stores.tasks.interfaces import FailedSubtaskDetail, TaskAccessStore
 from shared.models.db.enums import ContextType
 
 
@@ -30,6 +31,22 @@ class SqlAlchemySubtaskStore:
             return query
         return query.filter(
             Subtask.task_id.in_(self._owner_task_id_select(owner_user_id=owner_user_id))
+        )
+
+    @staticmethod
+    def _queue_bulk_status_metrics(
+        db: Session,
+        query,
+        *,
+        status: SubtaskStatus,
+    ) -> None:
+        metric_query = query.filter(Subtask.role == SubtaskRole.ASSISTANT)
+        if status != SubtaskStatus.FAILED:
+            metric_query = metric_query.filter(Subtask.status == SubtaskStatus.FAILED)
+        queue_bulk_subtask_status_metrics(
+            db,
+            metric_query.all(),
+            status=status,
         )
 
     def _owner_task_id_select(self, *, owner_user_id: int):
@@ -266,6 +283,37 @@ class SqlAlchemySubtaskStore:
             )
             .all()
         )
+
+    def list_failed_details_by_ids(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        limit: int,
+    ) -> list[FailedSubtaskDetail]:
+        if not subtask_ids or limit <= 0:
+            return []
+        rows = (
+            db.query(Subtask, TaskResource, User.user_name)
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .outerjoin(User, User.id == Subtask.user_id)
+            .filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.status == SubtaskStatus.FAILED,
+                TaskResource.kind == "Task",
+            )
+            .all()
+        )
+        order = {subtask_id: index for index, subtask_id in enumerate(subtask_ids)}
+        rows.sort(key=lambda row: order.get(row[0].id, len(order)))
+        return [
+            FailedSubtaskDetail(
+                subtask=subtask,
+                task=task,
+                user_name=user_name,
+            )
+            for subtask, task, user_name in rows[:limit]
+        ]
 
     def get_accessible_by_id(
         self,
@@ -1066,6 +1114,7 @@ class SqlAlchemySubtaskStore:
     ) -> int:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=SubtaskStatus.DELETE)
         return query.update(
             {
                 Subtask.executor_deleted_at: True,
@@ -1085,6 +1134,7 @@ class SqlAlchemySubtaskStore:
     ) -> int:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=status)
         return query.update(
             {
                 Subtask.status: status,
@@ -1119,6 +1169,7 @@ class SqlAlchemySubtaskStore:
             Subtask.status.in_(from_statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        self._queue_bulk_status_metrics(db, query, status=to_status)
         return query.update(values, synchronize_session="fetch")
 
     def delete(self, db: Session, *, subtask: Subtask) -> None:
