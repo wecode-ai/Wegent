@@ -38,6 +38,40 @@ async function reservePort() {
   return address.port
 }
 
+function configuredPort(value, name) {
+  if (value === undefined) return null
+  const port = Number(value)
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error(`${name} must be a TCP port`)
+  }
+  return port
+}
+
+async function resolveServerPorts(env) {
+  const configuredModelPort = configuredPort(
+    env.WEWORK_E2E_MODEL_SERVER_PORT,
+    'WEWORK_E2E_MODEL_SERVER_PORT'
+  )
+  const configuredControlPort = configuredPort(
+    env.WEWORK_E2E_CONTROL_SERVER_PORT,
+    'WEWORK_E2E_CONTROL_SERVER_PORT'
+  )
+  let modelServerPort = configuredModelPort ?? (await reservePort())
+  let controlServerPort = configuredControlPort ?? (await reservePort())
+
+  while (controlServerPort === modelServerPort) {
+    if (configuredControlPort !== null && configuredModelPort !== null) {
+      throw new Error('Desktop E2E control and model server ports must differ')
+    }
+    if (configuredControlPort !== null) {
+      modelServerPort = await reservePort()
+    } else {
+      controlServerPort = await reservePort()
+    }
+  }
+  return { controlServerPort, modelServerPort }
+}
+
 function runTaskFlow(args, env, label) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()
@@ -161,11 +195,7 @@ async function runRequestedArgs() {
 async function runCheckpoints(checkpoints) {
   const tempDir = await mkdtemp(join(tmpdir(), 'wework-desktop-e2e-'))
   const buildManifestPath = join(tempDir, 'build-manifest.json')
-  const modelServerPort = await reservePort()
-  let controlServerPort = await reservePort()
-  while (controlServerPort === modelServerPort) {
-    controlServerPort = await reservePort()
-  }
+  const { controlServerPort, modelServerPort } = await resolveServerPorts(process.env)
   const failures = []
   let buildManifest = existingBuildManifest(process.env)
 
