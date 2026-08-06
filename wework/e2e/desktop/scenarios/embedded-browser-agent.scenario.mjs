@@ -176,6 +176,12 @@ async function writeStaleBridgeRuntime(identity) {
 }
 
 async function callBridge(identity, payload) {
+  const body = await callBridgeResponse(identity, payload)
+  assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
+  return body.data
+}
+
+async function callBridgeResponse(identity, payload) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
     headers: {
@@ -186,8 +192,7 @@ async function callBridge(identity, payload) {
   })
   const body = await response.json()
   assert.equal(response.ok, true, `Bridge HTTP failed: ${JSON.stringify(body)}`)
-  assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
-  return body.data
+  return body
 }
 
 async function withTimeout(promise, timeoutMs, message) {
@@ -760,19 +765,32 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       findReadonlyNode(afterScrollInspect, node => node.name === SCROLLED_TEXT, 'Scroll marker')
 
-      const screenshotResult = await bridgeCall({
-        action: 'screenshot',
-      })
-      assert.equal(screenshotResult.kind, 'browser.screenshot')
-      assert.equal(screenshotResult.format, 'png')
-      assert.ok(screenshotResult.screenshotId)
-      assert.ok(screenshotResult.path.endsWith('.png'))
-
       const capabilities = await bridgeCall({
         action: 'capabilities',
       })
       assert.equal(capabilities.kind, 'browser.capabilities')
       assert.equal(capabilities.actions.trustedNativeInput, 'poc_only')
+
+      let screenshotResult
+      if (process.platform === 'darwin') {
+        assert.equal(capabilities.actions.screenshot.viewport, true)
+        screenshotResult = await bridgeCall({ action: 'screenshot' })
+        assert.equal(screenshotResult.kind, 'browser.screenshot')
+        assert.equal(screenshotResult.format, 'png')
+        assert.ok(screenshotResult.screenshotId)
+        assert.ok(screenshotResult.path.endsWith('.png'))
+      } else {
+        assert.equal(capabilities.actions.screenshot.viewport, false)
+        const screenshotResponse = await callBridgeResponse(bridgeIdentity, {
+          action: 'screenshot',
+        })
+        assert.equal(screenshotResponse.ok, false)
+        assert.equal(
+          screenshotResponse.error,
+          'Embedded browser screenshots are currently supported on macOS only'
+        )
+        screenshotResult = screenshotResponse
+      }
 
       // file:// local file support: the bridge renders a local HTML page, and
       // an un-previewable local file surfaces a notice instead of downloading.
