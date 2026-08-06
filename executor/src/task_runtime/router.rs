@@ -4,10 +4,11 @@
 
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
-    issue_provider::IssueProvider, store::task_provider, BinaryInput, Delivery, DeliveryAsset,
-    DeliveryCreate, DeliveryDetail, IssueComment, LocalTaskStore, LoopItem, ProjectCreate,
-    ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding,
-    TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
+    issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
+    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
+    LocalExecution, LocalExecutionClaim, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
+    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -541,6 +542,109 @@ impl TaskRuntime {
 
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         self.local_store.list_task_bindings(item_id)
+    }
+
+    pub fn list_chat_agents(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
+        self.local_store.list_chat_agents(project_id)
+    }
+
+    pub fn create_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        self.local_store.create_chat_agent(project_id, input)
+    }
+
+    pub fn update_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        input: ChatAgentUpdate,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        self.local_store.update_chat_agent(project_id, agent_id, input)
+    }
+
+    pub fn archive_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .archive_chat_agent(project_id, agent_id, version)
+    }
+
+    pub fn list_executions(
+        &self,
+        project_id: &str,
+        agent_id: Option<&str>,
+        status: Option<&str>,
+        include_terminal: bool,
+    ) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
+        self.local_store
+            .list_executions(project_id, agent_id, status, include_terminal)
+    }
+
+    pub fn approve_execution(
+        &self,
+        execution_id: i64,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        self.local_store.approve_execution(execution_id)
+    }
+
+    pub fn reject_execution(
+        &self,
+        execution_id: i64,
+        reason: Option<String>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        self.local_store.reject_execution(execution_id, reason)
+    }
+
+    pub fn claim_next_local_execution(
+        &self,
+        claim: LocalExecutionClaim,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.claim_next_local_execution(&claim)
+    }
+
+    pub fn heartbeat_execution(
+        &self,
+        execution_id: i64,
+        runtime_device_id: Option<&str>,
+        runtime_task_id: Option<&str>,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.heartbeat_execution(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            lease_seconds,
+        )
+    }
+
+    pub fn complete_execution(
+        &self,
+        execution_id: i64,
+        note: Option<&str>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.complete_execution(execution_id, note)
+    }
+
+    pub fn fail_execution(
+        &self,
+        execution_id: i64,
+        error: &str,
+        requeue: bool,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.fail_execution(execution_id, error, requeue)
+    }
+
+    pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {
+        self.local_store.recover_stale_local_executions()
     }
 
     pub fn find_task_binding(

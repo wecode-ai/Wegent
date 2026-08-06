@@ -431,12 +431,51 @@ where
             let config = Arc::clone(&config);
             let cancellations = cancellations.clone();
             Box::pin(async move {
+                write_executor_log_line(&format_executor_log(
+                    "task:execute received",
+                    &[(
+                        "payload_keys",
+                        payload
+                            .as_object()
+                            .map(|object| object.len().to_string())
+                            .unwrap_or_else(|| "non-object".to_owned()),
+                    )],
+                ));
                 let Ok(mut request) = serde_json::from_value::<ExecutionRequest>(payload) else {
+                    write_executor_log_line(
+                        "task:execute parse failed (unsupported execution request shape)",
+                    );
                     return None;
                 };
+                write_executor_log_line(&format_executor_log(
+                    "task:execute parsed",
+                    &[
+                        ("task_id", request.task_id.clone()),
+                        (
+                            "shell",
+                            request
+                                .resolved_shell_type()
+                                .unwrap_or_else(|| "none".to_owned()),
+                        ),
+                        (
+                            "cwd",
+                            request
+                                .cwd()
+                                .unwrap_or("<missing>")
+                                .to_owned(),
+                        ),
+                    ],
+                ));
                 normalize_local_task_request(&mut request, &config);
                 cancellations.register_task(&request);
-                let _ = runner.submit(request).await;
+                let result = runner.submit(request).await;
+                write_executor_log_line(&format_executor_log(
+                    "task:execute submit result",
+                    &[
+                        ("status", format!("{:?}", result.status)),
+                        ("message", result.message.unwrap_or_default()),
+                    ],
+                ));
                 None
             })
         })
@@ -545,6 +584,17 @@ where
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
             Box::pin(async move {
+                write_executor_log_line(&format_executor_log(
+                    "runtime:rpc received",
+                    &[(
+                        "method",
+                        payload
+                            .get("method")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<missing>")
+                            .to_owned(),
+                    )],
+                ));
                 let Some(handler) = runtime_work_handler else {
                     return Some(runtime_error_response(AppIpcError::new(
                         "runtime_unavailable",
@@ -552,10 +602,18 @@ where
                     )));
                 };
 
-                Some(match handler.handle_runtime_rpc(payload).await {
+                let response = match handler.handle_runtime_rpc(payload).await {
                     Ok(result) => result,
                     Err(error) => runtime_error_response(error),
-                })
+                };
+                write_executor_log_line(&format_executor_log(
+                    "runtime:rpc responded",
+                    &[
+                        ("ok", response.get("success").map(Value::as_bool).flatten().unwrap_or(false).to_string()),
+                        ("error", response.get("error").map(|v| v.to_string()).unwrap_or_default()),
+                    ],
+                ));
+                Some(response)
             })
         })
     }

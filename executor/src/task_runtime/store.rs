@@ -10,17 +10,18 @@ use std::{
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
-use serde_json::json;
+use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
-    LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind, ProjectUpdate,
-    RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskUpdate,
+    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalExecution, LocalExecutionClaim, LoopItem,
+    ProjectCreate, ProjectDescriptor, ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress,
+    TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskUpdate,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 3;
+const LOCAL_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Error)]
 pub enum TaskRuntimeError {
@@ -79,7 +80,8 @@ impl LocalTaskStore {
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at
+                    metadata, version, created_at, updated_at, completed_at,
+                    assignee_agent_id
              FROM loop_items
              WHERE resource_type = 'project' AND deleted_at IS NULL
              ORDER BY updated_at DESC",
@@ -355,7 +357,8 @@ impl LocalTaskStore {
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at
+                    metadata, version, created_at, updated_at, completed_at,
+                    assignee_agent_id
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1
                AND deleted_at IS NULL
@@ -409,9 +412,10 @@ impl LocalTaskStore {
             "INSERT INTO loop_items (
                 id, resource_type, project_space, cloud_project_id, parent_id,
                 title, description, sequence_number, status, priority, sort_order,
-                metadata, version, created_at, updated_at, completed_at
+                metadata, version, created_at, updated_at, completed_at,
+                assignee_agent_id
              ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       0, ?9, 1, ?10, ?10, ?11)",
+                       0, ?9, 1, ?10, ?10, ?11, ?12)",
             params![
                 id,
                 project_id,
@@ -424,6 +428,7 @@ impl LocalTaskStore {
                 metadata.to_string(),
                 now,
                 completed_at,
+                None::<String>,
             ],
         )?;
         transaction.commit()?;
@@ -456,18 +461,35 @@ impl LocalTaskStore {
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
         }
+        if let Some(Some(agent_id)) = input.assignee_agent_id.as_ref() {
+            let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+            })?;
+            if agent.cloud_project_id.as_deref() != Some(project_id) {
+                return Err(TaskRuntimeError::Invalid(
+                    "Robot is not in this project".to_owned(),
+                ));
+            }
+        }
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
         }
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
         let status = input.status.or(current.status);
-        let priority = input.priority.or(current.priority);
+        let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
         let mut metadata = current.metadata;
         if let Some(tags) = input.tags {
             metadata["tags"] = json!(tags);
         }
+        let assignee_agent_id = match input.assignee_agent_id.as_ref() {
+            Some(Some(agent_id)) => Some(agent_id.as_str()),
+            Some(None) => None,
+            None => current.assignee_agent_id.as_deref(),
+        };
+        let assignee_changed =
+            input.assignee_agent_id.is_some() && assignee_agent_id != current.assignee_agent_id.as_deref();
         let now = now();
         let completed_at = if status.as_deref() == Some("completed") {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -478,8 +500,8 @@ impl LocalTaskStore {
             "UPDATE loop_items
              SET title = ?1, description = ?2, status = ?3, priority = ?4,
                  parent_id = ?5, metadata = ?6, completed_at = ?7,
-                 version = version + 1, updated_at = ?8
-             WHERE id = ?9 AND version = ?10",
+                 assignee_agent_id = ?8, version = version + 1, updated_at = ?9
+             WHERE id = ?10 AND version = ?11",
             params![
                 title,
                 description,
@@ -488,6 +510,7 @@ impl LocalTaskStore {
                 parent_id,
                 metadata.to_string(),
                 completed_at,
+                assignee_agent_id,
                 now,
                 task_id,
                 input.version,
@@ -496,9 +519,481 @@ impl LocalTaskStore {
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
         }
+        if assignee_changed {
+            cancel_active_executions(&transaction, task_id)?;
+            if let Some(agent_id) = assignee_agent_id {
+                let agent = get_item_from(&transaction, agent_id, "chat_agent")?
+                    .ok_or_else(|| {
+                        TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+                    })?;
+                create_local_execution(
+                    &transaction,
+                    task_id,
+                    project_id,
+                    agent_id,
+                    &agent,
+                    current.priority.as_deref().unwrap_or("none"),
+                    input.execution_payload.unwrap_or(Value::Null),
+                )?;
+            }
+        }
         transaction.commit()?;
         drop(connection);
         self.get_item(task_id, "task")
+    }
+
+    // ------------------------------------------------------------------
+    // Local robot (chat_agent) CRUD
+    // ------------------------------------------------------------------
+
+    pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
+                    public_id, project_key, name, title, description, sequence_number,
+                    next_item_number, status, priority, sort_order, current_delivery_id,
+                    metadata, version, created_at, updated_at, completed_at,
+                    assignee_agent_id
+             FROM loop_items
+             WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1 AND deleted_at IS NULL
+             ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map(params![project_id], map_loop_item)?;
+        let agents = collect_items(rows)?;
+        Ok(agents
+            .into_iter()
+            .filter(|agent| agent.status.as_deref() != Some("archived"))
+            .map(map_chat_agent)
+            .collect())
+    }
+
+    pub fn create_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        validate_name(&input.name, "robot name")?;
+        let connection = self.connection()?;
+        let id = format!("LA-{}", Uuid::new_v4().simple());
+        let now = now();
+        let mut metadata = json!({
+            "runtime": "codex",
+            "model": input.model,
+            "system_prompt": input.system_prompt.unwrap_or_default(),
+            "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
+            "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
+            "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
+        });
+        metadata["execution_device_id"] = json!(input.execution_device_id);
+        connection.execute(
+            "INSERT INTO loop_items (
+                id, resource_type, project_space, cloud_project_id, name, title,
+                description, status, metadata, version, created_at, updated_at
+             ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1, ?5, ?5)",
+            params![
+                id,
+                project_id,
+                input.name,
+                metadata.to_string(),
+                now,
+            ],
+        )?;
+        drop(connection);
+        self.get_chat_agent(project_id, &id)
+    }
+
+    pub fn update_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        input: ChatAgentUpdate,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let current =
+            get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("Robot not found".to_owned())
+            })?;
+        if current.cloud_project_id.as_deref() != Some(project_id) {
+            return Err(TaskRuntimeError::Invalid(
+                "Robot is not in this project".to_owned(),
+            ));
+        }
+        if current.version != input.version {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let mut metadata = current.metadata;
+        if let Some(name) = input.name.as_ref() {
+            validate_name(name, "robot name")?;
+        }
+        if let Some(model) = input.model.as_ref() {
+            metadata["model"] = json!(model);
+        }
+        if let Some(prompt) = input.system_prompt.as_ref() {
+            metadata["system_prompt"] = json!(prompt);
+        }
+        if let Some(visibility) = input.visibility.as_ref() {
+            metadata["visibility"] = json!(visibility);
+        }
+        if let Some(environment) = input.execution_environment.as_ref() {
+            metadata["execution_environment"] = json!(environment);
+        }
+        if let Some(mode) = input.execution_mode.as_ref() {
+            metadata["execution_mode"] = json!(mode);
+        }
+        if let Some(device) = input.execution_device_id.as_ref() {
+            metadata["execution_device_id"] = json!(device);
+        }
+        let status = input.status.unwrap_or_else(|| current.status.unwrap_or_else(|| "active".to_owned()));
+        let name = input.name.unwrap_or_else(|| {
+            current
+                .name
+                .or(current.title)
+                .unwrap_or_else(|| "AI".to_owned())
+        });
+        let changed = connection.execute(
+            "UPDATE loop_items
+             SET name = ?1, title = ?1, status = ?2, metadata = ?3,
+                 version = version + 1, updated_at = ?4
+             WHERE id = ?5 AND version = ?6",
+            params![
+                name,
+                status,
+                metadata.to_string(),
+                now(),
+                agent_id,
+                input.version,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        drop(connection);
+        self.get_chat_agent(project_id, agent_id)
+    }
+
+    pub fn archive_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let changed = connection.execute(
+            "UPDATE loop_items
+             SET status = 'archived', version = version + 1, updated_at = ?1
+             WHERE id = ?2 AND version = ?3 AND cloud_project_id = ?4",
+            params![now(), agent_id, version, project_id],
+        )?;
+        if changed != 1 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        Ok(())
+    }
+
+    fn get_chat_agent(&self, project_id: &str, agent_id: &str) -> Result<ChatAgent, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let row = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+            TaskRuntimeError::Invalid("Robot not found".to_owned())
+        })?;
+        if row.cloud_project_id.as_deref() != Some(project_id) {
+            return Err(TaskRuntimeError::Invalid(
+                "Robot is not in this project".to_owned(),
+            ));
+        }
+        Ok(map_chat_agent(row))
+    }
+
+    // ------------------------------------------------------------------
+    // Local execution lifecycle
+    // ------------------------------------------------------------------
+
+    pub fn list_executions(
+        &self,
+        project_id: &str,
+        agent_id: Option<&str>,
+        status_filter: Option<&str>,
+        include_terminal: bool,
+    ) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut sql = String::from(
+            "SELECT e.id, e.loop_item_id, e.cloud_project_id, e.agent_id,
+                    e.assigner_user_id, e.execution_environment, e.execution_device_id,
+                    e.status, e.priority_weight, e.queued_at, e.started_at, e.completed_at,
+                    e.lease_expires_at, e.heartbeat_at, e.retry_attempt, e.error_message,
+                    e.execution_note, e.approval_status, e.approved_by_user_id,
+                    e.rejected_reason, e.runtime_device_id, e.runtime_task_id,
+                    e.execution_payload, e.max_retries, e.version, e.created_at,
+                    e.updated_at, t.title, t.status, t.priority,
+                    a.name, a.title, a.metadata
+             FROM loop_item_executions e
+             LEFT JOIN loop_items t ON t.id = e.loop_item_id
+             LEFT JOIN loop_items a ON a.id = e.agent_id
+             WHERE e.cloud_project_id = ?1",
+        );
+        if agent_id.is_some() {
+            sql.push_str(" AND e.agent_id = ?2");
+        }
+        if status_filter.is_some() {
+            sql.push_str(" AND e.status = ?3");
+        } else if !include_terminal {
+            sql.push_str(
+                " AND e.status IN ('pending_approval', 'queued', 'running')",
+            );
+        }
+        sql.push_str(" ORDER BY e.priority_weight DESC, e.queued_at ASC, e.id ASC");
+        let mut statement = connection.prepare(&sql)?;
+        let mut rows = match (agent_id, status_filter) {
+            (Some(agent_id), Some(status)) => statement.query_map(
+                params![project_id, agent_id, status],
+                map_execution,
+            )?,
+            (Some(agent_id), None) => {
+                statement.query_map(params![project_id, agent_id], map_execution)?
+            }
+            (None, Some(status)) => statement.query_map(params![project_id, status], map_execution)?,
+            (None, None) => statement.query_map(params![project_id], map_execution)?,
+        };
+        let mut executions = Vec::new();
+        while let Some(execution) = rows.next() {
+            executions.push(execution?);
+        }
+        Ok(executions)
+    }
+
+    pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let current = execution_row(&connection, execution_id)?;
+        if current.status != "pending_approval" {
+            return Err(TaskRuntimeError::Invalid(
+                "Run is not waiting for robot approval".to_owned(),
+            ));
+        }
+        let now = now();
+        connection.execute(
+            "UPDATE loop_item_executions
+             SET status = 'queued', queued_at = ?1, approval_status = 'approved',
+                 approved_at = ?1, version = version + 1, updated_at = ?1
+             WHERE id = ?2",
+            params![now, execution_id],
+        )?;
+        execution_row(&connection, execution_id)
+    }
+
+    pub fn reject_execution(
+        &self,
+        execution_id: i64,
+        reason: Option<String>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let current = execution_row(&connection, execution_id)?;
+        if current.status != "pending_approval" {
+            return Err(TaskRuntimeError::Invalid(
+                "Run is not waiting for robot approval".to_owned(),
+            ));
+        }
+        let now = now();
+        connection.execute(
+            "UPDATE loop_item_executions
+             SET status = 'cancelled', approval_status = 'rejected',
+                 rejected_reason = ?1, execution_note = ?1, completed_at = ?2,
+                 version = version + 1, updated_at = ?2
+             WHERE id = ?3",
+            params![
+                reason.unwrap_or_else(|| "Robot creator rejected the run".to_owned()),
+                now,
+                execution_id,
+            ],
+        )?;
+        execution_row(&connection, execution_id)
+    }
+
+    pub fn claim_next_local_execution(
+        &self,
+        claim: &LocalExecutionClaim,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let running: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM loop_item_executions
+             WHERE execution_environment = 'local' AND status = 'running'
+               AND (?1 IS NULL OR execution_device_id = ?1)",
+            params![claim.execution_device_id],
+            |row| row.get(0),
+        )?;
+        if running >= claim.device_capacity as i64 {
+            return Ok(None);
+        }
+        let running_agents: Vec<String> = {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT agent_id FROM loop_item_executions
+                 WHERE execution_environment = 'local' AND status = 'running'",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut sql = String::from(
+            "SELECT id FROM loop_item_executions
+             WHERE execution_environment = 'local' AND status = 'queued'",
+        );
+        if !running_agents.is_empty() {
+            let placeholders = vec!["?"; running_agents.len()].join(",");
+            sql.push_str(&format!(" AND agent_id NOT IN ({placeholders})"));
+        }
+        if claim.execution_device_id.is_some() {
+            sql.push_str(" AND execution_device_id = ?");
+        }
+        sql.push_str(" ORDER BY priority_weight DESC, queued_at ASC, id ASC LIMIT 1");
+        let mut statement = connection.prepare(&sql)?;
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::new();
+        let device_ref;
+        for agent in &running_agents {
+            params_vec.push(agent);
+        }
+        if let Some(device_id) = claim.execution_device_id.as_ref() {
+            device_ref = device_id;
+            params_vec.push(&device_ref);
+        }
+        let candidate: Option<i64> = statement
+            .query_row(params_vec.as_slice(), |row| row.get(0))
+            .optional()?;
+        let Some(candidate_id) = candidate else {
+            return Ok(None);
+        };
+        let now = now();
+        let lease_seconds = claim.lease_seconds.max(60);
+        let changed = connection.execute(
+            "UPDATE loop_item_executions
+             SET status = 'running', started_at = ?1, heartbeat_at = ?1,
+                 lease_expires_at = ?2, version = version + 1, updated_at = ?1
+             WHERE id = ?3 AND status = 'queued'",
+            params![
+                now,
+                lease_expiry(&now, lease_seconds),
+                candidate_id,
+            ],
+        )?;
+        if changed != 1 {
+            return Ok(None);
+        }
+        execution_row(&connection, candidate_id).map(Some)
+    }
+
+    pub fn heartbeat_execution(
+        &self,
+        execution_id: i64,
+        runtime_device_id: Option<&str>,
+        runtime_task_id: Option<&str>,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let now = now();
+        let changed = connection.execute(
+            "UPDATE loop_item_executions
+             SET heartbeat_at = ?1, lease_expires_at = ?2,
+                 runtime_device_id = COALESCE(?3, runtime_device_id),
+                 runtime_task_id = COALESCE(?4, runtime_task_id),
+                 version = version + 1, updated_at = ?1
+             WHERE id = ?5 AND status = 'running'",
+            params![
+                now,
+                lease_expiry(&now, lease_seconds.max(60)),
+                runtime_device_id,
+                runtime_task_id,
+                execution_id,
+            ],
+        )?;
+        if changed != 1 {
+            return Ok(None);
+        }
+        execution_row(&connection, execution_id).map(Some)
+    }
+
+    pub fn complete_execution(
+        &self,
+        execution_id: i64,
+        note: Option<&str>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let now = now();
+        connection.execute(
+            "UPDATE loop_item_executions
+             SET status = 'completed', completed_at = ?1, lease_expires_at = NULL,
+                 execution_note = ?2, version = version + 1, updated_at = ?1
+             WHERE id = ?3 AND status != 'completed' AND status != 'failed'
+               AND status != 'cancelled'",
+            params![now, note.unwrap_or(""), execution_id],
+        )?;
+        execution_row(&connection, execution_id).map(Some)
+    }
+
+    pub fn fail_execution(
+        &self,
+        execution_id: i64,
+        error: &str,
+        requeue: bool,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let current = execution_row(&connection, execution_id)?;
+        if matches!(current.status.as_str(), "completed" | "failed" | "cancelled") {
+            return Ok(Some(current));
+        }
+        let now = now();
+        if requeue && current.retry_attempt < current.max_retries {
+            connection.execute(
+                "UPDATE loop_item_executions
+                 SET retry_attempt = retry_attempt + 1, status = 'queued', queued_at = ?1,
+                     lease_expires_at = NULL, error_message = ?2, version = version + 1,
+                     updated_at = ?1
+                 WHERE id = ?3",
+                params![now, truncate(&error, 2000), execution_id],
+            )?;
+        } else {
+            connection.execute(
+                "UPDATE loop_item_executions
+                 SET status = 'failed', completed_at = ?1, lease_expires_at = NULL,
+                     error_message = ?2, version = version + 1, updated_at = ?1
+                 WHERE id = ?3",
+                params![now, truncate(&error, 2000), execution_id],
+            )?;
+        }
+        execution_row(&connection, execution_id).map(Some)
+    }
+
+    pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let stale: Vec<i64> = {
+            let mut statement = connection.prepare(
+                "SELECT id FROM loop_item_executions
+                 WHERE status = 'running' AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at < ?1",
+            )?;
+            let rows = statement.query_map(params![now()], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut requeued = 0u64;
+        let mut failed = 0u64;
+        for id in stale {
+            let current = execution_row(&connection, id)?;
+            if current.retry_attempt < current.max_retries {
+                self.fail_execution(id, "Run lease expired locally", true)?;
+                requeued += 1;
+            } else {
+                self.fail_execution(id, "Run lease expired locally", false)?;
+                failed += 1;
+            }
+        }
+        Ok((requeued, failed))
+    }
+
+    pub fn local_execution_payload(&self, execution_id: i64) -> Result<Option<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let payload: Option<String> = connection.query_row(
+            "SELECT execution_payload FROM loop_item_executions WHERE id = ?1",
+            params![execution_id],
+            |row| row.get(0),
+        )?;
+        Ok(payload
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .filter(Value::is_object))
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
@@ -549,7 +1044,8 @@ impl LocalTaskStore {
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at
+                    metadata, version, created_at, updated_at, completed_at,
+                    assignee_agent_id
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1 AND status = ?2
                AND ((?3 IS NULL AND (parent_id IS NULL OR parent_id = '')) OR parent_id = ?3)
@@ -860,7 +1356,8 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             updated_at TEXT NOT NULL,
             completed_at TEXT,
             delivered_at TEXT,
-            deleted_at TEXT
+            deleted_at TEXT,
+            assignee_agent_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_loop_items_project_type
             ON loop_items(cloud_project_id, resource_type);
@@ -874,6 +1371,42 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             ON loop_items(project_space);
         CREATE INDEX IF NOT EXISTS ix_loop_items_deleted_at
             ON loop_items(deleted_at);
+        CREATE TABLE IF NOT EXISTS loop_item_executions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loop_item_id TEXT NOT NULL,
+            cloud_project_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            execution_environment TEXT NOT NULL DEFAULT 'local',
+            execution_device_id TEXT,
+            assigner_user_id INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'queued',
+            priority_weight INTEGER NOT NULL DEFAULT 0,
+            queued_at TEXT,
+            started_at TEXT,
+            completed_at TEXT,
+            lease_expires_at TEXT,
+            heartbeat_at TEXT,
+            retry_attempt INTEGER NOT NULL DEFAULT 0,
+            max_retries INTEGER NOT NULL DEFAULT 1,
+            error_message TEXT NOT NULL DEFAULT '',
+            execution_note TEXT NOT NULL DEFAULT '',
+            approval_status TEXT,
+            approved_by_user_id INTEGER,
+            approved_at TEXT,
+            rejected_reason TEXT,
+            runtime_device_id TEXT,
+            runtime_task_id TEXT,
+            execution_payload TEXT,
+            version INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_exec_device_status_order
+            ON loop_item_executions(execution_device_id, status, priority_weight, queued_at);
+        CREATE INDEX IF NOT EXISTS ix_exec_agent_status
+            ON loop_item_executions(agent_id, status);
+        CREATE INDEX IF NOT EXISTS ix_exec_item_status
+            ON loop_item_executions(loop_item_id, status);
         CREATE TABLE IF NOT EXISTS project_provider_credentials (
             project_store TEXT NOT NULL,
             project_id TEXT NOT NULL,
@@ -889,6 +1422,27 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             updated_at TEXT NOT NULL,
             PRIMARY KEY(project_store, project_id)
         );",
+    )?;
+    // Existing databases created before assignee_agent_id existed.
+    let has_assignee_agent = connection
+        .prepare("PRAGMA table_info(loop_items)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|column| column == "assignee_agent_id");
+    if !has_assignee_agent {
+        connection.execute(
+            "ALTER TABLE loop_items ADD COLUMN assignee_agent_id TEXT",
+            [],
+        )?;
+    }
+    // The index must be created after the column exists (old databases need
+    // the ALTER first; a missing column here would abort the whole migration
+    // and take down the wework_space MCP server).
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS ix_loop_items_assignee_agent_id
+         ON loop_items(assignee_agent_id)",
+        [],
     )?;
     connection.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
@@ -907,7 +1461,8 @@ fn get_item_from(
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at
+                    metadata, version, created_at, updated_at, completed_at,
+                    assignee_agent_id
              FROM loop_items
              WHERE id = ?1 AND resource_type = ?2 AND deleted_at IS NULL",
             params![id, resource_type],
@@ -943,6 +1498,7 @@ fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
         created_at: row.get(18)?,
         updated_at: row.get(19)?,
         completed_at: row.get(20)?,
+        assignee_agent_id: row.get(21)?,
     })
 }
 
@@ -1119,6 +1675,7 @@ fn descriptor_loop_item(
         created_at: String::new(),
         updated_at: String::new(),
         completed_at: None,
+        assignee_agent_id: None,
     }
 }
 
@@ -1206,6 +1763,217 @@ pub(crate) fn numeric_id() -> String {
         .to_string()
 }
 
+fn map_chat_agent(row: LoopItem) -> ChatAgent {
+    let metadata = row.metadata;
+    let text = |key: &str, default: &str| {
+        metadata
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or(default)
+            .to_owned()
+    };
+    ChatAgent {
+        id: row.id.clone(),
+        project_id: row.cloud_project_id.clone().unwrap_or_default(),
+        name: row
+            .title
+            .or(row.name)
+            .unwrap_or_else(|| "AI".to_owned()),
+        runtime: "codex".to_owned(),
+        model: metadata.get("model").and_then(Value::as_str).map(ToOwned::to_owned),
+        system_prompt: text("system_prompt", ""),
+        status: row.status.unwrap_or_else(|| "active".to_owned()),
+        visibility: text("visibility", "creator_admin"),
+        execution_environment: text("execution_environment", "local"),
+        execution_mode: text("execution_mode", "auto"),
+        execution_device_id: metadata
+            .get("execution_device_id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        created_by_user_id: row.created_by_user_id,
+        version: row.version,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
+    let payload: Option<String> = row.get(22)?;
+    Ok(LocalExecution {
+        id: row.get(0)?,
+        loop_item_id: row.get(1)?,
+        cloud_project_id: row.get(2)?,
+        agent_id: row.get(3)?,
+        assigner_user_id: row.get(4)?,
+        execution_environment: row.get(5)?,
+        execution_device_id: row.get(6)?,
+        status: row.get(7)?,
+        priority_weight: row.get(8)?,
+        queued_at: row.get(9)?,
+        started_at: row.get(10)?,
+        completed_at: row.get(11)?,
+        lease_expires_at: row.get(12)?,
+        heartbeat_at: row.get(13)?,
+        retry_attempt: row.get(14)?,
+        error_message: row.get(15)?,
+        execution_note: row.get(16)?,
+        approval_status: row.get(17)?,
+        approved_by_user_id: row.get(18)?,
+        rejected_reason: row.get(19)?,
+        runtime_device_id: row.get(20)?,
+        runtime_task_id: row.get(21)?,
+        execution_payload: payload
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .filter(Value::is_object),
+        max_retries: row.get(23)?,
+        version: row.get(24)?,
+        created_at: row.get(25)?,
+        updated_at: row.get(26)?,
+        task_title: row.get(27)?,
+        task_status: row.get(28)?,
+        task_priority: row.get(29)?,
+        agent_name: row
+            .get::<_, Option<String>>(30)?
+            .or(row.get::<_, Option<String>>(31)?)
+            .unwrap_or_else(|| "AI".to_owned()),
+        agent_system_prompt: row
+            .get::<_, Option<String>>(32)?
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .and_then(|metadata| {
+                metadata
+                    .get("system_prompt")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_default(),
+    })
+}
+
+fn execution_row(
+    connection: &Connection,
+    execution_id: i64,
+) -> Result<LocalExecution, TaskRuntimeError> {
+    let mut statement = connection.prepare(
+        "SELECT e.id, e.loop_item_id, e.cloud_project_id, e.agent_id,
+                e.assigner_user_id, e.execution_environment, e.execution_device_id,
+                e.status, e.priority_weight, e.queued_at, e.started_at, e.completed_at,
+                e.lease_expires_at, e.heartbeat_at, e.retry_attempt, e.error_message,
+                e.execution_note, e.approval_status, e.approved_by_user_id,
+                e.rejected_reason, e.runtime_device_id, e.runtime_task_id,
+                e.execution_payload, e.max_retries, e.version, e.created_at,
+                e.updated_at, t.title, t.status, t.priority,
+                a.name, a.title, a.metadata
+         FROM loop_item_executions e
+         LEFT JOIN loop_items t ON t.id = e.loop_item_id
+         LEFT JOIN loop_items a ON a.id = e.agent_id
+         WHERE e.id = ?1",
+    )?;
+    statement
+        .query_row(params![execution_id], map_execution)
+        .map_err(TaskRuntimeError::from)
+}
+
+fn cancel_active_executions(
+    connection: &Connection,
+    item_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    connection.execute(
+        "UPDATE loop_item_executions
+         SET status = 'cancelled', completed_at = ?1,
+             execution_note = 'Assignee changed before the run finished',
+             version = version + 1, updated_at = ?1
+         WHERE loop_item_id = ?2
+           AND status IN ('pending_approval', 'queued', 'running')",
+        params![now(), item_id],
+    )?;
+    Ok(())
+}
+
+fn create_local_execution(
+    connection: &Connection,
+    item_id: &str,
+    project_id: &str,
+    agent_id: &str,
+    agent: &LoopItem,
+    priority: &str,
+    payload: Value,
+) -> Result<(), TaskRuntimeError> {
+    let metadata = &agent.metadata;
+    let mode = metadata
+        .get("execution_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let environment = metadata
+        .get("execution_environment")
+        .and_then(Value::as_str)
+        .unwrap_or("local");
+    let now = now();
+    let status = if mode == "manual_approval" {
+        "pending_approval"
+    } else {
+        "queued"
+    };
+    let approval = if status == "pending_approval" {
+        Some("pending")
+    } else {
+        None
+    };
+    connection.execute(
+        "INSERT INTO loop_item_executions (
+            loop_item_id, cloud_project_id, agent_id, execution_environment,
+            execution_device_id, assigner_user_id, status, priority_weight, queued_at,
+            approval_status, execution_payload, version, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, 1, ?8, ?8)",
+        params![
+            item_id,
+            project_id,
+            agent_id,
+            environment,
+            agent
+                .metadata
+                .get("execution_device_id")
+                .and_then(Value::as_str),
+            status,
+            priority_weight(priority),
+            now,
+            approval,
+            if payload.is_null() {
+                None::<String>
+            } else {
+                Some(payload.to_string())
+            },
+        ],
+    )?;
+    Ok(())
+}
+
+fn priority_weight(priority: &str) -> i64 {
+    match priority {
+        "low" => 10,
+        "medium" => 20,
+        "high" => 30,
+        "urgent" => 40,
+        _ => 0,
+    }
+}
+
+fn lease_expiry(now: &str, lease_seconds: u64) -> String {
+    let parsed = chrono::DateTime::parse_from_rfc3339(now)
+        .unwrap_or_else(|_| chrono::Utc::now().fixed_offset())
+        .naive_utc();
+    (parsed + chrono::Duration::seconds(lease_seconds as i64))
+        .and_utc()
+        .to_rfc3339()
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        value.to_owned()
+    } else {
+        value.chars().take(max).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1213,6 +1981,403 @@ mod tests {
 
     use super::*;
     use crate::task_runtime::{BinaryInput, DeliveryCreate};
+
+    fn chat_agent_store() -> (TempDir, LocalTaskStore, LoopItem) {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Robot project".to_owned(),
+                project_key: Some("RBOT".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        (directory, store, project)
+    }
+
+    fn make_local_agent(
+        store: &LocalTaskStore,
+        project_id: &str,
+        mode: &str,
+    ) -> ChatAgent {
+        store
+            .create_chat_agent(
+                project_id,
+                ChatAgentCreate {
+                    name: "Local Bot".to_owned(),
+                    model: None,
+                    system_prompt: Some("Be careful.".to_owned()),
+                    visibility: Some("creator_admin".to_owned()),
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some(mode.to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn chat_agent_crud_and_task_assignment_create_execution() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let listed = store.list_chat_agents(&project.id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Local Bot");
+        assert_eq!(listed[0].execution_device_id.as_deref(), Some("local-device"));
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Do the thing".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+        let updated = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: None,
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: Some(Some(agent.id.clone())),
+                    execution_payload: Some(json!({"message": "run it"})),
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.assignee_agent_id.as_deref(), Some(agent.id.as_str()));
+
+        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].agent_id, agent.id);
+        assert_eq!(executions[0].status, "queued");
+        assert_eq!(executions[0].priority_weight, 30);
+        assert!(executions[0].execution_payload.is_some());
+    }
+
+    #[test]
+    fn manual_approval_flow_and_claim_runs_once() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "manual_approval");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Approve me".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: None,
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: Some(Some(agent.id.clone())),
+                    execution_payload: Some(json!({"message": "run it"})),
+                },
+            )
+            .unwrap();
+        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        assert_eq!(executions[0].status, "pending_approval");
+        assert_eq!(executions[0].approval_status.as_deref(), Some("pending"));
+
+        // Not approved -> not claimable.
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            device_capacity: 1,
+            lease_seconds: 300,
+        };
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+
+        store.approve_execution(executions[0].id).unwrap();
+        let claimed = store.claim_next_local_execution(&claim).unwrap().unwrap();
+        assert_eq!(claimed.status, "running");
+        assert!(claimed.lease_expires_at.is_some());
+        // Only one run at a time.
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+
+        store
+            .heartbeat_execution(
+                claimed.id,
+                Some("local-device"),
+                Some("codex-queue-1"),
+                300,
+            )
+            .unwrap();
+        let done = store.complete_execution(claimed.id, None).unwrap().unwrap();
+        assert_eq!(done.status, "completed");
+    }
+
+    #[test]
+    fn local_claim_respects_device_capacity() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent_a = make_local_agent(&store, &project.id, "auto");
+        let agent_b = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Bot B".to_owned(),
+                    model: None,
+                    system_prompt: None,
+                    visibility: None,
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                },
+            )
+            .unwrap();
+        for (agent, title) in [(agent_a, "A"), (agent_b, "B")] {
+            let task = store
+                .create_task(
+                    &project.id,
+                    TaskCreate {
+                        title: title.to_owned(),
+                        description: String::new(),
+                        status: "inbox".to_owned(),
+                        priority: "none".to_owned(),
+                        parent_id: None,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            store
+                .update_task(
+                    &project.id,
+                    &task.id,
+                    TaskUpdate {
+                        version: task.version,
+                        title: None,
+                        description: None,
+                        status: None,
+                        priority: None,
+                        parent_id: None,
+                        tags: None,
+                        assignee_agent_id: Some(Some(agent.id.clone())),
+                        execution_payload: Some(json!({"message": title})),
+                    },
+                )
+                .unwrap();
+        }
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            device_capacity: 1,
+            lease_seconds: 300,
+        };
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
+        // Capacity 1 -> the second robot's run stays queued.
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+    }
+
+    #[test]
+    fn migrates_legacy_schema_without_assignee_agent_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("tasks.sqlite");
+        // A pre-robot database: loop_items exists without assignee_agent_id and
+        // loop_item_executions does not exist yet. The migrate() step must add
+        // the column before creating the index, otherwise TaskRuntime fails to
+        // open and the wework_space MCP server dies during startup.
+        let legacy = rusqlite::Connection::open(&db_path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                );
+                CREATE TABLE loop_items (
+                    id TEXT PRIMARY KEY,
+                    resource_type TEXT NOT NULL,
+                    project_space TEXT NOT NULL DEFAULT 'default',
+                    cloud_project_id TEXT REFERENCES loop_items(id) ON DELETE CASCADE,
+                    parent_id TEXT REFERENCES loop_items(id) ON DELETE CASCADE,
+                    loop_item_id TEXT REFERENCES loop_items(id) ON DELETE CASCADE,
+                    delivery_id TEXT REFERENCES loop_items(id) ON DELETE CASCADE,
+                    public_id TEXT UNIQUE,
+                    project_key TEXT UNIQUE,
+                    name TEXT,
+                    title TEXT,
+                    description TEXT NOT NULL DEFAULT '',
+                    storage_prefix TEXT UNIQUE,
+                    sequence_number INTEGER,
+                    next_item_number INTEGER,
+                    created_by_user_id INTEGER,
+                    updated_by_user_id INTEGER,
+                    assignee_user_id INTEGER,
+                    user_id INTEGER,
+                    added_by_user_id INTEGER,
+                    source TEXT,
+                    status TEXT,
+                    priority TEXT,
+                    due_at TEXT,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    current_delivery_id TEXT,
+                    local_project_id INTEGER,
+                    device_id TEXT,
+                    is_default INTEGER,
+                    task_user_id INTEGER,
+                    task_id TEXT,
+                    task_title TEXT,
+                    backend_task_id INTEGER,
+                    linked_by_user_id INTEGER,
+                    linked_at TEXT,
+                    unlinked_at TEXT,
+                    path TEXT,
+                    kind TEXT,
+                    display_name TEXT,
+                    relative_path TEXT,
+                    object_key TEXT,
+                    content_type TEXT,
+                    size_bytes INTEGER,
+                    sha256 TEXT,
+                    source_task_binding_id TEXT,
+                    source_task_snapshot TEXT,
+                    markdown_object_key TEXT,
+                    chat_object_key TEXT,
+                    manifest_object_key TEXT,
+                    metadata TEXT,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    delivered_at TEXT,
+                    deleted_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_loop_items_project_type
+                    ON loop_items(cloud_project_id, resource_type);
+                CREATE INDEX IF NOT EXISTS ix_loop_items_resource_type
+                    ON loop_items(resource_type);
+                CREATE TABLE IF NOT EXISTS project_provider_credentials (
+                    project_store TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    task_provider TEXT NOT NULL,
+                    provider_config TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(project_store, project_id)
+                );
+                CREATE TABLE IF NOT EXISTS external_project_catalog (
+                    project_store TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    descriptor TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(project_store, project_id)
+                );
+                INSERT INTO schema_migrations(version, applied_at) VALUES (3, '2026-08-01T00:00:00+00:00');",
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = LocalTaskStore::open(&db_path).unwrap();
+        let connection = store.connection().unwrap();
+        let columns = connection
+            .prepare("PRAGMA table_info(loop_items)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "assignee_agent_id"));
+        let tables = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(tables.iter().any(|table| table == "loop_item_executions"));
+        let index_exists = connection
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ix_loop_items_assignee_agent_id'")
+            .unwrap()
+            .query_row([], |_| Ok(()))
+            .optional()
+            .unwrap()
+            .is_some();
+        assert!(index_exists);
+        drop(connection);
+
+        // The migrated store is fully usable: robots and executions work.
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Migrated project".to_owned(),
+                project_key: Some("MIG".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let agent = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Migrated Bot".to_owned(),
+                    model: None,
+                    system_prompt: None,
+                    visibility: None,
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                },
+            )
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "After migration".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: None,
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: Some(Some(agent.id.clone())),
+                    execution_payload: Some(json!({"message": "run"})),
+                },
+            )
+            .unwrap();
+        let executions = store.list_executions(&project.id, None, None, false).unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].status, "queued");
+    }
 
     fn store() -> (TempDir, LocalTaskStore) {
         let directory = tempfile::tempdir().unwrap();

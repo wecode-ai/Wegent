@@ -25,6 +25,37 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     let Ok(executable) = env::current_exe() else {
         return;
     };
+    // The App-side payload used to carry these; the robot queue dispatchers
+    // build payloads server-side, so fall back to the device's own backend
+    // connection configuration (same source as `normalize_local_task_request`).
+    if request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        if let Ok(url) = env::var("WEGENT_BACKEND_URL") {
+            let url = url.trim().to_owned();
+            if !url.is_empty() {
+                request.backend_url = Some(url);
+            }
+        }
+    }
+    if request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        if let Ok(token) = env::var("WEGENT_AUTH_TOKEN") {
+            let token = token.trim().to_owned();
+            if !token.is_empty() {
+                request.auth_token = Some(token);
+            }
+        }
+    }
     let mut server = json!({
         "name": SPACE_MCP_SERVER_NAME,
         "type": "stdio",
@@ -1454,6 +1485,35 @@ mod tests {
         assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
         assert_eq!(request.mcp_servers[0]["type"], "stdio");
         assert_eq!(request.mcp_servers[0]["args"], json!(["space-mcp-server"]));
+    }
+
+    #[test]
+    fn falls_back_to_device_backend_env_for_space_mcp() {
+        let previous_url = env::var("WEGENT_BACKEND_URL").ok();
+        let previous_token = env::var("WEGENT_AUTH_TOKEN").ok();
+        env::set_var("WEGENT_BACKEND_URL", "https://wework.example.com");
+        env::set_var("WEGENT_AUTH_TOKEN", "device-token");
+
+        let mut request = ExecutionRequest::default();
+        ensure_space_mcp_server(&mut request);
+
+        let server = &request.mcp_servers[0];
+        assert_eq!(
+            server["env"]["WEWORK_SPACE_BACKEND_URL"],
+            json!("https://wework.example.com")
+        );
+        assert_eq!(server["env"]["WEWORK_SPACE_AUTH_TOKEN"], json!("device-token"));
+
+        if let Some(url) = previous_url {
+            env::set_var("WEGENT_BACKEND_URL", url);
+        } else {
+            env::remove_var("WEGENT_BACKEND_URL");
+        }
+        if let Some(token) = previous_token {
+            env::set_var("WEGENT_AUTH_TOKEN", token);
+        } else {
+            env::remove_var("WEGENT_AUTH_TOKEN");
+        }
     }
 
     #[test]

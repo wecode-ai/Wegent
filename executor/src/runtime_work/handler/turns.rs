@@ -408,7 +408,8 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error);
+            self.finish_automation_run(local_task_id, status.clone(), error.clone());
+            self.finish_queue_run(local_task_id, status, error);
         }
     }
 

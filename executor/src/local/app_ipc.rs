@@ -27,8 +27,9 @@ use crate::{
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, DeliveryCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate,
-        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalExecutionClaim,
+        ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress, TaskCreate,
+        TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -1097,6 +1098,126 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .unbind_task(device_id, runtime_task_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
+        }
+        "chat_agents.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_chat_agents(&project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "chat_agents.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = task_input::<ChatAgentCreate>(&params, "agent")?;
+            serialize_task_value(
+                runtime
+                    .create_chat_agent(&project_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "chat_agents.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = required_task_string(&params, "agent_id")?;
+            let input = task_input::<ChatAgentUpdate>(&params, "agent")?;
+            serialize_task_value(
+                runtime
+                    .update_chat_agent(&project_id, &agent_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "chat_agents.archive" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = required_task_string(&params, "agent_id")?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .archive_chat_agent(&project_id, &agent_id, version)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "executions.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = params.get("agent_id").and_then(Value::as_str);
+            let status = params.get("status").and_then(Value::as_str);
+            let include_terminal = params
+                .get("include_terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            serialize_task_value(
+                runtime
+                    .list_executions(&project_id, agent_id, status, include_terminal)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "executions.approve" | "executions.reject" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let reason = params.get("reason").and_then(Value::as_str).map(ToOwned::to_owned);
+            serialize_task_value(
+                if method == "executions.approve" {
+                    runtime
+                        .approve_execution(execution_id)
+                        .map_err(task_runtime_error)?
+                } else {
+                    runtime
+                        .reject_execution(execution_id, reason)
+                        .map_err(task_runtime_error)?
+                },
+            )
+        }
+        "executions.claim_next" => {
+            let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
+            serialize_task_value(
+                runtime
+                    .claim_next_local_execution(input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "executions.heartbeat" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let runtime_device_id = params.get("runtime_device_id").and_then(Value::as_str);
+            let runtime_task_id = params.get("runtime_task_id").and_then(Value::as_str);
+            let lease_seconds = params
+                .get("lease_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(300);
+            serialize_task_value(
+                runtime
+                    .heartbeat_execution(
+                        execution_id,
+                        runtime_device_id,
+                        runtime_task_id,
+                        lease_seconds,
+                    )
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "executions.complete" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let note = params.get("note").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .complete_execution(execution_id, note)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "executions.fail" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let error = params
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Local runtime run failed");
+            let requeue = params
+                .get("requeue")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            serialize_task_value(
+                runtime
+                    .fail_execution(execution_id, error, requeue)
+                    .map_err(task_runtime_error)?,
+            )
         }
         "files.list" => {
             let project_id = required_task_string(&params, "project_id")?;

@@ -88,6 +88,94 @@ pub struct TaskUpdate {
     pub priority: Option<String>,
     pub parent_id: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
+    pub assignee_agent_id: Option<Option<String>>,
+    pub execution_payload: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChatAgentCreate {
+    pub name: String,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub visibility: Option<String>,
+    pub execution_environment: Option<String>,
+    pub execution_mode: Option<String>,
+    pub execution_device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChatAgentUpdate {
+    pub version: i64,
+    pub name: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub status: Option<String>,
+    pub visibility: Option<String>,
+    pub execution_environment: Option<String>,
+    pub execution_mode: Option<String>,
+    pub execution_device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatAgent {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub runtime: String,
+    pub model: Option<String>,
+    pub system_prompt: String,
+    pub status: String,
+    pub visibility: String,
+    pub execution_environment: String,
+    pub execution_mode: String,
+    pub execution_device_id: Option<String>,
+    pub created_by_user_id: i64,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LocalExecutionClaim {
+    pub execution_device_id: Option<String>,
+    pub device_capacity: u64,
+    pub lease_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalExecution {
+    pub id: i64,
+    pub loop_item_id: String,
+    pub cloud_project_id: String,
+    pub task_title: String,
+    pub task_status: Option<String>,
+    pub task_priority: Option<String>,
+    pub agent_id: String,
+    pub assigner_user_id: i64,
+    pub execution_environment: String,
+    pub execution_device_id: Option<String>,
+    pub status: String,
+    pub priority_weight: i64,
+    pub queued_at: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub lease_expires_at: Option<String>,
+    pub heartbeat_at: Option<String>,
+    pub retry_attempt: i64,
+    pub error_message: String,
+    pub execution_note: String,
+    pub approval_status: Option<String>,
+    pub approved_by_user_id: Option<i64>,
+    pub rejected_reason: Option<String>,
+    pub runtime_device_id: Option<String>,
+    pub runtime_task_id: Option<String>,
+    pub execution_payload: Option<Value>,
+    pub max_retries: i64,
+    pub agent_name: String,
+    pub agent_system_prompt: String,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -252,6 +340,8 @@ pub struct LoopItem {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_agent_id: Option<String>,
 }
 
 pub fn default_status() -> String {
