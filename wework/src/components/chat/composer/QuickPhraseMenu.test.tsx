@@ -44,15 +44,14 @@ describe('QuickPhraseMenu', () => {
     expect(screen.queryByTestId('quick-phrase-menu')).not.toBeInTheDocument()
   })
 
-  test('uses subdued regular text for the trigger and menu options', () => {
+  test('uses an icon-only trigger and subdued regular text for menu options', () => {
     render(<QuickPhraseMenu onSelect={vi.fn()} />)
 
-    expect(screen.getByTestId('quick-phrase-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
+    const button = screen.getByTestId('quick-phrase-button')
+    expect(button).not.toHaveTextContent('快捷短语')
+    expect(button).toHaveClass('h-8', 'w-8', 'text-text-primary')
 
-    fireEvent.click(screen.getByTestId('quick-phrase-button'))
+    fireEvent.click(button)
 
     const menu = screen.getByTestId('quick-phrase-menu')
     expect(menu).toHaveClass('text-text-primary')
@@ -87,15 +86,6 @@ describe('QuickPhraseMenu', () => {
 
     fireEvent.pointerEnter(stash)
     expect(screen.getByTestId('quick-phrase-stash-preview')).toHaveTextContent('两张图片')
-  })
-
-  test('renders icon-only without label when iconOnly is true', () => {
-    render(<QuickPhraseMenu iconOnly onSelect={vi.fn()} />)
-
-    const button = screen.getByTestId('quick-phrase-button')
-    expect(button).not.toHaveTextContent('快捷短语')
-    expect(button.className).toContain('h-8')
-    expect(button.className).toContain('w-8')
   })
 
   test('renders compact circular button without label when compact is true', () => {

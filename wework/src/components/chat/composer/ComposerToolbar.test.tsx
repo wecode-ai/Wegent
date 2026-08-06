@@ -5,9 +5,7 @@ import { ComposerToolbar } from './ComposerToolbar'
 let resizeCallback: ResizeObserverCallback | null = null
 
 vi.mock('./QuickPhraseMenu', () => ({
-  QuickPhraseMenu: ({ iconOnly }: { iconOnly?: boolean }) => (
-    <span data-testid="quick-phrase-layout">{iconOnly ? 'icon' : 'label'}</span>
-  ),
+  QuickPhraseMenu: () => <span data-testid="quick-phrase-layout">icon</span>,
 }))
 
 vi.mock('./ModelSelector', () => ({
@@ -61,7 +59,7 @@ describe('ComposerToolbar', () => {
     )
 
     expect(screen.getByTestId('composer-toolbar')).toHaveAttribute('data-compact', 'false')
-    expect(screen.getByTestId('quick-phrase-layout')).toHaveTextContent('label')
+    expect(screen.getByTestId('quick-phrase-layout')).toHaveTextContent('icon')
 
     act(() => {
       resizeCallback?.(

@@ -143,7 +143,7 @@ export function ComposerToolbar({
           selectedCloudProjectId={selectedCloudProjectId}
           onSelectCloudProject={onSelectCloudProject}
         />
-        <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
+        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu
           disabled={disabled}
           iconOnly={compact}
