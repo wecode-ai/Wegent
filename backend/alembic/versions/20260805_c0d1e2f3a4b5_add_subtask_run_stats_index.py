@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add an index for task run statistics queries.
+"""Add an index for task run metric creation cursors.
 
 Revision ID: c0d1e2f3a4b5
 Revises: b9c0d1e2f3a4
@@ -19,7 +19,7 @@ down_revision: Union[str, Sequence[str], None] = "b9c0d1e2f3a4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-INDEX_NAME = "ix_subtasks_role_created_at_status"
+INDEX_NAME = "ix_subtasks_role_created_at_id"
 
 
 def upgrade() -> None:
@@ -30,7 +30,7 @@ def upgrade() -> None:
         op.create_index(
             INDEX_NAME,
             "subtasks",
-            ["role", "created_at", "status"],
+            ["role", "created_at", "id"],
         )
 
 

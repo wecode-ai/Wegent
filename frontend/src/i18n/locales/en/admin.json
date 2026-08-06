@@ -554,7 +554,7 @@
   },
   "task_run_monitor": {
     "title": "Task Run Monitor",
-    "description": "Track task statuses and failure reasons from assistant run records across all users",
+    "description": "Track total assistant runs and current failure details across all users",
     "refresh": "Refresh task run statistics",
     "time_range": {
       "1": "Last hour",
@@ -566,13 +566,9 @@
     },
     "stats": {
       "total": "Total runs",
-      "completed": "Completed",
       "failed": "Failed",
-      "running": "Running",
-      "pending": "Pending",
-      "cancelled": "Cancelled"
+      "approximate": "Approximate distinct count"
     },
-    "status_distribution": "All statuses",
     "failure_reasons": {
       "title": "Top failure reasons",
       "description": "Identical error messages are grouped; percentages use all failed runs",
@@ -586,7 +582,7 @@
       "user": "User",
       "subtask": "Run"
     },
-    "rate_note": "Success and failure rates only include completed and failed terminal runs. Pending, running, and cancelled runs are excluded.",
+    "rate_note": "Total runs use Redis HyperLogLog and are approximate. Failed runs are the current failed state among runs created in the selected time range.",
     "errors": {
       "load_failed": "Failed to load task run statistics"
     }

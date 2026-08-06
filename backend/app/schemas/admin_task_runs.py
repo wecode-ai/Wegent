@@ -5,7 +5,7 @@
 """Schemas for administrator task run statistics."""
 
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -16,7 +16,6 @@ class TaskRunFailureReason(BaseModel):
     reason: Optional[str] = None
     count: int
     percentage: float
-    latest_at: datetime
 
 
 class RecentTaskRunFailure(BaseModel):
@@ -40,8 +39,9 @@ class TaskRunStatsResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     total_runs: int
-    by_status: Dict[str, int]
-    success_rate: float
+    total_is_approximate: bool
+    failed_runs: int
     failure_rate: float
     failure_reasons: list[TaskRunFailureReason]
     recent_failures: list[RecentTaskRunFailure]
+    data_as_of: Optional[datetime] = None

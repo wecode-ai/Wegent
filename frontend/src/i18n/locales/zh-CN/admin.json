@@ -554,7 +554,7 @@
   },
   "task_run_monitor": {
     "title": "任务运行监控",
-    "description": "按实际 assistant 运行记录统计所有用户的任务状态和失败原因",
+    "description": "统计所有用户的 assistant 总运行数和当前失败详情",
     "refresh": "刷新任务运行统计",
     "time_range": {
       "1": "最近 1 小时",
@@ -566,13 +566,9 @@
     },
     "stats": {
       "total": "总运行数",
-      "completed": "已完成",
       "failed": "失败",
-      "running": "运行中",
-      "pending": "等待中",
-      "cancelled": "已取消"
+      "approximate": "HyperLogLog 近似去重值"
     },
-    "status_distribution": "全部状态",
     "failure_reasons": {
       "title": "失败原因排行",
       "description": "相同错误信息合并统计，占比以全部失败运行数为分母",
@@ -586,7 +582,7 @@
       "user": "用户",
       "subtask": "运行"
     },
-    "rate_note": "成功率与失败率仅以已完成和失败的终态运行为分母；等待中、运行中和主动取消不参与计算。",
+    "rate_note": "总运行数由 Redis HyperLogLog 近似统计；失败数表示所选创建时间范围内当前仍处于失败状态的运行。",
     "errors": {
       "load_failed": "加载任务运行统计失败"
     }

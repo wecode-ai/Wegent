@@ -5,6 +5,7 @@
 """Tests for administrator task run statistics."""
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -13,6 +14,24 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.admin_task_run_stats import get_task_run_stats
+from app.services.task_run_metrics import (
+    TaskRunFailureMetric,
+    TaskRunMetricsUnavailable,
+    TaskRunMetricWindow,
+)
+
+
+class _FakeMetricsStore:
+    def __init__(self, window: TaskRunMetricWindow) -> None:
+        self.window = window
+
+    def load_window(self, *args: Any, **kwargs: Any) -> TaskRunMetricWindow:
+        return self.window
+
+
+class _UnavailableMetricsStore:
+    def load_window(self, *args: Any, **kwargs: Any) -> TaskRunMetricWindow:
+        raise TaskRunMetricsUnavailable("Redis unavailable")
 
 
 def _create_task(test_db: Session, user: User, name: str, title: str) -> TaskResource:
@@ -53,18 +72,12 @@ def _create_subtask(
     return subtask
 
 
-def test_get_task_run_stats_aggregates_assistant_runs_and_failures(
+def test_get_task_run_stats_combines_redis_metrics_with_mysql_failure_details(
     test_db: Session,
     test_user: User,
 ):
     now = datetime.now()
     task = _create_task(test_db, test_user, "task-monitor", "Investigate failure")
-    completed = _create_subtask(
-        test_db,
-        task,
-        status=SubtaskStatus.COMPLETED,
-        created_at=now - timedelta(hours=2),
-    )
     first_failure = _create_subtask(
         test_db,
         task,
@@ -72,40 +85,42 @@ def test_get_task_run_stats_aggregates_assistant_runs_and_failures(
         created_at=now - timedelta(hours=1),
         error_message="  Executor   timed out\nwhile waiting  ",
     )
-    _create_subtask(
+    second_failure = _create_subtask(
         test_db,
         task,
         status=SubtaskStatus.FAILED,
         created_at=now - timedelta(minutes=30),
         error_message="Executor timed out while waiting",
     )
-    _create_subtask(
-        test_db,
-        task,
-        status=SubtaskStatus.COMPLETED,
-        created_at=now - timedelta(minutes=10),
-        role=SubtaskRole.USER,
-    )
-    _create_subtask(
-        test_db,
-        task,
-        status=SubtaskStatus.FAILED,
-        created_at=now - timedelta(days=2),
-        error_message="Old failure",
-    )
     test_db.commit()
+
+    metrics_store = _FakeMetricsStore(
+        TaskRunMetricWindow(
+            total_runs=3,
+            failed_runs=2,
+            failure_reasons=[
+                TaskRunFailureMetric(
+                    reason_id="timeout",
+                    reason="Executor timed out while waiting",
+                    count=2,
+                )
+            ],
+            recent_failure_ids=[second_failure.id, first_failure.id],
+            data_as_of=now,
+        )
+    )
 
     response = get_task_run_stats(
         test_db,
         hours=24,
         failure_reason_limit=10,
         recent_failure_limit=20,
+        metrics_store=metrics_store,
     )
 
     assert response.total_runs == 3
-    assert response.by_status["COMPLETED"] == 1
-    assert response.by_status["FAILED"] == 2
-    assert response.success_rate == 33.3
+    assert response.total_is_approximate is True
+    assert response.failed_runs == 2
     assert response.failure_rate == 66.7
     assert response.failure_reasons[0].reason == "Executor timed out while waiting"
     assert response.failure_reasons[0].count == 2
@@ -113,7 +128,7 @@ def test_get_task_run_stats_aggregates_assistant_runs_and_failures(
     assert response.recent_failures[-1].subtask_id == first_failure.id
     assert response.recent_failures[0].task_title == "Investigate failure"
     assert response.recent_failures[0].user_name == test_user.user_name
-    assert completed.id is not None
+    assert response.data_as_of == now
 
 
 def test_admin_task_run_stats_endpoint(
@@ -121,9 +136,10 @@ def test_admin_task_run_stats_endpoint(
     test_db: Session,
     test_user: User,
     test_admin_token: str,
+    monkeypatch,
 ):
     task = _create_task(test_db, test_user, "task-monitor-api", "API failure")
-    _create_subtask(
+    failed = _create_subtask(
         test_db,
         task,
         status=SubtaskStatus.FAILED,
@@ -131,6 +147,24 @@ def test_admin_task_run_stats_endpoint(
         error_message="Executor unavailable",
     )
     test_db.commit()
+    metrics_store = _FakeMetricsStore(
+        TaskRunMetricWindow(
+            total_runs=1,
+            failed_runs=1,
+            failure_reasons=[
+                TaskRunFailureMetric(
+                    reason_id="unavailable",
+                    reason="Executor unavailable",
+                    count=1,
+                )
+            ],
+            recent_failure_ids=[failed.id],
+            data_as_of=datetime.now(),
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.admin_task_run_stats.task_run_metrics_store", metrics_store
+    )
 
     response = test_client.get(
         "/api/admin/task-runs/stats?hours=24",
@@ -140,5 +174,25 @@ def test_admin_task_run_stats_endpoint(
     assert response.status_code == 200
     payload = response.json()
     assert payload["total_runs"] == 1
-    assert payload["by_status"]["FAILED"] == 1
+    assert payload["failed_runs"] == 1
+    assert payload["total_is_approximate"] is True
     assert payload["failure_reasons"][0]["reason"] == "Executor unavailable"
+
+
+def test_admin_task_run_stats_endpoint_returns_503_when_redis_is_unavailable(
+    test_client: TestClient,
+    test_admin_token: str,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.admin_task_run_stats.task_run_metrics_store",
+        _UnavailableMetricsStore(),
+    )
+
+    response = test_client.get(
+        "/api/admin/task-runs/stats?hours=24",
+        headers={"Authorization": f"Bearer {test_admin_token}"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Task run metrics are temporarily unavailable"

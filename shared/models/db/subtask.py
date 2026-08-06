@@ -43,6 +43,7 @@ class Subtask(Base):
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    status_changed_at = Column(DateTime, nullable=True, default=func.now())
     completed_at = Column(
         DateTime,
         nullable=False,
@@ -70,10 +71,16 @@ class Subtask(Base):
 
     __table_args__ = (
         Index(
-            "ix_subtasks_role_created_at_status",
+            "ix_subtasks_role_created_at_id",
             "role",
             "created_at",
-            "status",
+            "id",
+        ),
+        Index(
+            "ix_subtasks_role_status_changed_at_id",
+            "role",
+            "status_changed_at",
+            "id",
         ),
         {
             "sqlite_autoincrement": True,

@@ -119,7 +119,6 @@ export interface TaskRunFailureReason {
   reason: string | null
   count: number
   percentage: number
-  latest_at: string
 }
 
 export interface RecentTaskRunFailure {
@@ -139,11 +138,12 @@ export interface TaskRunStats {
   window_start: string
   window_end: string
   total_runs: number
-  by_status: Record<string, number>
-  success_rate: number
+  total_is_approximate: boolean
+  failed_runs: number
   failure_rate: number
   failure_reasons: TaskRunFailureReason[]
   recent_failures: RecentTaskRunFailure[]
+  data_as_of: string | null
 }
 
 // Connector App Types

@@ -44,23 +44,17 @@ describe('TaskRunMonitorPanel', () => {
       window_start: '2026-08-04T00:00:00',
       window_end: '2026-08-05T00:00:00',
       total_runs: 3,
-      by_status: {
-        PENDING: 0,
-        RUNNING: 0,
-        COMPLETED: 2,
-        FAILED: 1,
-        CANCELLED: 0,
-      },
-      success_rate: 66.7,
+      total_is_approximate: true,
+      failed_runs: 1,
       failure_rate: 33.3,
       failure_reasons: [
         {
           reason: 'Executor timed out',
           count: 1,
           percentage: 100,
-          latest_at: '2026-08-04T23:00:00',
         },
       ],
+      data_as_of: '2026-08-05T00:00:00',
       recent_failures: [
         {
           subtask_id: 42,
@@ -81,14 +75,15 @@ describe('TaskRunMonitorPanel', () => {
     jest.clearAllMocks()
   })
 
-  it('loads and displays run status and failure details', async () => {
+  it('loads and displays total runs and failure details', async () => {
     render(<TaskRunMonitorPanel />)
 
     await waitFor(() => expect(getTaskRunStats).toHaveBeenCalledWith(24))
 
     expect(await screen.findByText('Investigate executor')).toBeInTheDocument()
     expect(screen.getAllByText('Executor timed out')).toHaveLength(2)
-    expect(screen.getByText('COMPLETED 2')).toBeInTheDocument()
-    expect(screen.getByText('FAILED 1')).toBeInTheDocument()
+    expect(screen.getByText('admin:task_run_monitor.stats.total')).toBeInTheDocument()
+    expect(screen.getByText('admin:task_run_monitor.stats.failed')).toBeInTheDocument()
+    expect(screen.queryByText('COMPLETED 2')).not.toBeInTheDocument()
   })
 })

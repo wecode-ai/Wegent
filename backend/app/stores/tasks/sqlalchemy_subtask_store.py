@@ -966,6 +966,7 @@ class SqlAlchemySubtaskStore:
         completed_at: Optional[datetime] = None,
     ) -> Subtask:
         subtask.status = status
+        subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         if completed_at is not None:
             subtask.completed_at = completed_at
@@ -981,6 +982,8 @@ class SqlAlchemySubtaskStore:
         self, db: Session, *, subtask: Subtask, error_message: str
     ) -> Subtask:
         subtask.error_message = error_message
+        if subtask.status == SubtaskStatus.FAILED:
+            subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         return subtask
 
@@ -1007,6 +1010,10 @@ class SqlAlchemySubtaskStore:
     def update_fields(self, db: Session, *, subtask: Subtask, **fields: Any) -> Subtask:
         for field, value in fields.items():
             setattr(subtask, field, value)
+        if "status" in fields or (
+            "error_message" in fields and subtask.status == SubtaskStatus.FAILED
+        ):
+            subtask.status_changed_at = datetime.now()
         subtask.updated_at = datetime.now()
         if "result" in fields:
             flag_modified(subtask, "result")
@@ -1070,6 +1077,7 @@ class SqlAlchemySubtaskStore:
             {
                 Subtask.executor_deleted_at: True,
                 Subtask.status: SubtaskStatus.DELETE,
+                Subtask.status_changed_at: datetime.now(),
                 Subtask.updated_at: datetime.now(),
             },
             synchronize_session="fetch",
@@ -1088,6 +1096,7 @@ class SqlAlchemySubtaskStore:
         return query.update(
             {
                 Subtask.status: status,
+                Subtask.status_changed_at: datetime.now(),
                 Subtask.updated_at: datetime.now(),
             },
             synchronize_session=False,
@@ -1108,6 +1117,7 @@ class SqlAlchemySubtaskStore:
             return 0
         values: dict[Any, Any] = {
             Subtask.status: to_status,
+            Subtask.status_changed_at: datetime.now(),
             Subtask.updated_at: datetime.now(),
         }
         if progress is not None:

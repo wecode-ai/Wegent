@@ -24,6 +24,8 @@ from app.db.session import AsyncSessionLocal
 from app.services.adapters.executor_job import job_service
 from app.services.executor_cleanup_cursor_service import EXECUTOR_CLEANUP_CURSOR_KEY
 from app.services.repository_job import repository_job_service
+from app.services.task_run_metrics import TaskRunMetricsUnavailable
+from app.services.task_run_metrics_reconciler import task_run_metrics_reconciler
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +194,21 @@ def repo_update_worker(stop_event: threading.Event):
         stop_event.wait(timeout=settings.REPO_UPDATE_INTERVAL_SECONDS)
 
 
+def task_run_metrics_reconcile_worker(stop_event: threading.Event) -> None:
+    """Continuously repair Redis task run metrics from indexed database cursors."""
+    while not stop_event.is_set():
+        try:
+            task_run_metrics_reconciler.reconcile()
+        except TaskRunMetricsUnavailable:
+            logger.warning(
+                "[job] Task run metrics reconciliation skipped because Redis failed",
+                exc_info=True,
+            )
+        except Exception:
+            logger.exception("[job] Task run metrics reconciliation failed")
+        stop_event.wait(timeout=settings.TASK_RUN_METRICS_RECONCILE_INTERVAL_SECONDS)
+
+
 def start_background_jobs(app):
     """
     Start all background jobs
@@ -216,6 +233,16 @@ def start_background_jobs(app):
     )
     app.state.repo_update_thread.start()
     logger.info("[job] repository update worker started")
+
+    app.state.task_run_metrics_stop_event = threading.Event()
+    app.state.task_run_metrics_thread = threading.Thread(
+        target=task_run_metrics_reconcile_worker,
+        args=(app.state.task_run_metrics_stop_event,),
+        name="task-run-metrics-reconcile-worker",
+        daemon=True,
+    )
+    app.state.task_run_metrics_thread.start()
+    logger.info("[job] task run metrics reconciliation worker started")
 
     # Note: Subscription scheduler is now handled by Celery Beat
     # Start celery worker and beat separately:
@@ -251,6 +278,14 @@ async def stop_background_jobs(app):
     if repo_thread:
         repo_thread.join(timeout=5.0)
     logger.info("[job] repository update worker stopped")
+
+    metrics_stop_event = getattr(app.state, "task_run_metrics_stop_event", None)
+    metrics_thread = getattr(app.state, "task_run_metrics_thread", None)
+    if metrics_stop_event:
+        metrics_stop_event.set()
+    if metrics_thread:
+        metrics_thread.join(timeout=5.0)
+    logger.info("[job] task run metrics reconciliation worker stopped")
 
     # Note: Subscription scheduler is now handled by Celery Beat
     # Celery worker/beat are managed separately

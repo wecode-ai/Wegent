@@ -5,7 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Activity, CheckCircle, Clock, Pause, RefreshCw, StopCircle, XCircle } from 'lucide-react'
+import { Activity, RefreshCw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { adminApis, type TaskRunStats } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
@@ -53,10 +53,6 @@ function StatCard({ title, value, icon, tone = 'default', subtitle }: StatCardPr
 
 function formatDateTime(value: string): string {
   return new Date(value).toLocaleString()
-}
-
-function statusCount(stats: TaskRunStats, status: string): number {
-  return stats.by_status[status] ?? 0
 }
 
 export function TaskRunMonitorPanel() {
@@ -131,55 +127,24 @@ export function TaskRunMonitorPanel() {
 
       {stats && (
         <>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-4 sm:grid-cols-2">
             <StatCard
               title={t('admin:task_run_monitor.stats.total')}
               value={stats.total_runs}
               icon={<Activity className="h-5 w-5" />}
-            />
-            <StatCard
-              title={t('admin:task_run_monitor.stats.completed')}
-              value={statusCount(stats, 'COMPLETED')}
-              icon={<CheckCircle className="h-5 w-5" />}
-              tone="success"
-              subtitle={`${stats.success_rate.toFixed(1)}%`}
+              subtitle={
+                stats.total_is_approximate
+                  ? t('admin:task_run_monitor.stats.approximate')
+                  : undefined
+              }
             />
             <StatCard
               title={t('admin:task_run_monitor.stats.failed')}
-              value={statusCount(stats, 'FAILED')}
+              value={stats.failed_runs}
               icon={<XCircle className="h-5 w-5" />}
               tone="error"
               subtitle={`${stats.failure_rate.toFixed(1)}%`}
             />
-            <StatCard
-              title={t('admin:task_run_monitor.stats.running')}
-              value={statusCount(stats, 'RUNNING')}
-              icon={<Clock className="h-5 w-5" />}
-            />
-            <StatCard
-              title={t('admin:task_run_monitor.stats.pending')}
-              value={statusCount(stats, 'PENDING')}
-              icon={<Pause className="h-5 w-5" />}
-              tone="warning"
-            />
-            <StatCard
-              title={t('admin:task_run_monitor.stats.cancelled')}
-              value={statusCount(stats, 'CANCELLED')}
-              icon={<StopCircle className="h-5 w-5" />}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-text-muted">
-              {t('admin:task_run_monitor.status_distribution')}:
-            </span>
-            {Object.entries(stats.by_status)
-              .filter(([, count]) => count > 0)
-              .map(([status, count]) => (
-                <Tag key={status} variant={status === 'FAILED' ? 'error' : 'default'}>
-                  {status} {count}
-                </Tag>
-              ))}
           </div>
 
           <div className="grid gap-6 xl:grid-cols-2">
@@ -212,10 +177,7 @@ export function TaskRunMonitorPanel() {
                           style={{ width: `${Math.max(item.percentage, 2)}%` }}
                         />
                       </div>
-                      <div className="flex justify-between text-xs text-text-muted">
-                        <span>{item.percentage.toFixed(1)}%</span>
-                        <span>{formatDateTime(item.latest_at)}</span>
-                      </div>
+                      <p className="text-xs text-text-muted">{item.percentage.toFixed(1)}%</p>
                     </div>
                   ))
                 )}
