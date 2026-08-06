@@ -40,6 +40,8 @@ Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop
 
 When diagnosing a terminal that does not repaint after a task switch, frontend logs record the terminal type, task and session identifiers, activation phase, xterm row and column count, container dimensions, and hidden state. They never record terminal output, commands, or workspace paths.
 
+To diagnose `[Terminal connection failed]`, use the same session identifier across three log groups: `Closing local terminal session` identifies whether panel unmount, workspace-target change, or an explicit user close removed the session; `Local terminal connection failed` identifies output-listener, exit-listener, or native-attach failure; and `Tauri local terminal attach` reports native states such as a missing session, closed attach channel, already attached, or successful attach. These logs never include terminal input, output, or workspace paths.
+
 ## Expand the right workspace
 
 With the right workspace open, select **Expand panel** in its title bar to let files, previews, or change reviews fill the main workspace. The task composer is hidden while a non-chat workspace is expanded; an expanded temporary chat keeps only its own composer. The expanded state is saved per conversation.
