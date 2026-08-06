@@ -561,7 +561,7 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_USE_SSL: bool = True
 
     # Plugin marketplace package storage and controlled publishing.
-    PLUGIN_STORAGE_BUCKET: str = "plugins"
+    PLUGIN_STORAGE_BUCKET: str = "wegent"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200
     PLUGIN_PUBLISH_ENABLED: bool = False
