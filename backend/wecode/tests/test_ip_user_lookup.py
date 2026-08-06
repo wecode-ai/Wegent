@@ -201,6 +201,42 @@ def test_internal_admin_ip_lookup_requires_admin(
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize("header_name", ["X-API-Key", "Authorization"])
+def test_internal_admin_ip_lookup_accepts_admin_api_key(
+    test_client: TestClient,
+    test_admin_api_key,
+    header_name: str,
+):
+    raw_key, _ = test_admin_api_key
+    header_value = raw_key if header_name == "X-API-Key" else f"Bearer {raw_key}"
+    pod_lookup = AsyncMock(return_value=([], None))
+
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
+        response = test_client.get(
+            "/api/internal/admin/users/by-ip",
+            params={"ip": "192.0.2.10"},
+            headers={header_name: header_value},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ip"] == "192.0.2.10"
+
+
+def test_internal_admin_ip_lookup_rejects_non_admin_api_key(
+    test_client: TestClient,
+    test_api_key,
+):
+    raw_key, _ = test_api_key
+
+    response = test_client.get(
+        "/api/internal/admin/users/by-ip",
+        params={"ip": "192.0.2.10"},
+        headers={"X-API-Key": raw_key},
+    )
+
+    assert response.status_code == 403
+
+
 @pytest.mark.asyncio
 async def test_pod_lookup_calls_executor_manager(mocker):
     response = mocker.MagicMock()
