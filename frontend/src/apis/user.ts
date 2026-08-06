@@ -223,8 +223,8 @@ export const userApis = {
     return request
   },
 
-  async getRecentTeams(): Promise<QuickAccessTeam[]> {
-    return apiClient.get('/users/recent-teams')
+  async getRecentTeams(isCode = false): Promise<QuickAccessTeam[]> {
+    return apiClient.get(`/users/recent-teams?is_code=${isCode}`)
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {

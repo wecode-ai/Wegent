@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 use tauri::{Emitter, State};
 
 use crate::process_environment;
@@ -23,6 +23,8 @@ struct LocalTerminalSession {
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     child_pid: Option<u32>,
+    attach_sender: Option<mpsc::SyncSender<()>>,
+    attached: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -239,12 +241,15 @@ fn start_pty_shell(
         .map_err(|error| format!("Failed to spawn shell: {error}"))?;
     drop(pair.slave);
 
+    let (attach_sender, attach_receiver) = mpsc::sync_channel(1);
     let session_id = next_session_id(state);
     let session = LocalTerminalSession {
         master: pair.master,
         writer,
         child_pid: child.process_id(),
         child,
+        attach_sender: Some(attach_sender),
+        attached: false,
     };
     state
         .sessions
@@ -255,7 +260,9 @@ fn start_pty_shell(
     let output_session_id = session_id.clone();
     let exit_session_id = session_id.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(80));
+        if attach_receiver.recv().is_err() {
+            return;
+        }
         let mut buffer = [0_u8; 8192];
         let mut pending_utf8 = Vec::new();
         loop {
@@ -286,6 +293,33 @@ fn start_pty_shell(
     });
 
     Ok(session_id)
+}
+
+#[tauri::command]
+pub fn attach_local_terminal(
+    state: State<'_, LocalTerminalState>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Local terminal session not found: {session_id}"))?;
+    if session.attached {
+        return Ok(());
+    }
+    let attach_sender = session
+        .attach_sender
+        .take()
+        .ok_or_else(|| format!("Local terminal session cannot be attached: {session_id}"))?;
+
+    attach_sender
+        .send(())
+        .map_err(|_| format!("Failed to attach local terminal session: {session_id}"))?;
+    session.attached = true;
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

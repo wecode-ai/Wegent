@@ -97,6 +97,11 @@ export function findLocalConnectorsForMessage(
   )
 }
 
+export function messageNeedsConnectorPreflight(text: string | null | undefined): boolean {
+  if (!text) return false
+  return text.match(PLUGIN_URI_PATTERN) !== null || resolveLocalConnectorAuthHint(text) !== null
+}
+
 export function toLocalConnectorAuthTarget(
   requirement: LocalConnectorRequirement
 ): LocalConnectorAuthTarget {

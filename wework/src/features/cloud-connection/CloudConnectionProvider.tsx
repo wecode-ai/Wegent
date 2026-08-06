@@ -12,6 +12,7 @@ import {
   type CloudConnectionContextValue,
   type OpenCloudAuthorizationUrl,
 } from './CloudConnectionContext'
+import { track } from '@/telemetry/client'
 import {
   clearStoredCloudConnection,
   getJwtExpiry,
@@ -516,11 +517,13 @@ export function CloudConnectionProvider({
               socketBaseUrlOverride
             )
           )
+          track('cloud_connection_changed', { connected: true })
           return user
         }
 
         throw new Error('云端授权已超时，请重新连接')
       } catch (error) {
+        track('operation_failed', { operation: 'cloud_connect' })
         setSnapshot(current => ({
           ...current,
           ...config,
@@ -571,6 +574,7 @@ export function CloudConnectionProvider({
   const disconnect = useCallback(() => {
     clearStoredCloudConnection()
     setSnapshot(DISCONNECTED_STATE)
+    track('cloud_connection_changed', { connected: false })
   }, [])
 
   useEffect(() => {

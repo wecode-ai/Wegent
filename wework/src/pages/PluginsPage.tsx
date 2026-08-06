@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -18,6 +18,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getRuntimeConfig } from '@/config/runtime'
 import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
+import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 const PluginsWorkspace = lazy(() =>
@@ -124,6 +125,10 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
+
+  useEffect(() => {
+    track('plugin_center_opened', { surface: 'catalog' })
+  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')

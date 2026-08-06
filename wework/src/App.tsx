@@ -88,6 +88,8 @@ import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsCo
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { User } from '@/types/api'
+import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
+import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
@@ -147,6 +149,21 @@ function useCurrentLocation() {
   }, [])
 
   return location
+}
+
+function telemetryFeatureForPath(path: string) {
+  if (path === '/login' || path === '/login/oidc') return 'login' as const
+  if (path === '/plugins/manage') return 'plugin_management' as const
+  if (path === '/plugins/create') return 'plugin_create' as const
+  if (path === '/plugins') return 'plugins' as const
+  if (path === '/cloud-work') return 'cloud_work' as const
+  if (path === '/sites') return 'sites' as const
+  if (path === '/automations') return 'automations' as const
+  if (path === '/apps' || path.startsWith('/app/')) return 'apps' as const
+  if (path.startsWith('/settings')) return 'settings' as const
+  if (path.startsWith('/project-space')) return 'project_space' as const
+  if (path === '/') return 'workbench' as const
+  return 'unknown' as const
 }
 
 interface AppRoutesProps {
@@ -238,6 +255,7 @@ function WorkspaceTabSurface({
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
   const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
+  const usesWorkbenchDesktopSurface = nativeWorkbenchActive && isTauriRuntime()
 
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
@@ -258,7 +276,13 @@ function WorkspaceTabSurface({
               ) : null}
               {renderWorkbench ? (
                 <div
-                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+                  data-testid="desktop-workbench-surface"
+                  className={cn(
+                    'h-full',
+                    usesWorkbenchDesktopSurface &&
+                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+                    !nativeWorkbenchActive && 'hidden'
+                  )}
                   aria-hidden={!nativeWorkbenchActive}
                 >
                   <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
@@ -305,6 +329,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
   }))
+  const telemetryEnabled = useTelemetryEnabled()
+
+  useEffect(() => {
+    track('feature_opened', {
+      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
+    })
+  }, [isPopoutWindow, path, telemetryEnabled])
   if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
     setMountedTabs({
       activeTabId: workspaceTabs.activeTabId,
@@ -400,6 +431,7 @@ function MainApp() {
         <AppUpdateProvider>
           <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
             <AuthProvider>
+              <TelemetryBridge />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>

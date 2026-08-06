@@ -235,14 +235,14 @@ describe('ConnectionsSettingsPage', () => {
       disk: [],
     })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
-      codexHome: '/Users/crystal/.wegent-executor/codex',
-      configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+      codexHome: '/Users/crystal/.wework/codex',
+      configPath: '/Users/crystal/.wework/codex/config.toml',
       remoteAppsEnabled: false,
     })
     localCodexPluginApiMock.updateCodexLocalConfig.mockImplementation(patch =>
       Promise.resolve({
-        codexHome: '/Users/crystal/.wegent-executor/codex',
-        configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+        codexHome: '/Users/crystal/.wework/codex',
+        configPath: '/Users/crystal/.wework/codex/config.toml',
         remoteAppsEnabled: Boolean(patch.remoteAppsEnabled),
       })
     )
@@ -357,6 +357,17 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(window.location.pathname).toBe('/settings/worktrees')
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
+  })
+
+  test('settings page fills its container instead of the full viewport', async () => {
+    window.history.pushState({}, '', '/settings')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const settingsPage = await screen.findByTestId('wework-settings-page')
+    expect(settingsPage).toHaveClass('h-full')
+    expect(settingsPage).not.toHaveClass('h-screen')
   })
 
   test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {

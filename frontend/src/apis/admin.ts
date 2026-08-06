@@ -115,6 +115,37 @@ export interface SystemStats {
   total_public_models: number
 }
 
+export interface TaskRunFailureReason {
+  reason: string | null
+  count: number
+  percentage: number
+}
+
+export interface RecentTaskRunFailure {
+  subtask_id: number
+  task_id: number
+  task_title: string
+  user_id: number
+  user_name: string | null
+  client_origin: string
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskRunStats {
+  hours: number
+  window_start: string
+  window_end: string
+  total_runs: number
+  total_is_approximate: boolean
+  failed_runs: number
+  failure_rate: number
+  failure_reasons: TaskRunFailureReason[]
+  recent_failures: RecentTaskRunFailure[]
+  data_as_of: string | null
+}
+
 // Connector App Types
 export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
@@ -857,6 +888,13 @@ export const adminApis = {
    */
   async getSystemStats(): Promise<SystemStats> {
     return apiClient.get('/admin/stats')
+  },
+
+  /**
+   * Get assistant task run statuses and failure reasons.
+   */
+  async getTaskRunStats(hours: number = 24): Promise<TaskRunStats> {
+    return apiClient.get(`/admin/task-runs/stats?hours=${hours}`)
   },
 
   // ==================== System Config (Quick Access) ====================

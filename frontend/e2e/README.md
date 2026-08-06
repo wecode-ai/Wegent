@@ -211,6 +211,13 @@ browsers, and the executor job's Claude Code CLI. Dependency install steps are
 skipped only on exact cache hits; partial restore-key matches still run install
 commands to reconcile dependencies before saving a fresh cache.
 
+Playwright browser binaries are prepared once in `build-frontend-e2e` before the
+sharded browser/API jobs and the executor E2E job start. The cache key contains
+the runner OS and resolved Playwright version, so unrelated lockfile changes do
+not invalidate the browser cache. A cache miss uses
+`.github/scripts/install-playwright-browser.sh`, which retries interrupted or
+slow downloads up to three times with a three-minute per-attempt timeout.
+
 ### Sharded CI Users
 
 The CI workflow runs Playwright tests across multiple shards. Each shard uses an

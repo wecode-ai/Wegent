@@ -8,6 +8,7 @@ import {
   type QuickPhraseMode,
 } from '@/tauri/appPreferences'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
+import { track } from '@/telemetry/client'
 
 const emptyPhrase = (): QuickPhrase => ({
   id: crypto.randomUUID(),
@@ -27,12 +28,14 @@ export function QuickPhrasesSettingsPage() {
     void getAppPreferences().then(value => setPhrases(value.quickPhrases))
   }, [])
 
-  const save = async (next: QuickPhrase[]) => {
+  const save = async (next: QuickPhrase[], action: 'create' | 'update' | 'delete' | 'move') => {
     setPhrases(next)
     try {
       await updateAppPreferences({ quickPhrases: next })
       setError('')
+      track('feature_action_completed', { domain: 'quick_phrase', action })
     } catch {
+      track('operation_failed', { operation: 'quick_phrase_action' })
       setError(t('workbench.quick_phrases_save_error', '无法保存快捷短语，请重试'))
     }
   }
@@ -41,7 +44,7 @@ export function QuickPhrasesSettingsPage() {
     if (target < 0 || target >= phrases.length) return
     const next = [...phrases]
     ;[next[index], next[target]] = [next[target], next[index]]
-    void save(next)
+    void save(next, 'move')
   }
   const commitEditing = () => {
     if (!editing?.title.trim() || !editing.content.trim()) {
@@ -53,7 +56,8 @@ export function QuickPhrasesSettingsPage() {
     void save(
       exists
         ? phrases.map(item => (item.id === editing.id ? normalized : item))
-        : [...phrases, normalized]
+        : [...phrases, normalized],
+      exists ? 'update' : 'create'
     )
     setEditing(null)
   }
@@ -95,7 +99,7 @@ export function QuickPhrasesSettingsPage() {
               const [item] = next.splice(from, 1)
               next.splice(index, 0, item)
               setDraggedId(null)
-              void save(next)
+              void save(next, 'move')
             }}
             className="flex min-h-14 items-center gap-2 rounded-xl px-2 py-2 hover:bg-muted"
           >
@@ -147,7 +151,10 @@ export function QuickPhrasesSettingsPage() {
                 if (
                   window.confirm(t('workbench.quick_phrase_delete_confirm', '删除这条快捷短语？'))
                 ) {
-                  void save(phrases.filter(item => item.id !== phrase.id))
+                  void save(
+                    phrases.filter(item => item.id !== phrase.id),
+                    'delete'
+                  )
                 }
               }}
               className="h-8 w-8 rounded-lg p-2 text-destructive hover:bg-destructive/10"

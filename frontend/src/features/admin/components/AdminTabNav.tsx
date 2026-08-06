@@ -32,6 +32,7 @@ import {
   LayoutTemplate,
   Cable,
   Store,
+  ChartNoAxesCombined,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -51,6 +52,7 @@ export type AdminTabId =
   | 'connector-apps'
   | 'monitor'
   | 'device-monitor'
+  | 'task-runs'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -71,7 +73,6 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
 
   // Tab items
-  // Tab items
   const tabs: TabItem[] = [
     { id: 'users', label: t('admin:tabs.users'), icon: Users },
     { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
@@ -87,6 +88,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'connector-apps', label: t('admin:tabs.connector_apps'), icon: Cable },
+    { id: 'task-runs', label: t('admin:tabs.task_runs'), icon: ChartNoAxesCombined },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
   ]

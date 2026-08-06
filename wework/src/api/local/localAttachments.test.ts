@@ -20,7 +20,7 @@ describe('local attachment API', () => {
 
   test('stores uploaded files under executor home instead of the active project workspace', async () => {
     tauriMocks.invoke.mockResolvedValue(
-      '/Users/me/.wegent-executor/workspace/attachments/draft/123/photo.png'
+      '/Users/me/.wework/workspace/attachments/draft/123/photo.png'
     )
     const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' })
     const progress = vi.fn()
@@ -44,7 +44,7 @@ describe('local attachment API', () => {
     expect(progress).toHaveBeenNthCalledWith(1, 0)
     expect(progress).toHaveBeenNthCalledWith(2, 100)
     expect(attachment.local_path).toBe(
-      '/Users/me/.wegent-executor/workspace/attachments/draft/123/photo.png'
+      '/Users/me/.wework/workspace/attachments/draft/123/photo.png'
     )
   })
 })

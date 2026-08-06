@@ -35,6 +35,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 import type { RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
   Automation,
@@ -346,7 +347,9 @@ export function AutomationsPage() {
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
+      track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
+      track('operation_failed', { operation: 'automation_save' })
       setError(
         saveError instanceof Error
           ? saveError.message
@@ -363,7 +366,11 @@ export function AutomationsPage() {
       const response = await automationApi.toggleAutomation(automation.id, !automation.enabled)
       setEditing(response.automation)
       await loadAutomations()
+      track('automation_action_completed', {
+        action: response.automation.enabled ? 'enable' : 'disable',
+      })
     } catch (toggleError) {
+      track('operation_failed', { operation: 'automation_toggle' })
       setError(toggleError instanceof Error ? toggleError.message : String(toggleError))
     }
   }
@@ -375,7 +382,9 @@ export function AutomationsPage() {
       await automationApi.runAutomationNow(automation.id)
       await Promise.all([loadAutomations(), loadRuns(automation.id), refreshWorkLists()])
       setSelectedAutomationId(automation.id)
+      track('automation_action_completed', { action: 'run' })
     } catch (runError) {
+      track('operation_failed', { operation: 'automation_run' })
       setError(runError instanceof Error ? runError.message : String(runError))
     } finally {
       setRunningId(null)
@@ -392,7 +401,9 @@ export function AutomationsPage() {
       setDraft(null)
       setDirty(false)
       await loadAutomations()
+      track('automation_action_completed', { action: 'delete' })
     } catch (deleteError) {
+      track('operation_failed', { operation: 'automation_delete' })
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError))
     }
   }
