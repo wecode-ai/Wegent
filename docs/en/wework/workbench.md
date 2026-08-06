@@ -16,6 +16,10 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
 
+## Use the project sidebar
+
+Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
+
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.
