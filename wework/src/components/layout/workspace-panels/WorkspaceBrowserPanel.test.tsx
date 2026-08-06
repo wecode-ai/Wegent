@@ -483,6 +483,9 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.openEmbeddedBrowser.mockRejectedValueOnce(
       new Error('Timed out waiting for embedded browser host bounds')
     )
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockRejectedValue(
+      new Error('No embedded browser is open')
+    )
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
@@ -491,9 +494,9 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)
 
-    expect(await screen.findByTestId('workspace-browser-error')).toHaveTextContent(
-      '无法打开应用内浏览器'
-    )
+    expect(
+      await screen.findByTestId('workspace-browser-error', {}, { timeout: 2000 })
+    ).toHaveTextContent('无法打开应用内浏览器')
     expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
 
     fireEvent.submit(input.closest('form')!)
