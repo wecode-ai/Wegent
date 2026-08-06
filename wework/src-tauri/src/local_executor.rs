@@ -679,24 +679,45 @@ fn migrate_legacy_executor_home(
             ));
         }
     };
-    if !source_metadata.is_dir() {
-        return Err(format!(
-            "Legacy Wework directory is not a directory: {}",
+    let source_is_symlink = source_metadata.file_type().is_symlink();
+    if !source.is_dir() {
+        log::warn!(
+            "Skipping legacy Wework migration because {} is not a directory",
             source.display()
-        ));
+        );
+        return Ok(());
     }
 
     match fs::symlink_metadata(destination) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::rename(source, destination).map_err(|error| {
-                format!(
-                    "Failed to migrate {} to {}: {error}",
+            if !source_is_symlink {
+                fs::rename(source, destination).map_err(|error| {
+                    format!(
+                        "Failed to migrate {} to {}: {error}",
+                        source.display(),
+                        destination.display()
+                    )
+                })?;
+                log::info!(
+                    "Migrated legacy Wework directory {} to {}",
                     source.display(),
                     destination.display()
-                )
-            })?;
+                );
+                return Ok(());
+            }
+
+            fs::create_dir_all(destination)
+                .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
+            merge_legacy_executor_directory(
+                source,
+                destination,
+                &destination
+                    .join(LEGACY_MIGRATION_CONFLICTS_DIR)
+                    .join(legacy_label),
+            )?;
+            remove_empty_legacy_executor_home(source, source_is_symlink)?;
             log::info!(
-                "Migrated legacy Wework directory {} to {}",
+                "Migrated linked legacy Wework directory {} to {}",
                 source.display(),
                 destination.display()
             );
@@ -724,15 +745,25 @@ fn migrate_legacy_executor_home(
             .join(LEGACY_MIGRATION_CONFLICTS_DIR)
             .join(legacy_label),
     )?;
+    remove_empty_legacy_executor_home(source, source_is_symlink)?;
+    Ok(())
+}
+
+fn remove_empty_legacy_executor_home(source: &Path, source_is_symlink: bool) -> Result<(), String> {
     if fs::read_dir(source)
         .map_err(|error| format!("Failed to read {}: {error}", source.display()))?
         .next()
-        .is_none()
+        .is_some()
     {
-        fs::remove_dir(source)
-            .map_err(|error| format!("Failed to remove {}: {error}", source.display()))?;
+        return Ok(());
     }
-    Ok(())
+
+    if source_is_symlink {
+        fs::remove_file(source)
+    } else {
+        fs::remove_dir(source)
+    }
+    .map_err(|error| format!("Failed to remove {}: {error}", source.display()))
 }
 
 fn merge_legacy_executor_directory(
@@ -4826,6 +4857,50 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         );
         assert!(!legacy_home.exists());
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn ignores_non_directory_legacy_executor_home() {
+        let home = import_test_root("non-directory-legacy-executor-home");
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
+        fs::create_dir_all(&home).unwrap();
+        fs::write(&legacy_home, "not a directory").unwrap();
+
+        migrate_legacy_executor_homes(&home).unwrap();
+
+        assert_eq!(fs::read_to_string(&legacy_home).unwrap(), "not a directory");
+        assert!(!home.join(WEWORK_HOME_DIR).exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrates_legacy_executor_directory_symlink_into_wework_home() {
+        let home = import_test_root("linked-legacy-executor-home");
+        let linked_target = import_test_root("linked-legacy-executor-target");
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(linked_target.join("workspace/chats")).unwrap();
+        fs::write(linked_target.join("workspace/chats/current.md"), "current").unwrap();
+        std::os::unix::fs::symlink(&linked_target, &legacy_home).unwrap();
+
+        migrate_legacy_executor_homes(&home).unwrap();
+
+        let destination = home.join(WEWORK_HOME_DIR);
+        assert_eq!(
+            fs::read_to_string(destination.join("workspace/chats/current.md")).unwrap(),
+            "current"
+        );
+        assert!(fs::symlink_metadata(&destination).unwrap().is_dir());
+        assert!(!fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(&legacy_home).is_err());
+        assert!(linked_target.is_dir());
+        assert!(fs::read_dir(&linked_target).unwrap().next().is_none());
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(linked_target);
     }
 
     #[cfg(unix)]

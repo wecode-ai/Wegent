@@ -256,6 +256,306 @@ describe('ComposerTextarea', () => {
     expect(onOpenSkillFile).toHaveBeenCalledWith('/tmp/gmail/SKILL.md')
   })
 
+  test('consumes the Tab that selects a skill from the $ menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={nextValue => {
+            onChange(nextValue)
+            setValue(nextValue)
+          }}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onOpenSkillFile={vi.fn()}
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '$gmail'
+      editor.focus()
+    })
+    await screen.findByTestId('local-skill-option-gmail')
+
+    expect(fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })).toBe(
+      false
+    )
+
+    await waitFor(() => expect(editor.value).toBe(`${GMAIL_REFERENCE} `))
+    expect(editor.value).not.toContain('\n')
+    expect(onChange).toHaveBeenLastCalledWith(`${GMAIL_REFERENCE} `)
+  })
+
+  test('does not confirm via Tab during IME composition', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={nextValue => {
+            onChange(nextValue)
+            setValue(nextValue)
+          }}
+          onSubmit={onSubmit}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onOpenSkillFile={vi.fn()}
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '$gmail'
+      editor.focus()
+    })
+    await screen.findByTestId('local-skill-option-gmail')
+
+    expect(
+      fireEvent.keyDown(editor, {
+        key: 'Tab',
+        code: 'Tab',
+        keyCode: 229,
+        which: 229,
+        charCode: 229,
+      })
+    ).toBe(true)
+    expect(editor.value).toBe('$gmail')
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('local-skill-option-gmail')).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalledWith(`${GMAIL_REFERENCE} `)
+  })
+
+  test('consumes the Tab that confirms a slash command from the / menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSetGoal = vi.fn()
+    const onSubmit = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={onSubmit}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onSetGoal={onSetGoal}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '/goal'
+      editor.focus()
+    })
+    await screen.findByTestId('slash-command-option-goal')
+
+    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
+
+    expect(onSetGoal).toHaveBeenCalledOnce()
+    expect(onSubmit).not.toHaveBeenCalled()
+    await waitFor(() => expect(editor.value).toBe(''))
+    await waitFor(() => expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument())
+  })
+
+  test('does not confirm via Tab while Shift is held', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSetGoal = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onSetGoal={onSetGoal}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '/goal'
+      editor.focus()
+    })
+    await screen.findByTestId('slash-command-option-goal')
+
+    expect(
+      fireEvent.keyDown(editor, {
+        key: 'Tab',
+        code: 'Tab',
+        keyCode: 9,
+        charCode: 9,
+        shiftKey: true,
+      })
+    ).toBe(true)
+    expect(onSetGoal).not.toHaveBeenCalled()
+    expect(editor.value).toBe('/goal')
+  })
+
+  test('consumes the Tab that confirms the highlighted @ mention', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const searchWorkspaceEntries = vi.fn().mockResolvedValue({
+      files: [
+        {
+          root: '/workspace/project',
+          path: 'src/auth.ts',
+          fileName: 'auth.ts',
+          matchType: 'file',
+          score: 100,
+          indices: [4, 5, 6, 7],
+        },
+      ],
+    })
+    const workspaceTarget: WorkspaceTarget = {
+      deviceId: 'local-device',
+      path: '/workspace/project',
+      source: 'project',
+    }
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          workspaceTarget={workspaceTarget}
+          workspaceFileApi={{
+            listWorkspaceEntries: vi.fn(),
+            searchWorkspaceEntries,
+            readWorkspaceTextFile: vi.fn(),
+          }}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '@auth'
+      editor.focus()
+    })
+
+    await screen.findByTestId('workspace-mention-option-0')
+    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
+    await waitFor(() => {
+      expect(editor.value).toContain('[$auth.ts](file://')
+      expect(screen.getByTestId('composer-path-chip-auth-ts')).toHaveAttribute(
+        'data-composer-path',
+        '/workspace/project/src/auth.ts'
+      )
+      expect(screen.getByTestId('composer-path-chip-auth-ts')).toHaveTextContent('auth.ts')
+    })
+  })
+
+  test('does not intercept Tab when no autocomplete menu is open', () => {
+    const textareaRef = createRef<HTMLElement>()
+    render(
+      <ComposerTextarea
+        value="plain text"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = 'plain text'
+      editor.focus()
+    })
+
+    expect(fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })).toBe(
+      true
+    )
+  })
+
+  test('does not confirm via Tab when the menu has no selectable option', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={nextValue => {
+            onChange(nextValue)
+            setValue(nextValue)
+          }}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/unknown-command'
+      editor.focus()
+    })
+
+    await screen.findByTestId('slash-command-menu')
+
+    expect(fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })).toBe(
+      true
+    )
+    expect(editor.value).toBe('/unknown-command')
+  })
+
   test('places callable plugins between model and skill slash commands', async () => {
     const textareaRef = createRef<HTMLElement>()
 
