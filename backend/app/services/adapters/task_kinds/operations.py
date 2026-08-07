@@ -53,9 +53,16 @@ class TaskOperationsMixin:
         obj_in: TaskCreate,
         user: User,
         task_id: Optional[int] = None,
+        namespace: str = "default",
     ) -> Dict[str, Any]:
-        """
-        Create user Task using kinds table.
+        """Create user Task using kinds table.
+
+        ``namespace`` is a parameter here rather than a field on ``TaskCreate``
+        because it is not something a client asks for. "system" keeps a task out of
+        the conversation list, for work the user did not start a conversation to do,
+        and it reached the public create endpoints as a free string as long as it was
+        part of the request body -- so any client could file a task where the person
+        who made it would never find it.
         """
         logger.info(
             f"create_task_or_append called with task_id={task_id}, user_id={user.id}"
@@ -65,7 +72,9 @@ class TaskOperationsMixin:
         requested_task_id = task_id
 
         if task_id is None:
-            task, team = self._create_new_task(db, obj_in, user, task_id=None)
+            task, team = self._create_new_task(
+                db, obj_in, user, task_id=None, namespace=namespace
+            )
         else:
             # Validate if task_id is valid
             if not self.validate_task_id(db, task_id, user_id=user.id):
@@ -99,7 +108,9 @@ class TaskOperationsMixin:
                     and existing_record.kind != "Placeholder"
                 ):
                     raise HTTPException(status_code=404, detail="Task not found")
-                task, team = self._create_new_task(db, obj_in, user, task_id)
+                task, team = self._create_new_task(
+                    db, obj_in, user, task_id, namespace=namespace
+                )
 
         # Create subtasks for the task
         create_subtasks(db, task, team, user.id, obj_in.prompt)
@@ -220,6 +231,7 @@ class TaskOperationsMixin:
         obj_in: TaskCreate,
         user: User,
         task_id: int,
+        namespace: str = "default",
     ) -> tuple:
         """Create a new task."""
         # Validate team exists
@@ -266,6 +278,7 @@ class TaskOperationsMixin:
                 user=user,
                 team=team,
                 title=title,
+                namespace=namespace,
             )
 
         return self._create_new_task_with_preallocated_id(
@@ -275,6 +288,7 @@ class TaskOperationsMixin:
             team=team,
             task_id=task_id,
             title=title,
+            namespace=namespace,
         )
 
     def _create_new_task_with_allocated_pair(
@@ -285,6 +299,7 @@ class TaskOperationsMixin:
         user: User,
         team: Kind,
         title: Optional[str],
+        namespace: str = "default",
     ) -> tuple:
         """Create a task and workspace through the Store allocation boundary."""
 
@@ -316,7 +331,7 @@ class TaskOperationsMixin:
             db,
             task=task,
             name=f"task-{task_id}",
-            namespace=obj_in.namespace,
+            namespace=namespace,
             project_id=obj_in.project_id or 0,
             client_origin=obj_in.client_origin,
         )
@@ -332,6 +347,7 @@ class TaskOperationsMixin:
         team: Kind,
         task_id: int,
         title: Optional[str],
+        namespace: str = "default",
     ) -> tuple:
         """Create a task from an already reserved task id."""
         workspace_name = f"workspace-{task_id}"
@@ -349,7 +365,7 @@ class TaskOperationsMixin:
             task_id=task_id,
             user_id=user.id,
             name=f"task-{task_id}",
-            namespace=obj_in.namespace,
+            namespace=namespace,
             payload=self._build_task_json(
                 obj_in=obj_in,
                 team=team,
@@ -413,11 +429,11 @@ class TaskOperationsMixin:
             },
             "metadata": {
                 "name": f"task-{task_id}",
-                # Deliberately not obj_in.namespace, which the row carries. That one
-                # decides whether the task is listed as a conversation; this one is
-                # where the model in the labels below is looked up, and moving it to
-                # "system" would send that lookup to a namespace holding no models and
-                # leave it to fall back.
+                # Deliberately not the `namespace` argument, which the row carries.
+                # That one decides whether the task is listed as a conversation; this
+                # one is where the model in the labels below is looked up, and moving
+                # it to "system" would send that lookup to a namespace holding no
+                # models and leave it to fall back.
                 "namespace": "default",
                 "labels": {
                     "type": obj_in.type,

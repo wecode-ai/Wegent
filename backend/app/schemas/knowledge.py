@@ -59,6 +59,23 @@ class DocumentSourceType(str, Enum):
     CODE = "code"
 
 
+def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
+    """Refuse ``code`` on a public document create.
+
+    A code target is an indexed source file rather than a browsable page, so every
+    reader-facing scope filters it out -- but the document count does not, which makes
+    a document a client can create, that raises the count, and that no list will ever
+    show. Nothing writes ``code`` yet; it is declared for the phase that indexes
+    repository sources, and that phase will write it through its own path the way the
+    wiki projection does.
+    """
+    if value == DocumentSourceType.CODE:
+        raise ValueError(
+            "'code' documents are written by the indexer, not through this API"
+        )
+    return value
+
+
 class DocumentIndexStatus(str, Enum):
     """Business status enumeration for document indexing."""
 
@@ -823,6 +840,8 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     )
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
+
+    _no_code_source = field_validator("source_type")(reject_code_source_type)
     source_config: dict = Field(
         default_factory=dict,
         description="Source configuration (e.g., {'url': '...'} for table)",
@@ -1506,6 +1525,8 @@ class KnowledgeDocumentCreateV1(BaseModel):
             "'web' (URL scraping), 'attachment' (existing attachment ID)"
         ),
     )
+
+    _no_code_source = field_validator("source_type")(reject_code_source_type)
     # source_type=text
     content: Optional[str] = Field(
         None,

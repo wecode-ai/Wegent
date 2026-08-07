@@ -53,6 +53,10 @@ class FakeTasks:
     """Stands in for the task service, capturing what the agent would be sent."""
 
     created: list[TaskCreate] = field(default_factory=list)
+    # Captured separately because it is no longer part of the request body: whether a
+    # task is listed as a conversation is this run's decision, not a field a client
+    # could set.
+    namespaces: list[str] = field(default_factory=list)
     next_id: int = 500
     fails: bool = False
 
@@ -60,10 +64,13 @@ class FakeTasks:
         self.next_id += 1
         return self.next_id
 
-    def create_task_or_append(self, *, db, obj_in: TaskCreate, user, task_id):
+    def create_task_or_append(
+        self, *, db, obj_in: TaskCreate, user, task_id, namespace="default"
+    ):
         if self.fails:
             raise RuntimeError("no executor available")
         self.created.append(obj_in)
+        self.namespaces.append(namespace)
         return {"id": task_id}
 
     @property
@@ -725,7 +732,7 @@ def test_a_generation_run_stays_out_of_the_conversation_list_by_default(
     """
     start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
 
-    assert tasks.created[0].namespace == "system"
+    assert tasks.namespaces[0] == "system"
 
 
 def test_a_wiki_may_ask_for_its_runs_to_be_listed(
@@ -735,7 +742,7 @@ def test_a_wiki_may_ask_for_its_runs_to_be_listed(
 
     start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
 
-    assert tasks.created[0].namespace == "default"
+    assert tasks.namespaces[0] == "default"
 
 
 def test_the_hiding_namespace_is_the_one_the_listing_query_excludes():

@@ -69,7 +69,6 @@ from app.services.knowledge.code_wiki.publisher import (
 )
 from app.services.knowledge.code_wiki.registry import (
     CODE_WIKI_NAMESPACE,
-    claim_repository,
     existing_wiki_id,
     existing_wikis_for,
 )
@@ -269,14 +268,15 @@ def create_code_wiki(
     name = data.name.strip() or source.project_name
 
     try:
-        result = knowledge_orchestrator.create_knowledge_base(
+        # Registering the repository is part of this call, in its transaction: a code
+        # wiki without a registry row is one no run can start and no list can show.
+        result = knowledge_orchestrator.create_code_wiki(
             db=db,
             user=current_user,
             name=name[:100],
+            source=source,
             description=data.description,
             namespace=data.namespace or CODE_WIKI_NAMESPACE,
-            kb_type=KnowledgeBaseType.CODE_WIKI.value,
-            source=source,
             language=data.language,
             show_generation_task=data.show_generation_task,
             # A code wiki is an ordinary knowledge base with a repository attached,
@@ -295,8 +295,6 @@ def create_code_wiki(
             multimodal_analysis_video_prompt=data.multimodal_analysis_video_prompt,
             multimodal_analysis_image_prompt=data.multimodal_analysis_image_prompt,
         )
-        claim_repository(db, source, result.id)
-        db.commit()
         add_span_event(
             "knowledge.code_wiki.created",
             {

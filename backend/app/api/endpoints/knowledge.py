@@ -50,7 +50,6 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
-    KnowledgeBaseType,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
@@ -438,18 +437,6 @@ def create_knowledge_base(
     - **namespace=<group_name>**: Team knowledge base (requires Maintainer+ permission)
     - **members**: Optional initial members to add after creation
     """
-    # A code wiki must be created through its own endpoint, which binds a repository
-    # and checks the caller can read it. Refusing here rather than quietly ignoring
-    # the field keeps this endpoint from becoming a way around that check.
-    if data.kb_type == KnowledgeBaseType.CODE_WIKI:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Use POST /knowledge-bases/code-wikis to create a "
-                "'code_wiki' knowledge base"
-            ),
-        )
-
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
         result = knowledge_orchestrator.create_knowledge_base(

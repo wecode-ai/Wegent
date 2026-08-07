@@ -115,9 +115,17 @@ def test_unsupported_source_type_is_rejected_by_validation(
 
 
 def test_the_general_endpoint_refuses_to_create_a_code_wiki(
-    test_client: TestClient, auth_headers: dict[str, str]
+    test_client: TestClient, auth_headers: dict[str, str], test_db: Session
 ):
-    """Only the code wiki endpoint may create one, because only it checks the repo."""
+    """Only the code wiki path may create one, because only it binds a repository.
+
+    The refusal lives in the orchestrator now rather than in this endpoint. It used
+    to be written here, and the MCP tool calling the same orchestrator method had no
+    equivalent -- so an agent could create a code wiki while the rollout flag was off,
+    with no source and no registry row. One check where both entrances pass.
+    """
+    from app.models.kind import Kind
+
     response = test_client.post(
         "/api/knowledge-bases",
         json={"name": "sneaky", "kb_type": "code_wiki"},
@@ -125,7 +133,8 @@ def test_the_general_endpoint_refuses_to_create_a_code_wiki(
     )
 
     assert response.status_code == 400
-    assert "code-wikis" in response.json()["detail"]
+    assert "dedicated code wiki endpoint" in response.json()["detail"]
+    assert test_db.query(Kind).filter(Kind.name == "sneaky").count() == 0
 
 
 def test_ordinary_knowledge_bases_are_still_created_as_notebooks(
@@ -1303,3 +1312,84 @@ def test_the_code_wiki_routes_are_matched_before_the_by_id_route():
     paths = [route.path for route in router.routes]
 
     assert paths.index("/code-wikis") < paths.index("/{knowledge_base_id}")
+
+
+# --- one implementation, one public surface ----------------------------------
+
+
+def _source():
+    from app.services.knowledge.code_wiki.source import SourceRepository
+
+    return SourceRepository.from_url("gitlab", "http://git.example.com/acme/repo.git")
+
+
+def test_the_mcp_entrance_cannot_create_a_code_wiki_either(
+    test_db: Session, test_user: User, kind_services_use_test_db
+):
+    """The hole the split closes.
+
+    MCP passes ``kb_type`` through as a free string to the same orchestrator method
+    the REST endpoint uses. The REST endpoint had its own guard and MCP had none, so
+    an agent could produce a code wiki with no repository -- one that renders as a
+    wiki, lists nowhere, and answers every regenerate with "no source repository
+    recorded". Asserted through the orchestrator because that is now the only place
+    the rule is written, and both entrances go through it.
+    """
+    import pytest
+
+    from app.models.kind import Kind
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    with pytest.raises(ValueError, match="dedicated code wiki endpoint"):
+        knowledge_orchestrator.create_knowledge_base(
+            db=test_db, user=test_user, name="sneaky", kb_type="code_wiki"
+        )
+
+    assert test_db.query(Kind).filter(Kind.name == "sneaky").count() == 0
+
+
+def test_a_code_wiki_and_its_registry_row_are_created_together(
+    test_db: Session, test_user: User, kind_services_use_test_db
+):
+    from app.models.wiki import WikiProject
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    source = _source()
+    result = knowledge_orchestrator.create_code_wiki(
+        db=test_db, user=test_user, name="repo wiki", source=source
+    )
+
+    rows = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
+    assert len(rows) == 1
+    # Compared against the resolved source rather than the URL that was typed: how a
+    # URL is normalised is settled elsewhere, and restating it here would make this
+    # test fail for a reason that has nothing to do with what it is asserting.
+    assert rows[0].source_url == source.source_url
+
+
+def test_a_failed_registration_leaves_no_knowledge_base_behind(
+    test_db: Session, test_user: User, kind_services_use_test_db
+):
+    """Why registration had to move inside.
+
+    It used to run *after* the knowledge base was committed, in a second transaction.
+    Anything failing between the two -- a crash, a unique-violation on the registry,
+    a dropped connection -- left a committed code wiki with no registry row, which is
+    precisely the malformed shape this split exists to make unreachable.
+    """
+    import pytest
+
+    from app.models.kind import Kind
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    with patch(
+        "app.services.knowledge.code_wiki.registry.claim_repository",
+        side_effect=RuntimeError("registry unavailable"),
+    ):
+        with pytest.raises(RuntimeError):
+            knowledge_orchestrator.create_code_wiki(
+                db=test_db, user=test_user, name="doomed", source=_source()
+            )
+
+    test_db.rollback()
+    assert test_db.query(Kind).filter(Kind.name == "doomed").count() == 0
