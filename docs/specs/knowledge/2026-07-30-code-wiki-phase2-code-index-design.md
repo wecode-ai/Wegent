@@ -139,6 +139,21 @@ code_wiki 的 splitter **由系统按目标类型固定,用户不可选/不可�
 2. 重生成某页时,把该页关联的 notes 一并喂进生成 prompt,让 agent 采纳人类纠正。
 3. 保持"生成是唯一真源":人不直接改生成页,只提供反馈。
 
+## 7.5 一期留下的清理项(已定推迟到本期)
+
+**内部回写端点的固定 token 通道要拆掉。** `/api/internal/wiki/generations/contents`
+接受三种身份:agent 实际走 skill 身份 token,还有用户 JWT,以及一个固定 token
+(`WIKI_INTERNAL_API_TOKEN`,默认 `weki`)。第三条**没有任何调用方** —— skill 支持从
+`WIKI_TOKEN` 环境变量取,但全仓无人设置这个变量。
+
+它不只是死代码。`_internal_caller` 对固定 token 返回 `None`,而 `None` 会让
+`_assert_caller_owns_generation` **直接放行**,所以拿到那个默认值就能往任意 generation
+写页面并结束它 —— 一期之后这意味着投影进任意知识库。internal router 和其它路由挂在同一个
+app 上,没有额外网络隔离。
+
+一期没动是因为它是既有行为,可能有我们不知道的运维脚本在用。本期一并处理:删掉这条路径,
+`_internal_caller` 的 `None` 分支随之消失,所有权检查不再有例外。
+
 ## 8. 早期 spike(降风险,可与一期并行,不进一期交付)
 
 验证整个投资的最大假设——**代码 RAG 的 Ask 在我们的栈/模型约束下能否达到 DeepWiki 级价值**——在大投入前止损。
