@@ -23,7 +23,7 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import {
-  buildTaskAiInitialPrompt,
+  buildRobotRoleDescription,
   mergeProjectChatMessages,
   startTaskAiRun,
 } from './taskAiExecution'
@@ -494,7 +494,7 @@ export function TaskActivityView({
         project,
         task,
         agent: assignedAgent,
-        prompt: buildTaskAiInitialPrompt(task),
+        prompt: buildRobotRoleDescription(assignedAgent),
         messages,
         models: availableModels,
         selectedModel: rerunModel,

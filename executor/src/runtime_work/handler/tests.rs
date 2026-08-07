@@ -20,6 +20,73 @@ fn follow_up_thread_mode_preserves_ephemeral_direct_semantics() {
     assert_eq!(follow_up_thread_mode(false), FollowUpThreadMode::Resume);
 }
 
+#[test]
+fn applies_backend_connection_from_the_shared_snapshot() {
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".to_owned(),
+            socket_url: "wss://socket.example.com".to_owned(),
+            auth_token: "wg-token".to_owned(),
+            runtime_auth_token: "runtime-wg-token".to_owned(),
+        })));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+
+    let mut request = ExecutionRequest {
+        task_id: "task-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.backend_url.as_deref(),
+        Some("https://backend.example.com")
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("wg-token"));
+    assert_eq!(
+        request.runtime_auth_token.as_deref(),
+        Some("runtime-wg-token")
+    );
+}
+
+#[test]
+fn keeps_payload_backend_credentials_over_the_snapshot() {
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".to_owned(),
+            socket_url: String::new(),
+            auth_token: "wg-token".to_owned(),
+            runtime_auth_token: String::new(),
+        })));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+
+    let mut request = ExecutionRequest {
+        backend_url: Some("https://payload.example.com".to_owned()),
+        auth_token: Some("payload-token".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.backend_url.as_deref(),
+        Some("https://payload.example.com")
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("payload-token"));
+}
+
+#[test]
+fn skips_backend_connection_without_a_configured_connection() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let mut request = ExecutionRequest::default();
+    handler.apply_backend_connection(&mut request);
+
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+}
+
 #[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
     for (case, persisted_running, active_in_memory) in

@@ -28,6 +28,7 @@ use crate::{
         CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
         CODEX_APP_SERVER_TURN_CANCELLED,
     },
+    config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
         host::HookService,
@@ -304,6 +305,11 @@ pub struct RuntimeWorkRpcHandler {
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
     connectors: ConnectorRuntime,
+    /// Authoritative backend connection configuration (URL + auth tokens)
+    /// updated by `executor.backend.configure`. Runtime task payloads do not
+    /// carry credentials, so turns fill them from here before launching the
+    /// project-space MCP server.
+    backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
 #[derive(Default)]
@@ -381,6 +387,7 @@ impl RuntimeWorkRpcHandler {
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
+            backend_connection: Arc::new(Mutex::new(None)),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -401,6 +408,61 @@ impl RuntimeWorkRpcHandler {
         handler.start_automation_scheduler();
         handler.start_supervisor_scheduler();
         handler
+    }
+
+    pub fn with_backend_connection(
+        mut self,
+        backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    ) -> Self {
+        self.backend_connection = backend_connection;
+        self
+    }
+
+    /// Fill the request's backend connection fields from the executor's
+    /// current configuration when the run payload did not provide them.
+    /// Runtime tasks created through the App IPC (queue dispatches, project
+    /// chat runs) do not carry credentials; `wework_space` relies on them to
+    /// read cloud project data. This mirrors `normalize_local_task_request`
+    /// used by the `task:execute` channel so both paths behave identically
+    /// regardless of when the executor process was spawned.
+    fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        let Ok(guard) = self.backend_connection.lock() else {
+            return;
+        };
+        let Some(connection) = guard.as_ref() else {
+            return;
+        };
+        if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
+            return;
+        }
+        if request
+            .backend_url
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            request.backend_url = Some(connection.backend_url.clone());
+        }
+        if request
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            request.auth_token = Some(connection.auth_token.clone());
+        }
+        if request
+            .runtime_auth_token
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+            && !connection.runtime_auth_token.trim().is_empty()
+        {
+            request.runtime_auth_token = Some(connection.runtime_auth_token.clone());
+        }
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {

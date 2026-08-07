@@ -11,16 +11,25 @@ const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_DEVICE_CAPACITY = 5
 const LOCAL_QUEUE_LEASE_SECONDS = 300
 
+function robotRoleDescription(agentName: string, systemPrompt: string): string {
+  return systemPrompt
+    ? `你是 ${agentName}，这个项目任务的 AI 执行者。\n${systemPrompt}`
+    : `你是 ${agentName}，这个项目任务的 AI 执行者。`
+}
+
 function queuePrompt(execution: LocalLoopItemExecution): string {
   const commentText =
     typeof execution.execution_payload?.text === 'string'
       ? (execution.execution_payload.text as string)
       : ''
-  const base = `请开始执行任务 ${execution.loop_item_id}：${execution.task_title}\n\n你是 ${execution.agent_name}，这个项目任务的 AI 执行者。${execution.agent_system_prompt ?? ''}`
+  // The task title/description is not embedded here; the AI reads the bound
+  // task itself through wework_space (get_board_item). The sent content is
+  // the robot's role description plus the triggering comment requirement.
+  const role = robotRoleDescription(execution.agent_name, execution.agent_system_prompt ?? '')
   if (commentText) {
-    return `${base}\n\n以下是任务评论中提出的最新要求：\n${commentText}\n\n完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。`
+    return `${role}\n\n以下是任务评论中提出的最新要求：\n${commentText}`
   }
-  return `${base}\n\n完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。`
+  return role
 }
 
 /**
@@ -154,6 +163,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     const taskId = `codex-queue-${execution.id}-${Date.now()}`
     const prompt = queuePrompt(execution)
     const systemPrompt = execution.agent_system_prompt ?? ''
+    const roleDescription = robotRoleDescription(execution.agent_name, systemPrompt)
     const agentModel = execution.agent_model ?? null
     const resolvedModel = agentModel ? ((await modelsByAgentModel()).get(agentModel) ?? null) : null
     const executionModel = resolvedModel
@@ -185,12 +195,13 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           value: [
             'This run is bound to the current project space board task.',
             `Reply to task cloud://projects/${execution.cloud_project_id}/todos/${execution.loop_item_id}.`,
+            'Read the task with the wework_space get_board_item tool before executing; the task link already contains the space_id and item_id, so do not call list_spaces to find the project.',
             'Your final response is a reviewable task comment. Report actual changes, verification, unfinished work, and risks.',
           ].join('\n'),
         },
         projectChatAgent: {
           kind: 'application',
-          value: `You are ${execution.agent_name}, the AI owner of this project task.${systemPrompt ? `\n${systemPrompt}` : ''}`,
+          value: roleDescription,
         },
       },
     }

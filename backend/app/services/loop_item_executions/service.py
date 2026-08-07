@@ -29,6 +29,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ PRIORITY_WEIGHTS = {
 
 DEFAULT_MAX_RETRIES = 1
 DEFAULT_LEASE_SECONDS = 5 * 60
+DEFAULT_STALL_TEXT_TIMEOUT_SECONDS = 20 * 60
 
 
 def _optional_text(value: str) -> str | None:
@@ -832,34 +834,30 @@ class LoopItemExecutionService:
             agent=agent,
             creator=creator,
             team=team,
-            prompt=self.build_robot_prompt(task, agent),
+            prompt=self.build_robot_prompt(agent),
             model_config=model_config,
         )
 
     @staticmethod
-    def build_robot_prompt(item: object, agent: object) -> str:
-        """Mirror the App-side initial prompt for a task robot run."""
+    def build_robot_prompt(agent: object) -> str:
+        """Build the robot role description sent to the executor.
+
+        The task title and description are not embedded here; the AI reads the
+        bound task itself through wework_space (get_board_item). Mirror the
+        App-side role description so local and cloud runs stay consistent.
+        """
 
         from app.services.project_chat.service import bot_config
 
         system_prompt = bot_config(agent).get("system_prompt") or ""
-        title = getattr(item, "title", None) or getattr(item, "name", None) or ""
-        description = getattr(item, "description", "") or ""
         agent_name = (
             getattr(agent, "title", None) or getattr(agent, "name", None) or "AI"
         )
-        identity = (
+        return (
             f"你是 {agent_name}，这个项目任务的 AI 执行者。\n{system_prompt}"
             if system_prompt
             else f"你是 {agent_name}，这个项目任务的 AI 执行者。"
         )
-        parts = [
-            f"请开始执行任务 {getattr(item, 'id', '')}：{title}",
-            description.strip(),
-            identity,
-            "完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。",
-        ]
-        return "\n\n".join(part for part in parts if part)
 
     @staticmethod
     def _resolve_default_team(db: Session, user_id: int) -> Optional[object]:
@@ -964,9 +962,13 @@ class LoopItemExecutionService:
                 "projectChat": {
                     "kind": "application",
                     "value": (
-                        f"Reply to task cloud://projects/{getattr(item, 'cloud_project_id', '')}"
-                        f"/todos/{getattr(item, 'id', '')}. Your final response is a reviewable "
-                        "task comment. Report actual changes, verification, unfinished work, and risks."
+                        f"This run is bound to task cloud://projects/"
+                        f"{getattr(item, 'cloud_project_id', '')}/todos/{getattr(item, 'id', '')} "
+                        "in the current project space. Read the task with the wework_space "
+                        "get_board_item tool before executing; the task link already "
+                        "contains the space_id and item_id, so do not call list_spaces to "
+                        "find the project. Your final response is a reviewable task comment. "
+                        "Report actual changes, verification, unfinished work, and risks."
                     ),
                 },
                 "projectChatAgent": {
@@ -1138,6 +1140,62 @@ class LoopItemExecutionService:
             else:
                 failed += 1
         return requeued, failed
+
+    def stall_scan(
+        self,
+        db: Session,
+        *,
+        now: Optional[datetime] = None,
+        text_timeout_seconds: int = DEFAULT_STALL_TEXT_TIMEOUT_SECONDS,
+    ) -> list[LoopItemExecution]:
+        """Fail runs that produced no AI text for a long time.
+
+        Lease renewal keeps event-flowing runs alive forever, which includes
+        runaway tool loops that never emit assistant text. A run executing
+        longer than ``text_timeout_seconds`` with an empty streaming message is
+        stalled: mark it failed so the task unlocks and the device slot frees.
+        Returns the stalled runs so callers can also cancel them on the device.
+        """
+
+        current = now or utcnow()
+        threshold = current - timedelta(seconds=text_timeout_seconds)
+        candidates = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.status == STATUS_RUNNING,
+                LoopItemExecution.started_at.isnot(None),
+                LoopItemExecution.started_at < threshold,
+            )
+            .all()
+        )
+        stalled: list[LoopItemExecution] = []
+        for execution in candidates:
+            if not execution.runtime_device_id or not execution.runtime_task_id:
+                continue
+            message = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                    ProjectChatMessage.sender_type == "agent",
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .order_by(ProjectChatMessage.id.desc())
+                .first()
+            )
+            if message is not None and (message.content or "").strip():
+                continue
+            self.fail(
+                db,
+                execution_id=execution.id,
+                error=(
+                    f"AI 执行超过 {text_timeout_seconds // 60} 分钟未产生任何输出，"
+                    "已自动停止（疑似卡死）"
+                ),
+                requeue=False,
+            )
+            stalled.append(execution)
+        return stalled
 
     # ------------------------------------------------------------------
     # Helpers

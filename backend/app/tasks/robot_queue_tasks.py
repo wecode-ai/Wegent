@@ -103,6 +103,17 @@ def scan_robot_queue(self) -> dict:
                 requeued, failed = loop_item_execution_service.recovery_scan(db)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="requeued").inc(requeued)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="failed").inc(failed)
+                stalled = loop_item_execution_service.stall_scan(db)
+                if stalled:
+                    logger.warning(
+                        "[RobotQueue] Stall scan stopped %s run(s) with no AI output: %s",
+                        len(stalled),
+                        [
+                            f"execution={run.id} task={run.loop_item_id}"
+                            for run in stalled
+                        ],
+                    )
+                    emit_runtime_cancels(stalled)
                 dispatched = _robot_queue_loop().run_until_complete(
                     _dispatch_queued_executions(db)
                 )
@@ -733,7 +744,7 @@ async def _dispatch_execution(
     if not online:
         raise RuntimeError("Device went offline before dispatch")
 
-    prompt = loop_item_execution_service.build_robot_prompt(task, agent)
+    prompt = loop_item_execution_service.build_robot_prompt(agent)
     payload = loop_item_execution_service.build_runtime_payload(
         db, execution=execution, task=task
     )

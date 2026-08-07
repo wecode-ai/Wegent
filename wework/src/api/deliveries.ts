@@ -457,6 +457,12 @@ export function createDeliveryApi(client: HttpClient) {
           })),
         }))
     },
+    stopExecution(
+      projectId: CloudProjectIdInput,
+      executionId: number
+    ): Promise<{ id: number; status: string }> {
+      return client.post(`/v1/cloud-projects/${projectId}/executions/${executionId}/stop`)
+    },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },

@@ -446,3 +446,34 @@ def cancel_execution(
 
         background_tasks.add_task(emit_runtime_cancels, [row])
     return _execution_view(db, row) if row else None
+
+
+@router.post(
+    "/{project_id}/executions/{execution_id}/stop",
+    response_model=Optional[LoopItemExecutionView],
+)
+def stop_execution(
+    project_id: int,
+    execution_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Optional[LoopItemExecutionView]:
+    """Stop a run from the automation page (project member action).
+
+    Cancels the queued/claimed/running execution and best-effort asks the
+    executor to terminate its codex session, so the task unlocks and the
+    device slot frees without hunting for the per-message stop button.
+    """
+
+    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+    row = loop_item_execution_service.cancel(
+        db,
+        execution_id=execution_id,
+        note="Stopped from the automation queue",
+    )
+    if row is not None and row.runtime_device_id and row.runtime_task_id:
+        from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+        background_tasks.add_task(emit_runtime_cancels, [row])
+    return _execution_view(db, row) if row else None

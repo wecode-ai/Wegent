@@ -19,7 +19,7 @@ use tokio::{
 
 use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
-    config::device::DeviceConfig,
+    config::device::{ConnectionConfig, DeviceConfig},
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
@@ -165,11 +165,16 @@ where
         let mut backend = Self::from_client_and_runner(client, runner.clone());
         backend.task_controller = Some(Arc::new(runner));
         let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
-        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::with_event_sender(
-            backend.client.config.device_id.clone(),
-            resolve_codex_binary(),
-            runtime_event_tx,
-        )));
+        backend.runtime_work_handler = Some(Arc::new(
+            RuntimeWorkRpcHandler::with_event_sender(
+                backend.client.config.device_id.clone(),
+                resolve_codex_binary(),
+                runtime_event_tx,
+            )
+            .with_backend_connection(Arc::new(Mutex::new(
+                connection_snapshot_from_config(backend.client.config.as_ref()),
+            ))),
+        ));
         backend.start_runtime_event_forwarder(runtime_event_rx);
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
@@ -961,16 +966,21 @@ pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String>
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
     let (runtime_event_tx, _) = broadcast::channel(512);
-    let runtime_work_handler: Arc<dyn RuntimeWorkHandler> =
-        Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+    let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
+        Arc::new(Mutex::new(None));
+    let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
+        RuntimeWorkRpcHandler::with_event_sender(
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),
-        ));
+        )
+        .with_backend_connection(backend_connection_snapshot.clone()),
+    );
     let backend_connection = LocalBackendConnectionController::start_with_runtime(
         config,
         runtime_work_handler.clone(),
         runtime_event_tx.clone(),
+        backend_connection_snapshot,
     )
     .await;
     let server = AppIpcServer::new()
@@ -994,6 +1004,23 @@ fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| config.device_id.clone())
+}
+
+/// Snapshot of the static connection used by the remote backend runner path.
+/// The App sidecar path instead shares the live controller snapshot so
+/// `executor.backend.configure` updates reach running tasks immediately.
+fn connection_snapshot_from_config(config: &LocalBackendConfig) -> Option<ConnectionConfig> {
+    let backend_url = config.backend_url.trim();
+    let auth_token = config.auth_token.trim();
+    if backend_url.is_empty() || auth_token.is_empty() {
+        return None;
+    }
+    Some(ConnectionConfig {
+        backend_url: backend_url.to_owned(),
+        socket_url: config.socket_url.trim().trim_end_matches('/').to_owned(),
+        auth_token: auth_token.to_owned(),
+        runtime_auth_token: config.runtime_auth_token.clone(),
+    })
 }
 
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {

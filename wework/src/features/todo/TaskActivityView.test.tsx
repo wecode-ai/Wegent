@@ -694,7 +694,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun',
-          prompt: expect.stringContaining('请开始执行任务 WEG-1：Inspect changes'),
+          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
         })
       )
     )
@@ -790,7 +790,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun-failed',
-          prompt: expect.stringContaining('请开始执行任务 WEG-1：Inspect changes'),
+          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
           model: 'gpt-5.5-codex',
         })
       )

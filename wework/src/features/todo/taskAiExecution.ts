@@ -82,14 +82,12 @@ export interface StartTaskAiRunInput {
   startFailedText: string
 }
 
-export function buildTaskAiInitialPrompt(task: CloudLoopItem): string {
-  return [
-    `请开始执行任务 ${task.id}：${task.title}`,
-    task.description.trim(),
-    '完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。',
-  ]
-    .filter(Boolean)
-    .join('\n\n')
+export function buildRobotRoleDescription(agent: { name: string; systemPrompt?: string }): string {
+  // The task title/description is read by the AI itself (injected context and
+  // wework_space get_board_item); the sent content is the robot role only.
+  return agent.systemPrompt
+    ? `你是 ${agent.name}，这个项目任务的 AI 执行者。\n${agent.systemPrompt}`
+    : `你是 ${agent.name}，这个项目任务的 AI 执行者。`
 }
 
 export function formatThreadHistory(
@@ -192,14 +190,13 @@ export async function startTaskAiRun({
           ? `This run was started by task activity ${trigger.messageId}.`
           : 'This run was started by assigning this task to the project AI.',
         `Reply to task cloud://projects/${project.id}/todos/${task.id}.`,
+        'Read the task with the wework_space get_board_item tool before executing; the task link already contains the space_id and item_id, so do not call list_spaces to find the project.',
         'Your final response is a reviewable task comment. Report actual changes, verification, unfinished work, and risks.',
       ].join('\n'),
     },
     projectChatAgent: {
       kind: 'application',
-      value: agent.systemPrompt
-        ? `You are ${agent.name}, the AI owner of this project task.\n${agent.systemPrompt}`
-        : `You are ${agent.name}, the AI owner of this project task.`,
+      value: buildRobotRoleDescription(agent),
     },
   }
 

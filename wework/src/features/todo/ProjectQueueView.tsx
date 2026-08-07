@@ -1,4 +1,13 @@
-import { Bot, CheckCircle2, Clock3, Inbox, LoaderCircle, RefreshCw, Search } from 'lucide-react'
+import {
+  Bot,
+  CheckCircle2,
+  Clock3,
+  Inbox,
+  LoaderCircle,
+  RefreshCw,
+  Search,
+  Square,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudLoopItemExecution, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -34,6 +43,7 @@ export interface ExecutionListApi {
     projectId: string,
     options: { agent_id?: string; status?: string }
   ) => Promise<QueueExecution[]>
+  stop?: (projectId: string, executionId: number) => Promise<{ id: number; status: string }>
 }
 
 const QUEUE_STATES = new Set([
@@ -45,6 +55,7 @@ const QUEUE_STATES = new Set([
   'failed',
 ])
 const MY_APPROVAL_FILTER = 'my_approval'
+const STOPPABLE_STATES = new Set(['pending_approval', 'queued', 'claimed', 'running'])
 
 function queueStateLabel(state: string, t: TFunction): string {
   switch (state) {
@@ -207,6 +218,22 @@ export function ProjectQueueView({
   const [error, setError] = useState<string | null>(null)
   const [stateFilter, setStateFilter] = useState<string>('all')
   const [query, setQuery] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+  const [stoppingExecutionId, setStoppingExecutionId] = useState<number | null>(null)
+
+  const stopExecution = async (item: CloudLoopItem) => {
+    if (!executionApi?.stop || item.execution_id == null) return
+    setStoppingExecutionId(item.execution_id)
+    setError(null)
+    try {
+      await executionApi.stop(project.id, item.execution_id)
+      setReloadKey(key => key + 1)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.queue_stop_failed'))
+    } finally {
+      setStoppingExecutionId(null)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -277,7 +304,7 @@ export function ProjectQueueView({
       active = false
       window.clearInterval(interval)
     }
-  }, [api, currentUserId, executionApi, project.id, projectChatAgentApi])
+  }, [api, currentUserId, executionApi, project.id, projectChatAgentApi, reloadKey])
 
   const queueColumns = useMemo(() => {
     const columns: Array<{
@@ -440,33 +467,61 @@ export function ProjectQueueView({
                     {t('workbench.queue_column_empty')}
                   </p>
                 ) : (
-                  column.items.filter(isVisible).map(item => (
-                    <button
-                      key={item.execution_id ? `${item.id}:${item.execution_id}` : item.id}
-                      type="button"
-                      data-testid={`project-queue-task-${item.id}`}
-                      onClick={() => onOpenTask?.(item)}
-                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-medium text-text-primary">
-                          {item.title}
-                        </span>
-                        <span className="block truncate text-xs text-text-muted">
-                          {item.assignment_history?.at(-1)
-                            ? `${t('workbench.queue_assigned_by')} ${item.assignment_history.at(-1)?.to_name ?? `#${item.assignment_history.at(-1)?.by_user_id}`}`
-                            : item.id}
-                        </span>
-                        {item.execution_note ? (
-                          <span className="block truncate text-xs text-amber-600">
-                            {item.execution_note}
+                  column.items.filter(isVisible).map(item => {
+                    const canStop =
+                      Boolean(executionApi?.stop) &&
+                      item.execution_id != null &&
+                      STOPPABLE_STATES.has(item.execution_state ?? '')
+                    return (
+                      <div
+                        key={item.execution_id ? `${item.id}:${item.execution_id}` : item.id}
+                        className="group relative"
+                      >
+                        <button
+                          type="button"
+                          data-testid={`project-queue-task-${item.id}`}
+                          onClick={() => onOpenTask?.(item)}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted',
+                            canStop && 'pr-8'
+                          )}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium text-text-primary">
+                              {item.title}
+                            </span>
+                            <span className="block truncate text-xs text-text-muted">
+                              {item.assignment_history?.at(-1)
+                                ? `${t('workbench.queue_assigned_by')} ${item.assignment_history.at(-1)?.to_name ?? `#${item.assignment_history.at(-1)?.by_user_id}`}`
+                                : item.id}
+                            </span>
+                            {item.execution_note ? (
+                              <span className="block truncate text-xs text-amber-600">
+                                {item.execution_note}
+                              </span>
+                            ) : null}
                           </span>
+                          <PriorityBadge priority={item.priority} />
+                          <QueueStateChip state={item.execution_state} />
+                        </button>
+                        {canStop ? (
+                          <button
+                            type="button"
+                            data-testid={`project-queue-stop-${item.id}`}
+                            title={t('workbench.queue_stop')}
+                            disabled={stoppingExecutionId === item.execution_id}
+                            onClick={event => {
+                              event.stopPropagation()
+                              void stopExecution(item)
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                          >
+                            <Square className="h-3.5 w-3.5" />
+                          </button>
                         ) : null}
-                      </span>
-                      <PriorityBadge priority={item.priority} />
-                      <QueueStateChip state={item.execution_state} />
-                    </button>
-                  ))
+                      </div>
+                    )
+                  })
                 )}
               </div>
             </section>

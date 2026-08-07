@@ -56,6 +56,18 @@ describe('createDeliveryApi queue and assignment routes', () => {
     })
   })
 
+  it('stops an execution through the project route', async () => {
+    const client = {
+      post: vi.fn(async () => ({ id: 202, status: 'cancelled' })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    const response = await api.stopExecution(123, 202)
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/executions/202/stop')
+    expect(response).toMatchObject({ id: 202, status: 'cancelled' })
+  })
+
   it('assigns a task to a robot through the project route', async () => {
     const client = {
       post: vi.fn(async () => ({})),

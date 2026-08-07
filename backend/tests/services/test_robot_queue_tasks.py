@@ -141,7 +141,12 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
         f"codex-queue-{execution.id}-assistant"
     )
     assert payload["message"]
-    assert "Build the landing page" in payload["message"]
+    # The message is the robot role description; the AI reads the task itself
+    # through wework_space instead of receiving the task content inline.
+    assert "你是 Dispatch Bot，这个项目任务的 AI 执行者。" in payload["message"]
+    assert "Verify before reporting." in payload["message"]
+    assert "Build the landing page" not in payload["message"]
+    assert "get_board_item" in payload["additionalContext"]["projectChat"]["value"]
 
     test_db.refresh(execution)
     assert execution.runtime_device_id == "local-device"

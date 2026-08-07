@@ -366,6 +366,126 @@ def test_lease_expiry_recovery_requeues_then_fails(
     assert "lease" in re_claimed.error_message
 
 
+def test_stall_scan_fails_runs_without_ai_output(
+    test_db: Session, test_user: User
+) -> None:
+    """A run that streams events but never produces assistant text for a long
+    time must be stopped so the task unlocks and the device slot frees.
+
+    Regression: lease renewal kept event-flowing runs alive forever, so a
+    runaway tool loop with no text output stayed "执行中" indefinitely and the
+    task could not be modified.
+    """
+
+    from datetime import timedelta
+
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.heartbeat(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id="cloud-device-1",
+        runtime_task_id="codex-robot-stall",
+    )
+    claimed.started_at = claimed.started_at - timedelta(minutes=30)
+    test_db.commit()
+    test_db.add(
+        ProjectChatMessage(
+            message_id="stall-msg-1",
+            client_message_id="stall-msg-1",
+            project_id=str(project.id),
+            task_id=claimed.loop_item_id,
+            sender_type="agent",
+            sender_id=bot.id,
+            sender_name="Queue Bot",
+            message_type="agent_chunk",
+            content="",
+            agent_id=bot.id,
+            runtime_device_id="cloud-device-1",
+            runtime_task_id="codex-robot-stall",
+            status="streaming",
+        )
+    )
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+    assert [run.id for run in stalled] == [claimed.id]
+    test_db.refresh(claimed)
+    assert claimed.status == "failed"
+    assert "未产生任何输出" in claimed.error_message
+
+
+def test_stall_scan_keeps_runs_with_text_output(
+    test_db: Session, test_user: User
+) -> None:
+    """A long-running run that already produced assistant text is progress,
+    not a stall, and must be left alone."""
+
+    from datetime import timedelta
+
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.heartbeat(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id="cloud-device-1",
+        runtime_task_id="codex-robot-text",
+    )
+    claimed.started_at = claimed.started_at - timedelta(minutes=30)
+    test_db.commit()
+    test_db.add(
+        ProjectChatMessage(
+            message_id="text-msg-1",
+            client_message_id="text-msg-1",
+            project_id=str(project.id),
+            task_id=claimed.loop_item_id,
+            sender_type="agent",
+            sender_id=bot.id,
+            sender_name="Queue Bot",
+            message_type="agent_chunk",
+            content="real progress text",
+            agent_id=bot.id,
+            runtime_device_id="cloud-device-1",
+            runtime_task_id="codex-robot-text",
+            status="streaming",
+        )
+    )
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+    assert stalled == []
+    test_db.refresh(claimed)
+    assert claimed.status == "running"
+
+
 def test_approve_reject_only_creator(test_db: Session, test_user: User) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user, mode="manual_approval")
@@ -399,7 +519,8 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     test_db: Session, test_user: User
 ) -> None:
     """A claimed cloud run must produce the runtime.tasks.create payload the
-    executor replays, including the robot identity and the task prompt."""
+    executor replays: the prompt is the robot role description, and the task
+    content is left for the AI to read through wework_space."""
 
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -441,8 +562,15 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         "Verify before reporting completion"
         in execution_request["bot"][0]["system_prompt"]
     )
-    assert "Build the landing page" in execution_request["prompt"]
+    assert "你是" in execution_request["prompt"]
+    assert "Build the landing page" not in execution_request["prompt"]
+    assert "Create three subtasks for testing." not in execution_request["prompt"]
+    assert "Verify before reporting completion" in execution_request["prompt"]
     assert execution_request["prompt"] == payload["message"]
+    project_chat = payload["additionalContext"]["projectChat"]["value"]
+    assert "get_board_item" in project_chat
+    assert "do not call list_spaces" in project_chat
+    assert f"/todos/{item.id}" in project_chat
     assert payload["cloudProjectId"] == str(project.id)
     assert payload["ephemeral"] is True
     assert payload["continuable"] is True

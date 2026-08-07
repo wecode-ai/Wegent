@@ -199,6 +199,33 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
+  it('sends the robot role description without embedding the task content', async () => {
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(
+        execution({
+          agent_name: '发布机器人',
+          agent_system_prompt: '只读检查',
+          execution_payload: {},
+        })
+      )
+      .mockResolvedValue(null)
+    const { services: svc, mocks } = services({ claimNext })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
+    expect(call.message).toBe('你是 发布机器人，这个项目任务的 AI 执行者。\n只读检查')
+    expect(call.message).not.toContain('请开始执行任务')
+    expect(call.message).not.toContain('Run me')
+    const context = call.additionalContext as Record<string, { kind: string; value: string }>
+    expect(context.projectChat.value).toContain('get_board_item')
+    expect(context.projectChat.value).toContain('do not call list_spaces')
+    expect(context.projectChatAgent.value).toContain('你是 发布机器人')
+    stop()
+  })
+
   it('recovers stale runs on the recovery interval', async () => {
     const recoverStale = vi.fn(async () => ({ requeued: 1, failed: 0 }))
     const claimNext = vi.fn(async () => null)

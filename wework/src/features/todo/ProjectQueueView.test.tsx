@@ -106,6 +106,45 @@ describe('ProjectQueueView', () => {
     expect(list).toHaveBeenCalledWith('11', {})
   })
 
+  it('stops a running execution from the automation queue', async () => {
+    const mock = services()
+    const list = vi.fn(async () => [
+      {
+        id: 202,
+        loop_item_id: 'T-9',
+        cloud_project_id: '11',
+        task_title: 'Running bot task',
+        task_status: 'in_progress',
+        task_priority: 'medium',
+        agent_id: 'bot-1',
+        assigner_user_id: 1,
+        status: 'running',
+        queued_at: null,
+        started_at: null,
+        completed_at: null,
+        execution_note: null,
+        version: 1,
+        created_at: '2026-08-07T00:00:00Z',
+        updated_at: '2026-08-07T00:00:00Z',
+      },
+    ])
+    const stop = vi.fn(async () => ({ id: 202, status: 'cancelled' }))
+    render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={{ id: '11', task_provider: 'gitlab', name: 'GitLab' } as never}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        executionApi={{ list, stop }}
+        currentUserId={1}
+        onOpenTask={vi.fn()}
+      />
+    )
+
+    const stopButton = await screen.findByTestId('project-queue-stop-T-9')
+    await userEvent.click(stopButton)
+    await waitFor(() => expect(stop).toHaveBeenCalledWith('11', 202))
+  })
+
   it('renders derived queues for the current user and visible robots', async () => {
     const mock = services()
     const listLoopItems = mock.deliveryApi!.listLoopItems as ReturnType<typeof vi.fn>

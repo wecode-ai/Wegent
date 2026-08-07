@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex as StdMutex},
+};
 
 use serde_json::{json, Value};
 use tokio::{
@@ -24,6 +28,10 @@ pub struct LocalBackendConnectionController {
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     runtime_event_tx: Option<broadcast::Sender<Value>>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
+    /// Lightweight snapshot of the current connection shared with the
+    /// runtime-work handler so App-IPC task runs can resolve backend
+    /// credentials without relying on the executor process environment.
+    connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
 }
 
 #[derive(Default)]
@@ -35,21 +43,29 @@ struct LocalBackendConnectionState {
 
 impl LocalBackendConnectionController {
     pub async fn start(config: DeviceConfig) -> Self {
-        Self::start_internal(config, None, None).await
+        Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
     }
 
     pub async fn start_with_runtime(
         config: DeviceConfig,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         runtime_event_tx: broadcast::Sender<Value>,
+        connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
-        Self::start_internal(config, Some(runtime_work_handler), Some(runtime_event_tx)).await
+        Self::start_internal(
+            config,
+            Some(runtime_work_handler),
+            Some(runtime_event_tx),
+            connection_snapshot,
+        )
+        .await
     }
 
     async fn start_internal(
         mut config: DeviceConfig,
         runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
         runtime_event_tx: Option<broadcast::Sender<Value>>,
+        connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
         let initial_connection = normalized_connection(&config.connection);
         config.connection = ConnectionConfig::default();
@@ -58,15 +74,23 @@ impl LocalBackendConnectionController {
             runtime_work_handler,
             runtime_event_tx,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
+            connection_snapshot,
         };
         controller.replace_connection(initial_connection).await;
         controller
+    }
+
+    pub fn connection_snapshot(&self) -> Arc<StdMutex<Option<ConnectionConfig>>> {
+        Arc::clone(&self.connection_snapshot)
     }
 
     async fn replace_connection(&self, connection: Option<ConnectionConfig>) -> bool {
         let mut state = self.state.lock().await;
         if state.connection == connection {
             return false;
+        }
+        if let Ok(mut snapshot) = self.connection_snapshot.lock() {
+            *snapshot = connection.clone();
         }
 
         if let Some(task) = state.task.take() {
@@ -233,8 +257,32 @@ fn optional_connection_field(
 mod tests {
     use serde_json::json;
 
-    use super::{connection_from_params, normalized_connection};
-    use crate::config::device::ConnectionConfig;
+    use super::{connection_from_params, normalized_connection, LocalBackendConnectionController};
+    use crate::config::device::{ConnectionConfig, DeviceConfig};
+
+    #[tokio::test]
+    async fn publishes_the_initial_connection_to_the_shared_snapshot() {
+        let config = DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "https://backend.example.com".to_owned(),
+                socket_url: String::new(),
+                auth_token: "wg-token".to_owned(),
+                runtime_auth_token: "runtime-wg-token".to_owned(),
+            },
+            ..DeviceConfig::default()
+        };
+
+        let controller = LocalBackendConnectionController::start(config).await;
+        let snapshot = controller.connection_snapshot();
+        let guard = snapshot.lock().unwrap();
+        let connection = guard
+            .as_ref()
+            .expect("initial connection should be published");
+
+        assert_eq!(connection.backend_url, "https://backend.example.com");
+        assert_eq!(connection.auth_token, "wg-token");
+        assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
+    }
 
     #[test]
     fn dynamic_connection_preserves_distinct_socket_url() {

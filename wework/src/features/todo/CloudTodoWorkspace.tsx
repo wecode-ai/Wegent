@@ -925,15 +925,31 @@ export function CloudTodoWorkspace({
   // render, so unrelated workspace re-renders do not restart the queue load
   // (which flashed the loading state).
   const automationExecutionApi = useMemo(() => {
-    if (selectedProject?.location === 'local') return services.localLoopItemExecutionApi
+    const stop = services.deliveryApi?.stopExecution
+      ? (projectId: string, executionId: number) =>
+          services.deliveryApi!.stopExecution(projectId, executionId)
+      : undefined
+    if (selectedProject?.location === 'local') {
+      const local = services.localLoopItemExecutionApi
+      return local ? { ...local, stop } : undefined
+    }
     if (!selectedProjectApi) return undefined
     return {
       list: (projectId: string, options: { agent_id?: string; status?: string }) =>
         selectedProjectApi
           .listLoopItemExecutions(projectId, options)
           .then(response => response.items),
+      stop:
+        stop ??
+        ((projectId: string, executionId: number) =>
+          selectedProjectApi.stopExecution(projectId, executionId)),
     }
-  }, [selectedProject?.location, selectedProjectApi, services.localLoopItemExecutionApi])
+  }, [
+    selectedProject?.location,
+    selectedProjectApi,
+    services.deliveryApi,
+    services.localLoopItemExecutionApi,
+  ])
   const selectedProjectAgents = useMemo(
     () => (selectedProjectId ? (projectAgents[selectedProjectId] ?? []) : []),
     [projectAgents, selectedProjectId]
