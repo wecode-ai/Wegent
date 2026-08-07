@@ -682,10 +682,10 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.resolve_request_preload_skills.assert_called_once()
         assert result is resolved_request
 
-    async def test_selected_kb_does_not_trigger_skill_resolution_without_device_id(
+    async def test_selected_kb_triggers_skill_resolution_for_claude_code_without_device_id(
         self,
     ):
-        """Selected KB skill resolution should stay scoped to device tasks."""
+        """ClaudeCode executors should receive selected KB MCP config."""
         from app.services.chat.trigger import unified as trigger_unified
 
         mock_db = MagicMock()
@@ -695,9 +695,19 @@ class TestBuildExecutionRequestUserSubtaskId:
             skill_names=[],
             preload_skills=[],
             user_selected_skills=[],
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+        resolved_request = ExecutionRequest(
+            task_id=1273,
+            subtask_id=1709,
+            skill_names=["wegent-knowledge"],
+            preload_skills=["wegent-knowledge"],
+            user_selected_skills=["wegent-knowledge"],
         )
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
+        mock_builder.resolve_request_preload_skills.return_value = resolved_request
+        mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
             db,
@@ -749,8 +759,8 @@ class TestBuildExecutionRequestUserSubtaskId:
                         user_subtask_id=1708,
                     )
 
-        mock_builder.resolve_request_preload_skills.assert_not_called()
-        assert result is request_from_builder
+        mock_builder.resolve_request_preload_skills.assert_called_once()
+        assert result is resolved_request
 
 
 @pytest.mark.unit
