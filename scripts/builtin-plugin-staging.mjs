@@ -20,7 +20,7 @@ export const builtinPluginStagingDefinitions = [
     ),
   },
   {
-    name: "wegent-mini-program",
+    name: "weibo-miniapp-h5-develop-agent",
     label: "Mini Program",
     sourceEnvironmentVariable: "WEGENT_MINI_PROGRAM_PLUGIN_SOURCE",
     archiveEnvironmentPrefix: "WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE",

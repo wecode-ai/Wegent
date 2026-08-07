@@ -252,12 +252,6 @@ export function DesktopSettingsMenu({
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
       />
-      <SettingsMenuItem
-        testId="about-menu-button"
-        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.settings_nav_about', '关于')}
-        onClick={onOpenAbout}
-      />
       {downloadMessage ? (
         <div
           data-testid="app-update-download-progress"
@@ -286,6 +280,12 @@ export function DesktopSettingsMenu({
           </span>
         </div>
       ) : null}
+      <SettingsMenuItem
+        testId="about-menu-button"
+        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
+        label={t('workbench.settings_nav_about', '关于')}
+        onClick={onOpenAbout}
+      />
       <div className="mx-2 my-1 border-t border-border/70" />
       <SettingsMenuItem
         testId="usage-menu-button"

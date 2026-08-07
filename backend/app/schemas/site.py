@@ -75,6 +75,13 @@ class SiteListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class ApplicationCreatePluginResponse(BaseModel):
+    """Plugin configuration used to create one application type."""
+
+    plugin_name: str
+    marketplace_name: str
+
+
 class ApplicationTypeResponse(BaseModel):
     """One application type supported by the current Backend."""
 
@@ -82,6 +89,7 @@ class ApplicationTypeResponse(BaseModel):
     enabled: bool = True
     order: int
     capabilities: list[ApplicationCapability]
+    create: ApplicationCreatePluginResponse | None = None
 
 
 class ApplicationTypeListResponse(BaseModel):

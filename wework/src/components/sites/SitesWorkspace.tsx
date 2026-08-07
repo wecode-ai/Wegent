@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import {
   DEFAULT_APPLICATION_TYPE,
+  type ApplicationCreateStrategy,
   getApplicationTypeDefinition,
 } from './applicationTypeDefinitions'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
@@ -16,12 +17,13 @@ import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
   api: SitesApi
-  onCreate: (appType: SiteAppType) => void | Promise<void>
+  onCreate: (appType: SiteAppType, create: ApplicationCreateStrategy) => void | Promise<void>
   creatingType?: SiteAppType | null
   pageSize?: number
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
   createError?: string | null
+  createNotice?: string | null
   onOpenPlugins?: () => void
 }
 
@@ -179,6 +181,20 @@ function SitesCreateError({
   )
 }
 
+function SitesCreateNotice({ message }: { message: string }) {
+  return (
+    <div
+      className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text-secondary"
+      role="status"
+      aria-live="polite"
+      data-testid="sites-create-notice"
+    >
+      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-muted" aria-hidden="true" />
+      <span className="min-w-0 truncate">{message}</span>
+    </div>
+  )
+}
+
 export function SitesWorkspace({
   api,
   onCreate,
@@ -187,6 +203,7 @@ export function SitesWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
   createError,
+  createNotice,
   onOpenPlugins,
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
@@ -326,7 +343,7 @@ export function SitesWorkspace({
       label: t(definition.create.label.key, definition.create.label.fallback),
       icon: definition.icon,
       testId: definition.create.testId,
-      onSelect: () => onCreate(definition.appType),
+      onSelect: () => onCreate(definition.appType, definition.create),
     }))
 
   const emptyTitle = t(activeDefinition.emptyTitle.key, activeDefinition.emptyTitle.fallback)
@@ -449,6 +466,7 @@ export function SitesWorkspace({
             onOpenPlugins={onOpenPlugins}
           />
         )}
+        {!createError && createNotice && <SitesCreateNotice message={createNotice} />}
 
         <div
           id="applications-tab-panel"

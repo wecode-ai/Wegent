@@ -9,6 +9,7 @@ import {
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
@@ -36,9 +37,14 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
 } from './runtimeConversationCache'
+import {
+  getComposerApps,
+  resetComposerAppsMemory,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import type {
   Attachment,
   DeviceInfo,
+  InstalledPlugin,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
@@ -57,9 +63,15 @@ import type {
 const localExecutorMocks = vi.hoisted(() => ({
   connectLocalExecutorToBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
   disconnectLocalExecutorFromBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
+  ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
   ensureLocalExecutorStarted: vi.fn(),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
+}))
+
+const pluginApiMocks = vi.hoisted(() => ({
+  cloudListInstalledPlugins: vi.fn(),
 }))
 
 const runtimeWorkSyncMocks = vi.hoisted(() => ({
@@ -67,10 +79,19 @@ const runtimeWorkSyncMocks = vi.hoisted(() => ({
   notifyMainRuntimeWorkChanged: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('@/api/plugins', () => ({
+  createPluginApi: () => ({
+    listInstalledPlugins: pluginApiMocks.cloudListInstalledPlugins,
+  }),
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
+  ensureBundledPluginMarketplaceRegistered:
+    localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
+  getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
@@ -1908,6 +1929,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
+    resetComposerAppsMemory()
+    pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
       ready: true,
@@ -1951,6 +1974,74 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/list' || request.method === 'plugin/installed') {
+            return { marketplaces: [] }
+          }
+          if (request.method === 'app/list') {
+            return { data: [], nextCursor: null }
+          }
+        }
+        return {}
+      }
+    )
+    const documentsPlugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'documents', namespace: 'default', labels: { id: '101' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'documents',
+        },
+        displayName: 'Documents',
+        description: 'Create documents',
+        installState: 'installed',
+        enabled: true,
+        visibility: 'public',
+        pluginId: 101,
+        releaseId: 1001,
+        manifest: { name: 'documents' },
+        components: {
+          skills: [],
+          commands: [],
+          apps: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        interface: { shortDescription: 'Create documents' },
+      },
+      status: { state: 'enabled' },
+    }
+    pluginApiMocks.cloudListInstalledPlugins
+      .mockResolvedValueOnce({ items: [documentsPlugin] })
+      .mockResolvedValue({ items: [] })
+
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+
+    await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('local-device')
+
+    act(() => {
+      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(getComposerApps()).toEqual([]))
   })
 
   test('keeps a background runtime task settled when its terminal refresh is stale', async () => {
@@ -9347,6 +9438,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       return vi.fn()
     })
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -9385,7 +9477,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus },
+        local: { updateTaskTrackingStatus, updateTaskTrackingTitle },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -9419,6 +9511,21 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
         expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
         'succeeded'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeTaskTitleUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'friendly-title',
+        deviceId: 'device-1',
+        title: '修复登录回调',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        '修复登录回调'
       )
     )
   })

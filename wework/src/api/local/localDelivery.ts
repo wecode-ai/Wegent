@@ -574,6 +574,22 @@ export function createLocalDeliveryApi(
         ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
         : item
     },
+    async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
+      let binding: LocalTaskBindingRecord
+      try {
+        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          device_id: task.deviceId,
+          task_id: task.taskId,
+        })
+      } catch {
+        return null
+      }
+      if (!binding.loop_item_id) return null
+      const item = await api.getLoopItem(binding.loop_item_id)
+      return item.title === title
+        ? item
+        : api.updateLoopItem(item.id, { version: item.version, title })
+    },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,

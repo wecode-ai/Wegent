@@ -10,6 +10,7 @@ import {
   replaceComposerApps,
   requestComposerAppsSync,
   resetComposerAppsMemory,
+  shouldSuppressComposerAppsSync,
   subscribeComposerApps,
   writeComposerAppsSnapshot,
 } from './composerAppsSnapshot'
@@ -65,8 +66,19 @@ describe('composerAppsSnapshot', () => {
 
     replaceComposerApps([])
     expect(getComposerApps()).toEqual([])
+    expect(shouldSuppressComposerAppsSync()).toBe(true)
     expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
+  })
+
+  test('allows sync republish after a non-empty composer app list is published', () => {
+    replaceComposerApps([])
+    expect(shouldSuppressComposerAppsSync()).toBe(true)
+
+    publishComposerApps(sampleApps)
+
+    expect(shouldSuppressComposerAppsSync()).toBe(false)
+    expect(getComposerApps()).toEqual(sampleApps)
   })
 
   test('stores composer apps on window so HMR cannot split slash and picker', () => {
