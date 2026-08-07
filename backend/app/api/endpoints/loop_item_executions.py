@@ -11,7 +11,7 @@ cloud Celery dispatcher (which also calls the service directly).
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -428,6 +428,7 @@ def cancel_execution(
     project_id: int,
     execution_id: int,
     values: LoopItemExecutionCancel,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Optional[LoopItemExecutionView]:
@@ -440,4 +441,8 @@ def cancel_execution(
     row = loop_item_execution_service.cancel(
         db, execution_id=execution_id, note=values.note
     )
+    if row is not None and row.runtime_device_id and row.runtime_task_id:
+        from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+        background_tasks.add_task(emit_runtime_cancels, [row])
     return _execution_view(db, row) if row else None

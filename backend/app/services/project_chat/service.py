@@ -466,6 +466,11 @@ class ProjectChatService:
             metadata["model"] = request.model
         row = ProjectChatMessage(
             message_id=message_id,
+            # The client_message_id unique index covers (sender_type,
+            # sender_id, client_message_id). An empty value would collide for
+            # every queue-dispatched run of the same robot (no user trigger),
+            # so server-created agent messages use the unique message id.
+            client_message_id=message_id,
             project_id=request.project_id,
             task_id=request.task_id or "",
             sender_type="agent",

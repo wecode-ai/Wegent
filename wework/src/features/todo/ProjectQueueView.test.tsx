@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -278,5 +278,72 @@ describe('ProjectQueueView', () => {
     await userEvent.type(screen.getByTestId('project-queue-search'), 'queued')
     expect(screen.getByText('Bot queued task')).toBeInTheDocument()
     expect(screen.queryByText('Zap the runner')).not.toBeInTheDocument()
+  })
+
+  it('refreshes executions in the background without flashing the loading state', async () => {
+    vi.useFakeTimers()
+    try {
+      const mock = services()
+      const list = vi.fn(async () => [])
+      render(
+        <ProjectQueueView
+          api={mock.deliveryApi!}
+          project={{ id: '11', task_provider: 'gitlab', name: 'GitLab' } as never}
+          projectChatAgentApi={mock.projectChatAgentApi}
+          executionApi={{ list }}
+          currentUserId={1}
+          onOpenTask={vi.fn()}
+        />
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(list).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument()
+
+      // The interval refresh replaces data in place: the content stays mounted
+      // and the loading spinner is never shown again.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      expect(list).toHaveBeenCalledTimes(2)
+      expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument()
+      expect(screen.queryByText('正在加载评论 / 动态…')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('renders a spinning icon for running executions', async () => {
+    const mock = services()
+    const listLoopItems = mock.deliveryApi!.listLoopItems as ReturnType<typeof vi.fn>
+    listLoopItems.mockImplementation(async (_projectId: string | number, filters?: object) => ({
+      items:
+        (filters as { assigneeId?: string | number } | undefined)?.assigneeId === 'bot-1'
+          ? []
+          : [
+              {
+                id: 'T-1',
+                cloud_project_id: '11',
+                title: 'Running task',
+                status: 'in_progress',
+                execution_state: 'running',
+                assignment_history: [],
+              },
+            ],
+    }))
+
+    const { container } = render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        currentUserId={1}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByText('Running task')).toBeInTheDocument())
+    expect(container.querySelector('svg.animate-spin')).not.toBeNull()
   })
 })

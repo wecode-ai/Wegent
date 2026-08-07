@@ -17,7 +17,7 @@ from typing import Optional
 
 import celery.signals
 from prometheus_client import Counter, Gauge
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 ROBOT_QUEUE_SCAN_LOCK_TIMEOUT = 120
 ROBOT_DEVICE_LOCK_TIMEOUT = 120
+DISPATCH_START_TIMEOUT_SECONDS = 30
+RUN_EVENT_CHANNEL = "wegent:robot-run-events"
 
 ROBOT_QUEUE_DISPATCHED_TOTAL = Counter(
     "robot_queue_dispatched_total",
@@ -313,6 +315,13 @@ async def _dispatch_queued_executions(db: Session) -> int:
                     break
             if routing_user_id is None:
                 # Leave runs queued; no identity with this device is online.
+                logger.info(
+                    "[RobotQueue] Queued run not dispatched: no online device owner "
+                    "for device=%s environment=%s sample_execution=%s",
+                    device_id,
+                    environment,
+                    sample.id,
+                )
                 continue
             capacity = (
                 settings.ROBOT_CLOUD_DEVICE_SLOTS
@@ -327,6 +336,24 @@ async def _dispatch_queued_executions(db: Session) -> int:
                     device_capacity=capacity,
                 )
                 if execution is None:
+                    occupied = (
+                        db.query(func.count(LoopItemExecution.id))
+                        .filter(
+                            LoopItemExecution.execution_device_id == device_id,
+                            LoopItemExecution.execution_environment == environment,
+                            LoopItemExecution.status.in_(["claimed", "running"]),
+                        )
+                        .scalar()
+                        or 0
+                    )
+                    logger.info(
+                        "[RobotQueue] Queued run not dispatched: device slot busy "
+                        "device=%s environment=%s occupied=%s capacity=%s",
+                        device_id,
+                        environment,
+                        occupied,
+                        capacity,
+                    )
                     break
                 try:
                     await _dispatch_execution(
@@ -415,6 +442,146 @@ async def dispatch_queues_background() -> None:
             await _dispatch_queued_executions(db)
     except Exception:
         logger.exception("[RobotQueue] Background queue dispatch failed")
+
+
+def emit_runtime_cancels(executions: list) -> None:
+    """Best-effort tell devices to stop runs the backend just cancelled.
+
+    Reassign/unassign and explicit cancel only mark the DB row cancelled;
+    without this RPC the executor keeps running the old task (zombie run) and
+    occupies the device slot. Fire-and-forget through the same internal emit
+    endpoint the queue dispatcher uses, so it works from both request and
+    worker contexts.
+    """
+
+    import httpx
+
+    from app.db.session import get_db_session
+
+    backend_url = "http://localhost:8000"
+    with get_db_session() as db:
+        for execution in executions:
+            runtime_task_id = getattr(execution, "runtime_task_id", "") or ""
+            runtime_device_id = getattr(execution, "runtime_device_id", "") or ""
+            if not runtime_task_id or not runtime_device_id:
+                continue
+            user_id = _device_owner_user_id(db, runtime_device_id)
+            if user_id is None:
+                continue
+            try:
+                with httpx.Client(
+                    base_url=backend_url, timeout=5, trust_env=False
+                ) as client:
+                    response = client.post(
+                        "/api/internal/robot-queue/emit-runtime-rpc",
+                        json={
+                            "user_id": user_id,
+                            "device_id": runtime_device_id,
+                            "method": "runtime.tasks.cancel",
+                            "payload": {
+                                "taskId": runtime_task_id,
+                                "deviceId": runtime_device_id,
+                            },
+                        },
+                    )
+                    if response.status_code != 200:
+                        logger.warning(
+                            "[RobotQueue] Runtime cancel emit failed status=%s execution=%s",
+                            response.status_code,
+                            getattr(execution, "id", None),
+                        )
+            except Exception:
+                logger.exception(
+                    "[RobotQueue] Runtime cancel emit failed execution=%s",
+                    getattr(execution, "id", None),
+                )
+
+
+def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> None:
+    """Broadcast one matched robot-run runtime event for dispatch verification.
+
+    The dispatcher subscribes to this channel before emitting
+    `runtime.tasks.create`; the first matching event is the executor's
+    confirmation that a codex session was really started, so the backend only
+    marks the run visible (streaming comment) after that point.
+    """
+
+    import json
+
+    from redis import Redis
+
+    from app.core.config import settings
+
+    try:
+        client = Redis.from_url(
+            settings.CELERY_BROKER_URL or settings.REDIS_URL,
+            decode_responses=True,
+        )
+        try:
+            client.publish(
+                RUN_EVENT_CHANNEL,
+                json.dumps(
+                    {
+                        "device_id": device_id,
+                        "runtime_task_id": runtime_task_id,
+                        "event_name": event_name,
+                    }
+                ),
+            )
+        finally:
+            client.close()
+    except Exception:
+        logger.exception(
+            "[RobotQueue] Run event publish failed device=%s task=%s event=%s",
+            device_id,
+            runtime_task_id,
+            event_name,
+        )
+
+
+def wait_for_run_event(
+    runtime_task_id: str, timeout_seconds: int = DISPATCH_START_TIMEOUT_SECONDS
+) -> str | None:
+    """Wait for the first robot-run event of a dispatched task.
+
+    Returns the event name once the executor confirms the session started, or
+    None when the timeout expires. Subscribe-before-emit eliminates the race
+    between the executor's first event and this subscriber.
+    """
+
+    import json
+    import time
+
+    from redis import Redis
+
+    from app.core.config import settings
+
+    client = Redis.from_url(
+        settings.CELERY_BROKER_URL or settings.REDIS_URL,
+        decode_responses=True,
+    )
+    pubsub = client.pubsub()
+    try:
+        pubsub.subscribe(RUN_EVENT_CHANNEL)
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            message = pubsub.get_message(timeout=1)
+            if message is None or message.get("type") != "message":
+                continue
+            try:
+                data = json.loads(message.get("data") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if data.get("runtime_task_id") == runtime_task_id:
+                return str(data.get("event_name") or "")
+    finally:
+        try:
+            pubsub.unsubscribe(RUN_EVENT_CHANNEL)
+        except Exception:
+            pass
+        pubsub.close()
+        client.close()
+    return None
 
 
 async def _consumer_pass(db: Session) -> int:
@@ -580,9 +747,30 @@ async def _dispatch_execution(
     if isinstance(execution_request, dict):
         execution_request["task_id"] = task_id
         execution_request["subtask_id"] = f"{task_id}-assistant"
-    # Emit through the uvicorn process (the worker's Socket.IO singleton is
-    # bound to a foreign loop), then optimistically record the runtime task id
-    # (we set it above) so the executor's runtime events map back to this run.
+    # Write the runtime ids first so the executor's first event matches this
+    # execution, then emit through the uvicorn process (the worker's Socket.IO
+    # singleton is bound to a foreign loop). The Socket.IO ACK routing through
+    # the Redis manager is unreliable, so acceptance is verified by waiting for
+    # the executor's first runtime event (subscribe-before-emit): only a real
+    # codex session produces one. A run whose executor never starts the session
+    # fails/requeues here instead of showing a fake "AI 执行" comment.
+    loop_item_execution_service.heartbeat(
+        db,
+        execution_id=execution.id,
+        runtime_device_id=execution.execution_device_id,
+        runtime_task_id=task_id,
+    )
+    import asyncio
+
+    # Start the subscriber before emitting so the executor's first event can
+    # never slip in between emit and subscribe.
+    wait_task = asyncio.create_task(
+        asyncio.to_thread(
+            wait_for_run_event,
+            task_id,
+            DISPATCH_START_TIMEOUT_SECONDS,
+        )
+    )
     ack = await _emit_runtime_rpc(
         user_id=routing_user_id,
         device_id=execution.execution_device_id,
@@ -590,19 +778,25 @@ async def _dispatch_execution(
         payload=payload,
     )
     if not ack.get("emitted"):
+        wait_task.cancel()
         raise RuntimeError("Device did not accept the runtime RPC")
-    # The internal endpoint emits without waiting for an ACK (the Socket.IO
-    # Redis manager can lose or misroute concurrent ACKs), so the runtime task
-    # id is written optimistically here. Runtime events carry the same id and
-    # write back the real terminal status.
-    runtime_task_id = task_id
-
-    loop_item_execution_service.heartbeat(
-        db,
-        execution_id=execution.id,
-        runtime_device_id=execution.execution_device_id,
-        runtime_task_id=runtime_task_id,
+    event_name = await wait_task
+    if not event_name:
+        raise RuntimeError(
+            f"Executor did not start a codex session for {task_id} within "
+            f"{DISPATCH_START_TIMEOUT_SECONDS}s"
+        )
+    logger.info(
+        "[RobotQueue] Runtime create confirmed execution=%s task=%s device=%s "
+        "user=%s runtime_task=%s first_event=%s",
+        execution.id,
+        getattr(task, "id", ""),
+        execution.execution_device_id,
+        routing_user_id,
+        task_id,
+        event_name,
     )
+    runtime_task_id = task_id
     try:
         from app.schemas.project_chat import ProjectChatAgentStart
 
@@ -643,6 +837,8 @@ async def _emit_runtime_rpc(
     device_id: str,
     method: str,
     payload: dict,
+    wait_ack: bool = False,
+    ack_timeout_seconds: int = 15,
 ) -> dict:
     """Call the internal emit endpoint in the uvicorn process."""
 
@@ -660,6 +856,8 @@ async def _emit_runtime_rpc(
                     "device_id": device_id,
                     "method": method,
                     "payload": payload,
+                    "wait_ack": wait_ack,
+                    "ack_timeout_seconds": ack_timeout_seconds,
                 },
             )
             if response.status_code != 200:

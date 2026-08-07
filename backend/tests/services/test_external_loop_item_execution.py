@@ -27,7 +27,10 @@ from app.schemas.project_chat import (
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
-from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.external_provider import (
+    ASSIGNEE_PREFIX,
+    external_loop_item_provider,
+)
 from app.services.project_chat.service import project_chat_service
 
 
@@ -220,6 +223,47 @@ def test_external_response_merges_execution_state(
     assert view["can_approve"] is True
     assert view["approval"]["status"] == "pending"
     assert view["ai_state"] is None
+
+
+def test_list_filters_external_issues_by_assignee(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    my_issue = _issue(1)
+    my_issue["labels"] = [f"{ASSIGNEE_PREFIX}user:{test_user.id}"]
+    bot_issue = _issue(2)
+    bot_issue["labels"] = [f"{ASSIGNEE_PREFIX}agent:bot-1"]
+    unassigned = _issue(3)
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issues",
+        lambda _project: [my_issue, bot_issue, unassigned],
+    )
+
+    mine = external_loop_item_provider.list(
+        test_db,
+        project.id,
+        test_user.id,
+        assignee_type="user",
+        assignee_id=str(test_user.id),
+    )
+    assert [item["id"] for item in mine] == [f"{project.project_key}-1"]
+
+    bots = external_loop_item_provider.list(
+        test_db,
+        project.id,
+        test_user.id,
+        assignee_type="agent",
+        assignee_id="bot-1",
+    )
+    assert [item["id"] for item in bots] == [f"{project.project_key}-2"]
+
+    everything = external_loop_item_provider.list(test_db, project.id, test_user.id)
+    assert [item["id"] for item in everything] == [
+        f"{project.project_key}-1",
+        f"{project.project_key}-2",
+        f"{project.project_key}-3",
+    ]
 
 
 def test_approve_run_on_gitlab_project(

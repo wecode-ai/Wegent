@@ -35,6 +35,7 @@ import type {
 } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
+import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import {
   DesktopSidebarHeader,
@@ -229,6 +230,23 @@ const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
 function boardStatusFromDropId(id: string | number | undefined): string | null {
   if (typeof id !== 'string' || !id.startsWith('todo-column:')) return null
   return id.slice('todo-column:'.length) || null
+}
+
+function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): boolean {
+  if (groupValue.startsWith('agent:')) {
+    return item.assignee_agent_id === groupValue.slice('agent:'.length)
+  }
+  if (groupValue === '') {
+    return !item.assignee_user_id && !item.assignee_agent_id
+  }
+  return String(item.assignee_user_id ?? '') === groupValue
+}
+
+// Signature of a board snapshot (items plus the load error). The poll compares
+// against the last applied snapshot so unchanged fetches do not re-render the
+// workspace (and downstream views such as the automation queue) every 15s.
+function boardSnapshotKey(items: CloudLoopItem[], error: string | null): string {
+  return `${error ?? ''}\u0000${JSON.stringify(items)}`
 }
 
 function boardCardIdFromDropId(id: string | number | undefined): string | null {
@@ -689,6 +707,9 @@ export function CloudTodoWorkspace({
   const [projects, setProjects] = useState<LocatedCloudProject[]>([])
   const [projectCounts, setProjectCounts] = useState<Record<string, number>>({})
   const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
+  // Active robots of the selected project, used to resolve the assignee name
+  // of robot-assigned tasks (local loop items only carry the agent id).
+  const [projectAgents, setProjectAgents] = useState<Record<string, ProjectChatAgent[]>>({})
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
@@ -747,6 +768,7 @@ export function CloudTodoWorkspace({
     add: 0,
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
+  const boardSnapshotSignatureRef = useRef<string | null>(null)
 
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
@@ -898,6 +920,29 @@ export function CloudTodoWorkspace({
   const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
   const selectedProjectLocation = selectedProject?.location
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
+  // Stable handle for the automation queue: the cloud executions API is
+  // wrapped once per selected project API instead of being recreated on every
+  // render, so unrelated workspace re-renders do not restart the queue load
+  // (which flashed the loading state).
+  const automationExecutionApi = useMemo(() => {
+    if (selectedProject?.location === 'local') return services.localLoopItemExecutionApi
+    if (!selectedProjectApi) return undefined
+    return {
+      list: (projectId: string, options: { agent_id?: string; status?: string }) =>
+        selectedProjectApi
+          .listLoopItemExecutions(projectId, options)
+          .then(response => response.items),
+    }
+  }, [selectedProject?.location, selectedProjectApi, services.localLoopItemExecutionApi])
+  const selectedProjectAgents = useMemo(
+    () => (selectedProjectId ? (projectAgents[selectedProjectId] ?? []) : []),
+    [projectAgents, selectedProjectId]
+  )
+  const agentNameById = useMemo(() => {
+    const names: Record<string, string> = {}
+    for (const agent of selectedProjectAgents) names[agent.id] = agent.name
+    return names
+  }, [selectedProjectAgents])
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
     showPriority: selectedProject?.card_display?.show_priority ?? true,
@@ -907,6 +952,28 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedProjectAgentApi) return
+    let cancelled = false
+    void selectedProjectAgentApi
+      .list(selectedProjectId)
+      .then(agents => {
+        if (cancelled) return
+        setProjectAgents(current => ({
+          ...current,
+          [selectedProjectId]: agents.filter(agent => agent.status === 'active'),
+        }))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectAgents(current => ({ ...current, [selectedProjectId]: [] }))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProjectAgentApi, selectedProjectId])
 
   useEffect(() => {
     if (!selectedProjectId || !selectedProjectLocation) return
@@ -993,6 +1060,36 @@ export function CloudTodoWorkspace({
               status: 'inbox',
               sourceStatus: null,
               groupValue: String(member.user_id),
+              dotClass: 'bg-indigo-500',
+            })),
+            ...Array.from(
+              new Map(
+                [
+                  ...selectedProjectAgents.map(agent => ({
+                    agent_id: agent.id,
+                    agent_name: agent.name,
+                  })),
+                  ...items.flatMap(item =>
+                    item.assignee_agent_id
+                      ? [
+                          {
+                            agent_id: item.assignee_agent_id,
+                            agent_name:
+                              item.assignee_agent_name ||
+                              agentNameById[item.assignee_agent_id] ||
+                              '',
+                          },
+                        ]
+                      : []
+                  ),
+                ].map(agent => [agent.agent_id, agent])
+              ).values()
+            ).map(agent => ({
+              key: `assignee-agent-${agent.agent_id}`,
+              label: agent.agent_name || agent.agent_id,
+              status: 'inbox',
+              sourceStatus: null,
+              groupValue: `agent:${agent.agent_id}`,
               dotClass: 'bg-indigo-500',
             })),
             {
@@ -1306,6 +1403,9 @@ export function CloudTodoWorkspace({
         .then(() => selectedProjectApi.listLoopItems(selectedProjectId))
         .then(response => {
           if (!active) return
+          const signature = boardSnapshotKey(response.items, null)
+          if (boardSnapshotSignatureRef.current === signature) return
+          boardSnapshotSignatureRef.current = signature
           applyBoardItems(selectedProjectId, response.items, null)
           // Keep the projects-home cache in sync with the board fetch.
           setProjectItems(current => ({ ...current, [selectedProjectId]: response.items }))
@@ -1323,11 +1423,11 @@ export function CloudTodoWorkspace({
             error,
           })
           if (!active) return
-          applyBoardItems(
-            selectedProjectId,
-            [],
-            error instanceof Error ? error.message : '任务加载失败'
-          )
+          const message = error instanceof Error ? error.message : '任务加载失败'
+          const signature = boardSnapshotKey([], message)
+          if (boardSnapshotSignatureRef.current === signature) return
+          boardSnapshotSignatureRef.current = signature
+          applyBoardItems(selectedProjectId, [], message)
         })
     }
     refreshItems()
@@ -1403,10 +1503,17 @@ export function CloudTodoWorkspace({
             return { ...candidate, priority: column.groupValue as CloudLoopItem['priority'] }
           }
           if (nativeGroupBy === 'assignee') {
-            return {
-              ...candidate,
-              assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
-            }
+            return column.groupValue.startsWith('agent:')
+              ? {
+                  ...candidate,
+                  assignee_user_id: null,
+                  assignee_agent_id: column.groupValue.slice('agent:'.length),
+                }
+              : {
+                  ...candidate,
+                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                  assignee_agent_id: null,
+                }
           }
           return { ...candidate, tags: column.groupValue ? [column.groupValue] : [] }
         })
@@ -1422,7 +1529,15 @@ export function CloudTodoWorkspace({
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
-              ? { assignee_user_id: column.groupValue ? Number(column.groupValue) : null }
+              ? column.groupValue.startsWith('agent:')
+                ? {
+                    assignee_user_id: null,
+                    assignee_agent_id: column.groupValue.slice('agent:'.length),
+                  }
+                : {
+                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                    assignee_agent_id: null,
+                  }
               : { tags: column.groupValue ? [column.groupValue] : [] }
       const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
       setItems(current =>
@@ -1460,7 +1575,7 @@ export function CloudTodoWorkspace({
         ? boardColumns.find(column => {
             if (nativeGroupBy === 'priority') return target.priority === column.groupValue
             if (nativeGroupBy === 'assignee') {
-              return String(target.assignee_user_id ?? '') === column.groupValue
+              return itemMatchesAssigneeGroup(target, column.groupValue)
             }
             if (nativeGroupBy === 'tag') {
               return column.groupValue
@@ -1996,18 +2111,7 @@ export function CloudTodoWorkspace({
                 <ProjectAutomationView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
-                  executionApi={
-                    selectedProject.location === 'local'
-                      ? services.localLoopItemExecutionApi
-                      : selectedProjectApi
-                        ? {
-                            list: (projectId, options) =>
-                              selectedProjectApi
-                                .listLoopItemExecutions(projectId, options)
-                                .then(response => response.items),
-                          }
-                        : undefined
-                  }
+                  executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}
                   project={selectedProject}
@@ -2231,7 +2335,7 @@ export function CloudTodoWorkspace({
                                     : nativeGroupBy === 'priority'
                                       ? item.priority === column.groupValue
                                       : nativeGroupBy === 'assignee'
-                                        ? String(item.assignee_user_id ?? '') === column.groupValue
+                                        ? itemMatchesAssigneeGroup(item, column.groupValue)
                                         : column.groupValue
                                           ? (item.tags ?? []).includes(column.groupValue)
                                           : !(item.tags ?? []).length)) &&
@@ -2305,6 +2409,7 @@ export function CloudTodoWorkspace({
                                           : undefined
                                       }
                                       display={boardCardDisplay}
+                                      agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
                                       archiveDisabled={selectedProject.task_provider !== 'local'}
                                     />
@@ -2341,6 +2446,7 @@ export function CloudTodoWorkspace({
                               <CloudTodoCardContent
                                 item={items.find(item => item.id === activeDragItemId)!}
                                 display={boardCardDisplay}
+                                agentNames={agentNameById}
                               />
                             </div>
                           ) : null}

@@ -59,7 +59,13 @@ class ExternalLoopItemProvider:
         return self._find_project(db, item_id) is not None
 
     def list(
-        self, db: Session, project_id: int, user_id: int
+        self,
+        db: Session,
+        project_id: int,
+        user_id: int,
+        *,
+        assignee_type: str | None = None,
+        assignee_id: str | None = None,
     ) -> list[dict[str, object]]:
         access = require_cloud_project_role(
             db, project_id, user_id, BaseRole.RestrictedAnalyst
@@ -67,6 +73,11 @@ class ExternalLoopItemProvider:
         project = access.project
         self._require_external(project)
         issues = self._list_issues(project)
+        if assignee_type in {"user", "agent"} and assignee_id:
+            assignee_label = f"{ASSIGNEE_PREFIX}{assignee_type}:{assignee_id}"
+            issues = [
+                issue for issue in issues if assignee_label in self._labels(issue)
+            ]
         return [self._response(db, project, issue, access, user_id) for issue in issues]
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
@@ -517,11 +528,16 @@ class ExternalLoopItemProvider:
         return None
 
     @staticmethod
-    def _cancel_active_executions(db: Session, item_id: str) -> None:
-        """Cancel any active runs of one issue (assignee changed/unassigned)."""
+    def _cancel_active_executions(db: Session, item_id: str) -> list:
+        """Cancel any active runs of one issue (assignee changed/unassigned).
+
+        Returns the runs that were cancelled and already handed to a device so
+        callers can ask the executor to stop them after the change commits.
+        """
 
         from app.services.loop_item_executions.service import utcnow
 
+        cancelled_runs = []
         active = (
             db.query(LoopItemExecution)
             .filter(
@@ -539,6 +555,9 @@ class ExternalLoopItemProvider:
             execution.execution_note = (
                 execution.execution_note or "Assignee changed before the run finished"
             )
+            if execution.runtime_device_id and execution.runtime_task_id:
+                cancelled_runs.append(execution)
+        return cancelled_runs
 
     def _apply_assignee_executions(
         self,
@@ -552,7 +571,7 @@ class ExternalLoopItemProvider:
     ) -> None:
         """Recreate queue state for an assignee change made through update."""
 
-        self._cancel_active_executions(db, item_id)
+        cancelled_runs = self._cancel_active_executions(db, item_id)
         if values.assignee_agent_id:
             agent = db.get(ProjectChatAgent, values.assignee_agent_id)
             if agent is not None:
@@ -587,6 +606,10 @@ class ExternalLoopItemProvider:
         else:
             self._soft_delete_index_row(db, item_id)
         db.commit()
+        if cancelled_runs:
+            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+            emit_runtime_cancels(cancelled_runs)
 
     def _create_execution_for_agent(
         self,
@@ -705,7 +728,7 @@ class ExternalLoopItemProvider:
             assignee_name=assignee_name,
             user_id=user_id,
         )
-        self._cancel_active_executions(db, item_id)
+        cancelled_runs = self._cancel_active_executions(db, item_id)
         if agent is not None:
             self._create_execution_for_agent(
                 db,
@@ -716,6 +739,10 @@ class ExternalLoopItemProvider:
                 priority=self._priority(current_labels),
             )
         db.commit()
+        if cancelled_runs:
+            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+            emit_runtime_cancels(cancelled_runs)
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(

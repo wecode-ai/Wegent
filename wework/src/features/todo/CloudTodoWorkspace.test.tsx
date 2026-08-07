@@ -167,6 +167,7 @@ function services(): WorkbenchServices {
           role: 'Developer',
         },
       ]),
+      listLoopItemExecutions: vi.fn(async () => ({ items: [] })),
       searchCloudProjectUsers: vi.fn(async () => ({ users: [], total: 0 })),
       listCloudFiles: vi.fn(async () => ({ items: [] })),
       listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
@@ -366,11 +367,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('WEG-1')).not.toBeInTheDocument()
     expect(screen.getByText('hongyu9')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('负责人')
-    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveTextContent('H')
-    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveClass(
-      'from-indigo-400',
-      'to-indigo-500'
-    )
+    expect(screen.getByTestId('cloud-todo-card-assignee-WEG-1')).toHaveTextContent('hongyu9')
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
 
@@ -392,7 +389,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
   })
 
-  it('does not render an avatar for an unassigned board card', async () => {
+  it('does not render an assignee for an unassigned board card', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -404,7 +401,143 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
-    expect(screen.queryByTestId('cloud-todo-card-assignee-avatar-WEG-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
+  })
+
+  it('renders a robot assignee on the board card instead of 未指定', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: '发布机器人',
+        },
+      ],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
+    expect(assignee).toHaveTextContent('发布机器人')
+    expect(assignee.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+  })
+
+  it('resolves a local robot assignee name from the project chat agents', async () => {
+    const cloudServices = services()
+    cloudServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [] }))
+    const localServices = services()
+    localServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [project] }))
+    localServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'LA-abc123',
+          assignee_agent_name: undefined,
+        },
+      ],
+    }))
+    cloudServices.projectSpaceApis = {
+      local: localServices.deliveryApi,
+      cloud: cloudServices.deliveryApi,
+      defaultLocation: 'cloud',
+    }
+    cloudServices.localProjectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'LA-abc123',
+          projectId: String(project.id),
+          name: '发布机器人',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          executionDeviceId: null,
+          createdByUserId: 1,
+          version: 1,
+          createdAt: '2026-07-22T00:00:00Z',
+          updatedAt: '2026-07-22T00:00:00Z',
+        },
+      ]),
+      create: vi.fn(),
+      update: vi.fn(),
+      archive: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={cloudServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
+    expect(assignee).toHaveTextContent('发布机器人')
+    expect(assignee.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(cloudServices.localProjectChatAgentApi!.list).toHaveBeenCalledWith(project.id)
+  })
+
+  it('keeps robot-assigned tasks out of the unassigned assignee group', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: '发布机器人',
+        },
+        {
+          ...item,
+          id: 'WEG-2',
+          sequence_number: 2,
+          title: '无人负责的任务',
+          assignee_user_id: null,
+        },
+      ],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-assignee'))
+
+    expect(screen.getByTestId('cloud-todo-column-assignee-agent-agent-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).toHaveTextContent(
+      '无人负责的任务'
+    )
+    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).not.toHaveTextContent(
+      'Implement cloud MCP'
+    )
   })
 
   it('renders DingTalk records by live table fields without exposing provider record ids', async () => {
@@ -1252,6 +1385,40 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-project-chat-agents')).toBeInTheDocument()
     expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
+  })
+
+  it('keeps the automation queue loaded across unrelated workspace re-renders', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+    const listExecutions = workbenchServices.deliveryApi!.listLoopItemExecutions as ReturnType<
+      typeof vi.fn
+    >
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    await waitFor(() => expect(listExecutions).toHaveBeenCalledTimes(1))
+
+    // Opening and closing the global search re-renders the workspace. The
+    // queue must not restart its load (which previously flashed the spinner)
+    // just because the parent re-rendered.
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await waitFor(() => expect(screen.getByTestId('cloud-global-search')).toBeInTheDocument())
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('cloud-global-search')).not.toBeInTheDocument())
+
+    expect(listExecutions).toHaveBeenCalledTimes(1)
   })
 
   it('shows the automation tab for local project spaces', async () => {

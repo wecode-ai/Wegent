@@ -1592,10 +1592,14 @@ export function TodoEditor(props: TodoEditorProps) {
               {twoColumn ? (
                 <div className="task-detail-meta-line">
                   <span className="task-detail-meta-item">
-                    <CircleUserRound className="h-3.5 w-3.5" />
+                    {assigneeAgent ? (
+                      <Bot className="h-3.5 w-3.5 text-violet-600" />
+                    ) : (
+                      <CircleUserRound className="h-3.5 w-3.5" />
+                    )}
                     负责人
                     <span className="text-text-primary">
-                      {assigneeAgent?.name ?? assignee?.user_name ?? '未指派'}
+                      {assignee?.user_name ?? assigneeAgent?.name ?? '未指派'}
                     </span>
                   </span>
                   <span className="task-detail-meta-item">
@@ -1605,13 +1609,6 @@ export function TodoEditor(props: TodoEditorProps) {
                       {dueDate ? dueDate.slice(5) : '未设置'}
                     </span>
                   </span>
-                  {assigneeAgent ? (
-                    <span className="task-detail-meta-item">
-                      <Bot className="h-3.5 w-3.5 text-violet-600" />
-                      协作 Agent
-                      <span className="text-text-primary">{assigneeAgent.name}</span>
-                    </span>
-                  ) : null}
                 </div>
               ) : null}
 

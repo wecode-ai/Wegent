@@ -699,6 +699,7 @@ class LoopItemExecutionService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
         """Project device runtime events onto the matching running execution.
 
@@ -721,6 +722,7 @@ class LoopItemExecutionService:
             return None
         now = utcnow()
         row.heartbeat_at = now
+        row.lease_expires_at = now + timedelta(seconds=lease_seconds)
         terminal = self._terminal_status(event_name, payload)
         if terminal == STATUS_COMPLETED:
             row.status = STATUS_COMPLETED
@@ -1100,7 +1102,11 @@ class LoopItemExecutionService:
         """
 
         current = now or utcnow()
-        stale_threshold = current - timedelta(seconds=lease_seconds)
+        # A healthy run renews its lease on every runtime event, so a run is
+        # stale shortly after its lease expires. Do not wait another full
+        # lease period: a dead executor would otherwise block the device slot
+        # for up to two lease periods (10 minutes) while new runs queue.
+        stale_threshold = current - timedelta(seconds=min(lease_seconds, 60))
         stale_rows = (
             db.query(LoopItemExecution)
             .filter(
@@ -1113,6 +1119,14 @@ class LoopItemExecutionService:
         requeued = 0
         failed = 0
         for row in stale_rows:
+            logger.warning(
+                "[LoopItemExecutions] Recovering stale run execution=%s task=%s "
+                "status=%s lease_expires_at=%s",
+                row.id,
+                row.loop_item_id,
+                row.status,
+                row.lease_expires_at,
+            )
             self.fail(
                 db,
                 execution_id=row.id,

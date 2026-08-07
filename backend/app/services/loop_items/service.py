@@ -1009,7 +1009,7 @@ class LoopItemService:
                 agent.id,
                 agent.title or agent.name,
             )
-            self._sync_execution_for_assignment(
+            cancelled_runs = self._sync_execution_for_assignment(
                 db,
                 item=item,
                 user_id=user_id,
@@ -1044,7 +1044,7 @@ class LoopItemService:
                 str(target_user_id),
                 target.user_name if target else None,
             )
-            self._sync_execution_for_assignment(
+            cancelled_runs = self._sync_execution_for_assignment(
                 db,
                 item=item,
                 user_id=user_id,
@@ -1060,6 +1060,10 @@ class LoopItemService:
         updated = self._versioned_metadata_update(
             db, item, values.version, metadata, **assignee_updates
         )
+        if cancelled_runs:
+            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+            emit_runtime_cancels(cancelled_runs)
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if agent is not None and agent.created_by_user_id:
@@ -1752,15 +1756,18 @@ class LoopItemService:
         target_id: str | None,
         agent: ProjectChatAgent | None,
         priority: str | None,
-    ) -> None:
+    ) -> list:
         """Create/cancel execution records when the assignee changes.
 
         Reassigning to a robot cancels any active run and starts a fresh run;
-        assigning to a person (or unassigning) cancels robot runs.
+        assigning to a person (or unassigning) cancels robot runs. Returns the
+        runs that were cancelled and already handed to a device so callers can
+        ask the executor to stop them after the change commits.
         """
 
         from app.models.loop_item_execution import LoopItemExecution
 
+        cancelled_runs = []
         active = (
             db.query(LoopItemExecution)
             .filter(
@@ -1777,6 +1784,8 @@ class LoopItemService:
             execution.execution_note = (
                 execution.execution_note or "Assignee changed before the run finished"
             )
+            if execution.runtime_device_id and execution.runtime_task_id:
+                cancelled_runs.append(execution)
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)
             loop_item_execution_service.create_for_assignment(
@@ -1793,6 +1802,7 @@ class LoopItemService:
                 ),
                 priority=priority,
             )
+        return cancelled_runs
 
     @staticmethod
     def _approval_view(execution: object) -> dict | None:

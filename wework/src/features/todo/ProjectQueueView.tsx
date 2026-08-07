@@ -145,7 +145,7 @@ function QueueStateChip({ state }: { state?: string | null }) {
         current.className
       )}
     >
-      <Icon className="h-3 w-3" />
+      <Icon className={cn('h-3 w-3', state === 'running' && 'animate-spin')} />
       {state ? queueStateLabel(state, t) : ''}
     </span>
   )
@@ -210,9 +210,16 @@ export function ProjectQueueView({
 
   useEffect(() => {
     let active = true
-    const load = async () => {
-      setLoading(true)
-      setError(null)
+    let loadSeq = 0
+    const load = async (background: boolean) => {
+      const seq = ++loadSeq
+      // Only the initial load swaps the content for the spinner. Background
+      // refreshes update the existing content in place, so a fresh snapshot
+      // never flashes the loading state.
+      if (!background) {
+        setLoading(true)
+        setError(null)
+      }
       try {
         const [nextAgents, myResponse] = await Promise.all([
           projectChatAgentApi
@@ -223,13 +230,13 @@ export function ProjectQueueView({
             ...(currentUserId !== undefined ? { assigneeId: currentUserId } : {}),
           }),
         ])
-        if (!active) return
+        if (!active || seq !== loadSeq) return
         setAgents(nextAgents)
         setMyTasks(myResponse.items)
         const queues: Record<string, CloudLoopItem[]> = {}
         if (executionApi) {
           const all = await executionApi.list(project.id, {})
-          if (!active) return
+          if (!active || seq !== loadSeq) return
           const byAgent = new Map<string, QueueExecution[]>()
           for (const execution of all) {
             const bucket = byAgent.get(execution.agent_id) ?? []
@@ -247,20 +254,28 @@ export function ProjectQueueView({
               assigneeType: 'agent',
               assigneeId: agent.id,
             })
-            if (!active) return
+            if (!active || seq !== loadSeq) return
             queues[agent.id] = response.items.filter(isInQueue)
           }
         }
         setBotQueues(queues)
+        setError(null)
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : '加载队列失败')
+        if (!active || seq !== loadSeq) return
+        // Keep the last good content on background refresh failures; only the
+        // initial load surfaces the error banner.
+        if (!background) setError(cause instanceof Error ? cause.message : '加载队列失败')
       } finally {
-        if (active) setLoading(false)
+        if (active && seq === loadSeq) setLoading(false)
       }
     }
-    void load()
+    void load(false)
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true)
+    }, 15_000)
     return () => {
       active = false
+      window.clearInterval(interval)
     }
   }, [api, currentUserId, executionApi, project.id, projectChatAgentApi])
 

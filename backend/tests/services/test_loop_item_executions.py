@@ -274,6 +274,46 @@ def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) 
     assert next_claim is None  # only one queued run existed
 
 
+def test_runtime_events_renew_the_lease(test_db: Session, test_user: User) -> None:
+    """Streaming runtime events must renew the run lease.
+
+    Regression: handle_runtime_event only touched heartbeat_at, so any run
+    that streamed past the lease period was force-failed by lease recovery
+    even while the executor was actively working, and a dead executor's run
+    kept the agent slot blocked for up to two lease periods.
+    """
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.heartbeat(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id="cloud-device-1",
+        runtime_task_id="codex-robot-1",
+    )
+    original_lease = claimed.lease_expires_at
+
+    refreshed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id="codex-robot-1",
+        event_name="response.output_text.delta",
+        payload={"data": {"delta": "tick"}},
+    )
+    assert refreshed is not None
+    assert refreshed.lease_expires_at > original_lease
+
+
 def test_lease_expiry_recovery_requeues_then_fails(
     test_db: Session, test_user: User
 ) -> None:

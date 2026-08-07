@@ -221,7 +221,11 @@ def list_loop_items(
             items=[
                 LoopItemResponse.model_validate(item)
                 for item in external_loop_item_provider.list(
-                    db, project_id, current_user.id
+                    db,
+                    project_id,
+                    current_user.id,
+                    assignee_type=assignee_type,
+                    assignee_id=assignee_id,
                 )
             ]
         )

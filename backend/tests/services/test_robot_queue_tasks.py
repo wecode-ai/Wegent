@@ -7,16 +7,28 @@
 import uuid
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.tasks.robot_queue_tasks import _dispatch_execution
+
+
+@pytest.fixture(autouse=True)
+def _fake_run_event_wait(monkeypatch):
+    """Keep dispatch tests off the real Redis run-event channel."""
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.wait_for_run_event",
+        lambda *args, **kwargs: "response.created",
+    )
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
@@ -105,12 +117,7 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert claimed is not None
     execution = claimed
 
-    emit_rpc = AsyncMock(
-        return_value={
-            "emitted": True,
-            "result": {"taskId": f"codex-queue-{execution.id}"},
-        }
-    )
+    emit_rpc = AsyncMock(return_value={"emitted": True})
     online = AsyncMock(return_value=True)
     with (
         patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
@@ -140,6 +147,60 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert execution.runtime_device_id == "local-device"
     assert execution.runtime_task_id == f"codex-queue-{execution.id}"
     assert execution.status == "running"
+
+
+def test_dispatch_execution_fails_when_executor_never_starts_session(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    """A dispatched run whose executor never starts a codex session must raise
+    before any streaming comment is created, so the run never shows a fake
+    "AI 执行" card.
+
+    Regression: the emit was fire-and-forget with no acceptance signal, so an
+    executor that never started the task still produced a running execution
+    and an empty streaming message ("只创建评论、不创建会话").
+    """
+
+    from app.services.project_chat.service import project_chat_service
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=agent.id,
+        execution_device_id="local-device",
+        environment="local",
+    )
+    assert claimed is not None
+
+    emit_rpc = AsyncMock(return_value={"emitted": True})
+    online = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.wait_for_run_event",
+        lambda *args, **kwargs: None,
+    )
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
+        ),
+    ):
+        import asyncio
+
+        with pytest.raises(RuntimeError, match="did not start a codex session"):
+            asyncio.run(_dispatch_execution(test_db, execution))
+
+    # No streaming agent message may exist for the task.
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == claimed.loop_item_id,
+            ProjectChatMessage.sender_type == "agent",
+        )
+        .count()
+        == 0
+    )
 
 
 def test_queue_scan_dispatches_local_and_cloud_runs_through_same_internal_emit(
@@ -181,7 +242,7 @@ def test_queue_scan_dispatches_local_and_cloud_runs_through_same_internal_emit(
     cloud_execution.execution_device_id = "cloud-device-1"
     test_db.commit()
 
-    emit_rpc = AsyncMock(return_value={"emitted": True})
+    emit_rpc = AsyncMock(return_value={"emitted": True, "accepted": True})
     online = AsyncMock(return_value=True)
 
     @contextmanager
@@ -252,7 +313,7 @@ def test_queue_scan_falls_back_to_creator_online_when_device_owner_offline(
     agent = _make_agent(test_db, project, test_user)
     execution = _make_execution(test_db, project, agent, test_user)
 
-    emit_rpc = AsyncMock(return_value={"emitted": True})
+    emit_rpc = AsyncMock(return_value={"emitted": True, "accepted": True})
 
     async def online(user_id: int, device_id: str):
         return user_id == test_user.id
@@ -308,6 +369,7 @@ def test_execute_robot_task_advances_claimed_and_dispatches(
     emit_rpc = AsyncMock(
         return_value={
             "emitted": True,
+            "accepted": True,
             "result": {"taskId": f"codex-queue-{execution.id}"},
         }
     )

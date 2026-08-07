@@ -408,6 +408,45 @@ def test_agent_runtime_chunks_are_persisted_for_reconnect(
     assert completed[1] == "snapshot"
 
 
+def test_queue_dispatch_agent_runs_each_create_streaming_message(
+    test_db: Session, test_user: User
+) -> None:
+    """Queue-dispatched runs (no user trigger) must each create a streaming
+    agent message for the same robot.
+
+    Regression: every run inserted client_message_id='' and the unique
+    (sender_type, sender_id, client_message_id) index rejected the second run
+    of the same robot with IntegrityError 1062, leaving the task activity
+    empty ("entered the queue" placeholder) while the run was executing.
+    """
+
+    project = create_project(test_db, test_user)
+    first = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="queue-run-1",
+        ),
+    )
+    second = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="queue-run-2",
+        ),
+    )
+
+    assert first.message_id != second.message_id
+    assert first.status == "streaming"
+    assert second.status == "streaming"
+
+
 def test_subagent_runtime_event_becomes_compact_task_activity(
     test_db: Session, test_user: User
 ) -> None:

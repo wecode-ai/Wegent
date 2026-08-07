@@ -637,13 +637,17 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
         )
-        loop_item_execution_service.handle_runtime_event(
+        matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
             device_id=device_id,
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
         )
+        if matched_execution is not None:
+            from app.tasks.robot_queue_tasks import publish_run_event
+
+            publish_run_event(device_id, runtime_task_id, event_name)
         if projected is None:
             logger.info(
                 "[ProjectChat] Runtime event projection produced no project chat message: "
@@ -677,13 +681,17 @@ def _execution_runtime_event_sync(
 
     try:
         with get_db_session() as db:
-            loop_item_execution_service.handle_runtime_event(
+            matched = loop_item_execution_service.handle_runtime_event(
                 db,
                 device_id=device_id,
                 runtime_task_id=str(task_id),
                 event_name=event_name,
                 payload=payload,
             )
+            if matched is not None:
+                from app.tasks.robot_queue_tasks import publish_run_event
+
+                publish_run_event(device_id, str(task_id), event_name)
     except Exception:
         logger.exception(
             "[RobotQueue] Execution runtime event write-back failed "

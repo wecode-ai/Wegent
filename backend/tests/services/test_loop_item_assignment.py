@@ -335,6 +335,60 @@ def test_reject_with_stale_version_has_no_side_effects(
     assert execution.approval_status == "pending"
 
 
+def test_reassign_cancels_running_run_and_emits_runtime_cancel(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    """Reassigning a task away from a running robot must ask the executor to
+    stop the old run, not just mark the DB row cancelled.
+
+    Regression: only the row changed, so the executor kept running the old
+    task (zombie run) and occupied the device slot.
+    """
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    member = _make_member(test_db, project, "developer", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    assigned = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+    execution = _active_execution(test_db, assigned)
+    assert execution is not None
+    execution.runtime_device_id = "local-device"
+    execution.runtime_task_id = "codex-queue-99"
+    test_db.commit()
+
+    emitted: list[LoopItemExecution] = []
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.emit_runtime_cancels",
+        lambda runs: emitted.extend(runs),
+    )
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=assigned.version,
+            assignee_type="user",
+            assignee_id=str(member.id),
+        ),
+    )
+
+    assert _active_execution(test_db, updated) is None
+    assert [run.id for run in emitted] == [execution.id]
+
+
 def test_assign_requires_admin_and_visible_bot(
     test_db: Session, test_user: User
 ) -> None:
