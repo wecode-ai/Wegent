@@ -96,6 +96,7 @@ export interface LocalProjectChatAgent {
   executionEnvironment: 'local' | 'cloud'
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
+  localProjectId: number | null
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number

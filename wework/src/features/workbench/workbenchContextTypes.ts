@@ -13,6 +13,7 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  ModelType,
   PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
@@ -122,7 +123,7 @@ export interface CreateProjectRuntimeTaskOptions {
    * global workbench selection when provided. */
   modelSelection?: {
     modelName: string
-    modelType: string | null
+    modelType: ModelType | null
     options: ModelOptions
   } | null
   /** Force the runtime task onto a specific device (robot execution

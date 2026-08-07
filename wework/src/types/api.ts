@@ -85,7 +85,7 @@ export type ModelType = 'public' | 'user' | 'group' | 'runtime'
 
 export interface ModelSelectionConfig {
   modelName: string
-  modelType?: string | null
+  modelType?: ModelType | null
   options?: Record<string, string>
 }
 

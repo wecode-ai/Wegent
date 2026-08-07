@@ -28,7 +28,11 @@ export interface TaskAiRuntimeBridge {
         modelType?: string | null
         modelOptions?: ModelOptions
       } | null
-      modelSelection?: { modelName: string; modelType: string | null; options: ModelOptions } | null
+      modelSelection?: {
+        modelName: string
+        modelType: ModelType | null
+        options: ModelOptions
+      } | null
       additionalContext?: RuntimeAdditionalContext
       deviceId?: string | null
       attachments?: Attachment[]

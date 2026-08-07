@@ -576,7 +576,7 @@ export function useWorkbenchRuntimeMessaging({
         sideSource?: RuntimeTaskAddress | null
         modelSelection?: {
           modelName: string
-          modelType: string | null
+          modelType: ModelType | null
           options: ModelOptions
         } | null
         preserveAttachments?: boolean

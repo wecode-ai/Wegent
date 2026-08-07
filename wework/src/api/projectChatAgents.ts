@@ -56,6 +56,7 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'executionEnvironment'
           | 'executionMode'
           | 'executionDeviceId'
+          | 'localProjectId'
         >
       > &
         Pick<ProjectChatAgent, 'version'>
