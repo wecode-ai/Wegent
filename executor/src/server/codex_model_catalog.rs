@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_enables_deferred_tool_search_only_for_verified_profiles() {
+    fn catalog_enables_gpt_56_tool_search_without_changing_kimi_profiles() {
         let catalog = catalog();
         let models = catalog["models"].as_array().expect("models array");
 
