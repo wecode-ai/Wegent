@@ -49,6 +49,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
   RuntimeGoal,
+  RuntimeGoalGetResponse,
   RuntimeGuidanceResponse,
   NormalizedRuntimeMessage,
   RuntimeTranscriptResponse,
@@ -4936,6 +4937,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deferred<
         Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
       >()
+    const getRuntimeGoal = deferred<RuntimeGoalGetResponse>()
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -4962,6 +4964,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(initialRuntimeWork),
       createRuntimeTask: vi.fn().mockReturnValue(createRuntimeTask.promise),
+      getRuntimeGoal: vi.fn().mockReturnValue(getRuntimeGoal.promise),
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-created',
         workspacePath: '/workspace/project-alpha',
@@ -5002,6 +5005,12 @@ describe('WorkbenchProvider runtime tasks', () => {
         `device-1:${request.taskId}:/workspace/project-alpha`
       )
     )
+    await waitFor(() => expect(runtimeWorkApi.getRuntimeGoal).toHaveBeenCalled())
+    await act(async () => {
+      getRuntimeGoal.resolve({ accepted: true, goal: null })
+      await getRuntimeGoal.promise
+    })
+
     expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
   })
 
