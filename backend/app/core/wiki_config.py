@@ -21,11 +21,16 @@ class WikiSettings(BaseSettings):
     )
     # Whether new code wikis may be created (env var: WIKI_CODE_WIKI_ENABLED).
     #
-    # Off by default, so a deployment opts in rather than having to remember to opt
-    # out everywhere but the pilot group. It gates creation only: wikis that already
-    # exist stay readable and stay able to regenerate, because turning a rollout down
-    # should stop it spreading, not break what it already produced.
-    CODE_WIKI_ENABLED: bool = False
+    # On by default, because a deployment that never sets it should not have a
+    # feature that silently refuses. The staged rollout is decided on the frontend,
+    # by RUNTIME_ENABLE_CODE_WIKI, which is off by default and is what stops the
+    # option being offered; this one exists to refuse the call outright when a
+    # deployment wants it off no matter what any client asks.
+    #
+    # It gates creation only: wikis that already exist stay readable and stay able to
+    # regenerate, because turning a rollout down should stop it spreading, not break
+    # what it already produced.
+    CODE_WIKI_ENABLED: bool = True
     DEFAULT_LANGUAGE: str = (
         "en"  # Default language for wiki documentation generation (en/zh)
     )

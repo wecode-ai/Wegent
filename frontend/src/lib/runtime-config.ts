@@ -124,7 +124,9 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
         enableCodeKnowledgeAddRepo:
           process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
-        enableCodeWiki: process.env.NEXT_PUBLIC_ENABLE_CODE_WIKI === 'true',
+        // Runtime-only flag: nothing to read at build time, and false is the
+        // safe default for a rollout that has not been switched on.
+        enableCodeWiki: false,
         enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
         projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
         vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
@@ -169,7 +171,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
     enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
     enableCodeKnowledgeAddRepo: process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
-    enableCodeWiki: process.env.NEXT_PUBLIC_ENABLE_CODE_WIKI === 'true',
+    enableCodeWiki: false,
     enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
     projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
     vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',

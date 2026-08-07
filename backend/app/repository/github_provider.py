@@ -23,11 +23,6 @@ from app.schemas.github import Branch, Repository
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
 
-# Repository access checks run inside a user-facing request (creating a code wiki),
-# so an unresponsive provider must fail rather than hold the worker. Only this check
-# is bounded here; the other calls in this module remain as they were.
-ACCESS_CHECK_TIMEOUT_SECONDS = 15
-
 # GitHub's compare endpoint returns at most this many files and gives no reliable
 # signal that it truncated, so hitting it is treated as "the diff is unknown".
 GITHUB_COMPARE_FILE_LIMIT = 300
@@ -872,7 +867,7 @@ class GitHubProvider(RepositoryProvider):
             user_response = requests.get(
                 f"{api_base_url}/user",
                 headers=headers,
-                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             if user_response.status_code == 401:
                 return {
@@ -894,7 +889,7 @@ class GitHubProvider(RepositoryProvider):
             permission_response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/collaborators/{username}/permission",
                 headers=headers,
-                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
 
             if permission_response.status_code == 404:
@@ -939,7 +934,7 @@ class GitHubProvider(RepositoryProvider):
                     repo_response = requests.get(
                         f"{api_base_url}/repos/{repo_name}",
                         headers=headers,
-                        timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                        timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                     )
                     if repo_response.status_code == 200:
                         return {
@@ -978,7 +973,7 @@ class GitHubProvider(RepositoryProvider):
         repo = requests.get(
             f"{api_base_url}/repos/{repo_name}",
             headers=headers,
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         repo.raise_for_status()
         branch_name = repo.json().get("default_branch") or "main"
@@ -986,7 +981,7 @@ class GitHubProvider(RepositoryProvider):
         branch = requests.get(
             f"{api_base_url}/repos/{repo_name}/branches/{branch_name}",
             headers=headers,
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         branch.raise_for_status()
         commit = (branch.json() or {}).get("commit") or {}
@@ -1010,7 +1005,7 @@ class GitHubProvider(RepositoryProvider):
                 "Authorization": f"token {token}",
                 "Accept": "application/vnd.github.v3+json",
             },
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         payload = response.json() or {}
@@ -1054,7 +1049,7 @@ class GitHubProvider(RepositoryProvider):
             response = requests.get(
                 f"{api_base_url}/repos/{repo_name}",
                 headers=headers,
-                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
         except requests.exceptions.RequestException as e:
             self._log_domain_failure("describe repository", git_domain, e)

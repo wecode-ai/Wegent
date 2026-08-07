@@ -22,11 +22,6 @@ from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.url_util import build_url
 
-# Repository access checks run inside a user-facing request (creating a code wiki),
-# so an unresponsive provider must fail rather than hold the worker. Only this check
-# is bounded here; the other calls in this module remain as they were.
-ACCESS_CHECK_TIMEOUT_SECONDS = 15
-
 
 class GitLabProvider(RepositoryProvider):
     """
@@ -901,7 +896,7 @@ class GitLabProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/user",
                 token=decrypt_token,
-                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             user_data = user_response.json()
             user_id = user_data.get("id")
@@ -928,7 +923,7 @@ class GitLabProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project_id}/members/all/{user_id}",
                 token=decrypt_token,
-                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             member_data = member_response.json()
             access_level = member_data.get("access_level", 0)
@@ -972,7 +967,7 @@ class GitLabProvider(RepositoryProvider):
             method="GET",
             url=f"{api_base_url}/projects/{encoded}",
             token=token,
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         branch_name = (project.json() or {}).get("default_branch") or "main"
 
@@ -981,7 +976,7 @@ class GitLabProvider(RepositoryProvider):
             url=f"{api_base_url}/projects/{encoded}/repository/branches/"
             f"{quote(branch_name, safe='')}",
             token=token,
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         commit = (branch.json() or {}).get("commit") or {}
         return {"branch": branch_name, "commit": commit.get("id", "")}
@@ -1004,7 +999,7 @@ class GitLabProvider(RepositoryProvider):
             url=f"{api_base_url}/projects/{encoded}/repository/compare",
             token=token,
             params={"from": base, "to": head},
-            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
         )
         payload = response.json() or {}
 
@@ -1052,13 +1047,13 @@ class GitLabProvider(RepositoryProvider):
                     method="GET",
                     url=url,
                     token=token,
-                    timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
             else:
                 response = requests.get(
                     url,
                     headers={"Accept": "application/json"},
-                    timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 if response.status_code != 200:
                     return None
