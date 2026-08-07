@@ -96,11 +96,33 @@ async def test_a_run_the_agent_already_concluded_is_left_alone(session):
 @pytest.mark.asyncio
 async def test_a_task_belonging_to_no_wiki_costs_one_indexed_lookup(session):
     """Almost no task is a code wiki's. This handler shares a loop with the
-    subscription and IM ones, so it must return immediately for all of them."""
-    with patch.object(task_completion, "finish_run") as finish:
-        await conclude_code_wiki_run(_event(999999))
+    subscription and IM ones, so it must return immediately for all of them.
+
+    The count is asserted, not just the early return. `async def` does not make the
+    session and query below yield -- they are synchronous, so the event loop is held
+    for their duration and the publisher awaits every handler. What keeps that
+    acceptable is that it is exactly one selective lookup, and that argument stops
+    holding the moment a second query is added here.
+    """
+    from sqlalchemy import event as sa_event
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = session.get_bind()
+    sa_event.listen(engine, "before_cursor_execute", record)
+    try:
+        with patch.object(task_completion, "finish_run") as finish:
+            await conclude_code_wiki_run(_event(999999))
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", record)
 
     finish.assert_not_called()
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert len(selects) == 1, selects
+    assert "wiki_generations" in selects[0]
 
 
 @pytest.mark.asyncio

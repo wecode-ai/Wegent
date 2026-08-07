@@ -243,11 +243,19 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
                 <PanelLeft className="h-4 w-4" />
               </button>
             </DrawerTrigger>
-            <DrawerContent className="max-h-[80vh]">
+            <DrawerContent className="max-h-[80vh]" data-testid="code-wiki-navigation-drawer">
               <DrawerTitle className="px-4 pt-2 text-sm font-medium">
                 {t('codeWiki.reader.openNavigation')}
               </DrawerTitle>
               <div className="min-h-0 overflow-y-auto px-2 pb-4">
+                {/* Both halves of the left column, because that is what this drawer
+                    stands in for. With only the tree here, a narrow screen could
+                    reach the run history exactly when the wiki had no pages -- so on
+                    a wiki that had been generated, whether the last run failed and
+                    which version is live were unreachable, and so was restoring one. */}
+                <div className="border-b border-border px-1 pb-3">
+                  <RunHistory knowledgeBaseId={wiki.id} status={runStatus.status} />
+                </div>
                 <WikiNavigation
                   pages={pages}
                   activePath={activePath}

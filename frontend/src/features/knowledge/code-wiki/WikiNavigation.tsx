@@ -51,7 +51,11 @@ function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect 
             aria-label={node.title}
             aria-expanded={isOpen}
             data-testid={`wiki-nav-toggle-${node.path}`}
-            className="flex h-6 w-6 shrink-0 items-center justify-center text-text-tertiary hover:text-text-primary"
+            // 44px below `lg`, where this tree is the drawer and the chevron is the
+            // only way into a section that has no page of its own. The chevron keeps
+            // its size; the hit area is what grows. Back to 24px on the desktop
+            // sidebar, where a pointer is precise and a tall row costs visible pages.
+            className="flex h-11 w-11 shrink-0 items-center justify-center text-text-tertiary hover:text-text-primary lg:h-6 lg:w-6"
           >
             {isOpen ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -60,7 +64,8 @@ function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect 
             )}
           </button>
         ) : (
-          <span className="h-6 w-6 shrink-0" />
+          // Matches the toggle at both sizes, so a leaf lines up with its siblings.
+          <span className="h-11 w-11 shrink-0 lg:h-6 lg:w-6" />
         )}
 
         <button
@@ -70,7 +75,7 @@ function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect 
           onClick={() => (node.has_content ? onSelect(node) : onToggle(node.path))}
           data-testid={`wiki-nav-page-${node.path}`}
           title={node.has_content ? node.title : t('codeWiki.reader.sectionOnly')}
-          className={`min-w-0 flex-1 truncate py-1.5 text-left text-sm ${
+          className={`min-h-11 min-w-0 flex-1 truncate py-1.5 text-left text-sm lg:min-h-0 ${
             isActive
               ? 'font-medium text-text-primary'
               : node.has_content

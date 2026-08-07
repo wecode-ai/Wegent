@@ -28,10 +28,16 @@ from app.db.session import SessionLocal
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.services.knowledge.code_wiki.generation import FailureCode
 from app.services.knowledge.code_wiki.runner import finish_run
+from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
 
 
+@trace_async(
+    "code_wiki.conclude_run",
+    "knowledge.code_wiki",
+    extract_attributes=lambda event: {"task.id": str(event.task_id)},
+)
 async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
     """End the code wiki version this task was writing, if it was writing one.
 
@@ -42,6 +48,19 @@ async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
 
     Never raises. Handlers share a loop with the subscription and IM channel ones,
     and a code wiki has no claim to break their delivery.
+
+    **Traced because it is a blocking step on a path every task takes.** ``async def``
+    is not what makes it cheap -- the session and query below are synchronous, so the
+    event loop is held for their duration rather than yielding -- and the publisher
+    awaits every handler. What keeps it small is that ``wiki_generations.task_id`` is
+    indexed and almost no task matches, so a task that is not a wiki's returns after
+    one lookup. The span is here so that stops being an argument and becomes a number.
+
+    Registered unconditionally, and deliberately not behind ``CODE_WIKI_ENABLED``:
+    that flag gates *creating* a wiki, so a deployment that turns the rollout down
+    still has wikis that run and still needs their failures noticed. Skipping
+    registration would save one indexed lookup per task and leave every existing wiki
+    stuck on "generating" whenever its executor died.
     """
     db = SessionLocal()
     try:
@@ -55,6 +74,10 @@ async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
         )
         if generation is None:
             return
+
+        add_span_event(
+            "code_wiki.run_concluded_by_task", {"kb.id": str(generation.kind_id)}
+        )
 
         succeeded = event.status == "COMPLETED"
         if succeeded:

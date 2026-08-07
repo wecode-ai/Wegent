@@ -11,7 +11,7 @@
  * on a page that has them.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import type { KnowledgeBase } from '@/types/knowledge'
 
@@ -126,6 +126,36 @@ describe('navigating a wiki on a narrow screen', () => {
     // drawer stays mounted through its close animation, and what matters is that the
     // choice took effect.
     await waitFor(() => expect(header()).toContain('Other'))
+  })
+
+  it('carries the run history too, which is the rest of the column it replaces', async () => {
+    // With only the tree here, the history was reachable on a narrow screen exactly
+    // when the wiki had no pages -- so on a wiki that had been generated, whether the
+    // last run failed and which version is live could not be seen, and a version
+    // could not be restored.
+    await renderReader()
+
+    fireEvent.click(screen.getByTestId('code-wiki-open-navigation'))
+
+    // Scoped to the drawer. The column's own copy is in the document either way --
+    // jsdom does not apply the `hidden` that removes it from a narrow screen -- so
+    // counting instances would pass whether or not the drawer carries one.
+    const drawer = await screen.findByTestId('code-wiki-navigation-drawer')
+    expect(within(drawer).getByTestId('run-history')).toBeInTheDocument()
+  })
+
+  it('sizes the tree for a finger where the tree is a drawer', async () => {
+    await renderReader()
+
+    fireEvent.click(screen.getByTestId('code-wiki-open-navigation'))
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId('wiki-nav-page-other').length).toBeGreaterThan(1)
+    )
+    // The row a finger lands on. Reset above `lg`, where the same tree is a dense
+    // sidebar column and a tall row costs visible pages.
+    const row = screen.getAllByTestId('wiki-nav-page-other')[1]
+    expect(row).toHaveClass('min-h-11', 'lg:min-h-0')
   })
 
   it('offers nothing to open when the wiki has no pages', async () => {

@@ -152,7 +152,11 @@ function RunRow({
             disabled={working}
             title={t('codeWiki.history.republishHint')}
             data-testid={`code-wiki-republish-${run.generation_id}`}
-            className="mt-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-text-secondary hover:border-primary/40 disabled:opacity-50"
+            // Reachable on touch through the navigation drawer, so it is sized for
+            // one there and stays compact in the desktop sidebar, where the panel is
+            // a narrow column and a 44px button per row would crowd out the history
+            // it sits in.
+            className="mt-1 inline-flex min-h-11 items-center rounded border border-border px-3 text-[11px] text-text-secondary hover:border-primary/40 disabled:opacity-50 lg:min-h-0 lg:px-1.5 lg:py-0.5"
           >
             {t('codeWiki.history.republish')}
           </button>

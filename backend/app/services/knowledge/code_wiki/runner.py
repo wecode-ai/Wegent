@@ -426,10 +426,13 @@ def _create_task(
                 task_type="code",
                 auto_delete_executor="false",
                 source="code_wiki",
-                namespace=("default" if listed else HIDDEN_TASK_NAMESPACE),
             ),
             user=task_user,
             task_id=task_id,
+            # Not part of the request body it builds: "hidden from the conversation
+            # list" is something this run decides about its own task, not something
+            # a client may ask for.
+            namespace=("default" if listed else HIDDEN_TASK_NAMESPACE),
         )
         return task_id
     except Exception as exc:
