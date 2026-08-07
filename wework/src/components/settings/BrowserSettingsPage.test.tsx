@@ -18,6 +18,8 @@ const preferences: AppPreferences = vi.hoisted(() => ({
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: 85,
+  telemetryEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,

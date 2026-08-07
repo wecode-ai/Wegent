@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import i18n from '@/i18n'
 import {
   closeLocalTerminal,
+  connectLocalTerminal,
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   listenLocalTerminalExit,
@@ -346,5 +347,51 @@ describe('local-terminal', () => {
 
     expect(listenMock).toHaveBeenCalledWith('local-terminal-output', expect.any(Function))
     expect(listenMock).toHaveBeenCalledWith('local-terminal-exit', expect.any(Function))
+  })
+
+  test('attaches an embedded local terminal after listeners are ready', async () => {
+    const calls: string[] = []
+    const outputUnlisten = vi.fn()
+    const exitUnlisten = vi.fn()
+    listenMock.mockImplementation(async event => {
+      calls.push(`listen:${event}`)
+      return event === 'local-terminal-output' ? outputUnlisten : exitUnlisten
+    })
+    invokeMock.mockImplementation(async command => {
+      calls.push(`invoke:${command}`)
+      return undefined
+    })
+
+    const unlisten = await connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn())
+
+    expect(calls).toEqual([
+      'listen:local-terminal-output',
+      'listen:local-terminal-exit',
+      'invoke:attach_local_terminal',
+    ])
+
+    unlisten()
+    expect(outputUnlisten).toHaveBeenCalledOnce()
+    expect(exitUnlisten).toHaveBeenCalledOnce()
+  })
+
+  test('removes local terminal listeners when attach fails', async () => {
+    const outputUnlisten = vi.fn()
+    const exitUnlisten = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    listenMock.mockResolvedValueOnce(outputUnlisten).mockResolvedValueOnce(exitUnlisten)
+    invokeMock.mockRejectedValue(new Error('attach failed'))
+
+    await expect(connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn())).rejects.toThrow(
+      'attach failed'
+    )
+
+    expect(outputUnlisten).toHaveBeenCalledOnce()
+    expect(exitUnlisten).toHaveBeenCalledOnce()
+    expect(consoleError).toHaveBeenCalledWith('Local terminal connection failed', {
+      sessionId: 'local-terminal-1',
+      stage: 'attach',
+      error: 'attach failed',
+    })
   })
 })

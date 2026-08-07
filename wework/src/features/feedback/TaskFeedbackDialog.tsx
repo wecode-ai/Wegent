@@ -21,6 +21,7 @@ import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 
 type FeedbackCategory =
   | 'report'
@@ -321,7 +322,23 @@ function TaskFeedbackDialogContent({
       })
       setSubmitted(response)
       setPhase('done')
-    } catch {
+      const attachmentCount = attachments.length
+      track('feedback_submitted', {
+        attachment_count:
+          attachmentCount === 0
+            ? '0'
+            : attachmentCount === 1
+              ? '1'
+              : attachmentCount <= 5
+                ? '2-5'
+                : '6+',
+      })
+    } catch (caughtError) {
+      console.warn('[Wework] Feedback submission failed', {
+        reportId: preview.reportId,
+        errorKind: feedbackErrorKind(caughtError),
+      })
+      track('operation_failed', { operation: 'feedback' })
       setError(
         t('workbench.feedback_contact_developer_with_report', {
           reportId: preview.reportId,
@@ -754,6 +771,16 @@ function TaskFeedbackDialogContent({
 
 function waitForScreenshotPaint(): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, 500))
+}
+
+function feedbackErrorKind(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  const httpStatus = message.match(/\bHTTP (\d{3})\b/i)
+  if (httpStatus) return `http_${httpStatus[1]}`
+  if (message.includes('Feedback authentication is unavailable')) return 'authentication'
+  if (message.includes('Failed to submit feedback')) return 'request'
+  if (message.includes('Invalid feedback response')) return 'response_parse'
+  return 'native_command'
 }
 
 function serializeAttachment(file: File): Promise<FeedbackAttachment> {

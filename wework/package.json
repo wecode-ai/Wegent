@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.1.11-beta.1",
+  "version": "0.1.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,7 +28,7 @@
     "test:watch": "vitest",
     "test:kimi-k3-profile": "node scripts/verify-kimi-k3-profile.mjs",
     "e2e": "playwright test",
-    "e2e:desktop": "WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/run-checkpoints.mjs",
+    "e2e:desktop": "node e2e/desktop/run-checkpoints.mjs",
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
     "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",
     "e2e:desktop:memory": "node e2e/desktop/task-flow.e2e.mjs --memory-only",
@@ -72,6 +72,7 @@
     "@pierre/diffs": "^1.2.11",
     "@pierre/trees": "1.0.0-beta.4",
     "@radix-ui/react-slot": "^1.2.4",
+    "@sentry/react": "^8.55.0",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-virtual": "3.14.2",
     "@tauri-apps/api": "^2.11.1",
@@ -100,6 +101,7 @@
     "prosemirror-model": "^1.25.10",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.42.0",
+    "posthog-js": "^1.409.5",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-i18next": "^17.0.8",

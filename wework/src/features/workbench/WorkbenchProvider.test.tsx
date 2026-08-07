@@ -218,8 +218,7 @@ function createTurnFileChanges(): TurnFileChangesSummary {
   }
 }
 
-const LOCAL_IMAGE_ATTACHMENT_PATH =
-  '/Users/me/.wegent-executor/workspace/attachments/draft/-45/photo.png'
+const LOCAL_IMAGE_ATTACHMENT_PATH = '/Users/me/.wework/workspace/attachments/draft/-45/photo.png'
 
 function createImageAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -3739,6 +3738,59 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: request.taskId,
     })
+  })
+
+  test('opens a new task before configured model preparation completes', async () => {
+    const prepareRuntimeModel = vi.fn(() => deferred<boolean>().promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      prepareRuntimeModel,
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        `device-1:${request.taskId}`
+      )
+    )
+    expect(prepareRuntimeModel).not.toHaveBeenCalled()
   })
 
   test('restores and records the active project from Codex global state metadata', async () => {
@@ -9309,6 +9361,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       return vi.fn()
     })
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -9347,7 +9400,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus },
+        local: { updateTaskTrackingStatus, updateTaskTrackingTitle },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -9381,6 +9434,21 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
         expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
         'succeeded'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeTaskTitleUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'friendly-title',
+        deviceId: 'device-1',
+        title: '修复登录回调',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        '修复登录回调'
       )
     )
   })
@@ -9957,7 +10025,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-      'first message|working\n\nbefore |继续修|'
+      'first message|working\n\nbefore '
     )
     expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
@@ -10961,6 +11029,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       message: '执行ls',
       clientGuidanceId: expect.stringMatching(/^queued-runtime-pane-/),
     })
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('执行ls')
     await act(async () => {
       streamHandlers.onGuidanceApplied?.({
         taskId: 'runtime-a',

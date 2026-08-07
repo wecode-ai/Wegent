@@ -10,7 +10,6 @@ import {
   getAuthenticatedImageFetchUrl,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
-  localHtmlBrowserUrl,
   resolveDirectMarkdownImageSrc,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -490,8 +489,7 @@ function AssistantMarkdownLink({
         data-testid="assistant-markdown-link"
         onClick={() => {
           if (isHtmlFilePath(filePath)) {
-            const browserUrl = localHtmlBrowserUrl(filePath)
-            if (browserUrl && requestEmbeddedBrowserOpen(browserUrl)) return
+            if (requestEmbeddedBrowserOpen(filePath)) return
           }
           if (openOptions) {
             onOpenFile?.(filePath, openOptions)

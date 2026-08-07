@@ -26,7 +26,6 @@ interface ResourceListingCardProps {
   targetNamespace?: string
   compact?: boolean
   presentation?: 'discovery' | 'management'
-  managementAction?: ReactNode
   managementFooterAction?: ReactNode
   tagLabels?: Record<string, string>
 }
@@ -55,7 +54,6 @@ export function ResourceListingCard({
   targetNamespace = 'default',
   compact = false,
   presentation = 'discovery',
-  managementAction,
   managementFooterAction,
   tagLabels = {},
 }: ResourceListingCardProps) {
@@ -134,8 +132,6 @@ export function ResourceListingCard({
       {!isTopRightSkillAction && actionLabel}
     </Button>
   )
-  const showManagementHeaderAction = isManagementPresentation && Boolean(managementAction)
-
   return (
     <Card
       className={cn(
@@ -179,14 +175,6 @@ export function ResourceListingCard({
           </h3>
           {publisher && <p className="mt-0.5 truncate text-xs text-text-muted">{publisher}</p>}
         </div>
-        {showManagementHeaderAction && (
-          <div
-            className="relative z-20 flex shrink-0 items-center gap-1.5"
-            data-testid={`resource-listing-management-actions-${listing.id}`}
-          >
-            {managementAction}
-          </div>
-        )}
       </div>
 
       <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">
@@ -217,11 +205,14 @@ export function ResourceListingCard({
           className={cn('relative z-20 min-w-0', getResourceCardActionsClassName(true))}
           data-testid={`resource-listing-primary-action-${listing.id}`}
         >
-          {actionButton}
+          <div className="flex min-w-0 gap-2">
+            <div className="min-w-0 flex-1">{actionButton}</div>
+            {managementFooterAction}
+          </div>
         </div>
       )}
 
-      {isManagementPresentation && managementFooterAction && (
+      {isManagementPresentation && !isManagementAgentAction && managementFooterAction && (
         <div
           className={cn('relative z-20 min-w-0', getResourceCardActionsClassName(true))}
           data-testid={`resource-listing-footer-action-${listing.id}`}

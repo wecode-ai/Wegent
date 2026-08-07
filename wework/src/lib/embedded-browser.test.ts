@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+  EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+  clearEmbeddedBrowserData,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPageStateChanges,
   relabelEmbeddedBrowser,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
@@ -78,6 +81,26 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('clears selected embedded browser data through Tauri', async () => {
+    invokeMock.mockResolvedValue(1)
+
+    await expect(clearEmbeddedBrowserData(['cookies'])).resolves.toBe(1)
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: ['cookies'],
+    })
+  })
+
+  test('preserves the full-clear call when no data kinds are provided', async () => {
+    invokeMock.mockResolvedValue(0)
+
+    await clearEmbeddedBrowserData()
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: null,
+    })
+  })
+
   test('pauses agent control through Tauri', async () => {
     invokeMock.mockResolvedValue(undefined)
 
@@ -116,6 +139,17 @@ describe('embedded-browser', () => {
     )
   })
 
+  test('listens for embedded browser page state changes', async () => {
+    const handler = vi.fn()
+
+    await listenEmbeddedBrowserPageStateChanges(handler)
+
+    expect(eventMocks.listen).toHaveBeenCalledWith(
+      EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+      expect.any(Function)
+    )
+  })
+
   test('routes frontend open requests to the active embedded browser listener', async () => {
     const handler = vi.fn()
     const unlisten = listenEmbeddedBrowserOpenRequests(handler)
@@ -130,8 +164,18 @@ describe('embedded-browser', () => {
       label: 'workspace-browser',
       url: 'asset://localhost/Users/me/workspace/trend.html',
     })
+    expect(requestEmbeddedBrowserOpen('file:///Users/me/workspace/report.html')).toBe(true)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      url: 'file:///Users/me/workspace/report.html',
+    })
+    expect(requestEmbeddedBrowserOpen('/Users/me/workspace/report.html')).toBe(true)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      url: 'file:///Users/me/workspace/report.html',
+    })
     expect(requestEmbeddedBrowserOpen('ftp://localhost/resource')).toBe(false)
-    expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler).toHaveBeenCalledTimes(4)
 
     const release = await unlisten
     release?.()

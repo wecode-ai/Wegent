@@ -16,7 +16,7 @@ const IMAGE_EXTENSIONS = new Set([
   'webp',
 ])
 
-function fileUrlToPath(value: string): string | null {
+export function fileUrlToPath(value: string): string | null {
   try {
     const url = new URL(value)
     if (url.protocol !== 'file:') return null

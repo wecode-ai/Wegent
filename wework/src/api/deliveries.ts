@@ -604,6 +604,26 @@ export function createDeliveryApi(client: HttpClient) {
           })
         : item
     },
+    async updateTaskTrackingTitle(
+      task: RuntimeTaskAddress,
+      title: string
+    ): Promise<CloudLoopItem | null> {
+      let context: CloudTaskContext
+      try {
+        context = await api.findCloudContextForTask(task)
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null
+        throw error
+      }
+      if (!context.loop_item_id) return null
+      const item = await api.getLoopItem(context.loop_item_id)
+      return item.title === title
+        ? item
+        : api.updateLoopItem(item.id, {
+            version: item.version,
+            title,
+          })
+    },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {
       return client.delete('/v1/runtime-tasks/cloud-context', task)
     },

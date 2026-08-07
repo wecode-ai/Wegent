@@ -12,6 +12,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -94,6 +95,7 @@ const GUIDANCE_SCROLL_RESPONSE = [
   ),
 ].join('\n\n')
 const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
+const GUIDANCE_SCROLL_PRE_TOOL_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_PRE_TOOL_TEXT'
 const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
@@ -313,9 +315,9 @@ const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog.
-const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+// the official option is served from the cloud model catalog with a canonical
+// model id that does not collide with the local Codex catalog.
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
@@ -324,6 +326,30 @@ const PROVIDER_SWITCH_PROMPT =
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
 const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const TELEMETRY_CAPTURE_PATH = '/e/'
+const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
+const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
+  '$device_id',
+  '$geoip_disable',
+  '$lib',
+  '$lib_version',
+  '$process_person_profile',
+  '$session_id',
+  '$window_id',
+  'app_version',
+  'arch',
+  'distinct_id',
+  'feature',
+  'locale',
+  'os',
+  'release_channel',
+  'runtime_mode',
+  'surface',
+  'telemetry_session_id',
+  'token',
+])
+const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
+  /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
@@ -405,6 +431,8 @@ const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
 const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
+const VERIFIES_INITIAL_TELEMETRY_CONSENT =
+  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -1531,6 +1559,11 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
+    value: 'guidance-scroll-setup-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   await waitForOverflowMetrics(
@@ -1568,6 +1601,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    value: 'guidance-scroll-pre-tool-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const assistantAfterGuidanceText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:not([data-e2e-anchor-id])`
+  )
+  assert.equal(
+    assistantAfterGuidanceText.includes(GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    false,
+    'The final text from before guidance was duplicated after the guidance message'
+  )
 
   const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
     control,
@@ -5162,6 +5213,166 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
+async function waitForTelemetrySilence(control, options = {}) {
+  const { intervalMs = 100, silenceMs = 500, maxWaitMs = 3_500 } = options
+  const start = Date.now()
+  let lastCount = control.telemetryRequestCount()
+  let lastChange = start
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+    const currentCount = control.telemetryRequestCount()
+    if (currentCount !== lastCount) {
+      lastCount = currentCount
+      lastChange = Date.now()
+      continue
+    }
+    if (Date.now() - lastChange >= silenceMs) {
+      return currentCount
+    }
+  }
+  return lastCount
+}
+
+async function verifyTelemetryPreference(control) {
+  const toggleSelector = '[data-testid="general-telemetry-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', toggleSelector, { value: 'aria-checked' }),
+    'true',
+    'Accepting the first-run telemetry prompt was not persisted'
+  )
+  await control.command('click', toggleSelector)
+  await waitForAttribute(
+    control,
+    toggleSelector,
+    'aria-checked',
+    'false',
+    'Disabling telemetry was not persisted'
+  )
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForTelemetrySilence(control)
+  control.telemetryRequestCountAfterRevocation = control.telemetryRequestCount()
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'PostHog flushed telemetry after the user revoked consent'
+  )
+}
+
+function verifyTelemetryRemainsDisabled(control) {
+  assert.notEqual(
+    control.telemetryRequestCountAfterRevocation,
+    undefined,
+    'The telemetry revocation checkpoint did not record its request boundary'
+  )
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'Telemetry was sent after the user revoked consent'
+  )
+}
+
+async function verifyInitialTelemetryConsent(control, sensitiveValues) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
+  assert.equal(
+    control.telemetryRequestCount(),
+    0,
+    'Telemetry was sent before the user made an explicit consent choice'
+  )
+
+  await control.command('click', '[data-testid="telemetry-consent-accept"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after accepting'
+  )
+
+  await control.awaitTelemetryEvent('app_started')
+  const requests = control.telemetryRequests
+  const events = requests.flatMap(request => telemetryEvents(request.payload))
+  assert.ok(events.length > 0, 'The telemetry request did not contain an event')
+  const appStarted = events.find(event => event.event === 'app_started')
+  assert.ok(appStarted, 'The first telemetry request did not include app_started')
+  assert.equal(appStarted.properties?.surface, 'main')
+
+  for (const event of events) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        {
+          app_started: true,
+          feature_opened: true,
+          telemetry_preference_changed: true,
+        },
+        event.event
+      ),
+      true,
+      `The initial telemetry request contained an unexpected event: ${event.event}`
+    )
+    assert.ok(event.properties && typeof event.properties === 'object')
+    for (const propertyName of Object.keys(event.properties)) {
+      assert.equal(
+        TELEMETRY_SAFE_PROPERTY_KEYS.has(propertyName),
+        true,
+        `Telemetry sent a property outside the privacy allowlist: ${propertyName}`
+      )
+      if (propertyName === 'token') {
+        assert.equal(
+          event.properties[propertyName],
+          TELEMETRY_TEST_PROJECT_KEY,
+          'Telemetry sent an unexpected PostHog project key'
+        )
+      } else if (propertyName === '$process_person_profile') {
+        assert.equal(
+          event.properties[propertyName],
+          false,
+          'Telemetry attempted to create or update a PostHog person profile'
+        )
+      } else {
+        assert.equal(
+          TELEMETRY_FORBIDDEN_PROPERTY_PATTERN.test(propertyName),
+          false,
+          `Telemetry sent a potentially sensitive property: ${propertyName}`
+        )
+      }
+    }
+    assert.equal(event.$set, undefined, 'Telemetry sent person profile properties')
+    assert.equal(event.$set_once, undefined, 'Telemetry sent persistent person properties')
+  }
+
+  for (const sensitiveValue of sensitiveValues.filter(Boolean)) {
+    assert.equal(
+      requests.some(request => request.rawBody.includes(String(sensitiveValue))),
+      false,
+      `Telemetry leaked a sensitive runtime value: ${String(sensitiveValue).slice(0, 24)}`
+    )
+  }
+}
+
+async function declineInitialTelemetryConsent(control) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="telemetry-consent-decline"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after declining'
+  )
+}
+
 async function ensureExperimentalFeaturesEnabled(control) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
@@ -7339,6 +7550,33 @@ function readRequestBody(request) {
   })
 }
 
+function readRawRequestBody(request) {
+  return new Promise((resolvePromise, reject) => {
+    const chunks = []
+    request.on('data', chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('error', reject)
+  })
+}
+
+function parseTelemetryPayload(rawBody) {
+  try {
+    return JSON.parse(rawBody)
+  } catch {
+    const encoded = new URLSearchParams(rawBody).get('data')
+    assert.ok(encoded, 'The PostHog telemetry request did not contain a JSON payload')
+    return JSON.parse(encoded)
+  }
+}
+
+function telemetryEvents(payload) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.batch)) return payload.batch
+  return payload?.event ? [payload] : []
+}
+
 function json(response, statusCode, value) {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
@@ -7856,7 +8094,20 @@ async function verifyGoalRestartRecoveryLifecycle({
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
     'The user did not see the Goal working before Wework restarted'
-  )
+  ).catch(async error => {
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; workbench debug: ${JSON.stringify(
+        {
+          currentRuntimeTask: debugSnapshot.workbench?.currentRuntimeTask ?? null,
+          lifecycleCurrentTaskRunning: debugSnapshot.workbench?.lifecycleCurrentTaskRunning ?? null,
+          goal: debugSnapshot.pane?.goal ?? null,
+          goalContinuing: debugSnapshot.pane?.goalContinuing ?? null,
+          goalDraftActive: debugSnapshot.pane?.goalDraftActive ?? null,
+        }
+      )}`
+    )
+  })
   await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -7916,8 +8167,13 @@ async function verifyGoalRestartRecoveryLifecycle({
     'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  const interruptedDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const interruptedDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+      snapshot.pane?.goal?.status === 'active',
+    'The interrupted Goal did not finish hydrating after Wework restarted'
   )
   assert.equal(
     interruptedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
@@ -8407,6 +8663,8 @@ class DesktopE2EServer {
     this.commandHistory = []
     this.modelRequests = []
     this.catalogRequests = []
+    this.httpRequests = []
+    this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
@@ -8608,6 +8866,26 @@ class DesktopE2EServer {
         this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
       })
     )
+  }
+
+  async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.telemetryRequests.find(candidate =>
+        telemetryEvents(candidate.payload).some(event => event.event === eventName)
+      )
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    throw new Error(`The desktop app did not send the ${eventName} telemetry event`)
+  }
+
+  telemetryRequestCount() {
+    return this.telemetryRequests.length
+  }
+
+  recordTelemetryRequest(request) {
+    this.telemetryRequests.push(request)
   }
 
   fail(error, response) {
@@ -8972,8 +9250,23 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
+    this.httpRequests.push({
+      method: request.method ?? 'UNKNOWN',
+      pathname: url.pathname,
+    })
     if (await this.handleControlRoute(request, response, url)) return
     if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+
+    if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
+      const rawBody = await readRawRequestBody(request)
+      this.recordTelemetryRequest({
+        contentType: request.headers['content-type'] ?? null,
+        payload: parseTelemetryPayload(rawBody),
+        rawBody,
+      })
+      json(response, 200, { status: 1 })
+      return
+    }
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -9769,10 +10062,12 @@ class DesktopE2EServer {
         const tool = selectShellTool(body, this.workspacePath)
         this.guidanceScrollStage = 'awaiting_tool_output'
         await this.guidanceScrollToolRelease
+        const preToolMessage = assistantMessage(GUIDANCE_SCROLL_PRE_TOOL_TEXT)
         this.writeSse(response, [
           responseCreated(responseId),
+          preToolMessage,
           ...functionCall('wework-e2e-guidance-scroll-tool', tool.name, tool.arguments),
-          responseCompleted(responseId),
+          responseCompleted(responseId, [preToolMessage.item]),
         ])
         return
       }
@@ -11951,11 +12246,14 @@ async function writeCodexConfig(
   upstreamApiFormat = 'openai-responses'
 ) {
   await mkdir(codexHome, { recursive: true })
+  const configPath = join(codexHome, 'config.toml')
+  const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
-    join(codexHome, 'config.toml'),
+    temporaryConfigPath,
     `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+  await rename(temporaryConfigPath, configPath)
 }
 
 function toolDetailsMcpConfigToml() {
@@ -12192,6 +12490,9 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+        VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
+        VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -12944,6 +13245,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
+  let desktopScenarioVerified = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -13088,6 +13390,18 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
+    if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
+      await verifyInitialTelemetryConsent(control, [
+        workspacePath,
+        homePath,
+        cloudEnvironment?.authToken,
+        desktopScenario?.authToken,
+        MODEL_API_KEY,
+        'desktop-e2e@wework.local',
+      ])
+    } else {
+      await declineInitialTelemetryConsent(control)
+    }
     if (process.platform === 'darwin') {
       assert.notEqual(
         macosFrontmostProcessId(),
@@ -13180,7 +13494,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     await control.command('dispatchLocalModelSettingsChanged', '')
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
-    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
     const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
     assert.equal(
@@ -13192,11 +13505,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       recoveredModelMenu.testIds.includes(synthesizedModelOption),
       false,
       'The Backend-synthesized runtime Codex duplicate remained visible'
-    )
-    assert.equal(
-      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
-      false,
-      'The legacy GPT 5.5 Codex model remained visible'
     )
     assert.equal(
       (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
@@ -13227,6 +13535,21 @@ last_updated = "2026-07-30T00:00:00Z"`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       await verifyRetryFailureRestoration(control, ACTIVE_COMPOSER_SELECTOR)
       console.log(`Wework desktop retry-restoration E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (GUIDANCE_SCROLL_ONLY) {
+      phase = 'guidance-scroll'
+      await verifyForegroundGuidanceScroll({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -13448,6 +13771,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('telemetry-consent')) {
+      phase = 'telemetry-preference'
+      await verifyTelemetryPreference(control)
+      verifyTelemetryRemainsDisabled(control)
+      if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
+        console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -13764,18 +14097,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
-    }
-
-    if (GUIDANCE_SCROLL_ONLY) {
-      phase = 'guidance-scroll'
-      await verifyForegroundGuidanceScroll({ composerSelector, control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
-      return
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {
@@ -15271,10 +15592,27 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
+        desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
       if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
         console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('embedded-browser')) {
+      phase = 'embedded-browser-scenario'
+      assert.ok(
+        desktopScenario,
+        'The embedded-browser checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      if (!desktopScenarioVerified) {
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
+      if (shouldStopAfterDesktopCheckpoint('embedded-browser')) {
+        console.log(`Wework desktop embedded-browser checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -15315,6 +15653,7 @@ last_updated = "2026-07-30T00:00:00Z"`
               requests.length,
             ])
           ),
+          httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
         },
         null,

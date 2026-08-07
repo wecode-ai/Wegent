@@ -12,6 +12,7 @@ import {
   filterLocalRequirements,
   findFirstLocalNeedingLogin,
   findLocalConnectorsForMessage,
+  messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
   toLocalConnectorAuthTarget,
@@ -122,6 +123,7 @@ export function useLocalConnectorAuthGate(options: {
   const gateBeforeSend = useCallback(
     async (input: string): Promise<'send' | 'blocked'> => {
       if (pendingRef.current) return 'blocked'
+      if (!messageNeedsConnectorPreflight(input)) return 'send'
       try {
         const plugins = pluginsRef.current ?? (await refreshPlugins())
         const requirements = findLocalConnectorsForMessage(input, plugins)

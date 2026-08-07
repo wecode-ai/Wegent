@@ -19,7 +19,10 @@ const mergedDefaultPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: 85,
   experimentalFeaturesEnabled: false,
+  telemetryConsentAsked: false,
+  telemetryEnabled: false,
   supervisorPrinciples: '',
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
@@ -33,6 +36,8 @@ const mergedDefaultPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: [
     {
       id: 'default-summary-progress',
@@ -108,6 +113,25 @@ describe('appPreferences', () => {
       browserExternalLinkTarget: 'wework',
       browserDownloadDirectory: '/tmp/downloads',
       browserAskBeforeDownload: true,
+    })
+  })
+
+  test('clamps the context compaction threshold to 1..100', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({ contextCompactionThreshold: 250 })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      contextCompactionThreshold: 100,
+    })
+
+    invokeMock.mockResolvedValue({ contextCompactionThreshold: 0 })
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      contextCompactionThreshold: 1,
     })
   })
 

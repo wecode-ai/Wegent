@@ -68,6 +68,7 @@ import {
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
+import { track } from '@/telemetry/client'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -375,6 +376,14 @@ function createBottomPanelWorkspaceKey({
   ].join(':')
 }
 
+function rightPanelTabType(
+  tab: RightWorkspacePanelTab
+): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
+  if (tab.startsWith('chat:')) return 'chat'
+  if (tab === 'review' || tab === 'terminal' || tab === 'browser' || tab === 'files') return tab
+  return 'other'
+}
+
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
   visible?: boolean
@@ -601,10 +610,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(true))
-    return () => cancelAnimationFrame(frame)
-  }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
@@ -908,6 +913,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const api = projectSpaceApiFor(projectToBind)
     if (!api) return
     const bindingTaskTitle =
+      runtimeTaskTitle ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||
       t('workbench.untitled_task', '未命名任务')
     let active = true
@@ -946,6 +952,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pendingCloudProject,
     pendingTodoItem,
     projectSpaceApiFor,
+    runtimeTaskTitle,
     setPendingCloudContext,
     t,
   ])
@@ -1454,9 +1461,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoOpen = environmentInfoDocked
     ? environmentInfoPinned
     : environmentInfoOverlayOpen
-  const setEnvironmentInfoOpen = environmentInfoDocked
-    ? onEnvironmentInfoPinnedChange
-    : onEnvironmentInfoOverlayOpenChange
+  const setEnvironmentInfoOpen = useCallback(
+    (open: boolean) => {
+      if (environmentInfoDocked) {
+        setEnvironmentInfoTransitionEnabled(true)
+        onEnvironmentInfoPinnedChange(open)
+        return
+      }
+      onEnvironmentInfoOverlayOpenChange(open)
+    },
+    [environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, onEnvironmentInfoPinnedChange]
+  )
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
@@ -1955,6 +1970,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
       if (tab.startsWith('chat:')) {
         temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
       }

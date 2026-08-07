@@ -247,6 +247,7 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The
     # cloud-model LLM proxy URL is derived from it

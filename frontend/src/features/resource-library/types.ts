@@ -38,6 +38,11 @@ export interface ResourceLibraryVersion {
   updated_at?: string
 }
 
+export interface MarketplaceExampleConversation {
+  title: string
+  url: string
+}
+
 export interface ResourceLibraryListing {
   id: number
   resource_type: ResourceLibraryResourceType
@@ -55,6 +60,7 @@ export interface ResourceLibraryListing {
   current_version?: ResourceLibraryVersion | null
   install_count: number
   is_installed: boolean
+  example_conversations?: MarketplaceExampleConversation[]
   bind_modes: string[]
   allow_personal_install?: boolean
   allow_group_install?: boolean
@@ -73,6 +79,7 @@ export interface ResourceLibraryPublicationUpdateRequest {
   allow_personal_install?: boolean
   allow_group_install?: boolean
   target_groups?: string[]
+  example_conversations?: MarketplaceExampleConversation[]
 }
 
 export interface ResourceLibraryReferenceConsumer {
@@ -92,6 +99,7 @@ export interface ResourceLibraryListListingsParams {
   tags?: string[]
   status?: ResourceLibraryListingStatus | string
   systemOnly?: boolean
+  featuredOnly?: boolean
   targetNamespace?: string
   cursor?: string
   page?: number
@@ -127,6 +135,7 @@ export interface ResourceLibraryCreateListingRequest {
   target_groups?: string[]
   allow_personal_install?: boolean
   allow_group_install?: boolean
+  example_conversations?: MarketplaceExampleConversation[]
   manifest_options?: Record<string, unknown>
 }
 

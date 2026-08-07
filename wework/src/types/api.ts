@@ -1144,6 +1144,12 @@ export interface RuntimeTaskRenameRequest {
   title: string
 }
 
+export interface RuntimeTaskFriendlyTitleConfig {
+  modelId: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+}
+
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
   taskId?: string
@@ -1169,6 +1175,7 @@ export interface RuntimeTaskCreateRequest {
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
   modelSelection?: ModelSelectionConfig | null
+  friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -2304,6 +2311,13 @@ export interface RuntimeGoalEventPayload {
   threadId?: string
   turnId?: string
   goal?: RuntimeGoal | null
+}
+
+export interface RuntimeTaskTitleUpdatedPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  title: string
 }
 
 export type RuntimeGoalContinuationStatus = 'started' | 'settled'

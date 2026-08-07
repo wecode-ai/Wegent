@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { PluginUseCaseGuideDialog } from './PluginUseCaseGuideDialog'
@@ -34,6 +34,9 @@ describe('PluginUseCaseGuideDialog', () => {
       />
     )
 
+    await act(async () => {
+      await new Promise(resolve => window.requestAnimationFrame(resolve))
+    })
     await userEvent.click(screen.getByTestId('plugin-use-case-option-anonymous'))
     expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
       'Use anonymous player IDs on the leaderboard'
@@ -82,10 +85,14 @@ describe('PluginUseCaseGuideDialog', () => {
       />
     )
 
-    const goalInput = screen.getByTestId('plugin-use-case-goal-input')
-    await userEvent.clear(goalInput)
-    await userEvent.type(goalInput, 'Verify the cart total and discount code.')
-    await userEvent.click(screen.getByTestId('plugin-use-case-context-suggestion'))
+    const user = userEvent.setup()
+    const goalInput = screen.getByTestId('plugin-use-case-goal-input') as HTMLTextAreaElement
+    await act(async () => {
+      await new Promise(resolve => window.requestAnimationFrame(resolve))
+    })
+    await user.clear(goalInput)
+    await user.type(goalInput, 'Verify the cart total and discount code.')
+    await user.click(screen.getByTestId('plugin-use-case-context-suggestion'))
 
     expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
       'Verify the cart total and discount code.'

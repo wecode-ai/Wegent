@@ -128,6 +128,9 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
+import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
+import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
+import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -237,6 +240,7 @@ export function WorkbenchProvider({
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
+  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -321,6 +325,11 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  useWorkbenchTelemetry({
+    currentProject: state.currentProject,
+    devices: state.devices,
+    lifecycle: lifecycleSnapshot,
+  })
   const projectChatScopeKey = getProjectChatScopeKey({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
@@ -1393,6 +1402,37 @@ export function WorkbenchProvider({
     },
     [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
+  const resolveModelForAddress = useCallback(
+    (address: RuntimeTaskAddress): UnifiedModel | null => {
+      const taskSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const selectedModel = modelSelection.selectedModel
+      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
+      const matchingSelectedModel =
+        taskSelection?.modelName &&
+        selectedModel?.name === taskSelection.modelName &&
+        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
+          ? selectedModel
+          : null
+      return taskModel ?? matchingSelectedModel
+    },
+    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+  )
+  const knownModelIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const model of modelSelection.models) {
+      const id = normalizeAiModelId(model.modelId)
+      if (id) ids.add(id)
+    }
+    return ids
+  }, [modelSelection.models])
+  const aiGenerationTelemetry = useAiGenerationTelemetry({
+    resolveModel: resolveModelForAddress,
+    contextUsageByRuntimeTask,
+    knownModelIds,
+  })
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
       address: RuntimeTaskAddress,
@@ -1463,6 +1503,29 @@ export function WorkbenchProvider({
       })
     })
   })
+  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
+    const normalizedTitle = title.trim()
+    if (!normalizedTitle) return
+    const trackingApis = [
+      resolvedServices.projectSpaceApis?.local,
+      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
+    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+    if (!trackingApis.length) return
+    const key = `${address.deviceId}:${address.taskId}`
+    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
+    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
+    void Promise.allSettled(
+      trackingApis.map(api => api!.updateTaskTrackingTitle(address, normalizedTitle))
+    ).then(results => {
+      if (results.every(result => result.status === 'rejected')) {
+        trackingTitleSignaturesRef.current.delete(key)
+        console.warn('[Wework] Failed to synchronize project task title', {
+          address,
+          errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+        })
+      }
+    })
+  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -1487,13 +1550,33 @@ export function WorkbenchProvider({
           onAssistantStart: (address, turnId) => {
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
+            aiGenerationTelemetry.onAssistantStart(address, turnId)
+          },
+          onAssistantFirstToken: (address, turnId) => {
+            aiGenerationTelemetry.onAssistantFirstToken(address, turnId)
+          },
+          onAssistantResponseSize: (address, turnId, responseSizeBytes) => {
+            aiGenerationTelemetry.onAssistantResponseSize(address, turnId, responseSizeBytes)
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)
+            aiGenerationTelemetry.onAssistantSettled(
+              address,
+              turnId,
+              outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
+            )
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
+          onRuntimeTaskTitleUpdated: (address, payload) => {
+            dispatch({
+              type: 'runtime_task_title_updated',
+              address,
+              title: payload.title,
+            })
+            syncRuntimeTaskTitle(address, payload.title)
+          },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
             setRuntimeConversationGoal(address, goal)
@@ -1518,11 +1601,13 @@ export function WorkbenchProvider({
         })
       ),
     [
+      aiGenerationTelemetry,
       applyCanonicalRuntimeAction,
       lifecycleStore,
       refreshRuntimeWorkLists,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
     ]
   )

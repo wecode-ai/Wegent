@@ -118,34 +118,18 @@ def get_user_groups(db: Session, user_id: int) -> list[str]:
     Returns:
         List of group names (without duplicates)
     """
-    # Get all active groups
-    all_groups = db.query(Namespace).filter(Namespace.is_active == True).all()
+    return sorted(get_user_group_roles(db, user_id))
 
-    # Get user's direct + entity memberships with roles
-    all_memberships = iter_user_groups_with_roles(db, user_id)
 
-    # Create a mapping of group_name -> role
-    direct_group_names = {name for name, _, _, _ in all_memberships}
-    accessible_groups = set(direct_group_names)
-
-    # Check permission inheritance for all groups
-    for group in all_groups:
-        # Skip if already in accessible set
-        if group.name in accessible_groups:
-            continue
-
-        # Check if user has access via parent group membership
-        # Example: if user is member of 'aaa', they have access to 'aaa/bbb', 'aaa/bbb/ccc'
-        if "/" in group.name:
-            # Check each parent in the hierarchy
-            parts = group.name.split("/")
-            for i in range(1, len(parts)):
-                parent_name = "/".join(parts[:i])
-                if parent_name in direct_group_names:
-                    accessible_groups.add(group.name)
-                    break
-
-    return sorted(accessible_groups)
+def get_user_group_roles(db: Session, user_id: int) -> dict[str, GroupRole]:
+    """Get effective roles for every active group with one membership fetch."""
+    group_names = [
+        name
+        for (name,) in db.query(Namespace.name)
+        .filter(Namespace.is_active.is_(True))
+        .all()
+    ]
+    return get_effective_roles_in_groups(db, user_id, group_names)
 
 
 def get_effective_role_in_group(

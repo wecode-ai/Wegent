@@ -78,10 +78,20 @@ interface LocalTerminalCheckState {
   pathExists: boolean
 }
 
+type LocalTerminalCloseReason =
+  | 'workspace-panel-unmount'
+  | 'workspace-target-changed'
+  | 'user-closed-session'
+
 function createAvailableTools(): WorkspaceToolAvailability {
   return {
     terminal: true,
   }
+}
+
+function closeLocalTerminalWithReason(sessionId: string, reason: LocalTerminalCloseReason) {
+  console.info('Closing local terminal session', { sessionId, reason })
+  void closeLocalTerminal(sessionId)
 }
 
 export function WorkspacePanelCards({
@@ -237,7 +247,7 @@ export function WorkspacePanelCards({
     return () => {
       terminalSessionsRef.current.forEach(session => {
         if (session.terminal_kind === 'local') {
-          void closeLocalTerminal(session.session_id)
+          closeLocalTerminalWithReason(session.session_id, 'workspace-panel-unmount')
         }
       })
     }
@@ -254,7 +264,7 @@ export function WorkspacePanelCards({
 
     terminalSessionsRef.current.forEach(session => {
       if (session.terminal_kind === 'local') {
-        void closeLocalTerminal(session.session_id)
+        closeLocalTerminalWithReason(session.session_id, 'workspace-target-changed')
       }
     })
     terminalSessionsRef.current = []
@@ -514,7 +524,7 @@ export function WorkspacePanelCards({
   const handleCloseTerminalSession = (sessionId: string) => {
     const session = terminalSessions.find(session => session.session_id === sessionId)
     if (session?.terminal_kind === 'local') {
-      void closeLocalTerminal(sessionId)
+      closeLocalTerminalWithReason(sessionId, 'user-closed-session')
     }
 
     removeTerminalSession(sessionId)

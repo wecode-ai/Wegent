@@ -357,12 +357,14 @@ function runtimeWorkHasWorkspace(
   workspacePath: string
 ): boolean {
   const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
-  return (runtimeWork?.projects ?? []).some(projectWork =>
-    projectWork.deviceWorkspaces.some(
-      workspace =>
-        workspace.deviceId === deviceId &&
-        normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
-    )
+  const hasMatchingWorkspace = (workspace: RuntimeDeviceWorkspace) =>
+    workspace.deviceId === deviceId &&
+    normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
+
+  return (
+    (runtimeWork?.projects ?? []).some(projectWork =>
+      projectWork.deviceWorkspaces.some(hasMatchingWorkspace)
+    ) || (runtimeWork?.chats ?? []).some(hasMatchingWorkspace)
   )
 }
 
@@ -1438,6 +1440,9 @@ function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
+  const titleShimmerDelayRef = useRef<number | null>(null)
+  const previousTitleRef = useRef(task.title)
+  const [titleShimmering, setTitleShimmering] = useState(false)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
   const projectLabel = projectName?.trim() || t('workbench.task')
@@ -1491,8 +1496,23 @@ function RuntimeTaskRow({
       if (archiveDelayRef.current !== null) {
         window.clearTimeout(archiveDelayRef.current)
       }
+      if (titleShimmerDelayRef.current !== null) {
+        window.clearTimeout(titleShimmerDelayRef.current)
+      }
     }
   }, [])
+  useEffect(() => {
+    if (previousTitleRef.current === task.title) return
+    previousTitleRef.current = task.title
+    setTitleShimmering(true)
+    if (titleShimmerDelayRef.current !== null) {
+      window.clearTimeout(titleShimmerDelayRef.current)
+    }
+    titleShimmerDelayRef.current = window.setTimeout(() => {
+      titleShimmerDelayRef.current = null
+      setTitleShimmering(false)
+    }, 760)
+  }, [task.title])
   const runArchive = async (options?: ArchiveRuntimeTaskOptions) => {
     setArchiving(true)
     try {
@@ -1624,7 +1644,20 @@ function RuntimeTaskRow({
         >
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-              <span className="truncate">
+              <span
+                data-testid={`runtime-local-task-title-${task.taskId}`}
+                className={cn(
+                  'runtime-task-title relative truncate',
+                  titleShimmering && 'is-updated'
+                )}
+              >
+                {titleShimmering ? (
+                  <span
+                    aria-hidden="true"
+                    className="runtime-task-title-shimmer"
+                    data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                  />
+                ) : null}
                 <span
                   data-sidebar-drag-activator
                   data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
@@ -1647,7 +1680,20 @@ function RuntimeTaskRow({
               </span>
             </span>
           ) : (
-            <span className="min-w-0 flex-1 truncate">
+            <span
+              data-testid={`runtime-local-task-title-${task.taskId}`}
+              className={cn(
+                'runtime-task-title relative min-w-0 flex-1 truncate',
+                titleShimmering && 'is-updated'
+              )}
+            >
+              {titleShimmering ? (
+                <span
+                  aria-hidden="true"
+                  className="runtime-task-title-shimmer"
+                  data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                />
+              ) : null}
               <span
                 data-sidebar-drag-activator
                 data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
@@ -2224,6 +2270,7 @@ function ProjectItem({
                   <ProjectFolderIcon
                     project={project}
                     remote={isRuntimeRemoteProject(runtimeProjectWork)}
+                    open={expanded}
                     className="h-3.5 w-3.5 shrink-0"
                   />
                 )}

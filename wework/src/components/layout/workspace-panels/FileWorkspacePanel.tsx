@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 import {
   isLocalTerminalAvailable,
   getCachedLocalFileOpenerIcon,
@@ -522,8 +523,10 @@ export function FileWorkspacePanel({
       setPreview(saved)
       setEditedContent(saved.content)
       setEditing(false)
+      track('feature_action_completed', { domain: 'workspace_file', action: 'update' })
       return true
     } catch (error) {
+      track('operation_failed', { operation: 'workspace_file_action' })
       setSaveError(
         error instanceof Error ? error.message : t('workbench.workspace_file_save_failed')
       )

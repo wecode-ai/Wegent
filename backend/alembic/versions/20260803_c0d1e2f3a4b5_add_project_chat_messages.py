@@ -4,7 +4,7 @@
 """Add shared project chat messages.
 
 Revision ID: c0d1e2f3a4b5
-Revises: b9c0d1e2f3a4
+Revises: a8b9c0d1e2f3
 Create Date: 2026-08-03
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c0d1e2f3a4b5"
-down_revision: Union[str, Sequence[str], None] = "b9c0d1e2f3a4"
+down_revision: Union[str, Sequence[str], None] = "a8b9c0d1e2f3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

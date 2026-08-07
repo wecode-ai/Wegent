@@ -112,6 +112,76 @@ describe('workbenchReducer', () => {
     expect(state.standaloneChatKey).toBe(4)
   })
 
+  test('updates only the matching runtime task title without changing its execution state', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-a',
+                    workspacePath: '/workspace/repo',
+                    title: '原始标题',
+                    runtime: 'codex' as const,
+                    status: 'succeeded',
+                    running: false,
+                    threadStatus: 'idle',
+                    turnStatus: 'completed' as const,
+                  },
+                  {
+                    taskId: 'runtime-b',
+                    workspacePath: '/workspace/repo',
+                    title: '不应变更',
+                    runtime: 'codex' as const,
+                    status: 'running',
+                    running: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 2,
+      },
+    }
+
+    const updated = workbenchReducer(state, {
+      type: 'runtime_task_title_updated',
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        taskId: 'runtime-a',
+      },
+      title: '优化后的标题',
+    })
+
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'runtime-a',
+        title: '优化后的标题',
+        status: 'succeeded',
+        running: false,
+        threadStatus: 'idle',
+        turnStatus: 'completed',
+      }),
+      expect.objectContaining({
+        taskId: 'runtime-b',
+        title: '不应变更',
+        status: 'running',
+        running: true,
+      }),
+    ])
+  })
+
   test('preserves blank chat draft when returning to standalone chat', () => {
     const state = workbenchReducer(
       {

@@ -62,6 +62,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           'actions.add': '添加',
           'actions.added': '已添加',
           'actions.details': '详情',
+          'actions.more': '更多操作',
           'actions.remove_added_agent': '取消添加',
           'actions.remove_added_skill': '取消添加',
           'actions.cancel': '取消',
@@ -127,6 +128,27 @@ jest.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
 }))
 
+jest.mock('@/components/ui/dropdown', () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    disabled,
+    'data-testid': testId,
+  }: {
+    children: ReactNode
+    onSelect?: () => void
+    disabled?: boolean
+    'data-testid'?: string
+  }) => (
+    <button type="button" onClick={onSelect} disabled={disabled} data-testid={testId}>
+      {children}
+    </button>
+  ),
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+}))
+
 const mockedListMyInstalls = resourceLibraryApi.listMyInstalls as jest.MockedFunction<
   typeof resourceLibraryApi.listMyInstalls
 >
@@ -185,6 +207,13 @@ function makeInstall(
     updated_at: '2026-07-29T00:00:00Z',
     ...overrides,
   }
+}
+
+async function openRemovalConfirmation(resourceType: 'agent' | 'skill', installId: number = 21) {
+  fireEvent.click(
+    await screen.findByTestId(`installed-resource-actions-${resourceType}-${installId}`)
+  )
+  fireEvent.click(await screen.findByTestId(`remove-installed-${resourceType}-${installId}-button`))
 }
 
 describe('InstalledResources', () => {
@@ -251,12 +280,13 @@ describe('InstalledResources', () => {
       'lg:grid-cols-3',
       'xl:grid-cols-4'
     )
-    const removeSwitch = screen.getByRole('switch', { name: '已添加 Installed Skill' })
-    expect(removeSwitch).toBeChecked()
     const footerAction = screen.getByTestId('resource-listing-footer-action-92')
     expect(within(footerAction).getByTestId('configure-added-skill-21-button')).toHaveTextContent(
       '配置'
     )
+    expect(
+      within(footerAction).getByTestId('installed-resource-actions-skill-21')
+    ).toHaveAccessibleName('更多操作')
     expect(screen.queryByTestId('resource-listing-footer-92')).not.toBeInTheDocument()
   })
 
@@ -320,7 +350,7 @@ describe('InstalledResources', () => {
 
     render(<InstalledResources resourceType="skill" />)
 
-    fireEvent.click(await screen.findByTestId('remove-installed-skill-21-button'))
+    await openRemovalConfirmation('skill')
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
       '确定取消添加技能「Installed Skill」吗？'
     )
@@ -341,7 +371,7 @@ describe('InstalledResources', () => {
 
     render(<InstalledResources resourceType="skill" />)
 
-    fireEvent.click(await screen.findByTestId('remove-installed-skill-21-button'))
+    await openRemovalConfirmation('skill')
     fireEvent.click(screen.getByTestId('confirm-remove-installed-skill-button'))
 
     await waitFor(() => expect(mockedRemoveSkillFromMyDefault).toHaveBeenCalledWith(92))
@@ -352,7 +382,7 @@ describe('InstalledResources', () => {
 
     render(<InstalledResources resourceType="skill" />)
 
-    fireEvent.click(await screen.findByTestId('remove-installed-skill-21-button'))
+    await openRemovalConfirmation('skill')
     fireEvent.click(screen.getByTestId('confirm-remove-installed-skill-button'))
 
     await waitFor(() =>
@@ -557,14 +587,11 @@ describe('InstalledResources', () => {
     render(<InstalledResources resourceType="agent" keyword="" />)
 
     const card = await screen.findByTestId('resource-listing-card-92')
-    const managementActions = within(card).getByTestId('resource-listing-management-actions-92')
+    const primaryActions = within(card).getByTestId('resource-listing-primary-action-92')
     const useButton = within(card).getByTestId('install-resource-92-button')
     expect(
-      within(managementActions).queryByTestId('install-resource-92-button')
-    ).not.toBeInTheDocument()
-    expect(
-      within(managementActions).getByRole('switch', { name: '已添加 Installed Agent' })
-    ).toBeChecked()
+      within(primaryActions).getByTestId('installed-resource-actions-agent-21')
+    ).toHaveAccessibleName('更多操作')
     expect(useButton).toHaveClass('h-11', 'w-full', 'md:h-8')
     expect(useButton).toHaveTextContent(bindModes.length === 1 ? '去编码' : '去对话')
     expect(useButton.querySelector('svg')).toBeInTheDocument()
@@ -585,15 +612,13 @@ describe('InstalledResources', () => {
     render(<InstalledResources resourceType="agent" />)
 
     const card = await screen.findByTestId('resource-listing-card-92')
-    const managementActions = within(card).getByTestId('resource-listing-management-actions-92')
+    const primaryActions = within(card).getByTestId('resource-listing-primary-action-92')
     expect(within(card).getByTestId('install-resource-92-button')).toHaveTextContent('去对话')
-    const removeSwitch = within(managementActions).getByTestId('remove-installed-agent-21-button')
-    expect(within(managementActions).queryByText('已添加')).not.toBeInTheDocument()
-    expect(removeSwitch).toHaveRole('switch')
-    expect(removeSwitch).toHaveAccessibleName('已添加 Installed Agent')
-    expect(removeSwitch).toBeChecked()
-    fireEvent.click(removeSwitch)
-    expect(removeSwitch).not.toBeChecked()
+    const actionsButton = within(primaryActions).getByTestId('installed-resource-actions-agent-21')
+    expect(within(primaryActions).queryByText('已添加')).not.toBeInTheDocument()
+    expect(actionsButton).toHaveAccessibleName('更多操作')
+    fireEvent.click(actionsButton)
+    fireEvent.click(await screen.findByTestId('remove-installed-agent-21-button'))
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
       '确定取消添加智能体「Installed Agent」吗？'
     )
@@ -604,7 +629,7 @@ describe('InstalledResources', () => {
     expect(mockToast).toHaveBeenCalledWith({ title: '已取消添加智能体' })
   })
 
-  it('restores the installed agent switch when removal is cancelled', async () => {
+  it('keeps the installed agent when removal is cancelled', async () => {
     mockedListMyInstalls.mockResolvedValue({
       items: [makeInstall('agent')],
       total: 1,
@@ -614,14 +639,11 @@ describe('InstalledResources', () => {
 
     render(<InstalledResources resourceType="agent" />)
 
-    const removeSwitch = await screen.findByTestId('remove-installed-agent-21-button')
-    fireEvent.click(removeSwitch)
-
-    expect(removeSwitch).not.toBeChecked()
+    await openRemovalConfirmation('agent')
     fireEvent.click(screen.getByTestId('cancel-remove-installed-resource-button'))
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(removeSwitch).toBeChecked()
+    expect(screen.getByTestId('resource-listing-card-92')).toBeInTheDocument()
     expect(mockedUninstallListing).not.toHaveBeenCalled()
   })
 

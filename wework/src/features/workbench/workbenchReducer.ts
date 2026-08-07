@@ -126,6 +126,11 @@ export type WorkbenchAction =
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
     }
+  | {
+      type: 'runtime_task_title_updated'
+      address: RuntimeTaskAddress
+      title: string
+    }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
@@ -162,6 +167,35 @@ function updateRuntimeWorkDeviceStatus(
       deviceStatus: status,
       available: status !== 'offline',
     }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
+function updateRuntimeWorkTaskTitle(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  title: string
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    if (workspace.deviceId !== address.deviceId && workspace.remoteHostId !== address.deviceId) {
+      return workspace
+    }
+
+    const tasks = workspace.tasks.map(task =>
+      task.taskId === address.taskId ? { ...task, title } : task
+    )
+    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
+    return { ...workspace, tasks }
   }
 
   return {
@@ -1175,6 +1209,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
+      }
+    case 'runtime_task_title_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
       }
     case 'runtime_tasks_archived':
       return {

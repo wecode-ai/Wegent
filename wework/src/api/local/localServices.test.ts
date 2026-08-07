@@ -90,6 +90,9 @@ describe('createLocalAppServices', () => {
     })
     const models = await services.modelApi.listModels()
 
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
+      includeHidden: true,
+    })
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
@@ -114,10 +117,18 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
-    expect(modelIds).not.toContain('gpt-5.5')
-    expect(modelIds).not.toContain('Sol')
-    expect(modelIds).not.toContain('Terra')
-    expect(modelIds).not.toContain('Luna')
+    expect(modelIds).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex-spark',
+      ])
+    )
+    expect(modelIds).not.toContain('gpt-5.2')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -541,9 +552,8 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
-          local_preview_url:
-            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
     })
@@ -580,9 +590,8 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
-          local_preview_url:
-            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
       executionRequest: expect.objectContaining({
@@ -645,9 +654,8 @@ describe('createLocalAppServices', () => {
             mime_type: 'image/png',
             subtask_id: expect.any(String),
             file_extension: '.png',
-            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
-            local_preview_url:
-              '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+            local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
+            local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
           },
         ],
       }),
@@ -688,7 +696,7 @@ describe('createLocalAppServices', () => {
           }
         }
         if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
           return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
@@ -732,7 +740,7 @@ describe('createLocalAppServices', () => {
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
     expect(worktreePath).toMatch(
-      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
+      /^\/Users\/me\/\.wework\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
     expect(response?.runtimeHandle).toEqual({
@@ -786,7 +794,7 @@ describe('createLocalAppServices', () => {
           }
         }
         if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
           return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
@@ -884,9 +892,8 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
-          local_preview_url:
-            '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+          local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
+          local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
         },
       ],
     })
@@ -918,9 +925,8 @@ describe('createLocalAppServices', () => {
             status: 'ready',
             file_extension: '.png',
             created_at: '2026-06-29T00:00:00.000Z',
-            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
-            local_preview_url:
-              '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+            local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
+            local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
           },
         ],
         executionRequest: expect.objectContaining({
@@ -966,10 +972,8 @@ describe('createLocalAppServices', () => {
               mime_type: 'image/png',
               subtask_id: expect.any(String),
               file_extension: '.png',
-              local_path:
-                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
-              local_preview_url:
-                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+              local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
+              local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
             },
           ],
         }),

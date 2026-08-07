@@ -12,6 +12,7 @@ import type {
   RuntimeGoalEventPayload,
   RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
+  RuntimeTaskTitleUpdatedPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeMessagePresentationReference,
   RuntimeSubagentActivityPayload,
@@ -39,10 +40,13 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
   onAssistantStart?: (turnId: string) => void
+  onAssistantFirstToken?: (turnId: string) => void
+  onAssistantResponseSize?: (turnId: string, responseSizeBytes: number) => void
   onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
@@ -55,6 +59,12 @@ export interface RuntimeTaskStreamHandlers {
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
   onAssistantStart?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantFirstToken?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantResponseSize?: (
+    address: RuntimeTaskAddress,
+    turnId: string,
+    responseSizeBytes: number
+  ) => void
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
     turnId: string,
@@ -65,6 +75,10 @@ export interface RuntimeConversationStreamHandlers {
   onSubagentActivity?: (
     address: RuntimeTaskAddress,
     payload: RuntimeSubagentActivityPayload
+  ) => void
+  onRuntimeTaskTitleUpdated?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeTaskTitleUpdatedPayload
   ) => void
   onRuntimeGoalUpdated?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
@@ -105,11 +119,15 @@ export function createRuntimeConversationStreamHandlers(
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
       onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantFirstToken: turnId => handlers.onAssistantFirstToken?.(address, turnId),
+      onAssistantResponseSize: (turnId, responseSizeBytes) =>
+        handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
       onAssistantSettled: (turnId, outcome) =>
         handlers.onAssistantSettled?.(address, turnId, outcome),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
+      onRuntimeTaskTitleUpdated: payload => handlers.onRuntimeTaskTitleUpdated?.(address, payload),
       onRuntimeGoalUpdated: payload => handlers.onRuntimeGoalUpdated?.(address, payload),
       onRuntimeGoalCleared: payload => handlers.onRuntimeGoalCleared?.(address, payload),
       onRuntimeSupervisorUpdated: payload =>
@@ -130,6 +148,7 @@ export function createRuntimeConversationStreamHandlers(
     onBlockCreated: payload => resolve(payload)?.onBlockCreated?.(payload),
     onBlockUpdated: payload => resolve(payload)?.onBlockUpdated?.(payload),
     onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
+    onRuntimeTaskTitleUpdated: payload => resolve(payload)?.onRuntimeTaskTitleUpdated?.(payload),
     onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
     onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
     onRuntimeSupervisorUpdated: payload => resolve(payload)?.onRuntimeSupervisorUpdated?.(payload),
@@ -145,6 +164,7 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
+  const firstTokenSent = new Set<string>()
 
   const streamHandlers: ChatStreamHandlers = {
     scope: {
@@ -214,6 +234,12 @@ export function createRuntimeTaskStreamHandlers(
       if (contextUsage) {
         handlers.onContextUsageUpdated?.(contextUsage)
       }
+      if (payload.content || reasoningChunk) {
+        if (!firstTokenSent.has(identity.subtaskId)) {
+          firstTokenSent.add(identity.subtaskId)
+          handlers.onAssistantFirstToken?.(identity.subtaskId)
+        }
+      }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
         hasReasoningChunk: Boolean(reasoningChunk),
@@ -271,6 +297,16 @@ export function createRuntimeTaskStreamHandlers(
         blocks,
         fileChanges,
       })
+      const assistantText =
+        typeof payload.result?.value === 'string' && payload.result.value.trim()
+          ? payload.result.value
+          : undefined
+      if (assistantText) {
+        handlers.onAssistantResponseSize?.(
+          identity.subtaskId,
+          new TextEncoder().encode(assistantText).byteLength
+        )
+      }
       handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
       handlers.onRefreshWorkLists?.()
     },
@@ -418,6 +454,10 @@ export function createRuntimeTaskStreamHandlers(
         kind: payload.kind ?? null,
       })
       handlers.onSubagentActivity?.(payload)
+    },
+    onRuntimeTaskTitleUpdated: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeTaskTitleUpdated?.(payload)
     },
     onRuntimeGoalUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return

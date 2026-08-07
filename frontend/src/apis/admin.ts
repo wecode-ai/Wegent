@@ -115,6 +115,37 @@ export interface SystemStats {
   total_public_models: number
 }
 
+export interface TaskRunFailureReason {
+  reason: string | null
+  count: number
+  percentage: number
+}
+
+export interface RecentTaskRunFailure {
+  subtask_id: number
+  task_id: number
+  task_title: string
+  user_id: number
+  user_name: string | null
+  client_origin: string
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskRunStats {
+  hours: number
+  window_start: string
+  window_end: string
+  total_runs: number
+  total_is_approximate: boolean
+  failed_runs: number
+  failure_rate: number
+  failure_reasons: TaskRunFailureReason[]
+  recent_failures: RecentTaskRunFailure[]
+  data_as_of: string | null
+}
+
 // Connector App Types
 export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
@@ -359,6 +390,37 @@ export interface AdminPublicTeamUpdate {
 export interface AdminPublicTeamIconUpload {
   asset_id: number
   url: string
+}
+
+export type AdminMarketplaceResourceType = 'agent' | 'skill'
+
+export interface AdminMarketplaceExampleConversation {
+  title: string
+  url: string
+}
+
+export interface AdminMarketplaceResource {
+  id: number
+  resource_type: AdminMarketplaceResourceType
+  name: string
+  display_name: string
+  description: string | null
+  publisher_user_name: string | null
+  is_system: boolean
+  recommendation_score: number
+  example_conversations: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceUpdate {
+  recommendation_score?: number
+  example_conversations?: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceListResponse {
+  items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
 }
 
 // Public Bot Types
@@ -828,6 +890,13 @@ export const adminApis = {
     return apiClient.get('/admin/stats')
   },
 
+  /**
+   * Get assistant task run statuses and failure reasons.
+   */
+  async getTaskRunStats(hours: number = 24): Promise<TaskRunStats> {
+    return apiClient.get(`/admin/task-runs/stats?hours=${hours}`)
+  },
+
   // ==================== System Config (Quick Access) ====================
 
   /**
@@ -1052,6 +1121,23 @@ export const adminApis = {
    */
   async deletePublicTeamIcon(assetId: number): Promise<void> {
     return apiClient.delete(`/admin/public-teams/icon-assets/${assetId}`)
+  },
+
+  async getMarketplaceResources(
+    resourceType: AdminMarketplaceResourceType,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<AdminMarketplaceResourceListResponse> {
+    return apiClient.get(
+      `/admin/marketplace-resources?resource_type=${resourceType}&page=${page}&limit=${limit}`
+    )
+  },
+
+  async updateMarketplaceResource(
+    resourceId: number,
+    update: AdminMarketplaceResourceUpdate
+  ): Promise<AdminMarketplaceResource> {
+    return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
   },
 
   // ==================== Public Bot Management ====================

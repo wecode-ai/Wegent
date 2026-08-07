@@ -1069,6 +1069,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       return selectSlashCommand(command, currentSlashTrigger)
     }, [filteredSlashCommands, selectSlashCommand, slashCommands])
 
+    const confirmHighlightedMenuSelection = useCallback(() => {
+      if (showSkillMenuRef.current) return selectHighlightedMention()
+      if (showSlashMenuRef.current) return selectHighlightedSlashCommand()
+      return false
+    }, [selectHighlightedMention, selectHighlightedSlashCommand])
+
     const getModelCompatibilityDisabledMessage = useCallback(
       (model: UnifiedModel): string | undefined => {
         if (!model.compatibilityDisabled) return undefined
@@ -1250,6 +1256,15 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           return true
         }
 
+        if (event.key === 'Tab' && !event.shiftKey) {
+          if (isComposing || isImeComposingEvent(event)) return false
+          if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
+          if (!confirmHighlightedMenuSelection()) return false
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+
         if (event.key === 'Enter') {
           debugComposerEvent('keydown-enter', {
             shiftKey: event.shiftKey,
@@ -1272,13 +1287,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             event.preventDefault()
             return true
           }
-          if (showSkillMenuRef.current && selectHighlightedMention()) {
-            suppressEnterUntilKeyUpRef.current = true
-            event.preventDefault()
-            event.stopPropagation()
-            return true
-          }
-          if (showSlashMenuRef.current && selectHighlightedSlashCommand()) {
+          if (confirmHighlightedMenuSelection()) {
             suppressEnterUntilKeyUpRef.current = true
             event.preventDefault()
             event.stopPropagation()
@@ -1329,12 +1338,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       [
         canSend,
         closeAutocompleteMenu,
+        confirmHighlightedMenuSelection,
         isComposing,
         moveHighlightedIndex,
         onKeyDown,
         onSubmit,
-        selectHighlightedMention,
-        selectHighlightedSlashCommand,
       ]
     )
 

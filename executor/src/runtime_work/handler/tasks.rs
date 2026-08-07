@@ -5,6 +5,146 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn generate_friendly_title(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let source_title = string_field(&payload, "sourceTitle")
+            .or_else(|| string_field(&payload, "source_title"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "sourceTitle is required"))?;
+        let link = self.task_link_from_payload(&payload, false).await?;
+        if link.title != source_title {
+            log_executor_event(
+                "friendly task title generation skipped",
+                &[
+                    ("local_task_id", link.local_task_id),
+                    ("reason", "title_changed_before_generation".to_owned()),
+                ],
+            );
+            return Ok(json!({"success": true, "skipped": true}));
+        }
+        let local_task_id = link.local_task_id.clone();
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        request.ephemeral = true;
+        let result = self
+            .codex_app_server
+            .run_turn_with_cancel(request.clone(), CodexAppServerTurnOptions::default())
+            .await;
+        let content = match result {
+            Ok(turn) => match turn.outcome {
+                ExecutionOutcome::Completed { content } => content,
+                ExecutionOutcome::Failed { message } => {
+                    log_executor_event(
+                        "friendly task title generation failed",
+                        &[
+                            ("local_task_id", local_task_id.clone()),
+                            ("reason", "model_request_failed".to_owned()),
+                            ("error", message.clone()),
+                        ],
+                    );
+                    return Ok(json!({"success": false, "error": message}));
+                }
+                outcome => {
+                    let error = format!("friendly title generation did not complete: {outcome:?}");
+                    log_executor_event(
+                        "friendly task title generation failed",
+                        &[
+                            ("local_task_id", local_task_id.clone()),
+                            ("reason", "model_request_incomplete".to_owned()),
+                            ("error", error.clone()),
+                        ],
+                    );
+                    return Ok(json!({"success": false, "error": error}));
+                }
+            },
+            Err(error) => {
+                log_executor_event(
+                    "friendly task title generation failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("reason", "model_transport_failed".to_owned()),
+                        ("error", error.clone()),
+                    ],
+                );
+                return Ok(json!({"success": false, "error": error}));
+            }
+        };
+        let Some(title) = normalize_friendly_title(&content) else {
+            log_executor_event(
+                "friendly task title generation failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("reason", "empty_model_output".to_owned()),
+                ],
+            );
+            return Ok(json!({"success": false, "error": "friendly title was empty"}));
+        };
+        let mut latest_link = self.task_link_from_payload(&payload, false).await?;
+        for _ in 0..25 {
+            if latest_link.title != source_title {
+                log_executor_event(
+                    "friendly task title generation skipped",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("reason", "title_changed_during_generation".to_owned()),
+                    ],
+                );
+                return Ok(json!({"success": true, "skipped": true}));
+            }
+            if latest_link.thread_id.is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(200)).await;
+            latest_link = self.task_link_from_payload(&payload, false).await?;
+        }
+        if latest_link.title != source_title {
+            log_executor_event(
+                "friendly task title generation skipped",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("reason", "title_changed_before_update".to_owned()),
+                ],
+            );
+            return Ok(json!({"success": true, "skipped": true}));
+        }
+        if let Some(thread_id) = latest_link.thread_id.as_deref() {
+            if let Err(error) = self
+                .call_codex_thread_method(
+                    "thread/name/set",
+                    json!({"threadId": thread_id, "name": title}),
+                )
+                .await
+            {
+                log_executor_event(
+                    "friendly task title generation failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("reason", "thread_name_update_failed".to_owned()),
+                        ("error", error.clone()),
+                    ],
+                );
+                return Ok(json!({"success": false, "error": error}));
+            }
+        }
+        latest_link.title = title.clone();
+        latest_link.updated_at = now_ms();
+        self.upsert_local_task(latest_link);
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.task.title.updated",
+            &local_task_id,
+            &request,
+            json!({"title": title}),
+        );
+        log_executor_event(
+            "friendly task title generation completed",
+            &[("local_task_id", local_task_id)],
+        );
+        Ok(json!({"success": true, "title": title}))
+    }
+
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
         let source = self.task_link_from_payload(&payload, false).await?;
         let requested_turn_id = string_field(&payload, "lastTurnId")
@@ -219,9 +359,49 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
             fork_thread_path: side_source.and_then(|source| source.thread_path),
             resume_thread_id: None,
-            initial_thread_name: Some(title),
+            initial_thread_name: Some(title.clone()),
             initial_thread_goal,
         });
+        match payload.get("friendlyTitleExecutionRequest").cloned() {
+            Some(value) => match serde_json::from_value::<ExecutionRequest>(value) {
+                Ok(execution_request) => {
+                    log_executor_event(
+                        "friendly task title generation queued",
+                        &[("local_task_id", local_task_id.clone())],
+                    );
+                    let handler = self.clone();
+                    let friendly_payload = json!({
+                        "taskId": local_task_id,
+                        "sourceTitle": title,
+                        "executionRequest": execution_request,
+                    });
+                    tokio::spawn(async move {
+                        if let Err(error) = handler.generate_friendly_title(friendly_payload).await
+                        {
+                            log_executor_event(
+                                "friendly task title generation failed",
+                                &[("error", error.message)],
+                            );
+                        }
+                    });
+                }
+                Err(error) => log_executor_event(
+                    "friendly task title generation rejected",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("reason", "invalid_execution_request".to_owned()),
+                        ("error", error.to_string()),
+                    ],
+                ),
+            },
+            None => log_executor_event(
+                "friendly task title generation skipped",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("reason", "missing_execution_request".to_owned()),
+                ],
+            ),
+        }
 
         Ok(json!({
             "success": true,
@@ -847,6 +1027,25 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn normalize_friendly_title(value: &str) -> Option<String> {
+    let title = value
+        .lines()
+        .find_map(|line| {
+            let trimmed = line
+                .trim()
+                .trim_matches(|ch| matches!(ch, '"' | '\'' | '“' | '”' | '‘' | '’' | '`'));
+            (!trimmed.is_empty()).then_some(trimmed)
+        })?
+        .chars()
+        .take(48)
+        .collect::<String>()
+        .trim()
+        .trim_end_matches(['。', '！', '？', '.', '!', '?'])
+        .trim()
+        .to_owned();
+    (!title.is_empty()).then_some(title)
+}
+
 pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &Value) -> bool {
     let previous = model_selection_identity(
         link.runtime_handle
@@ -973,4 +1172,22 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_friendly_title;
+
+    #[test]
+    fn normalizes_model_title_to_one_short_line() {
+        assert_eq!(
+            normalize_friendly_title("  “为任务创建友好标题。”\n这是解释"),
+            Some("为任务创建友好标题".to_owned())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_model_title() {
+        assert_eq!(normalize_friendly_title(" \n\t "), None);
+    }
 }

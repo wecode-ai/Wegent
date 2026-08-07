@@ -237,14 +237,13 @@ async def test_mcp_session_initializes_streamable_http_transport(
 
 
 @pytest.mark.asyncio
-async def test_server_config_sends_trusted_user_headers(
+async def test_server_config_sends_trusted_user_headers_without_opt_in(
     test_db: Session, test_user: User
 ) -> None:
     app = _app(
         slug="sites",
         name="Sites",
         provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
-        forward_user_context_headers=True,
     )
 
     config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
@@ -257,7 +256,7 @@ async def test_server_config_sends_trusted_user_headers(
 
 
 @pytest.mark.asyncio
-async def test_oauth_server_config_uses_user_token_without_identity_headers(
+async def test_oauth_server_config_uses_user_token_with_identity_headers(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -276,7 +275,11 @@ async def test_oauth_server_config_uses_user_token_without_identity_headers(
 
     config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
 
-    assert config["headers"] == {"Authorization": "Bearer github-user-token"}
+    assert config["headers"] == {
+        "Authorization": "Bearer github-user-token",
+        "X-Wegent-Username": test_user.user_name,
+        "X-Wegent-User-Id": str(test_user.id),
+    }
 
 
 @pytest.mark.asyncio

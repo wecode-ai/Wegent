@@ -5,7 +5,7 @@
 """add plugin marketplace v2 control-plane tables
 
 Revision ID: d4e5f6a7b8c9
-Revises: b9c0d1e2f3a4
+Revises: a8b9c0d1e2f3
 Create Date: 2026-08-04
 
 Squashed from the feature-branch chain that previously created the marketplace
@@ -27,7 +27,7 @@ from sqlalchemy.dialects import mysql
 from alembic import op
 
 revision: str = "d4e5f6a7b8c9"
-down_revision: Union[str, Sequence[str], None] = "d2e3f4a5b6c7"
+down_revision: Union[str, Sequence[str], None] = "a8b9c0d1e2f3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
