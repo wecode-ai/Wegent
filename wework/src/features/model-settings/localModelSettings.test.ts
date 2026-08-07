@@ -122,6 +122,21 @@ describe('localModelSettings', () => {
     expect(findLocalModelConfigByModelName(model.codexCatalogModelId)).toEqual(model)
   })
 
+  test('does not resolve a local model when the model name is absent', () => {
+    const vision = saveLocalModelConfig({
+      id: 'vision',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry: {
+        input_modalities: ['text', 'image'],
+      },
+    })
+
+    expect(vision.codexCatalogModelId).toBeUndefined()
+    expect(findLocalModelConfigByModelName()).toBeNull()
+  })
+
   test('persists a vision proxy reference and clears it when that model is deleted', () => {
     const vision = saveLocalModelConfig({
       id: 'vision',
