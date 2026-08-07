@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session, undefer
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
+from app.models.user import User
+from app.stores.tasks.interfaces import FailedSubtaskDetail
 from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 from wecode.task_sharding.global_id_allocator import (
     GlobalIdAllocator,
@@ -27,6 +29,9 @@ from wecode.task_sharding.shard import (
 )
 from wecode.task_sharding.task_id import (
     is_new_task_id,
+)
+from wecode.task_sharding.task_run_metric_hooks import (
+    queue_bulk_sharded_subtask_status_metrics,
 )
 from wecode.task_sharding.task_store import MAX_TASK_ID_INSERT_ATTEMPTS
 from wecode.task_sharding.uuid_factory.user_scoped_id_factory import uid_from_id
@@ -431,6 +436,65 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
                 .all()
             )
         return subtasks
+
+    def list_failed_details_by_ids(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        limit: int,
+    ) -> list[FailedSubtaskDetail]:
+        if not subtask_ids or limit <= 0:
+            return []
+
+        unique_ids = list(dict.fromkeys(subtask_ids))
+        legacy_ids: list[int] = []
+        shard_ids_by_model: dict[type, list[int]] = defaultdict(list)
+        for subtask_id in unique_ids:
+            if is_new_task_id(subtask_id):
+                model = subtask_model_for_subtask_id(subtask_id)
+                shard_ids_by_model[model].append(subtask_id)
+            else:
+                legacy_ids.append(subtask_id)
+
+        details = super().list_failed_details_by_ids(
+            db,
+            subtask_ids=legacy_ids,
+            limit=len(unique_ids),
+        )
+        for model, shard_ids in shard_ids_by_model.items():
+            details.extend(self._list_shard_failed_details(db, model, shard_ids))
+
+        order = {subtask_id: index for index, subtask_id in enumerate(unique_ids)}
+        details.sort(key=lambda detail: order[detail.subtask.id])
+        return details[:limit]
+
+    @staticmethod
+    def _list_shard_failed_details(
+        db: Session,
+        subtask_model: type,
+        subtask_ids: Sequence[int],
+    ) -> list[FailedSubtaskDetail]:
+        task_model = task_model_for_task_id(subtask_ids[0])
+        rows = (
+            db.query(subtask_model, task_model, User.user_name)
+            .join(task_model, task_model.id == subtask_model.task_id)
+            .outerjoin(User, User.id == subtask_model.user_id)
+            .filter(
+                subtask_model.id.in_(subtask_ids),
+                subtask_model.status == SubtaskStatus.FAILED,
+                task_model.kind == "Task",
+            )
+            .all()
+        )
+        return [
+            FailedSubtaskDetail(
+                subtask=subtask,
+                task=task,
+                user_name=user_name,
+            )
+            for subtask, task, user_name in rows
+        ]
 
     def get_accessible_by_id(
         self,
@@ -1781,17 +1845,20 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             return 0
 
         model = subtask_model_for_task_id(task_id)
-        return (
-            db.query(model)
-            .filter(model.task_id == task_id)
-            .update(
-                {
-                    model.executor_deleted_at: True,
-                    model.status: SubtaskStatus.DELETE,
-                    model.updated_at: datetime.now(),
-                },
-                synchronize_session="fetch",
-            )
+        query = db.query(model).filter(model.task_id == task_id)
+        self._queue_shard_bulk_status_metrics(
+            db,
+            query,
+            model=model,
+            status=SubtaskStatus.DELETE,
+        )
+        return query.update(
+            {
+                model.executor_deleted_at: True,
+                model.status: SubtaskStatus.DELETE,
+                model.updated_at: datetime.now(),
+            },
+            synchronize_session="fetch",
         )
 
     def mark_task_messages_status(
@@ -1813,16 +1880,19 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             return 0
 
         model = subtask_model_for_task_id(task_id)
-        return (
-            db.query(model)
-            .filter(model.task_id == task_id)
-            .update(
-                {
-                    model.status: status,
-                    model.updated_at: datetime.now(),
-                },
-                synchronize_session=False,
-            )
+        query = db.query(model).filter(model.task_id == task_id)
+        self._queue_shard_bulk_status_metrics(
+            db,
+            query,
+            model=model,
+            status=status,
+        )
+        return query.update(
+            {
+                model.status: status,
+                model.updated_at: datetime.now(),
+            },
+            synchronize_session=False,
         )
 
     def mark_task_subtasks_by_statuses(
@@ -1860,14 +1930,17 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             values[model.progress] = progress
         if completed_at is not None:
             values[model.completed_at] = completed_at
-        return (
-            db.query(model)
-            .filter(
-                model.task_id == task_id,
-                model.status.in_(from_statuses),
-            )
-            .update(values, synchronize_session="fetch")
+        query = db.query(model).filter(
+            model.task_id == task_id,
+            model.status.in_(from_statuses),
         )
+        self._queue_shard_bulk_status_metrics(
+            db,
+            query,
+            model=model,
+            status=to_status,
+        )
+        return query.update(values, synchronize_session="fetch")
 
     def delete_from_message_id(
         self,
@@ -1943,6 +2016,23 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             for subtask_id in subtask_ids
             if subtask_id in id_to_subtask
         ]
+
+    @staticmethod
+    def _queue_shard_bulk_status_metrics(
+        db: Session,
+        query,
+        *,
+        model: type,
+        status: SubtaskStatus,
+    ) -> None:
+        metric_query = query.filter(model.role == SubtaskRole.ASSISTANT)
+        if status != SubtaskStatus.FAILED:
+            metric_query = metric_query.filter(model.status == SubtaskStatus.FAILED)
+        queue_bulk_sharded_subtask_status_metrics(
+            db,
+            metric_query.all(),
+            status=status,
+        )
 
     def _get_shard_subtask_by_id(self, db: Session, subtask_id: int) -> Subtask | None:
         model = subtask_model_for_subtask_id(subtask_id)
