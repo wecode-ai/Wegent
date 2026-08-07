@@ -1594,10 +1594,37 @@ async function createLocalRuntimeTaskPayload(
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
+  const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
+    ? buildLocalRuntimeExecutionRequest({
+        taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
+        runtime: 'codex',
+        teamId: normalizedData.teamId,
+        title: 'Generate friendly task title',
+        message: [
+          '为下面的用户请求生成一个简洁、具体、适合作为任务标题的中文标题。',
+          '只输出标题本身，不要引号、标点、解释或换行；最多 24 个汉字。',
+          '',
+          `用户请求：${normalizedData.message}`,
+        ].join('\n'),
+        turnSeed: createRuntimeTurnSeed(),
+        modelId: normalizedData.friendlyTitle.modelId,
+        modelType: normalizedData.friendlyTitle.modelType,
+        modelOptions: normalizedData.friendlyTitle.modelOptions,
+        cloudModelGateway,
+        localDeviceId,
+        workspacePath: runtimeWorkspace.workspacePath,
+        workspaceSource: runtimeWorkspace.workspaceSource,
+        branch: runtimeWorkspace.branch,
+        newSession: true,
+        ephemeral: true,
+        user,
+      })
+    : null
 
   return {
     ...payload,
     ...(collaborationMode ? { collaborationMode } : {}),
+    ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
@@ -2505,6 +2532,12 @@ export function createRuntimeWorkApiFromIpc(
       )
       debugLocalRuntimeCreatePayload(data, payload)
       const executionRequest = recordValue(payload.executionRequest)
+      console.info('[Wework] Friendly task title request', {
+        taskId: data.taskId,
+        enabled: Boolean(data.friendlyTitle),
+        executionRequestIncluded: Boolean(payload.friendlyTitleExecutionRequest),
+        modelId: data.friendlyTitle?.modelId ?? null,
+      })
       console.info('[Wework] Local runtime execution identity', {
         taskId: stringValue(executionRequest.task_id),
         userId: executionRequest.user_id ?? null,

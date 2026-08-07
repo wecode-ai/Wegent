@@ -1159,7 +1159,7 @@
     "plugins_install_gain_auth_separate": "External accounts authorize separately when needed",
     "plugins_run_skill": "Run skill",
     "plugins_uninstall_plugin_title": "Uninstall plugin?",
-    "plugins_uninstall_plugin_description": "{{name}} will be uninstalled from this account and this device. Local login sessions and install cache will be cleared; you can reinstall from the marketplace.",
+    "plugins_uninstall_plugin_description": "{{name}} will be uninstalled from this account and this device. Local login sessions and runtime installation records will be cleared; you can reinstall from the marketplace.",
     "plugins_creator_preview_status": "Preview created, not installed yet",
     "plugins_creator_view_plugin": "View plugin",
     "plugins_create_prompt_title": "What should we build in Wegent?",

@@ -57,12 +57,20 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
           enabled: true,
           order: 10,
           capabilities: ['create', 'publish', 'delete'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
         {
           app_type: 'miniapp',
           enabled: true,
           order: 20,
           capabilities: ['create', 'open_experience'],
+          create: {
+            plugin_name: 'weibo-miniapp-h5-develop-agent',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     }),
@@ -108,7 +116,10 @@ describe('SitesWorkspace', () => {
     expect(screen.queryByTestId('sites-refresh-button')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-site-menu-item'))
-    expect(onCreate).toHaveBeenCalledWith('web')
+    expect(onCreate).toHaveBeenCalledWith(
+      'web',
+      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
+    )
     expect(screen.getByTestId('sites-search-input')).toBeInTheDocument()
     expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
     expect(screen.queryByText('网络')).not.toBeInTheDocument()
@@ -237,7 +248,27 @@ describe('SitesWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-site-menu-item'))
-    expect(onCreate).toHaveBeenCalledWith('web')
+    expect(onCreate).toHaveBeenCalledWith(
+      'web',
+      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
+    )
+  })
+
+  test('shows a plugin installation notice while creation is preparing chat', async () => {
+    render(
+      <SitesWorkspace
+        api={createApi([])}
+        onCreate={vi.fn()}
+        creatingType="web"
+        createNotice="正在安装应用插件，完成后将进入会话..."
+      />
+    )
+    await screen.findByText('还没有站点')
+
+    expect(screen.getByTestId('sites-create-notice')).toHaveTextContent(
+      '正在安装应用插件，完成后将进入会话...'
+    )
+    expect(screen.getByTestId('sites-create-button')).toBeDisabled()
   })
 
   test('switches to the Mini Program tab through the shared sites API', async () => {
@@ -272,7 +303,13 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
 
-    expect(onCreate).toHaveBeenCalledWith('miniapp')
+    expect(onCreate).toHaveBeenCalledWith(
+      'miniapp',
+      expect.objectContaining({
+        pluginName: 'weibo-miniapp-h5-develop-agent',
+        marketplaceName: 'wegent',
+      })
+    )
   })
 
   test('uses discovered application order and capabilities for navigation and actions', async () => {
@@ -290,12 +327,20 @@ describe('SitesWorkspace', () => {
           enabled: true,
           order: 5,
           capabilities: [],
+          create: {
+            plugin_name: 'weibo-miniapp-h5-develop-agent',
+            marketplace_name: 'wegent',
+          },
         },
         {
           app_type: 'web',
           enabled: true,
           order: 10,
           capabilities: ['create'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     })
@@ -360,7 +405,13 @@ describe('SitesWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('sites-create-site-menu-item')).toHaveFocus())
     await userEvent.keyboard('{ArrowDown}{Enter}')
 
-    expect(onCreate).toHaveBeenCalledWith('miniapp')
+    expect(onCreate).toHaveBeenCalledWith(
+      'miniapp',
+      expect.objectContaining({
+        pluginName: 'weibo-miniapp-h5-develop-agent',
+        marketplaceName: 'wegent',
+      })
+    )
   })
 
   test('requires confirmation and explains that local files are preserved', async () => {

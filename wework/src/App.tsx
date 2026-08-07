@@ -403,8 +403,6 @@ export default function App() {
 }
 
 function MainApp() {
-  const isPopoutWindow = isPopoutWindowRuntime()
-
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
@@ -414,7 +412,7 @@ function MainApp() {
       <AppPreferencesProvider>
         <LanguagePreferenceInitializer />
         <AppUpdateProvider>
-          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+          <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
               <AppShell />

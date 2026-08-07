@@ -106,9 +106,9 @@ erDiagram
 
 ## 4. 来源与身份
 
-| 场景             | `origin`  | `sourceProvider` | UI 标记                  |
-| ---------------- | --------- | ---------------- | ------------------------ |
-| 本机创建         | `created` | 本地             | 我创建的                 |
+| 场景                       | `origin`  | `sourceProvider` | UI 标记                  |
+| -------------------------- | --------- | ---------------- | ------------------------ |
+| 本机创建                   | `created` | 本地             | 我创建的                 |
 | Wegent 自研 / 国内适配镜像 | `market`  | `wegent`         | Wegent 官方              |
 | 精选 Codex 镜像            | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
 | 用户投稿审核通过           | `market`  | `user`           | 社区插件/作者            |
@@ -118,6 +118,8 @@ erDiagram
 > 「国内公开」Tab；不要再标成 `codex`。
 
 “我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
+
+插件运行时身份使用 `plugin://<plugin-name>@<marketplace-name>`。受管市场名由 visibility 统一推导：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。前端生成试用 mention、Composer app metadata 和应用创建插件匹配时必须复用同一套映射，并且只在 `providerKey` 为 `wegent-market` 或 `wegent-marketplace` 的受管安装记录上应用该回退规则。普通 `public` 插件仍合法；只有系统所有者 `user_id=0` 的内置应用插件行若仍保存为旧的 `public`，才会在内置安装路径中规范化为当前注册表定义的 `workspace / wegent`。
 
 ## 5. 核心流程
 
@@ -144,7 +146,7 @@ sequenceDiagram
   API-->>UI: 成功或 502 明确失败
 ```
 
-新安装选择 `latest_release_id`。更新必须由用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的物化记录，离线设备上线后补执行。
+新安装选择 `latest_release_id`。更新必须由用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
 
 Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的稳定 `device_id`。目录中的“已安装”只在该设备 `state=installed` 且 `actual_release_id` 等于账号期望 Release 时成立；账号已有安装意图但当前设备为 `pending/failed` 时仍显示可安装和具体设备错误。一次操作只因当前设备失败而返回 `502`，其他设备失败记录在 `plugin_device_installations` 并等待重连补同步。设备 WebSocket 重连完成后会再次回写逐插件结果，清除已完成的卸载或旧失败状态。
 
@@ -306,7 +308,7 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 
 - 新安装永远取最新 Release，旧安装显示“可更新”且不静默升级。
 - 在线设备成功、离线设备 `pending`、失败返回逐插件错误，更新失败保留旧版本。
-- 安装和卸载由 Codex App Server 执行；Executor 只负责受管包缓存、校验、事件转发和逐设备结果上报。
+- 安装和卸载由 Codex App Server 执行；Executor 只负责受管包缓存、校验、事件转发和逐设备结果上报；普通卸载不承诺删除 `plugins/cache`。
 - `InstalledPlugin.status.devices` 与 App Server 当前设备结果一致，接口成功不得掩盖本机失败。
 - ZIP 穿越、重复路径、符号链接、加密成员、敏感文件、超大展开体积、SHA 错误和缺失 Manifest 均被拒绝。
 - 本地创建不触发云端上传；只有显式发布才产生 Submission。

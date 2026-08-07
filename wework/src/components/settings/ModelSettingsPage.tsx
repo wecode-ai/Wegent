@@ -2385,7 +2385,6 @@ export function ModelSettingsPage({
           onOpenCloudSettings={onOpenCloudSettings}
         />
       </div>
-
       <div className="mt-8">
         <CodexAuthSettingsSection isConnected>
           {loading ? (

@@ -16,13 +16,13 @@ class BuiltinPluginDefinition:
     """Describe the required cloud marketplace state for a built-in plugin."""
 
     name: str
-    visibility: str = "public"
+    visibility: str = "workspace"
     featured: bool = True
     required: bool = True
 
 
 BUILTIN_SITES_PLUGIN_NAME = "wegent-sites"
-BUILTIN_MINI_PROGRAM_PLUGIN_NAME = "wegent-mini-program"
+BUILTIN_MINI_PROGRAM_PLUGIN_NAME = "weibo-miniapp-h5-develop-agent"
 BUILTIN_PLUGINS = (
     BuiltinPluginDefinition(name=BUILTIN_SITES_PLUGIN_NAME, required=False),
     BuiltinPluginDefinition(

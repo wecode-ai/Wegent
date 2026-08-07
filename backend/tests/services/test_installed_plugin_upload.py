@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import io
 import json
 import zipfile
@@ -261,7 +262,7 @@ def test_user_cannot_publish_builtin_plugin_to_marketplace(
 
 
 @pytest.mark.parametrize("plugin_name", BUILTIN_PLUGIN_NAMES)
-def test_system_builtin_publication_forces_public_featured(test_db, plugin_name):
+def test_system_builtin_publication_forces_workspace_featured(test_db, plugin_name):
     service = InstalledPluginService()
 
     item = service.publish_marketplace_plugin(
@@ -274,7 +275,7 @@ def test_system_builtin_publication_forces_public_featured(test_db, plugin_name)
     )
 
     assert item.ownerUserId == BUILTIN_PLUGIN_OWNER_ID
-    assert item.visibility == "public"
+    assert item.visibility == "workspace"
     assert item.featured is True
 
 
@@ -361,7 +362,7 @@ def test_builtin_plugin_is_published_and_installed_idempotently(
     assert len(published) == 1
     assert published[0].name == BUILTIN_SITES_PLUGIN_NAME
     assert published[0].ownerUserId == 0
-    assert published[0].visibility == "public"
+    assert published[0].visibility == "workspace"
     assert published[0].featured is True
     test_db.refresh(legacy_row)
     assert legacy_row.is_active is False
@@ -494,6 +495,62 @@ def stat_mode(external_attr: int) -> int:
     return (external_attr >> 16) & 0o777
 
 
+def test_install_builtin_plugin_normalizes_legacy_public_row(test_db, test_user):
+    package_bytes = _create_plugin_zip(BUILTIN_SITES_PLUGIN_NAME)
+    row = Kind(
+        user_id=BUILTIN_PLUGIN_OWNER_ID,
+        kind="PluginMarketplaceItem",
+        name=BUILTIN_SITES_PLUGIN_NAME,
+        namespace="default",
+        json={
+            "kind": "PluginMarketplaceItem",
+            "metadata": {"name": BUILTIN_SITES_PLUGIN_NAME, "namespace": "default"},
+            "spec": {
+                "id": 0,
+                "remotePluginId": "wegent~Plugin_0",
+                "name": BUILTIN_SITES_PLUGIN_NAME,
+                "displayName": "Sites",
+                "description": "Build sites",
+                "version": "1.0.0",
+                "visibility": "public",
+                "featured": True,
+                "ownerUserId": BUILTIN_PLUGIN_OWNER_ID,
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(row)
+    test_db.flush()
+    payload = dict(row.json)
+    spec = dict(payload["spec"])
+    spec["id"] = row.id
+    payload["spec"] = spec
+    row.json = payload
+    test_db.add(
+        SkillBinary(
+            kind_id=row.id,
+            type="plugin",
+            file_name=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
+            binary_data=package_bytes,
+            file_size=len(package_bytes),
+            file_hash=hashlib.sha256(package_bytes).hexdigest(),
+        )
+    )
+    test_db.commit()
+
+    installed = InstalledPluginService().install_builtin_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        plugin_key=BUILTIN_SITES_PLUGIN_NAME,
+    )
+
+    test_db.refresh(row)
+    assert row.json["spec"]["visibility"] == "workspace"
+    assert installed.spec.source.providerKey == "wegent-marketplace"
+    assert installed.spec.source.pluginKey == BUILTIN_SITES_PLUGIN_NAME
+    assert installed.spec.source.marketplace == "wegent"
+
+
 def test_install_builtin_plugin_rejects_missing_system_item(test_db, test_user):
     service = InstalledPluginService()
 
@@ -520,7 +577,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
         user_id=BUILTIN_PLUGIN_OWNER_ID,
         package_bytes=_create_plugin_zip(name=plugin_name),
         filename=f"{plugin_name}.zip",
-        visibility="public",
+        visibility="workspace",
         featured=True,
     )
     requested_syncs = []
@@ -579,7 +636,7 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         user_id=BUILTIN_PLUGIN_OWNER_ID,
         package_bytes=_create_plugin_zip(name=BUILTIN_SITES_PLUGIN_NAME),
         filename=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
-        visibility="public",
+        visibility="workspace",
         featured=True,
     )
     sync_response = DeviceCapabilitySyncResponse(

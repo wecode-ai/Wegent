@@ -33,6 +33,10 @@ describe('createSitesApi', () => {
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
+            create: {
+              plugin_name: 'wegent-sites',
+              marketplace_name: 'wegent',
+            },
           },
         ],
       }),
@@ -46,6 +50,10 @@ describe('createSitesApi', () => {
           enabled: true,
           order: 10,
           capabilities: ['create', 'publish', 'delete'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     })

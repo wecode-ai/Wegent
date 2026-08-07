@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from app.schemas.site import (
     ApplicationCapability,
+    ApplicationCreatePluginResponse,
     ApplicationTypeListResponse,
     ApplicationTypeResponse,
     MiniProgramResponse,
@@ -19,6 +20,14 @@ from app.schemas.site import (
     SiteNetwork,
     SiteResponse,
 )
+from app.services.builtin_plugin_registry import (
+    BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
+    BUILTIN_PLUGINS_BY_NAME,
+    BUILTIN_SITES_PLUGIN_NAME,
+)
+from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
+
+APPLICATION_PLUGIN_MARKETPLACE = marketplace_name_for_visibility("workspace")
 
 
 class InvalidApplicationProjectError(ValueError):
@@ -52,6 +61,8 @@ class ApplicationTypeHandler(ABC):
     app_type: SiteAppType
     order: int
     capabilities: tuple[ApplicationCapability, ...]
+    create_plugin_name: str | None = None
+    create_marketplace_name: str = APPLICATION_PLUGIN_MARKETPLACE
 
     def matches(self, payload: Any) -> bool:
         if not isinstance(payload, dict):
@@ -68,10 +79,28 @@ class ApplicationTypeHandler(ABC):
         """Validate one upstream project and return its typed application."""
 
     def descriptor(self) -> ApplicationTypeResponse:
+        builtin_plugin = (
+            BUILTIN_PLUGINS_BY_NAME.get(self.create_plugin_name)
+            if self.create_plugin_name
+            else None
+        )
+        create_marketplace_name = (
+            marketplace_name_for_visibility(builtin_plugin.visibility)
+            if builtin_plugin
+            else self.create_marketplace_name
+        )
         return ApplicationTypeResponse(
             app_type=self.app_type,
             order=self.order,
             capabilities=list(self.capabilities),
+            create=(
+                ApplicationCreatePluginResponse(
+                    plugin_name=self.create_plugin_name,
+                    marketplace_name=create_marketplace_name,
+                )
+                if self.create_plugin_name
+                else None
+            ),
         )
 
 
@@ -83,6 +112,7 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         "publish",
         "delete",
     )
+    create_plugin_name = BUILTIN_SITES_PLUGIN_NAME
 
     def parse(self, payload: Any, *, username: str) -> SiteResponse:
         if not isinstance(payload, dict):
@@ -131,6 +161,7 @@ class MiniProgramApplicationHandler(ApplicationTypeHandler):
         "create",
         "open_experience",
     )
+    create_plugin_name = BUILTIN_MINI_PROGRAM_PLUGIN_NAME
 
     def parse(self, payload: Any, *, username: str) -> MiniProgramResponse:
         if not isinstance(payload, dict):

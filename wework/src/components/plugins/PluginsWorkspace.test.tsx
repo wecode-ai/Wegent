@@ -1496,7 +1496,7 @@ describe('PluginsWorkspace', () => {
     expect(window.location.pathname).toBe('/')
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
-        input: '[$Documents](plugin://documents@default) Draft a document outline from this chat',
+        input: '[$Documents](plugin://documents@wework) Draft a document outline from this chat',
         pluginName: 'Documents',
         openInNewChat: true,
       }

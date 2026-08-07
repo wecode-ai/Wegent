@@ -5,6 +5,7 @@ export interface PluginReference {
 
 export const WEGENT_CLOUD_MARKETPLACE_ALIASES = new Set([
   'default',
+  'wework',
   'wegent',
   'wegent-market',
   'wegent-marketplace',
