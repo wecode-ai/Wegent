@@ -6,11 +6,36 @@
 
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ResourceLibraryResourceType = Literal["agent", "skill", "model", "shell", "retriever"]
 ResourceLibraryListingStatus = Literal["published", "archived"]
+
+
+class MarketplaceExampleConversation(BaseModel):
+    """One titled public conversation demonstrating an Agent."""
+
+    title: str = Field(min_length=1, max_length=100)
+    url: str = Field(max_length=2048)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Example conversation title is required")
+        return normalized
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        normalized = value.strip()
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Example conversation URL must use HTTP or HTTPS")
+        return normalized
 
 
 class ResourceLibraryVersion(BaseModel):
@@ -44,6 +69,9 @@ class ResourceLibraryListing(BaseModel):
     current_version: ResourceLibraryVersion
     install_count: int = 0
     is_installed: bool = False
+    example_conversations: list[MarketplaceExampleConversation] = Field(
+        default_factory=list
+    )
     bind_modes: list[str] = Field(default_factory=list)
     allow_personal_install: bool = True
     allow_group_install: bool = True
@@ -87,6 +115,10 @@ class ResourceLibraryCreateListingRequest(BaseModel):
     target_groups: list[str] = Field(default_factory=list, max_length=100)
     allow_personal_install: bool | None = None
     allow_group_install: bool | None = None
+    example_conversations: list[MarketplaceExampleConversation] = Field(
+        default_factory=list,
+        max_length=10,
+    )
     manifest_options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -102,6 +134,10 @@ class ResourceLibraryPublicationUpdateRequest(BaseModel):
     allow_personal_install: bool | None = None
     allow_group_install: bool | None = None
     target_groups: list[str] | None = Field(default=None, max_length=100)
+    example_conversations: list[MarketplaceExampleConversation] | None = Field(
+        default=None,
+        max_length=10,
+    )
 
 
 class ResourceLibraryInstallRequest(BaseModel):

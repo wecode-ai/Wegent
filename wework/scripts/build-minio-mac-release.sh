@@ -53,6 +53,7 @@ RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-}"
+UPDATE_MANIFEST_S3_PREFIX="${WEWORK_UPDATE_MANIFEST_S3_PREFIX:-${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}}"
 DEFAULT_OUTPUT_DIR="$WEWORK_DIR/src-tauri/target/release/minio-update"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
@@ -90,6 +91,7 @@ Environment:
   ATTACHMENT_S3_REGION, ATTACHMENT_S3_USE_SSL
   WEWORK_RELEASE_S3_PREFIX, WEWORK_MAC_ARM64_RELEASE_S3_PREFIX,
   WEWORK_MAC_X64_RELEASE_S3_PREFIX, WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX,
+  WEWORK_UPDATE_MANIFEST_S3_PREFIX,
   WEWORK_RELEASE_OUTPUT_DIR, WEWORK_UPDATER_KEY_PATH,
   WEWORK_BRAND_CONFIG, VITE_API_BASE_URL, VITE_WEGENT_BACKEND_URL,
   VITE_WEGENT_SOCKET_URL, VITE_WEWORK_FEEDBACK_URL
@@ -184,6 +186,7 @@ upload_artifacts() {
   ATTACHMENT_S3_ENDPOINT="$S3_ENDPOINT" \
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
+  WEWORK_UPDATE_MANIFEST_S3_PREFIX="$UPDATE_MANIFEST_S3_PREFIX" \
   WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
   WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
   WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
@@ -218,15 +221,15 @@ verify_uploaded_artifacts() {
     exit 1
   fi
   dmg_filename="$(basename "$dmg_path")"
-  latest_dmg_url="$UPDATE_BASE_URL/WeWork_latest_${dmg_filename#WeWork_${VERSION}_}"
+  latest_dmg_url="$UPDATE_BASE_URL/WeWork_latest_${dmg_filename#WeWork_"${VERSION}"_}"
   if ! curl -fsSI -o /dev/null "$archive_url"; then
     echo "MinIO upload succeeded, but updater files are not publicly readable." >&2
     echo "Allow unauthenticated GET access to: $UPDATE_BASE_URL" >&2
     exit 1
   fi
   for platform in $(updater_platforms_for_target | tr ',' ' '); do
-    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$CHANNEL-$platform.json"; then
-      echo "Channel manifest is not publicly readable: $CHANNEL-$platform.json" >&2
+    if ! curl -fsSI -o /dev/null "$UPDATE_MANIFEST_BASE_URL/$CHANNEL-$platform.json"; then
+      echo "Channel manifest is not publicly readable: $UPDATE_MANIFEST_BASE_URL/$CHANNEL-$platform.json" >&2
       exit 1
     fi
   done
@@ -408,9 +411,14 @@ if [ -z "$S3_PREFIX" ]; then
   S3_PREFIX="$(default_s3_prefix)"
 fi
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
+UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET"
 if [ -n "$S3_PREFIX" ]; then
   UPDATE_BASE_URL="$UPDATE_BASE_URL/$S3_PREFIX"
+fi
+UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET"
+if [ -n "$UPDATE_MANIFEST_S3_PREFIX" ]; then
+  UPDATE_MANIFEST_BASE_URL="$UPDATE_MANIFEST_BASE_URL/$UPDATE_MANIFEST_S3_PREFIX"
 fi
 RELEASE_NOTES="${RELEASE_NOTES:-Wework $VERSION}"
 
@@ -430,6 +438,7 @@ echo "  CHANNEL=$CHANNEL"
 echo "  MACOS_BUILD_TARGET=$MACOS_BUILD_TARGET"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
+echo "  UPDATE_MANIFEST_BASE_URL=$UPDATE_MANIFEST_BASE_URL"
 echo "  OUTPUT_DIR=$OUTPUT_DIR"
 echo "  CARGO_TARGET_DIR=$PROJECT_TAURI_TARGET_DIR"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
@@ -442,7 +451,7 @@ RELEASE_ARGS=(
   --version "$VERSION"
   --notes "$RELEASE_NOTES"
   --local-base-url "$UPDATE_BASE_URL"
-  --updater-endpoint "$UPDATE_BASE_URL/{{target}}-{{arch}}.json"
+  --updater-endpoint "$UPDATE_MANIFEST_BASE_URL/{{target}}-{{arch}}.json"
   --local-dist-dir "$BUILD_OUTPUT_DIR"
   --macos-build-target "$MACOS_BUILD_TARGET"
 )
