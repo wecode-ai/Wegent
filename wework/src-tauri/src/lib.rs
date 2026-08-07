@@ -582,6 +582,8 @@ struct AppPreferences {
     language: String,
     #[serde(default = "default_true")]
     terminal_context_injection_enabled: bool,
+    #[serde(default = "default_context_compaction_threshold")]
+    context_compaction_threshold: u8,
     #[serde(default)]
     experimental_features_enabled: bool,
     #[serde(default)]
@@ -665,6 +667,11 @@ fn default_true() -> bool {
 }
 
 #[cfg(desktop)]
+fn default_context_compaction_threshold() -> u8 {
+    85
+}
+
+#[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
 }
@@ -695,6 +702,7 @@ impl Default for AppPreferences {
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
+            context_compaction_threshold: default_context_compaction_threshold(),
             experimental_features_enabled: false,
             telemetry_consent_asked: false,
             telemetry_enabled: false,
@@ -748,6 +756,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    context_compaction_threshold: Option<u8>,
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
@@ -1045,6 +1054,7 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    preferences.context_compaction_threshold = preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1327,6 +1337,9 @@ fn update_app_preferences(
     if let Some(value) = patch.terminal_context_injection_enabled {
         preferences.terminal_context_injection_enabled = value;
     }
+    if let Some(value) = patch.context_compaction_threshold {
+        preferences.context_compaction_threshold = value.clamp(1, 100);
+    }
     if let Some(value) = patch.experimental_features_enabled {
         preferences.experimental_features_enabled = value;
     }
@@ -1402,6 +1415,7 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
+    context_compaction_threshold: u8,
     experimental_features_enabled: bool,
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
@@ -1430,6 +1444,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    context_compaction_threshold: Option<u8>,
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
@@ -1458,6 +1473,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
+        context_compaction_threshold: 85,
         experimental_features_enabled: false,
         telemetry_consent_asked: false,
         telemetry_enabled: false,
@@ -1492,6 +1508,10 @@ fn update_app_preferences(
         terminal_context_injection_enabled: patch
             .terminal_context_injection_enabled
             .unwrap_or(true),
+        context_compaction_threshold: patch
+            .context_compaction_threshold
+            .map(|value| value.clamp(1, 100))
+            .unwrap_or(85),
         experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),

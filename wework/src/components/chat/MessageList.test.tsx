@@ -2400,9 +2400,7 @@ describe('MessageList', () => {
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
 
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
-      'asset://localhost/Users/dev/workspace/trend.html'
-    )
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith('/Users/dev/workspace/trend.html')
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
@@ -2445,9 +2443,7 @@ describe('MessageList', () => {
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
 
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
-      'asset://localhost/Users/dev/workspace/trend.html'
-    )
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith('/Users/dev/workspace/trend.html')
   })
 
   test('removes angle brackets from assistant file link destinations', () => {

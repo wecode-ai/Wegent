@@ -378,6 +378,7 @@ describe('local-terminal', () => {
   test('removes local terminal listeners when attach fails', async () => {
     const outputUnlisten = vi.fn()
     const exitUnlisten = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     listenMock.mockResolvedValueOnce(outputUnlisten).mockResolvedValueOnce(exitUnlisten)
     invokeMock.mockRejectedValue(new Error('attach failed'))
 
@@ -387,5 +388,10 @@ describe('local-terminal', () => {
 
     expect(outputUnlisten).toHaveBeenCalledOnce()
     expect(exitUnlisten).toHaveBeenCalledOnce()
+    expect(consoleError).toHaveBeenCalledWith('Local terminal connection failed', {
+      sessionId: 'local-terminal-1',
+      stage: 'attach',
+      error: 'attach failed',
+    })
   })
 })

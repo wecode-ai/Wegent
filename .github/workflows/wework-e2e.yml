@@ -321,7 +321,7 @@ jobs:
           CI: true
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/WeWork
           WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
-          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ./scenarios/streaming-text.scenario.mjs
+          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || './scenarios/streaming-text.scenario.mjs' }}
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_MODEL_SERVER_PORT: "43112"
