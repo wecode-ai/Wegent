@@ -254,9 +254,6 @@ function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
-  const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
-  const usesWorkbenchDesktopSurface = nativeWorkbenchActive && isTauriRuntime()
-
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active ? 'visible' : 'hidden'}>
@@ -277,26 +274,14 @@ function WorkspaceTabSurface({
               {renderWorkbench ? (
                 <div
                   data-testid="desktop-workbench-surface"
-                  className={cn(
-                    'h-full',
-                    usesWorkbenchDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
-                    !nativeWorkbenchActive && 'hidden'
-                  )}
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
                   aria-hidden={!nativeWorkbenchActive}
                 >
                   <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
                 </div>
               ) : null}
               {auxiliaryPage ? (
-                <div
-                  data-testid="desktop-auxiliary-surface"
-                  className={cn(
-                    'h-full',
-                    usesAuxiliaryDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
-                  )}
-                >
+                <div data-testid="desktop-auxiliary-surface" className="h-full">
                   {auxiliaryPage}
                 </div>
               ) : null}
