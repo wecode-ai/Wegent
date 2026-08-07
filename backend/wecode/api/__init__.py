@@ -75,6 +75,7 @@ from wecode.api.knowledge_document_protection import (
 from wecode.api.knowledge_video_download import (
     router as knowledge_video_download_router,
 )
+from wecode.api.knowledge_video_play import router as knowledge_video_play_router
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
@@ -163,6 +164,13 @@ api_router.include_router(
     knowledge_video_download_router,
     prefix="/knowledge-documents",
     tags=["knowledge-video-download"],
+)
+# User-facing KB video playback URL resolver (returns a signed CDN URL; the
+# browser <video src> reaches Weibo CDN directly, no byte proxying).
+api_router.include_router(
+    knowledge_video_play_router,
+    prefix="/knowledge-documents",
+    tags=["knowledge-video-play"],
 )
 api_router.include_router(
     knowledge_document_protection_router,

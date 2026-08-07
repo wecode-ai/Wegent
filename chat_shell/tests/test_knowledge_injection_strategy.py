@@ -455,6 +455,46 @@ class TestKnowledgeBaseTool:
         assert len(result_dict["sources"]) == 2
 
     @pytest.mark.asyncio
+    async def test_format_rag_result_adds_video_segments_after_top_k(self):
+        tool = KnowledgeBaseTool()
+        kb_chunks = {
+            1: [
+                {
+                    "content": (
+                        "### 章节 2：张凌赫的机场广播趣事 ([00:00:10 - 00:00:20])\n"
+                        "> **本段摘要**：回顾机场广播催促登机的经典事件。"
+                    ),
+                    "source": "123.video.md",
+                    "score": 0.9,
+                    "document_id": 123,
+                    "metadata": {
+                        "video_segment_id": "segment_10_20",
+                        "video_start_sec": 10,
+                        "video_end_sec": 20,
+                    },
+                },
+                {
+                    "content": "Ordinary chapter",
+                    "source": "notes.md",
+                    "score": 0.8,
+                    "document_id": 124,
+                    "metadata": {},
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 1))
+
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["source_type"] == "wegent_video_segment"
+        assert result["sources"][0]["document_id"] == 123
+        assert result["sources"][0]["segments"][0]["start_sec"] == 10
+        assert result["sources"][0]["segments"][0]["title"] == "张凌赫的机场广播趣事"
+        assert result["sources"][0]["segments"][0]["description"] == (
+            "回顾机场广播催促登机的经典事件。"
+        )
+
+    @pytest.mark.asyncio
     async def test_restricted_mode_no_rag_does_not_recommend_document_tools(self):
         """Restricted mode should not suggest kb_ls or kb_head when RAG is unavailable."""
         tool = KnowledgeBaseTool(

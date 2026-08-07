@@ -32,6 +32,15 @@ export interface SourceReference {
   source_type?: string
   source_uri?: string
   source_name?: string
+  document_id?: number
+  segments?: Array<{
+    id?: string
+    start_sec: number
+    end_sec: number
+    score?: number
+    title?: string
+    description?: string
+  }>
 }
 
 export interface RetrievalSummaryPayload {

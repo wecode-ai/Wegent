@@ -10,6 +10,7 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -34,6 +35,26 @@ TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
+
+VIDEO_CHAPTER_TITLE_PATTERN = re.compile(
+    r"^#{1,6}\s+(.*?)\s*\(\[\d{1,2}:\d{2}:\d{2}\s*-\s*" r"\d{1,2}:\d{2}:\d{2}\]\)\s*$",
+    re.MULTILINE,
+)
+VIDEO_CHAPTER_SUMMARY_PATTERN = re.compile(
+    r"^>\s*\*\*本段摘要\*\*[：:]\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_video_segment_copy(content: str) -> tuple[str | None, str | None]:
+    """Extract display copy from one generated video chapter."""
+    title_match = VIDEO_CHAPTER_TITLE_PATTERN.search(content)
+    summary_match = VIDEO_CHAPTER_SUMMARY_PATTERN.search(content)
+    title = title_match.group(1).strip() if title_match else None
+    if title:
+        title = re.sub(r"^章节\s*\d+\s*[：:]\s*", "", title)
+    summary = summary_match.group(1).strip() if summary_match else None
+    return title, summary
 
 
 def _retrieval_source_entry(provider: Any, source_id: Any) -> dict[str, str] | None:
@@ -901,6 +922,7 @@ class KnowledgeBaseTool(BaseTool):
                     "source_id": source_id,
                     "source_uri": record.get("source_uri"),
                     "source_name": record.get("source_name"),
+                    "metadata": record.get("metadata") or {},
                 }
             )
         return kb_chunks
@@ -1816,6 +1838,7 @@ class KnowledgeBaseTool(BaseTool):
                         "source_type": chunk.get("source_type"),
                         "source_uri": chunk.get("source_uri"),
                         "source_name": chunk.get("source_name"),
+                        "metadata": chunk.get("metadata") or {},
                     }
                 )
 
@@ -1834,6 +1857,43 @@ class KnowledgeBaseTool(BaseTool):
             for source in source_references
             if source.get("index") in referenced_indexes
         ]
+        sources_by_index = {source["index"]: source for source in source_references}
+        seen_segments: set[tuple[int, int, int]] = set()
+        for chunk in all_chunks:
+            metadata = chunk.get("metadata") or {}
+            start_sec = metadata.get("video_start_sec")
+            end_sec = metadata.get("video_end_sec")
+            document_id = chunk.get("document_id")
+            if not all(
+                isinstance(value, int) for value in (start_sec, end_sec, document_id)
+            ):
+                continue
+            if start_sec < 0 or end_sec <= start_sec:
+                continue
+            source = sources_by_index.get(chunk.get("source_index"))
+            if source is None:
+                continue
+            segment_key = (document_id, start_sec, end_sec)
+            if segment_key in seen_segments:
+                continue
+            seen_segments.add(segment_key)
+            source["source_type"] = "wegent_video_segment"
+            source["document_id"] = document_id
+            segment_title, segment_description = _extract_video_segment_copy(
+                chunk.get("content", "")
+            )
+            source.setdefault("segments", []).append(
+                {
+                    "id": metadata.get("video_segment_id"),
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "score": chunk.get("score"),
+                    "title": segment_title,
+                    "description": segment_description,
+                }
+            )
+        for chunk in all_chunks:
+            chunk.pop("metadata", None)
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )

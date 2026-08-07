@@ -118,6 +118,30 @@ def test_build_ingestion_result_without_splitter_config_uses_flat_file_aware_def
     assert "Useful body paragraph with enough detail." in result.index_nodes[0].text
 
 
+def test_build_ingestion_result_preserves_video_chapter_time_metadata() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# Overview\n\nGeneral summary.\n\n"
+                    "### Chapter 1 [00:00:12 - 00:01:05]\n\nRelevant transcript."
+                ),
+                metadata={"filename": "123.video"},
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    timed_nodes = [
+        node for node in result.index_nodes if "video_start_sec" in node.metadata
+    ]
+    assert len(timed_nodes) == 1
+    assert timed_nodes[0].metadata["video_start_sec"] == 12
+    assert timed_nodes[0].metadata["video_end_sec"] == 65
+
+
 @pytest.mark.parametrize("file_extension", [".md", ".txt"])
 def test_build_ingestion_result_auto_unitizes_qa_documents(
     file_extension: str,

@@ -26,6 +26,7 @@ from knowledge_engine.ingestion.qa_unitizer import (
     QAUnitizationResult,
     unitize_qa_documents,
 )
+from knowledge_engine.ingestion.video_segment import enrich_video_segment_nodes
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
     MarkdownEnhancementConfig,
@@ -78,6 +79,18 @@ class MarkdownEnhancementTransform(TransformComponent):
     ) -> Sequence[BaseNode]:
         del kwargs
         return enhance_markdown_nodes(list(nodes))
+
+
+class VideoSegmentMetadataTransform(TransformComponent):
+    """Attach video chapter timestamps before final sentence splitting."""
+
+    def __call__(
+        self,
+        nodes: Sequence[BaseNode],
+        **kwargs: Any,
+    ) -> Sequence[BaseNode]:
+        del kwargs
+        return enrich_video_segment_nodes(nodes)
 
 
 class MetadataEnrichmentTransform(TransformComponent):
@@ -345,6 +358,7 @@ def _build_file_aware_transformations(
         transformations: list[TransformComponent] = [MarkdownNodeParser()]
         if markdown_enhancement.enabled:
             transformations.append(MarkdownEnhancementTransform())
+        transformations.append(VideoSegmentMetadataTransform())
         transformations.append(
             LlamaSentenceSplitter(
                 chunk_size=flat_config.chunk_size,

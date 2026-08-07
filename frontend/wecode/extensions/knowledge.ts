@@ -40,4 +40,10 @@ export async function loadWecodeKnowledgeExtensions() {
   } catch (error) {
     console.warn('Failed to load knowledge document protection', error)
   }
+
+  try {
+    await import('@wecode/features/knowledge/video-segment-source-opener')
+  } catch (error) {
+    console.warn('Failed to load video segment source opener', error)
+  }
 }
