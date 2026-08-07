@@ -15,7 +15,7 @@
   --color-primary-contrast: 255 255 255;
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
-  --color-titlebar: 229 231 234;
+  --color-titlebar: 247 247 248;
   --color-sidebar: 243 243 243 / 0.92;
   --color-sidebar-unfocused: 246 246 246 / 0.88;
   --color-sidebar-active: 26 28 31 / 0.07;
@@ -130,6 +130,59 @@
   }
 }
 
+@keyframes runtime-task-title-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-125%);
+  }
+
+  14%,
+  82% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(215%);
+  }
+}
+
+.runtime-task-title {
+  display: block;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.runtime-task-title-shimmer {
+  animation: runtime-task-title-sheen 760ms ease-out both;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgb(var(--color-focus) / 0.12),
+    rgb(var(--color-focus) / 0.42),
+    rgb(255 255 255 / 0.34),
+    rgb(var(--color-focus) / 0.12),
+    transparent
+  );
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 54%;
+  z-index: 1;
+}
+
+.runtime-task-title > [data-sidebar-drag-activator] {
+  position: relative;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-task-title-shimmer {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 .suffix-roll-out-up,
 .suffix-roll-in-up,
 .suffix-roll-out-down,
@@ -168,7 +221,7 @@
   --color-primary-contrast: 11 18 20;
   --color-border: 55 61 70;
   --color-muted: 38 42 48;
-  --color-titlebar: 20 22 25;
+  --color-titlebar: 28 31 36;
   --color-sidebar: 33 33 33 / 0.96;
   --color-sidebar-unfocused: 40 40 40 / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
@@ -194,7 +247,8 @@
   --color-sidebar-unfocused: 246 246 246;
 }
 
-[data-theme='dark'][data-sidebar-translucent='false'] {
+[data-theme='dark'][data-sidebar-translucent='false'],
+[data-theme='dark'] [data-sidebar-translucent='false'] {
   --color-sidebar: 33 33 33;
   --color-sidebar-unfocused: 40 40 40;
 }
@@ -225,12 +279,6 @@ body {
 html[data-system-drag-panel='true'],
 html[data-system-drag-panel='true'] body,
 html[data-system-drag-panel='true'] #root {
-  background: transparent;
-}
-
-html[data-desktop-vibrancy='true'],
-html[data-desktop-vibrancy='true'] body,
-html[data-desktop-vibrancy='true'] #root {
   background: transparent;
 }
 

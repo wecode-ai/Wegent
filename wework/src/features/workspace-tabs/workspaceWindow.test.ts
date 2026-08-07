@@ -18,10 +18,6 @@ vi.mock('@tauri-apps/api/dpi', () => ({
     ) {}
   },
 }))
-vi.mock('@tauri-apps/api/window', () => ({
-  Effect: { Sidebar: 'sidebar' },
-}))
-
 const tab: WorkspaceTab = {
   id: 'board-project-1',
   kind: 'board',
@@ -73,12 +69,12 @@ describe('openWorkspaceTabWindow', () => {
       expect.objectContaining({
         title: '产品规划',
         visible: false,
-        transparent: true,
-        windowEffects: { effects: ['sidebar'] },
+        transparent: false,
         titleBarStyle: 'overlay',
         tabbingIdentifier: 'io.wecode.wework.workspace',
       })
     )
+    expect(WebviewWindow.mock.calls[0]?.[1]).not.toHaveProperty('windowEffects')
     expect(show).toHaveBeenCalledOnce()
     expect(setFocus).toHaveBeenCalledOnce()
     expect(destroy).not.toHaveBeenCalled()

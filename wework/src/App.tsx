@@ -33,7 +33,6 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
@@ -254,9 +253,6 @@ function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
-  const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
-  const usesWorkbenchDesktopSurface = nativeWorkbenchActive && isTauriRuntime()
-
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active ? 'visible' : 'hidden'}>
@@ -277,26 +273,14 @@ function WorkspaceTabSurface({
               {renderWorkbench ? (
                 <div
                   data-testid="desktop-workbench-surface"
-                  className={cn(
-                    'h-full',
-                    usesWorkbenchDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
-                    !nativeWorkbenchActive && 'hidden'
-                  )}
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
                   aria-hidden={!nativeWorkbenchActive}
                 >
                   <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
                 </div>
               ) : null}
               {auxiliaryPage ? (
-                <div
-                  data-testid="desktop-auxiliary-surface"
-                  className={cn(
-                    'h-full',
-                    usesAuxiliaryDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
-                  )}
-                >
+                <div data-testid="desktop-auxiliary-surface" className="h-full">
                   {auxiliaryPage}
                 </div>
               ) : null}
@@ -418,8 +402,6 @@ export default function App() {
 }
 
 function MainApp() {
-  const isPopoutWindow = isPopoutWindowRuntime()
-
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
@@ -429,7 +411,7 @@ function MainApp() {
       <AppPreferencesProvider>
         <LanguagePreferenceInitializer />
         <AppUpdateProvider>
-          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+          <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
               <AppShell />
@@ -477,7 +459,6 @@ function AppShell() {
   const isTauri = isTauriRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
-  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
@@ -505,15 +486,6 @@ function AppShell() {
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
-
-  useEffect(() => {
-    if (!usesDesktopVibrancy) return undefined
-
-    document.documentElement.dataset.desktopVibrancy = 'true'
-    return () => {
-      delete document.documentElement.dataset.desktopVibrancy
-    }
-  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -706,9 +678,7 @@ function AppShell() {
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
               ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-              : usesDesktopVibrancy
-                ? 'overflow-hidden bg-transparent'
-                : 'overflow-hidden bg-surface',
+              : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >

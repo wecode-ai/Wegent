@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
+import json
 import logging
 from datetime import datetime
 
@@ -338,6 +340,110 @@ def test_system_only_discovery_excludes_user_publications(test_db, test_user):
     assert [item.id for item in result.items] == [system_agent.id]
 
 
+def test_agent_publisher_manages_example_conversation(test_db):
+    agent = _create_published_agent(test_db)
+    publisher = test_db.get(User, agent.user_id)
+
+    published = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="agent",
+            source_id=agent.id,
+            name=agent.name,
+            display_name="Published Agent",
+            tags=["technical_development"],
+            version="1.0.0",
+            example_conversations=[
+                {
+                    "title": "First example",
+                    "url": "https://example.com/shared/first",
+                },
+                {
+                    "title": "Second example",
+                    "url": "https://example.com/shared/second",
+                },
+            ],
+        ),
+        current_user=publisher,
+    )
+    updated = resource_library_service.update_publication(
+        test_db,
+        listing_id=agent.id,
+        request=ResourceLibraryPublicationUpdateRequest(
+            example_conversations=[
+                {
+                    "title": "Updated example",
+                    "url": "https://example.com/shared/updated",
+                }
+            ]
+        ),
+        current_user=publisher,
+    )
+
+    assert [item.title for item in published.example_conversations] == [
+        "First example",
+        "Second example",
+    ]
+    assert [item.title for item in updated.example_conversations] == ["Updated example"]
+    assert test_db.get(Kind, agent.id).json["spec"]["capability"]["marketplace"][
+        "exampleConversations"
+    ] == [
+        {
+            "title": "Updated example",
+            "url": "https://example.com/shared/updated",
+        }
+    ]
+
+
+def test_featured_discovery_uses_admin_selection(test_db, test_user):
+    featured_agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="featured-filter-agent-included",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {"name": "featured-filter-agent-included"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "capability": {"marketplace": {"recommendationScore": 90}},
+            },
+        },
+        is_active=True,
+    )
+    excluded_agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="featured-filter-agent-excluded",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {"name": "featured-filter-agent-excluded"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "capability": {"marketplace": {"recommendationScore": 0}},
+            },
+        },
+        is_active=True,
+    )
+    test_db.add_all([featured_agent, excluded_agent])
+    test_db.commit()
+
+    result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="agent",
+        keyword="featured-filter-agent",
+        tags=[],
+        limit=20,
+        featured_only=True,
+    )
+
+    assert [item.id for item in result.items] == [featured_agent.id]
+
+
 def test_discovery_hides_installed_skill_only_without_search_filters(
     test_db, test_user
 ):
@@ -429,6 +535,100 @@ def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
     assert second_page.has_more is False
     assert second_page.next_cursor is None
     assert [item.id for item in second_page.items] == [older.id]
+
+
+def test_discovery_accepts_legacy_cursor(test_db, test_user):
+    older = _create_skill(
+        test_db,
+        user_id=0,
+        name="legacy-cursor-older-skill",
+    )
+    newer = _create_skill(
+        test_db,
+        user_id=0,
+        name="legacy-cursor-newer-skill",
+    )
+    older.updated_at = datetime(2026, 1, 1)
+    newer.updated_at = datetime(2026, 1, 2)
+    test_db.commit()
+
+    legacy_cursor = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "updated_at": newer.updated_at.isoformat(),
+                    "kind_id": newer.id,
+                },
+                separators=(",", ":"),
+            ).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword="legacy-cursor",
+        tags=[],
+        cursor=legacy_cursor,
+        limit=1,
+    )
+
+    assert [item.id for item in result.items] == [older.id]
+    assert result.next_cursor is None
+
+
+def test_discovery_cursor_merges_system_and_published_resources(test_db, test_user):
+    system_skill = _create_skill(
+        test_db,
+        user_id=0,
+        name="mixed-system-skill",
+    )
+    published_skill = _create_skill(
+        test_db,
+        user_id=test_user.id,
+        name="mixed-published-skill",
+        capability={
+            "visibility": "public",
+            "publishStatus": "published",
+            "tags": ["technical_development"],
+        },
+    )
+    system_skill.updated_at = datetime(2026, 1, 1)
+    test_db.add(
+        MarketplaceResource(
+            kind_id=published_skill.id,
+            owner_user_id=test_user.id,
+            resource_type="skill",
+            recommendation_score=90,
+            updated_at=datetime(2026, 1, 2),
+        )
+    )
+    test_db.commit()
+
+    first_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword="mixed-",
+        tags=[],
+        limit=1,
+    )
+    second_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword="mixed-",
+        tags=[],
+        cursor=first_page.next_cursor,
+        limit=1,
+    )
+
+    assert [item.id for item in first_page.items] == [published_skill.id]
+    assert first_page.has_more is True
+    assert [item.id for item in second_page.items] == [system_skill.id]
+    assert second_page.has_more is False
 
 
 def test_discovery_filters_hidden_system_skills_without_breaking_pagination(

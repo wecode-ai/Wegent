@@ -36,6 +36,8 @@ const mergedDefaultPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: [
     {
       id: 'default-summary-progress',

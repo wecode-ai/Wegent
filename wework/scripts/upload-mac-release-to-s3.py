@@ -175,50 +175,12 @@ def upload_channel_manifest(
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
 
 
-def publish_stable_bootstrap_manifest(
+def publish_legacy_manifest(
     client: Minio,
     bucket: str,
-    prefix: str,
-    manifest: dict,
-    expected_platforms: set[str],
+    version: str,
+    manifest_prefix: str,
 ) -> None:
-    if len(expected_platforms) != 1:
-        upload_file(
-            client,
-            bucket,
-            prefix,
-            Path(require_env("RELEASE_OUTPUT_DIR")) / "latest.json",
-            "no-cache, no-store",
-        )
-        return
-
-    platform = next(iter(expected_platforms))
-    entry = manifest["platforms"][platform]
-    operating_system = platform.split("-", 1)[0]
-    bootstrap_manifest = {
-        **manifest,
-        "platforms": {
-            **manifest["platforms"],
-            f"stable-{operating_system}": entry,
-            f"beta-{operating_system}": entry,
-        },
-    }
-    content = (
-        json.dumps(bootstrap_manifest, ensure_ascii=False, indent=2) + "\n"
-    ).encode()
-    object_name = storage_key(prefix, "latest.json")
-    client.put_object(
-        bucket,
-        object_name,
-        BytesIO(content),
-        len(content),
-        content_type="application/json",
-        metadata={"Cache-Control": "no-cache, no-store"},
-    )
-    print(f"Published stable bootstrap manifest: s3://{bucket}/{object_name}")
-
-
-def publish_legacy_manifest(client: Minio, bucket: str, version: str) -> None:
     manifests = {}
     for platform, prefix_env in MACOS_PLATFORM_PREFIXES.items():
         prefix = os.environ.get(prefix_env, "")
@@ -236,6 +198,27 @@ def publish_legacy_manifest(client: Minio, bucket: str, version: str) -> None:
             )
         manifests[platform] = manifest
 
+    for platform, manifest in manifests.items():
+        operating_system, architecture = platform.split("-", 1)
+        channel_manifest = read_manifest(
+            client,
+            bucket,
+            manifest_prefix,
+            f"stable-{operating_system}-{architecture}.json",
+        )
+        expected_entry = manifest["platforms"][platform]
+        if (
+            channel_manifest is None
+            or channel_manifest.get("version") != version
+            or channel_manifest.get("platforms", {}).get(f"stable-{operating_system}")
+            != expected_entry
+        ):
+            raise SystemExit(
+                "Refusing to publish the legacy macOS manifest before the "
+                f"stable channel manifest for {platform} is available under "
+                f"s3://{bucket}/{manifest_prefix}."
+            )
+
     arm_manifest = manifests["darwin-aarch64"]
     legacy_manifest = {
         "version": version,
@@ -246,9 +229,6 @@ def publish_legacy_manifest(client: Minio, bucket: str, version: str) -> None:
             for platform in MACOS_PLATFORM_PREFIXES
         },
     }
-    arm_entry = legacy_manifest["platforms"]["darwin-aarch64"]
-    legacy_manifest["platforms"]["stable-darwin"] = arm_entry
-    legacy_manifest["platforms"]["beta-darwin"] = arm_entry
     content = (
         json.dumps(legacy_manifest, ensure_ascii=False, indent=2) + "\n"
     ).encode()
@@ -271,6 +251,7 @@ def main() -> None:
     client = create_client(require_env("ATTACHMENT_S3_ENDPOINT"))
     bucket = require_env("ATTACHMENT_S3_BUCKET")
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/macos")
+    manifest_prefix = os.environ.get("WEWORK_UPDATE_MANIFEST_S3_PREFIX", prefix)
     version = require_env("RELEASE_VERSION")
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
@@ -302,31 +283,25 @@ def main() -> None:
         channel_manifest = (
             output_dir / f"{channel}-{operating_system}-{architecture}.json"
         )
-        upload_channel_manifest(client, bucket, prefix, channel_manifest)
+        upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
         if channel == "stable":
             beta_manifest = output_dir / f"beta-{operating_system}-{architecture}.json"
             upload_channel_manifest(
                 client,
                 bucket,
-                prefix,
+                manifest_prefix,
                 beta_manifest,
                 replace_only_if_newer=True,
             )
 
     if channel == "stable":
+        upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
         publish_latest_dmg(client, bucket, prefix, version, artifacts)
-        publish_stable_bootstrap_manifest(
-            client,
-            bucket,
-            prefix,
-            validate_manifest(manifest, version, expected_platforms),
-            expected_platforms,
-        )
         print("Uploaded latest.json last so legacy clients stay on stable releases.")
         if len(expected_platforms) == 1 and expected_platforms.issubset(
             MACOS_PLATFORM_PREFIXES
         ):
-            publish_legacy_manifest(client, bucket, version)
+            publish_legacy_manifest(client, bucket, version, manifest_prefix)
 
 
 if __name__ == "__main__":

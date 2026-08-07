@@ -26,7 +26,6 @@ async def test_validate_image_schedules_background_submission(mocker):
     http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
     mocker.patch.object(routers, "get_host_ip", return_value="10.0.0.1")
-    mocked_cleanup = mocker.patch.object(routers, "_cleanup_stale_validation_entries")
     mocked_bg = mocker.patch.object(
         routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
     )
@@ -39,7 +38,6 @@ async def test_validate_image_schedules_background_submission(mocker):
 
     assert result["status"] == "submitted"
     assert isinstance(result["validation_task_id"], int)
-    mocked_cleanup.assert_called_once()
     mocked_bg.assert_called_once()
     mocked_create_task.assert_called_once()
     mocked_process_tasks.assert_not_called()
@@ -61,7 +59,6 @@ async def test_validate_image_preserves_https_callback_scheme(mocker):
         {"CALLBACK_HOST": "https://callback.example.com", "CALLBACK_PORT": "8443"},
         clear=False,
     )
-    mocker.patch.object(routers, "_cleanup_stale_validation_entries")
     mocked_bg = mocker.patch.object(
         routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
     )
@@ -74,6 +71,9 @@ async def test_validate_image_preserves_https_callback_scheme(mocker):
     validation_task = mocked_bg.call_args.args[0]
     callback_url = validation_task["metadata"]["callback_url"]
     assert callback_url == "https://callback.example.com:8443/executor-manager/callback"
+    assert (
+        validation_task["metadata"]["validation_params"]["validation_id"] == "vid-https"
+    )
 
 
 @pytest.mark.asyncio
@@ -91,16 +91,17 @@ async def test_run_validation_task_in_background_uses_to_thread(mocker):
 
 
 @pytest.mark.asyncio
-async def test_run_validation_task_in_background_cleans_registry_on_failure(mocker):
-    validation_task_id = 999
-    routers._validation_task_registry[validation_task_id] = {"created_at": 0}
+async def test_run_validation_task_in_background_logs_failure(mocker):
     mocker.patch.object(
         routers.asyncio,
         "to_thread",
         new_callable=mocker.AsyncMock,
         side_effect=RuntimeError("boom"),
     )
+    mocked_error = mocker.patch.object(routers.logger, "error")
 
-    await routers._run_validation_task_in_background({}, validation_task_id, "img")
+    await routers._run_validation_task_in_background({}, 999, "img")
 
-    assert validation_task_id not in routers._validation_task_registry
+    mocked_error.assert_called_once_with(
+        "Failed to submit validation task for img: boom"
+    )

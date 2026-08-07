@@ -19,6 +19,8 @@ pub struct EventEnvelope {
     pub executor_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executor_namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,7 @@ pub struct ResponsesEventBuilder {
     message_id: Option<i64>,
     executor_name: Option<String>,
     executor_namespace: Option<String>,
+    validation_id: Option<String>,
 }
 
 impl ResponsesEventBuilder {
@@ -52,6 +55,7 @@ impl ResponsesEventBuilder {
             message_id: None,
             executor_name: None,
             executor_namespace: None,
+            validation_id: None,
         }
     }
 
@@ -72,6 +76,14 @@ impl ResponsesEventBuilder {
     ) -> Self {
         self.executor_name = executor_name.map(ToOwned::to_owned);
         self.executor_namespace = executor_namespace.map(ToOwned::to_owned);
+        self
+    }
+
+    pub fn with_validation_id(mut self, validation_id: Option<&str>) -> Self {
+        self.validation_id = validation_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
         self
     }
 
@@ -385,6 +397,7 @@ impl ResponsesEventBuilder {
             message_id: self.message_id,
             executor_name: self.executor_name.clone(),
             executor_namespace: self.executor_namespace.clone(),
+            validation_id: self.validation_id.clone(),
         }
     }
 

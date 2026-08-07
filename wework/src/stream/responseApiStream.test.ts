@@ -56,6 +56,29 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps friendly task title updates', () => {
+    const onRuntimeTaskTitleUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimeTaskTitleUpdated },
+      'runtime.task.title.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: 'friendly-title-turn',
+        deviceId: 'device-1',
+        data: { title: '测试标题生成功能' },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeTaskTitleUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
+  })
+
   test('maps task supervisor state updates', () => {
     const onRuntimeSupervisorUpdated = vi.fn()
     const supervisor = {

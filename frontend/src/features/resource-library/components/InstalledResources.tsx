@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, Pencil, RefreshCw, Settings2 } from 'lucide-react'
+import { Eye, MoreHorizontal, Pencil, RefreshCw, Settings2, Unlink } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
@@ -27,8 +27,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
 import { buildChatCodeHref } from '@/config/coding-route'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -410,6 +415,37 @@ export function InstalledResources({
             (user?.role === 'admin' ||
               String(install.listing.publisher_user_id) === String(user?.id) ||
               canEditContent(group?.my_role))
+          const removalAction = !isGroupMode ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                  aria-label={t('actions.more')}
+                  data-testid={`installed-resource-actions-${resourceType}-${install.id}`}
+                >
+                  <MoreHorizontal className="h-5 w-5" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  danger
+                  onSelect={() => setPendingRemoval(install)}
+                  disabled={isRemoving}
+                  data-testid={`remove-installed-${resourceType}-${install.id}-button`}
+                >
+                  <Unlink className="mr-2 h-4 w-4" aria-hidden />
+                  {t(
+                    resourceType === 'agent'
+                      ? 'actions.remove_added_agent'
+                      : 'actions.remove_added_skill'
+                  )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null
 
           return (
             <ResourceListingCard
@@ -419,29 +455,6 @@ export function InstalledResources({
               onViewDetails={handleViewDetails}
               compact={resourceType === 'skill'}
               presentation="management"
-              managementAction={
-                !isGroupMode ? (
-                  <div
-                    className="flex h-11 shrink-0 items-center px-1 md:h-9"
-                    title={t(
-                      resourceType === 'agent'
-                        ? 'actions.remove_added_agent'
-                        : 'actions.remove_added_skill'
-                    )}
-                  >
-                    <Switch
-                      checked={pendingRemoval?.id !== install.id}
-                      disabled={isRemoving}
-                      onCheckedChange={checked => {
-                        if (!checked) setPendingRemoval(install)
-                      }}
-                      aria-haspopup="dialog"
-                      aria-label={`${t('actions.added')} ${title}`}
-                      data-testid={`remove-installed-${resourceType}-${install.id}-button`}
-                    />
-                  </div>
-                ) : undefined
-              }
               managementFooterAction={
                 resourceType === 'skill' ? (
                   <div className="flex gap-2">
@@ -487,8 +500,11 @@ export function InstalledResources({
                         ? t('actions.details')
                         : tSettings('skills.autoSettings.configure')}
                     </Button>
+                    {removalAction}
                   </div>
-                ) : undefined
+                ) : (
+                  removalAction
+                )
               }
             />
           )

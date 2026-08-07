@@ -7,6 +7,7 @@ describe('codexOfficialModels', () => {
       providers: [
         {
           id: 'custom',
+          type: 'provider',
           data: [{ model: 'zeta' }, { model: 'alpha' }],
         },
         {
@@ -21,6 +22,7 @@ describe('codexOfficialModels', () => {
       'zeta',
       'alpha',
       'gpt-5.6-sol',
+      'gpt-5.5',
       'gpt-5.4',
     ])
   })
@@ -33,6 +35,7 @@ describe('codexOfficialModels', () => {
       'gpt-5.6-luna',
       'gpt-5.6-terra',
       'gpt-5.6-sol',
+      'gpt-5.5',
     ]
     const result = normalizeCodexOfficialModelList({
       providers: [
@@ -56,18 +59,36 @@ describe('codexOfficialModels', () => {
       'GPT 5.6 Sol',
       'GPT 5.6 Terra',
       'GPT 5.6 Luna',
+      'GPT 5.5',
       'GPT 5.4',
       'GPT 5.4 Mini',
       'GPT 5.3 Codex Spark',
     ])
   })
 
-  test('filters legacy Codex picker models that should not be selectable', () => {
+  test('matches the ChatGPT official picker instead of exposing every model/list entry', () => {
     const result = normalizeCodexOfficialModelList({
-      data: [{ model: 'gpt-5.6-sol' }, { model: 'gpt-5.5' }],
+      data: [
+        { model: 'gpt-5.2' },
+        { model: 'gpt-5.3-codex-spark' },
+        { model: 'gpt-5.4-mini' },
+        { model: 'gpt-5.4' },
+        { model: 'gpt-5.5' },
+        { model: 'gpt-5.6-luna' },
+        { model: 'gpt-5.6-terra' },
+        { model: 'gpt-5.6-sol' },
+      ],
     })
 
-    expect(result.models.map(model => model.modelId)).toEqual(['gpt-5.6-sol'])
+    expect(result.models.map(model => model.modelId)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark',
+    ])
   })
 
   test('preserves the supported reasoning effort sequence advertised by Codex', () => {

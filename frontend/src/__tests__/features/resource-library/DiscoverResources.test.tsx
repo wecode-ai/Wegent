@@ -268,7 +268,20 @@ describe('DiscoverResources', () => {
     expect(await screen.findByTestId('marketplace-tag-filter-all')).toHaveTextContent('精选')
     expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
       resourceType: 'agent',
-      systemOnly: true,
+      featuredOnly: true,
+      targetNamespace: 'default',
+      cursor: undefined,
+      limit: 20,
+    })
+  })
+
+  it('uses the featured filter for the Skill marketplace', async () => {
+    render(<DiscoverResources resourceType="skill" systemOnly />)
+
+    expect(await screen.findByTestId('marketplace-tag-filter-all')).toHaveTextContent('精选')
+    expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
+      resourceType: 'skill',
+      featuredOnly: true,
       targetNamespace: 'default',
       cursor: undefined,
       limit: 20,

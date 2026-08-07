@@ -40,6 +40,7 @@ interface TeamCardActionsMenuProps {
   canCopy: boolean
   canShare: boolean
   canDelete: boolean
+  canUnbindFromGroup?: boolean
   shared: boolean
   onOpenApi: () => void
   onEdit: () => void
@@ -47,6 +48,7 @@ interface TeamCardActionsMenuProps {
   onCopy: (targetNamespace: string) => void
   onShare: () => void
   onDelete: () => void
+  onUnbindFromGroup?: () => void
 }
 
 const menuIconClassName = 'h-4 w-4 shrink-0'
@@ -61,6 +63,7 @@ export function TeamCardActionsMenu({
   canCopy,
   canShare,
   canDelete,
+  canUnbindFromGroup = false,
   shared,
   onOpenApi,
   onEdit,
@@ -68,6 +71,7 @@ export function TeamCardActionsMenu({
   onCopy,
   onShare,
   onDelete,
+  onUnbindFromGroup,
 }: TeamCardActionsMenuProps) {
   const { t } = useTranslation('common')
 
@@ -202,6 +206,20 @@ export function TeamCardActionsMenu({
                 <TrashIcon className={menuIconClassName} />
               )}
               {t(shared ? 'teams.unbind' : 'teams.delete')}
+            </DropdownMenuItem>
+          </>
+        )}
+        {canUnbindFromGroup && onUnbindFromGroup && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={onUnbindFromGroup}
+              danger
+              className="gap-2"
+              data-testid={`team-unbind-from-group-${team.id}`}
+            >
+              <LinkSlashIcon className={menuIconClassName} />
+              {t('resource-library:actions.remove_from_team')}
             </DropdownMenuItem>
           </>
         )}

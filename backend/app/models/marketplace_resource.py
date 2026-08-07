@@ -4,7 +4,7 @@
 
 """Small indexed projection of user-published marketplace resources."""
 
-from sqlalchemy import Column, DateTime, Index, Integer, String
+from sqlalchemy import Column, DateTime, Index, Integer, SmallInteger, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -34,6 +34,13 @@ class MarketplaceResource(Base):
         default="",
         server_default="",
         comment="Resource type: agent or skill",
+    )
+    recommendation_score = Column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Marketplace recommendation score from 0 to 100",
     )
     install_count = Column(
         Integer,
@@ -76,6 +83,13 @@ class MarketplaceResource(Base):
             "idx_marketplace_resources_type_installs",
             "resource_type",
             "install_count",
+            "updated_at",
+            "kind_id",
+        ),
+        Index(
+            "idx_marketplace_resources_type_recommendation",
+            "resource_type",
+            "recommendation_score",
             "updated_at",
             "kind_id",
         ),

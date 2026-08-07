@@ -76,6 +76,8 @@ import {
   type CapabilityPublishTarget,
 } from '@/features/resource-library/components/CapabilityScopeSelector'
 import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
+import { ExampleConversationsEditor } from '@/features/resource-library/components/ExampleConversationsEditor'
+import type { MarketplaceExampleConversation } from '@/features/resource-library/types'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -177,19 +179,20 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
+  const [creatingPublishTarget, setCreatingPublishTarget] =
+    useState<CapabilityPublishTarget>('personal')
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
   const [editingWasPublished, setEditingWasPublished] = useState(false)
   const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
+  const [marketplaceExampleConversations, setMarketplaceExampleConversations] = useState<
+    MarketplaceExampleConversation[]
+  >([])
 
-  const publishTarget: CapabilityPublishTarget = publishAfterCreate
-    ? 'marketplace'
-    : isEditing
-      ? editingPublishTarget
-      : createTarget.scope === 'group' || scope === 'group'
-        ? 'team'
-        : 'personal'
+  const publishTarget: CapabilityPublishTarget = isEditing
+    ? editingPublishTarget
+    : creatingPublishTarget
   const publishGroupNames = useMemo(
     () =>
       isEditing
@@ -224,6 +227,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 display_name: team.displayName || team.name,
                 description: team.description || null,
                 tags: marketplaceTags,
+                example_conversations: marketplaceExampleConversations.map(item => ({
+                  title: item.title.trim(),
+                  url: item.url.trim(),
+                })),
                 version: '1.0.0',
                 status: 'published',
               })
@@ -236,6 +243,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 description: team.description || null,
                 icon: team.icon || null,
                 tags: marketplaceTags,
+                example_conversations: marketplaceExampleConversations.map(item => ({
+                  title: item.title.trim(),
+                  url: item.url.trim(),
+                })),
                 version: '1.0.0',
                 manifest_options: {},
               })
@@ -255,6 +266,22 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               await resourceLibraryApi.archiveListing(team.id)
             }
           }
+        } else if (publishTarget === 'marketplace') {
+          await resourceLibraryApi.createListing({
+            resource_type: 'agent',
+            source_id: team.id,
+            name: team.name,
+            display_name: team.displayName || team.name,
+            description: team.description || null,
+            icon: team.icon || null,
+            tags: marketplaceTags,
+            example_conversations: marketplaceExampleConversations.map(item => ({
+              title: item.title.trim(),
+              url: item.url.trim(),
+            })),
+            version: '1.0.0',
+            manifest_options: {},
+          })
         } else if (publishTarget === 'team') {
           await resourceLibraryApi.syncAgentBindings(team.id, {
             group_names: publishGroupNames,
@@ -278,6 +305,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       editingPublishTarget,
       editingWasPublished,
       isEditing,
+      marketplaceExampleConversations,
       marketplaceTags,
       onClose,
       onSaved,
@@ -485,10 +513,20 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       // Default to true for legacy data that doesn't have this field
       setRequiresWorkspace(formTeam.requires_workspace ?? true)
     } else {
+      if (isNewFormSession) {
+        setCreatingPublishTarget(
+          publishAfterCreate
+            ? 'marketplace'
+            : createTarget.scope === 'group' || scope === 'group'
+              ? 'team'
+              : 'personal'
+        )
+      }
       setEditingWasPublished(false)
       setEditingPublishTarget('personal')
       setEditingGroupNames([])
       setMarketplaceTags([])
+      setMarketplaceExampleConversations([])
       setName('')
       setDisplayName('')
       setDescription('')
@@ -563,10 +601,16 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     resourceLibraryApi
       .getPublication(formTeam.id)
       .then(listing => {
-        if (active) setMarketplaceTags(listing.tags)
+        if (active) {
+          setMarketplaceTags(listing.tags)
+          setMarketplaceExampleConversations(listing.example_conversations || [])
+        }
       })
       .catch(() => {
-        if (active) setMarketplaceTags([])
+        if (active) {
+          setMarketplaceTags([])
+          setMarketplaceExampleConversations([])
+        }
       })
     return () => {
       active = false
@@ -966,6 +1010,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       return
     }
+    if (
+      publishTarget === 'marketplace' &&
+      marketplaceExampleConversations.some(item => !item.title.trim() || !item.url.trim())
+    ) {
+      return
+    }
 
     if (useSimpleEditor) {
       await handleSimpleSave()
@@ -1194,6 +1244,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       }
       return
     }
+    setCreatingPublishTarget(target)
     if (target === 'team') {
       onCreateOptionsChange?.(
         {
@@ -1219,6 +1270,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (!isEditing) {
       onCreateOptionsChange?.({ scope: 'personal' }, publishTarget === 'marketplace', tags)
     }
+  }
+
+  const handleMarketplaceExampleConversationsChange = (
+    examples: MarketplaceExampleConversation[]
+  ) => {
+    setMarketplaceExampleConversations(examples)
   }
 
   return (
@@ -1398,15 +1455,24 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               />
             </div>
             {publishTarget === 'marketplace' && (
-              <div className="space-y-2" data-testid="team-marketplace-tags-section">
-                <h3 className="text-sm font-medium text-text-primary">
-                  {t('resource-library:marketplace_tags.field_label')}
-                </h3>
-                <MarketplaceTagSelector
-                  value={marketplaceTags}
-                  onChange={handleMarketplaceTagsChange}
-                />
-              </div>
+              <>
+                <div className="space-y-2" data-testid="team-marketplace-tags-section">
+                  <h3 className="text-sm font-medium text-text-primary">
+                    {t('resource-library:marketplace_tags.field_label')}
+                  </h3>
+                  <MarketplaceTagSelector
+                    value={marketplaceTags}
+                    onChange={handleMarketplaceTagsChange}
+                  />
+                </div>
+                <div data-testid="team-marketplace-example-conversations-section">
+                  <ExampleConversationsEditor
+                    value={marketplaceExampleConversations}
+                    onChange={handleMarketplaceExampleConversationsChange}
+                    testIdPrefix="team-marketplace-example-conversations"
+                  />
+                </div>
+              </>
             )}
           </div>
 

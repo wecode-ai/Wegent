@@ -315,9 +315,9 @@ const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog.
-const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+// the official option is served from the cloud model catalog with a canonical
+// model id that does not collide with the local Codex catalog.
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
@@ -2294,6 +2294,8 @@ async function waitForSnapshot(
       testId.startsWith('runtime-local-task-') ||
       testId.startsWith('composer-plugin-') ||
       testId.startsWith('plugin-trial-') ||
+      testId.startsWith('workspace-') ||
+      testId.startsWith('bottom-workspace-') ||
       [
         'goal-status-bar',
         'pause-response-button',
@@ -5601,17 +5603,10 @@ async function verifyAutomationLifecycle(control, workspacePath) {
 }
 
 async function verifySitesPluginAutoInstall(control) {
-  const bootstrapStartedAt = Date.now()
-  while (
-    control.sitesConnectionBootstrapRequests === 0 &&
-    Date.now() - bootstrapStartedAt < WORKBENCH_READY_TIMEOUT_MS
-  ) {
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
   assert.equal(
     control.sitesConnectionBootstrapRequests,
-    1,
-    'Connecting the cloud account did not initialize the Sites plugin exactly once'
+    0,
+    'Connecting the cloud account unexpectedly initialized the Sites plugin'
   )
 
   await control.command('navigate', 'body', { value: '/sites' })
@@ -5632,6 +5627,11 @@ async function verifySitesPluginAutoInstall(control) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const miniProgramInstallRequestsBefore = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
   await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -5648,15 +5648,64 @@ async function verifySitesPluginAutoInstall(control) {
     /创建并发布一个小程序/,
     'Creating a Mini Program did not place the requested application prompt in the composer'
   )
+  const miniProgramInstallRequestsAfter = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  assert.equal(
+    miniProgramInstallRequestsAfter - miniProgramInstallRequestsBefore,
+    1,
+    'Creating a Mini Program did not install its application plugin on demand'
+  )
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', '[data-testid="sites-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="applications-tab-miniapp"]')
+  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
+    text: 'E2E Mini Program',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const miniProgramReuseRequestsBefore = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    reuseSnapshot => reuseSnapshot.text.includes('创建并发布一个小程序'),
+    'Recreating a Mini Program did not reuse the installed application plugin',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_COMPOSER_SELECTOR
+  )
+  const miniProgramReuseRequestsAfter = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  assert.equal(
+    miniProgramReuseRequestsAfter - miniProgramReuseRequestsBefore,
+    0,
+    'Creating a Mini Program again should reuse the installed application plugin'
+  )
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     snapshot.testIds.includes('sites-create-error'),
     false,
     'The Sites page reported an installation error after opening the plugin in chat'
   )
-  await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
+  await captureVerificationScreenshot(control, 'plugins-05-application-plugin-installed.png')
 
-  const miniProgramPluginSelector = '[data-testid="composer-plugin-chip-wegent-mini-program"]'
+  const miniProgramPluginSelector =
+    '[data-testid="composer-plugin-chip-weibo-miniapp-h5-develop-agent"]'
   await control.command('waitFor', miniProgramPluginSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -5759,8 +5808,8 @@ function miniProgramMarketplacePlugin(installed) {
   return {
     id: 502,
     remotePluginId: 'wegent~Plugin_502',
-    name: 'wegent-mini-program',
-    displayName: '小程序',
+    name: 'weibo-miniapp-h5-develop-agent',
+    displayName: '微博小程序开发助手',
     description: 'Build and publish mini programs',
     version: '0.1.0',
     author: 'Wegent Team',
@@ -5771,7 +5820,7 @@ function miniProgramMarketplacePlugin(installed) {
     installedPluginId: installed ? 602 : null,
     sourceType: 'marketplace',
     interface: {
-      displayName: '小程序',
+      displayName: '微博小程序开发助手',
       shortDescription: 'Build and publish mini programs with Wegent',
       category: 'Productivity',
       defaultPrompt: ['创建并发布一个小程序'],
@@ -5792,7 +5841,7 @@ function miniProgramMarketplacePlugin(installed) {
       monitors: [],
       bins: [],
     },
-    manifest: { name: 'wegent-mini-program' },
+    manifest: { name: 'weibo-miniapp-h5-develop-agent' },
     ownerUserId: 0,
   }
 }
@@ -5803,7 +5852,7 @@ function installedMiniProgramPlugin() {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
-      name: 'wegent-mini-program',
+      name: 'weibo-miniapp-h5-develop-agent',
       namespace: 'default',
       labels: { id: '602' },
     },
@@ -5811,11 +5860,11 @@ function installedMiniProgramPlugin() {
       source: {
         type: 'marketplace',
         providerKey: 'wegent-marketplace',
-        pluginKey: 'wegent-mini-program',
+        pluginKey: 'weibo-miniapp-h5-develop-agent',
         catalogItemId: '502',
         marketplace: 'wegent',
       },
-      displayName: '小程序',
+      displayName: '微博小程序开发助手',
       description: marketplacePlugin.description,
       version: marketplacePlugin.version,
       author: marketplacePlugin.author,
@@ -5830,9 +5879,12 @@ function installedMiniProgramPlugin() {
         checksum: 'sha256:desktop-e2e-mini-program',
         sizeBytes: 1024,
       },
-      sourcePayload: { filename: 'wegent-mini-program.zip' },
+      sourcePayload: { filename: 'weibo-miniapp-h5-develop-agent.zip' },
     },
-    status: { state: 'Available' },
+    status: {
+      state: 'Available',
+      devices: [{ deviceId: 'local-device', state: 'installed' }],
+    },
   }
 }
 
@@ -8097,7 +8149,20 @@ async function verifyGoalRestartRecoveryLifecycle({
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
     'The user did not see the Goal working before Wework restarted'
-  )
+  ).catch(async error => {
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; workbench debug: ${JSON.stringify(
+        {
+          currentRuntimeTask: debugSnapshot.workbench?.currentRuntimeTask ?? null,
+          lifecycleCurrentTaskRunning: debugSnapshot.workbench?.lifecycleCurrentTaskRunning ?? null,
+          goal: debugSnapshot.pane?.goal ?? null,
+          goalContinuing: debugSnapshot.pane?.goalContinuing ?? null,
+          goalDraftActive: debugSnapshot.pane?.goalDraftActive ?? null,
+        }
+      )}`
+    )
+  })
   await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -8329,6 +8394,7 @@ class RealCloudEnvironment {
       DEVICE_TYPE: 'cloud',
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
+      WEGENT_WORKSPACE_ROOTS: this.workspacePath,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
@@ -9275,12 +9341,20 @@ class DesktopE2EServer {
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
+            create: {
+              plugin_name: 'wegent-sites',
+              marketplace_name: 'wegent',
+            },
           },
           {
             app_type: 'miniapp',
             enabled: true,
             order: 20,
             capabilities: ['create', 'open_experience'],
+            create: {
+              plugin_name: 'weibo-miniapp-h5-develop-agent',
+              marketplace_name: 'wegent',
+            },
           },
         ],
       })
@@ -9350,7 +9424,7 @@ class DesktopE2EServer {
     }
 
     const builtinPluginMatch = url.pathname.match(
-      /^\/api\/plugins\/builtin\/(wegent-sites|wegent-mini-program)\/ensure-installed$/
+      /^\/api\/plugins\/builtin\/(wegent-sites|weibo-miniapp-h5-develop-agent)\/ensure-installed$/
     )
     if (request.method === 'POST' && builtinPluginMatch) {
       const body = await readRequestBody(request)
@@ -13529,7 +13603,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     await control.command('dispatchLocalModelSettingsChanged', '')
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
-    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
     const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
     assert.equal(
@@ -13541,11 +13614,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       recoveredModelMenu.testIds.includes(synthesizedModelOption),
       false,
       'The Backend-synthesized runtime Codex duplicate remained visible'
-    )
-    assert.equal(
-      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
-      false,
-      'The legacy GPT 5.5 Codex model remained visible'
     )
     assert.equal(
       (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
@@ -15002,15 +15070,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       const conversationScrollerSelector = '[data-testid="desktop-workbench-content"]'
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
+        stableMs: COMPOSER_READY_STABILITY_MS,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      await control.command('scrollIntoViewAsUser', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        value: 'start',
+      })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       await control.command('markElementWithText', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
         value: 'file-panel-anchor',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('scrollIntoViewAsUser', filePanelAnchorSelector, { value: 'start' })
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const { element: filePanelAnchorBeforeOpen, scroller: filePanelScrollerBeforeOpen } =
         await waitForElementInsideScroller(
           control,
