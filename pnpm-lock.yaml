@@ -10,6 +10,9 @@ importers:
 
   .:
     devDependencies:
+      prettier:
+        specifier: ^3.8.4
+        version: 3.8.4
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

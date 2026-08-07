@@ -9,6 +9,7 @@
     "test": "pnpm -r --if-present test"
   },
   "devDependencies": {
+    "prettier": "^3.8.4",
     "typescript": "^5.7.3",
     "vitest": "^4.1.7"
   }
