@@ -266,7 +266,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
   采用显式 restore/save；只有 `refs/heads/main` 可以 save。Claude Code CLI
   通过仓库内的 `package-lock.json` 锁定完整依赖图和包完整性。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
-  输出。非 `main` 任务以只读模式访问共享 sccache。
+  输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
+  `--build-only`，非 `main` 任务以只读模式访问共享 sccache。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
@@ -275,8 +276,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
   `main` 写入，PR 只恢复。
 
 `.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
-`main` 后运行。它只下载依赖或编译缓存，不重复执行已经由 merge queue 验证过的
-测试。不要在 PR/merge-group 上新增大型自动保存缓存；需要增加缓存时，应采用
+`main` 后运行，并拒绝非 `main` 的手动预热。它只下载依赖或编译缓存，不重复执行
+已经由 merge queue 验证过的测试。不要在 PR/merge-group 上新增大型自动保存缓存；需要增加缓存时，应采用
 `actions/cache/restore` 和仅限 `main` 的 `actions/cache/save`，或使用已有共享
 action。
 

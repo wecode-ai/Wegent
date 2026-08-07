@@ -49,6 +49,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Cache Changes
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       docker: ${{ steps.classify.outputs.docker }}
@@ -314,6 +315,91 @@ jobs:
       - name: Compile Wework Rust for Windows
         working-directory: ./wework/src-tauri
         run: cargo check --locked --target x86_64-pc-windows-msvc
+
+  warm-wework-macos-rust:
+    name: Warm Wework macOS Rust Cache
+    needs: changes
+    if: needs.changes.outputs.wework_rust == 'true'
+    runs-on: macos-14
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore shared macOS pnpm store
+        id: macos-pnpm-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-v1-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Save shared macOS pnpm store
+        if: steps.macos-pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Restore shared Wework Cargo sources
+        id: wework-cargo-sources-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-app-cargo-sources-v2-
+
+      - name: Prepare bundled sidecars
+        working-directory: ./wework
+        run: |
+          pnpm run prepare:codex --materialize
+          pnpm run prepare:dws
+
+      - name: Compile Wework desktop E2E binaries
+        env:
+          CI: true
+          WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-macos-e2e-build.json
+          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/aarch64-apple-darwin/vendor/aarch64-apple-darwin/bin/codex
+          WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
+          WEWORK_E2E_MODEL_SERVER_PORT: "43112"
+        run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+
+      - name: Save shared Wework Cargo sources
+        if: steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
   warm-wework-desktop-target:
     name: Warm Wework Desktop Cargo Target
