@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   closeEmbeddedBrowser,
+  closeEmbeddedBrowsers,
+  isEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
   setEmbeddedBrowserActiveTab,
 } from '@/lib/embedded-browser'
@@ -34,6 +36,7 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
     tabId: string
   } | null>(null)
   const handledOpenRequestIdRef = useRef<string | null>(null)
+  const labelsRef = useRef<string[]>([])
 
   const updateTab = useCallback((tabId: string, update: Partial<BrowserTab>) => {
     setCollection(current => ({
@@ -147,6 +150,7 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
   }, [baseLabel, collection.activeTabId, collection.tabs])
 
   useEffect(() => {
+    labelsRef.current = collection.tabs.map(tab => tab.label)
     onTabsChange?.({
       activeLabel: collection.tabs.find(tab => tab.id === collection.activeTabId)?.label ?? null,
       baseLabel,
@@ -156,6 +160,17 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
       ),
     })
   }, [baseLabel, collection.activeTabId, collection.tabs, onTabsChange])
+
+  useEffect(() => {
+    return () => {
+      const labelsToClose = labelsRef.current.filter(
+        label => !isEmbeddedBrowserLabelTransferred(label)
+      )
+      void closeEmbeddedBrowsers(labelsToClose).catch(error => {
+        console.error('Failed to close embedded browser tabs:', error)
+      })
+    }
+  }, [])
 
   const closeTab = useCallback(
     (tabId: string) => {
@@ -247,9 +262,7 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
                     }
                   : null
               }
-              onNativeLabelChange={nativeLabel =>
-                updateTab(tab.id, { nativeLabel, suspended: !nativeLabel ? true : tab.suspended })
-              }
+              onNativeLabelChange={nativeLabel => updateTab(tab.id, { nativeLabel })}
               onDownloadActivityChange={hasActiveDownload =>
                 updateTab(tab.id, { hasActiveDownload })
               }

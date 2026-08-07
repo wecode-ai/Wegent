@@ -9,6 +9,7 @@ const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpen
 let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
 let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
+let embeddedBrowserOpenRequestSequence = 0
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
 export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
@@ -235,6 +236,10 @@ export function markEmbeddedBrowserLabelTransferred(label = DEFAULT_EMBEDDED_BRO
   transferredBrowserLabels.add(label)
 }
 
+export function isEmbeddedBrowserLabelTransferred(label = DEFAULT_EMBEDDED_BROWSER_LABEL): boolean {
+  return transferredBrowserLabels.has(label)
+}
+
 export function consumeEmbeddedBrowserLabelTransfer(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): boolean {
@@ -354,6 +359,11 @@ export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABE
   await invoke('embedded_browser_close', browserArgs(label))
 }
 
+export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
+  if (labels.length === 0) return
+  await invoke('embedded_browser_close_many', { labels })
+}
+
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
   return invoke<number>('embedded_browser_clear_data', { dataKinds: kinds ?? null })
 }
@@ -369,8 +379,11 @@ export function requestEmbeddedBrowserOpen(
   const normalizedUrl = normalizeBrowserUrl(url, window.location.href)
   if (!normalizedUrl) return false
 
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ?? `user-${++embeddedBrowserOpenRequestSequence}`
+
   const request: EmbeddedBrowserOpenRequest = {
-    id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id: requestId,
     url: normalizedUrl,
     label,
     baseLabel: label,

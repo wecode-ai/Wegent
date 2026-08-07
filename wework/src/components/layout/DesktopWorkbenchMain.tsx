@@ -96,6 +96,7 @@ import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
+  closeEmbeddedBrowsers,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
@@ -152,6 +153,8 @@ import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
+
+let legacyEmbeddedBrowserOpenRequestSequence = 0
 
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
@@ -1951,13 +1954,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const embeddedBrowserListenerStateRef = useRef({
     embeddedBrowserLabel,
     openRightPanelTab,
+    browserLabels: [] as string[],
   })
   useEffect(() => {
     embeddedBrowserListenerStateRef.current = {
       embeddedBrowserLabel,
       openRightPanelTab,
+      browserLabels: embeddedBrowserTabState.labels,
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [embeddedBrowserLabel, embeddedBrowserTabState.labels, openRightPanelTab])
   useEffect(() => {
     if (!paneActive) return
     const listener = listenEmbeddedBrowserOpenRequests(request => {
@@ -1968,7 +1973,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       setEmbeddedBrowserOpenRequest(() => ({
         ...request,
-        id: request.id || `legacy-${Date.now()}`,
+        id: request.id || `legacy-open-request-${++legacyEmbeddedBrowserOpenRequestSequence}`,
         baseLabel: request.baseLabel || request.label || current.embeddedBrowserLabel,
         source: request.source || 'agent',
         disposition: request.disposition || 'current-tab',
@@ -1984,17 +1989,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
     const listener = listenEmbeddedBrowserPopupRequests(request => {
       const current = embeddedBrowserListenerStateRef.current
-      const baseLabel = current.embeddedBrowserLabel
       if (
-        request.parentLabel !== baseLabel &&
-        !request.parentLabel.startsWith(`${baseLabel}--tab-`)
+        request.parentLabel !== current.embeddedBrowserLabel &&
+        !current.browserLabels.includes(request.parentLabel)
       ) {
         return
       }
       setEmbeddedBrowserOpenRequest({
         id: request.popupId,
         url: request.url,
-        baseLabel,
+        baseLabel: current.embeddedBrowserLabel,
         source: 'popup',
         disposition: 'new-tab',
         parentLabel: request.parentLabel,
@@ -2034,12 +2038,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setOpenFileRequest(null)
       }
       if (tab === 'browser') {
-        setEmbeddedBrowserTabState({
-          activeLabel: null,
-          baseLabel: DEFAULT_EMBEDDED_BROWSER_LABEL,
-          labels: [],
-          hasActiveDownload: false,
-        })
+        const labels = embeddedBrowserTabState.labels
+        void closeEmbeddedBrowsers(labels)
+          .catch(error => {
+            console.error('Failed to close embedded browser tabs:', error)
+          })
+          .finally(() => {
+            setEmbeddedBrowserTabState({
+              activeLabel: null,
+              baseLabel: DEFAULT_EMBEDDED_BROWSER_LABEL,
+              labels: [],
+              hasActiveDownload: false,
+            })
+          })
       }
       setRightPanelTabs(current => {
         const currentTabs = current.includes(tab) ? current : [...current, tab]

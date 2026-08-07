@@ -1,4 +1,5 @@
 export const MAX_BROWSER_LIVE_WEBVIEWS = 10
+let browserTabSequence = 0
 
 export type BrowserTabStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -27,7 +28,8 @@ function createTabId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  browserTabSequence += 1
+  return `browser-tab-${browserTabSequence}`
 }
 
 export function createBrowserTab(

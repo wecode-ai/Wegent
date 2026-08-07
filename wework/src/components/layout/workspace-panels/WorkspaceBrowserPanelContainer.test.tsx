@@ -5,6 +5,8 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn(),
+  closeEmbeddedBrowsers: vi.fn(),
+  isEmbeddedBrowserLabelTransferred: vi.fn(() => false),
   relabelEmbeddedBrowser: vi.fn(),
   setEmbeddedBrowserActiveTab: vi.fn(),
 }))
@@ -37,7 +39,9 @@ describe('WorkspaceBrowserPanelContainer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     browserPanelMocks.panels.clear()
+    embeddedBrowserMocks.isEmbeddedBrowserLabelTransferred.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockResolvedValue(undefined)
+    embeddedBrowserMocks.closeEmbeddedBrowsers.mockResolvedValue(undefined)
     embeddedBrowserMocks.relabelEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockResolvedValue(undefined)
   })

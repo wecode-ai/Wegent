@@ -73,6 +73,7 @@ const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
+const AGENT_TAB_ROUTE_TTL_MS: u128 = 60_000;
 const EMBEDDED_BROWSER_PLACEHOLDER_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
@@ -105,7 +106,7 @@ pub struct EmbeddedBrowserState {
     agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
     agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
     active_tabs: Arc<Mutex<HashMap<String, String>>>,
-    agent_tabs: Arc<Mutex<HashMap<(String, String), String>>>,
+    agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
 }
 
@@ -116,6 +117,13 @@ struct EmbeddedBrowserEntry {
     url: Option<String>,
     opened_at_unix_ms: u128,
     phase: EmbeddedBrowserPhase,
+}
+
+#[derive(Clone)]
+struct AgentTabRoute {
+    label: String,
+    last_request_at_unix_ms: u128,
+    closed_at_unix_ms: Option<u128>,
 }
 
 #[derive(Clone)]
@@ -408,38 +416,67 @@ fn resolve_agent_bridge_label(
     base_label: &str,
     browser_session_id: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(session_id) = browser_session_id.filter(|value| !value.trim().is_empty()) {
+    let now = current_unix_millis();
+    let session_id = browser_session_id.filter(|value| !value.trim().is_empty());
+    if let Some(session_id) = session_id {
         let key = (base_label.to_string(), session_id.to_string());
-        if let Some(label) = state
+        let paused_labels = state
+            .agent_control_paused
+            .lock()
+            .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?
+            .iter()
+            .filter_map(|(label, paused)| (*paused).then_some(label.clone()))
+            .collect::<std::collections::HashSet<_>>();
+        let approval_labels = state
+            .agent_approvals
+            .lock()
+            .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
+            .values()
+            .filter(|approval| approval.payload.expires_at_unix_ms > now)
+            .map(|approval| approval.label.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let mut agent_tabs = state
             .agent_tabs
             .lock()
-            .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-            .get(&key)
-            .cloned()
-        {
-            return Ok(label);
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+        agent_tabs.retain(|_, route| {
+            route.closed_at_unix_ms.is_some()
+                || paused_labels.contains(&route.label)
+                || approval_labels.contains(&route.label)
+                || now.saturating_sub(route.last_request_at_unix_ms) <= AGENT_TAB_ROUTE_TTL_MS
+        });
+        if let Some(route) = agent_tabs.get_mut(&key) {
+            if route.closed_at_unix_ms.is_some() {
+                return Err("agent tab was closed".to_string());
+            }
+            route.last_request_at_unix_ms = now;
+            return Ok(route.label.clone());
         }
+        let active_label = state
+            .active_tabs
+            .lock()
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+            .get(base_label)
+            .cloned()
+            .unwrap_or_else(|| base_label.to_string());
+        agent_tabs.insert(
+            key,
+            AgentTabRoute {
+                label: active_label.clone(),
+                last_request_at_unix_ms: now,
+                closed_at_unix_ms: None,
+            },
+        );
+        return Ok(active_label);
     }
 
-    let active_label = state
+    Ok(state
         .active_tabs
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?
         .get(base_label)
         .cloned()
-        .unwrap_or_else(|| base_label.to_string());
-
-    if let Some(session_id) = browser_session_id.filter(|value| !value.trim().is_empty()) {
-        state
-            .agent_tabs
-            .lock()
-            .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-            .insert(
-                (base_label.to_string(), session_id.to_string()),
-                active_label.clone(),
-            );
-    }
-    Ok(active_label)
+        .unwrap_or_else(|| base_label.to_string()))
 }
 
 fn native_webview_label(_logical_label: &str, sequence: u64) -> String {
@@ -605,18 +642,19 @@ fn relabel_tab_routes(
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
     let entries = agent_tabs
         .drain()
-        .map(|((base_label, session_id), tab_label)| {
+        .map(|((base_label, session_id), mut route)| {
             let next_base = if base_label == from_label {
                 to_label.to_string()
             } else {
                 base_label
             };
-            let next_tab = if tab_label == from_label {
+            let next_tab = if route.label == from_label {
                 to_label.to_string()
             } else {
-                tab_label
+                route.label.clone()
             };
-            ((next_base, session_id), next_tab)
+            route.label = next_tab;
+            ((next_base, session_id), route)
         })
         .collect::<Vec<_>>();
     agent_tabs.extend(entries);
@@ -2132,6 +2170,29 @@ pub async fn embedded_browser_close(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn embedded_browser_close_many(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    labels: Vec<String>,
+) -> Result<(), String> {
+    let _lifecycle = state.lifecycle.lock().await;
+    let mut seen = std::collections::HashSet::new();
+    for label in labels {
+        if !seen.insert(label.clone()) {
+            continue;
+        }
+        close_embedded_browser_entry(&state, &label)?;
+        app.emit_to(
+            MAIN_WINDOW_LABEL,
+            EMBEDDED_BROWSER_CLOSE_EVENT,
+            json!({ "label": label }),
+        )
+        .map_err(|error| format!("Failed to notify embedded browser close: {error}"))?;
+    }
+    Ok(())
+}
+
 fn close_embedded_browser_entry(state: &EmbeddedBrowserState, label: &str) -> Result<(), String> {
     let entry = {
         let webviews = state
@@ -2163,11 +2224,17 @@ fn close_embedded_browser_entry(state: &EmbeddedBrowserState, label: &str) -> Re
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?
         .retain(|base_label, active_label| base_label != label && active_label != label);
+    let now = current_unix_millis();
     state
         .agent_tabs
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .retain(|(base_label, _), active_label| base_label != label && active_label != label);
+        .iter_mut()
+        .filter(|((base_label, _), route)| base_label == label || route.label == label)
+        .for_each(|(_, route)| {
+            route.closed_at_unix_ms = Some(now);
+            route.last_request_at_unix_ms = now;
+        });
     clear_label_agent_state(state, label)
 }
 
