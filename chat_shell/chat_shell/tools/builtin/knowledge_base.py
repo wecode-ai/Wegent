@@ -105,6 +105,8 @@ class KnowledgeBaseTool(BaseTool):
     # Knowledge base IDs to search (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
     external_knowledge_refs: list[dict] = Field(default_factory=list)
+    external_knowledge_actor_user_id: Optional[int] = None
+    external_knowledge_actor_user_name: Optional[str] = None
 
     # Document IDs to filter (optional, for searching specific documents only)
     # When set, only chunks from these documents will be returned
@@ -120,6 +122,21 @@ class KnowledgeBaseTool(BaseTool):
 
     # User JWT for backend internal API calls that require authentication
     auth_token: str = ""
+
+    def _retrieval_actor_user_id(self) -> int:
+        """Return the explicit external actor without sender fallback."""
+        if not self.external_knowledge_refs:
+            return self.user_id
+        if not self.external_knowledge_actor_user_id:
+            raise ValueError(
+                "external_knowledge_actor_user_id is required for external retrieval"
+            )
+        return self.external_knowledge_actor_user_id
+
+    def _retrieval_actor_user_name(self) -> Optional[str]:
+        if self.external_knowledge_refs:
+            return self.external_knowledge_actor_user_name
+        return self.user_name
 
     # Database session (will be set when tool is created)
     # Accepts both sync Session (backend) and AsyncSession (chat_shell HTTP mode)
@@ -1393,15 +1410,14 @@ class KnowledgeBaseTool(BaseTool):
         total_estimated_tokens = 0
         modes: set[str] = set()
 
+        scopes = self.knowledge_base_scopes
         unscoped_kb_ids = [
-            scope.knowledge_base_id
-            for scope in self.knowledge_base_scopes
-            if not scope.scope_restricted
+            scope.knowledge_base_id for scope in scopes if not scope.scope_restricted
         ]
         retrieve_groups: list[tuple[list[int], Optional[list[int]]]] = []
         if unscoped_kb_ids:
             retrieve_groups.append((unscoped_kb_ids, None))
-        for scope in self.knowledge_base_scopes:
+        for scope in scopes:
             if scope.scope_restricted and scope.document_ids:
                 retrieve_groups.append(
                     ([scope.knowledge_base_id], list(scope.document_ids))
@@ -1510,7 +1526,7 @@ class KnowledgeBaseTool(BaseTool):
 
         payload = {
             "query": query,
-            "user_id": self.user_id,
+            "user_id": self._retrieval_actor_user_id(),
             "knowledge_base_ids": self.knowledge_base_ids,
             "max_results": max_results,
             "route_mode": route_mode,
@@ -1530,8 +1546,9 @@ class KnowledgeBaseTool(BaseTool):
             payload["document_ids"] = document_ids
         if document_names:
             payload["document_names"] = document_names
-        if self.user_name is not None:
-            payload["user_name"] = self.user_name
+        actor_user_name = self._retrieval_actor_user_name()
+        if actor_user_name is not None:
+            payload["user_name"] = actor_user_name
 
         headers = {}
         auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token

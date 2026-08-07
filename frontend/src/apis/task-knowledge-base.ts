@@ -7,6 +7,7 @@
  */
 
 import type {
+  BindExternalKnowledgeRefsResponse,
   BoundExternalKnowledgeRefListResponse,
   BoundKnowledgeBaseDetail,
   BoundKnowledgeBaseListResponse,
@@ -44,11 +45,15 @@ export const taskKnowledgeBaseApi = {
   unbindKnowledgeBase: async (
     taskId: number,
     kbName: string,
-    kbNamespace: string = 'default'
+    kbNamespace: string = 'default',
+    kbId?: number
   ): Promise<UnbindKnowledgeBaseResponse> => {
     const params = new URLSearchParams()
     if (kbNamespace !== 'default') {
       params.append('kb_namespace', kbNamespace)
+    }
+    if (kbId !== undefined) {
+      params.append('kb_id', String(kbId))
     }
     const query = params.toString()
     return client.delete<UnbindKnowledgeBaseResponse>(
@@ -64,6 +69,19 @@ export const taskKnowledgeBaseApi = {
   ): Promise<BoundExternalKnowledgeRefListResponse> => {
     return client.get<BoundExternalKnowledgeRefListResponse>(
       `/tasks/${taskId}/external-knowledge-refs`
+    )
+  },
+
+  /**
+   * Bind external knowledge refs to a task
+   */
+  bindExternalKnowledgeRefs: async (
+    taskId: number,
+    refs: ExternalKnowledgeRef[]
+  ): Promise<BindExternalKnowledgeRefsResponse> => {
+    return client.post<BindExternalKnowledgeRefsResponse>(
+      `/tasks/${taskId}/external-knowledge-refs`,
+      { refs }
     )
   },
 

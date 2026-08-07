@@ -5,8 +5,9 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { X, Loader2 } from 'lucide-react'
+import { Database, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import { Progress } from '@/components/ui/progress'
 import ContextBadge from '../chat/ContextBadge'
 import {
@@ -19,6 +20,11 @@ import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import { getExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import {
+  groupContextItems,
+  type KnowledgeSelectionGroup,
+} from '@/features/tasks/utils/knowledge-selection-groups'
 
 interface InputBadgeDisplayProps {
   /** Selected knowledge base contexts */
@@ -26,11 +32,83 @@ interface InputBadgeDisplayProps {
   /** Current attachments state */
   attachmentState: MultiAttachmentUploadState
   /** Callback to remove a context */
-  onRemoveContext: (contextId: number | string) => void
+  onRemoveContext: (contextId: number | string | (number | string)[]) => void
   /** Callback to remove an attachment */
   onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
   disabled?: boolean
+}
+
+function KnowledgeGroupBadge({
+  group,
+  onRemove,
+}: {
+  group: KnowledgeSelectionGroup
+  onRemove: () => void
+}) {
+  const { t } = useTranslation('knowledge')
+  const badgeColorClass =
+    group.sourceKind === 'external'
+      ? 'border-primary bg-primary/10 text-primary'
+      : 'border-cyan-500 bg-cyan-500/10 text-cyan-700'
+  const removeButtonClass =
+    group.sourceKind === 'external'
+      ? 'text-primary hover:bg-primary/20 hover:text-primary'
+      : 'text-cyan-700 hover:bg-cyan-500/20 hover:text-cyan-700'
+  const subtitle =
+    group.selectionMode === 'all'
+      ? t('picker.allDocuments')
+      : t('picker.selectedDocuments', { count: group.selectedTargetCount })
+  const externalSource = group.provider ? getExternalKnowledgeSource(group.provider) : undefined
+  const providerLabel =
+    group.sourceKind === 'external' && group.provider
+      ? externalSource?.shortLabel ||
+        externalSource?.label ||
+        (externalSource?.labelKey ? t(externalSource.labelKey) : group.provider)
+      : ''
+  const fullLabel =
+    group.selectionMode === 'all' || group.selectedTargetNames.length === 0
+      ? group.sourceName
+      : group.selectedTargetNames
+          .map(targetName => `${group.sourceName} / ${targetName}`)
+          .join('\n')
+
+  return (
+    <LongTextTooltip content={fullLabel}>
+      <div
+        className={`flex max-w-[min(260px,100%)] items-center gap-2 rounded-lg border px-3 py-1.5 ${badgeColorClass}`}
+        aria-label={fullLabel}
+      >
+        <Database className="h-4 w-4 flex-shrink-0" />
+        <div className="flex min-w-0 max-w-[200px] flex-col">
+          <TruncatedText
+            text={group.sourceName}
+            tooltipText={fullLabel}
+            focusable={false}
+            className="text-xs font-medium"
+          />
+          <TruncatedText
+            text={providerLabel ? `${providerLabel} · ${subtitle}` : subtitle}
+            focusable={false}
+            className="text-xs opacity-70"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={event => {
+            event.stopPropagation()
+            onRemove()
+          }}
+          className={`ml-1 h-5 w-5 shrink-0 ${removeButtonClass}`}
+          aria-label={`Remove ${group.sourceName}`}
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+    </LongTextTooltip>
+  )
 }
 
 /**
@@ -242,6 +320,7 @@ export default function InputBadgeDisplay({
 }: InputBadgeDisplayProps) {
   const { t } = useTranslation()
   const hasContexts = contexts.length > 0
+  const contextGroups = groupContextItems(contexts)
   const hasAttachments = attachmentState.attachments.length > 0
   const isUploading = attachmentState.uploadingFiles.size > 0
   const hasErrors = attachmentState.errors.size > 0
@@ -267,21 +346,33 @@ export default function InputBadgeDisplay({
 
       {/* Unified badge display area - knowledge bases first, then attachments */}
       {(hasContexts || hasAttachments) && (
-        <div className="flex items-center gap-2 overflow-x-auto max-w-full badge-scroll">
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           {/* Knowledge base badges */}
-          {contexts.map(context => (
-            <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
-              <ContextBadge
-                context={context}
-                onRemove={() => onRemoveContext(context.id)}
-                disableUrlClick={true}
-              />
-            </div>
-          ))}
+          {contextGroups.map(group => {
+            const singleContext = group.refs[0]
+            const shouldUseNativeBadge =
+              group.refs.length === 1 && singleContext.type !== 'external_knowledge'
+            return (
+              <div key={`context-group-${group.key}`} className="min-w-0 max-w-full">
+                {shouldUseNativeBadge ? (
+                  <ContextBadge
+                    context={singleContext}
+                    onRemove={() => onRemoveContext(singleContext.id)}
+                    disableUrlClick={true}
+                  />
+                ) : (
+                  <KnowledgeGroupBadge
+                    group={group}
+                    onRemove={() => onRemoveContext(group.refs.map(context => context.id))}
+                  />
+                )}
+              </div>
+            )
+          })}
 
           {/* Attachment badges */}
           {attachmentState.attachments.map(attachment => (
-            <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
+            <div key={`attachment-${attachment.id}`} className="min-w-0 max-w-full">
               <AttachmentPreviewInline
                 attachment={attachment}
                 disabled={disabled}

@@ -229,7 +229,6 @@ export function useChatStreamHandlers({
   scrollToBottom,
   selectedContexts = [],
   resetContexts,
-  onTaskCreated,
   selectedDocumentIds,
   additionalSkills,
   generateParams,
@@ -515,16 +514,7 @@ export function useChatStreamHandlers({
           contextItems.push({
             type: 'external_knowledge',
             data: {
-              provider: ref.provider,
-              mode: ref.mode,
-              id: ref.id,
-              name: ref.name,
-              scope: ref.scope,
-              target_type: ref.target_type,
-              node_id: ref.node_id,
-              document_id: ref.document_id,
-              parent_id: ref.parent_id,
-              target_name: ref.target_name,
+              external_ref: ref,
             },
           })
         })
@@ -536,18 +526,6 @@ export function useChatStreamHandlers({
           .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
           .join('\n\n---\n\n')
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-      }
-
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-      if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
-          })
-          .join('\n')
-        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
       }
 
       const queueAttachmentIds = queueMessageContexts.flatMap(
@@ -601,6 +579,10 @@ export function useChatStreamHandlers({
         external_node_id?: string
         external_document_id?: string
         external_parent_id?: string
+        external_target_name?: string
+        external_ref?: ExternalKnowledgeContext['ref']
+        external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+        text_count?: number
         video_count?: number
         site?: string | null
         source_url?: string
@@ -674,6 +656,7 @@ export function useChatStreamHandlers({
             context_type: 'external_knowledge',
             name: ctx.name,
             status: 'ready',
+            external_ref: externalContext.ref,
             external_provider: externalContext.ref.provider,
             external_mode: externalContext.ref.mode,
             external_id: externalContext.ref.id,
@@ -682,6 +665,7 @@ export function useChatStreamHandlers({
             external_node_id: externalContext.ref.node_id,
             external_document_id: externalContext.ref.document_id,
             external_parent_id: externalContext.ref.parent_id,
+            external_target_name: externalContext.ref.target_name,
           })
         }
       }
@@ -735,10 +719,6 @@ export function useChatStreamHandlers({
             setPendingTaskId(completedTaskId)
           }
 
-          if (completedTaskId && !currentTaskId && onTaskCreated) {
-            onTaskCreated(completedTaskId)
-          }
-
           if (completedTaskId && !currentTaskId) {
             if (taskType === 'knowledge' && knowledgeBaseId) {
               navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
@@ -789,7 +769,6 @@ export function useChatStreamHandlers({
       taskType,
       selectedDocumentIds,
       knowledgeBaseId,
-      t,
       selectedTeam?.id,
       currentTaskId,
       selectedTaskDetail,
@@ -800,7 +779,6 @@ export function useChatStreamHandlers({
       effectiveDeviceId,
       generateParams,
       user?.id,
-      onTaskCreated,
       pathname,
       router,
       searchParams,
@@ -1371,19 +1349,28 @@ export function useChatStreamHandlers({
                   source_config: ctx.source_config,
                 },
               })
-            } else if (ctx.context_type === 'external_knowledge' && ctx.external_provider) {
+            } else if (ctx.context_type === 'external_knowledge') {
+              const externalRef =
+                ctx.external_ref ??
+                (ctx.external_provider && ctx.external_mode
+                  ? {
+                      provider: ctx.external_provider,
+                      mode: ctx.external_mode,
+                      id: ctx.external_id ?? undefined,
+                      name: ctx.external_source_name ?? ctx.name,
+                      scope: ctx.external_scope ?? undefined,
+                      target_type: ctx.external_target_type ?? undefined,
+                      node_id: ctx.external_node_id ?? undefined,
+                      document_id: ctx.external_document_id ?? undefined,
+                      parent_id: ctx.external_parent_id ?? undefined,
+                      target_name: ctx.external_target_name ?? undefined,
+                    }
+                  : null)
+              if (!externalRef) continue
               contextItems.push({
                 type: 'external_knowledge' as const,
                 data: {
-                  provider: ctx.external_provider,
-                  mode: ctx.external_mode,
-                  id: ctx.external_id,
-                  name: ctx.name,
-                  scope: ctx.external_scope,
-                  target_type: ctx.external_target_type,
-                  node_id: ctx.external_node_id,
-                  document_id: ctx.external_document_id,
-                  parent_id: ctx.external_parent_id,
+                  external_ref: externalRef,
                 },
               })
             }
@@ -1410,6 +1397,7 @@ export function useChatStreamHandlers({
           source_config?: {
             url?: string
           }
+          external_ref?: SubtaskContextBrief['external_ref']
           external_provider?: string | null
           external_mode?: string | null
           external_id?: string | null
@@ -1440,6 +1428,7 @@ export function useChatStreamHandlers({
             knowledge_id: ctx.knowledge_id ?? undefined,
             document_id: ctx.document_id ?? undefined,
             source_config: ctx.source_config ?? undefined,
+            external_ref: ctx.external_ref ?? undefined,
             external_provider: ctx.external_provider ?? undefined,
             external_mode: ctx.external_mode ?? undefined,
             external_id: ctx.external_id ?? undefined,
@@ -1490,11 +1479,6 @@ export function useChatStreamHandlers({
             ) => {
               if (completedTaskId > 0) {
                 setPendingTaskId(completedTaskId)
-              }
-
-              // Call onTaskCreated callback when a new task is created
-              if (completedTaskId && !currentTaskId && onTaskCreated) {
-                onTaskCreated(completedTaskId)
               }
 
               if (completedTaskId && !currentTaskId) {
@@ -1564,7 +1548,6 @@ export function useChatStreamHandlers({
       setPendingTaskId,
       setTaskInputMessage,
       externalApiParams,
-      onTaskCreated,
       t,
       effectiveRequiresWorkspace,
       projectId,

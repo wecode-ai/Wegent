@@ -75,11 +75,14 @@ def mock_ghost():
 
 
 class TestAssembleTeamPrompt:
-    @patch("app.services.prompt_optimization.kindReader.get_by_name_and_namespace")
+    @patch("app.services.prompt_optimization.resolve_kind_reference")
     def test_assemble_single_bot_team(
-        self, mock_get_kind, mock_team, mock_bot, mock_ghost
+        self, mock_resolve_reference, mock_team, mock_bot, mock_ghost
     ):
-        mock_get_kind.side_effect = [mock_bot, mock_ghost]
+        mock_resolve_reference.side_effect = [
+            MagicMock(resource=mock_bot),
+            MagicMock(resource=mock_ghost),
+        ]
 
         # Create mock db
         mock_db = MagicMock()

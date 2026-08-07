@@ -68,6 +68,8 @@ spec:
 | `spec.mcpServers`    | object | No       | MCP server configuration defining agent's tool capabilities                      |
 | `spec.skills`        | array  | No       | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
 
+Default knowledge is saved, materialized, and run with the Team owner's permissions. When a message explicitly selects internal or external knowledge, the sender is used only for that execution and the corresponding Task default is skipped. Message selections never update `Task.spec.knowledgeBaseRefs` or `Task.spec.externalKnowledgeRefs`; the next message without an explicit selection restores the Team-owner default snapshot.
+
 ---
 
 ## ✨ Skill

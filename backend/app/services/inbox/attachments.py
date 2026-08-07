@@ -72,7 +72,6 @@ def link_inbox_attachments_to_subtask(
         attachment_ids=attachment_ids,
         contexts=None,
         task=None,
-        user_name=None,
     )
     logger.info(
         f"[link_inbox_attachments_to_subtask] Linked {len(linked_ids)} inbox attachment(s) "

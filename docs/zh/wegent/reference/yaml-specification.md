@@ -68,6 +68,8 @@ spec:
 | `spec.mcpServers`    | object | 否   | MCP 服务器配置,定义智能体的工具能力                 |
 | `spec.skills`        | array  | 否   | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
 
+默认知识按 Team owner 权限保存、物化和运行。本条消息显式选择内部或外部知识时，仅本次执行使用发送者身份并跳过对应 Task 默认；消息选择绝不更新 `Task.spec.knowledgeBaseRefs` 或 `Task.spec.externalKnowledgeRefs`，下一条没有显式选择的消息恢复 Team owner 默认快照。
+
 ---
 
 ## ✨ Skill

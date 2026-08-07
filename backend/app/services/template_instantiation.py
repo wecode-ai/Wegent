@@ -323,7 +323,11 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
             "modelRef": model_ref,
         }
         if ghost is not None:
-            bot_spec["ghostRef"] = {"name": ghost.name, "namespace": NAMESPACE}
+            bot_spec["ghostRef"] = {
+                "id": ghost.id,
+                "name": ghost.name,
+                "namespace": NAMESPACE,
+            }
 
         return self._create_kind(
             db,
@@ -361,7 +365,11 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         if bot is not None:
             members.append(
                 {
-                    "botRef": {"name": bot.name, "namespace": NAMESPACE},
+                    "botRef": {
+                        "id": bot.id,
+                        "name": bot.name,
+                        "namespace": NAMESPACE,
+                    },
                     "prompt": "",
                     "role": "leader",
                     "requireConfirmation": False,

@@ -11,6 +11,14 @@ import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 
 const mockRefreshTeams = jest.fn()
 const mockTeamModeEditor = jest.fn((_props: Record<string, unknown>) => null)
+const mockSimpleTeamEditForm = jest.fn(
+  ({ popoverContainer }: { popoverContainer?: HTMLElement | null }) => (
+    <div
+      data-container={popoverContainer ? 'dialog' : 'default'}
+      data-testid="simple-team-edit-form"
+    />
+  )
+)
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -76,14 +84,24 @@ jest.mock('@/apis/shells', () => {
   }
 })
 
-jest.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
-  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}))
+jest.mock('@/components/ui/dialog', () => {
+  const React = jest.requireActual<typeof import('react')>('react')
+  const DialogContent = React.forwardRef<HTMLDivElement, { children: React.ReactNode }>(
+    function DialogContent({ children }, ref) {
+      return <div ref={ref}>{children}</div>
+    }
+  )
+  DialogContent.displayName = 'DialogContent'
+
+  return {
+    Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    DialogContent,
+    DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
+    DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  }
+})
 
 jest.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -118,7 +136,7 @@ jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () =>
 
 jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: { popoverContainer?: HTMLElement | null }) => mockSimpleTeamEditForm(props),
 }))
 
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
@@ -157,6 +175,29 @@ describe('TeamEditDialog display name', () => {
     jest.clearAllMocks()
     mockRefreshTeams.mockResolvedValue(undefined)
     mockTeamModeEditor.mockImplementation(() => null)
+    mockSimpleTeamEditForm.mockClear()
+  })
+
+  it('passes its DialogContent to the simple editor popovers', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('simple-team-edit-form')).toHaveAttribute(
+        'data-container',
+        'dialog'
+      )
+    })
   })
 
   it('edits and saves the team display name', async () => {

@@ -10,8 +10,9 @@ Includes permission check methods previously in KnowledgePermissionService.
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -40,12 +41,23 @@ from app.schemas.share import (
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
 # All role-related code should use BaseRole as the single source of truth
 SchemaMemberRole = BaseRole
+from app.schemas.namespace import GroupRole
+from app.services.group_permission import (
+    get_effective_role_in_group,
+    get_restricted_analyst_groups,
+    get_user_groups,
+    is_restricted_analyst,
+)
 from app.services.knowledge.knowledge_access_policy import (
     get_user_knowledge_base_permission,
     meets_direct_access_requirement,
     resolve_knowledge_base_permission,
 )
-from app.services.knowledge.namespace_utils import is_organization_namespace
+from app.services.knowledge.namespace_utils import (
+    classify_namespace_level,
+    is_organization_namespace,
+    load_active_namespace_map,
+)
 from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -114,6 +126,138 @@ class KnowledgeShareService(UnifiedShareService):
             return None
 
         return kb
+
+    def get_accessible_resources_by_ids(
+        self,
+        db: Session,
+        resource_ids: Iterable[int],
+        user_id: int,
+    ) -> dict[int, Kind]:
+        """Return requested knowledge bases accessible to one user in bounded batches."""
+        requested_ids = sorted({int(resource_id) for resource_id in resource_ids})
+        if not requested_ids:
+            return {}
+
+        resources = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(requested_ids),
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        if not resources:
+            return {}
+
+        namespace_map = load_active_namespace_map(
+            db, [resource.namespace for resource in resources]
+        )
+        group_names = [
+            resource.namespace
+            for resource in resources
+            if classify_namespace_level(
+                resource.namespace,
+                namespace_map.get(resource.namespace),
+            )
+            == "group"
+        ]
+        accessible_groups = set(get_user_groups(db, user_id))
+        restricted_groups = get_restricted_analyst_groups(db, user_id, group_names)
+
+        direct_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(self._resource_type_variants),
+                ResourceMember.resource_id.in_(requested_ids),
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(self._approved_status_variants),
+            )
+            .all()
+        )
+        direct_resource_ids = {
+            member.resource_id
+            for member in direct_members
+            if member.get_effective_role() != ResourceRole.RestrictedAnalyst.value
+        }
+        entity_resource_ids = self._get_entity_accessible_resource_ids(
+            db=db,
+            resource_ids=requested_ids,
+            user_id=user_id,
+        )
+
+        accessible: dict[int, Kind] = {}
+        for resource in resources:
+            namespace_level = classify_namespace_level(
+                resource.namespace,
+                namespace_map.get(resource.namespace),
+            )
+            is_restricted_group = resource.namespace in restricted_groups
+            if is_restricted_group:
+                continue
+            if (
+                resource.user_id == user_id
+                or resource.id in direct_resource_ids
+                or resource.id in entity_resource_ids
+                or namespace_level == "organization"
+                or (
+                    namespace_level == "group"
+                    and resource.namespace in accessible_groups
+                )
+            ):
+                accessible[resource.id] = resource
+        return accessible
+
+    def _get_entity_accessible_resource_ids(
+        self,
+        *,
+        db: Session,
+        resource_ids: list[int],
+        user_id: int,
+    ) -> set[int]:
+        """Resolve non-user resource memberships without per-resource queries."""
+        entity_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(self._resource_type_variants),
+                ResourceMember.resource_id.in_(resource_ids),
+                ResourceMember.entity_type.notin_(["user", ""]),
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(self._approved_status_variants),
+            )
+            .all()
+        )
+        if not entity_members:
+            return set()
+
+        from app.services.share.external_entity_resolver import get_entity_resolver
+
+        members_by_type: dict[str, list[ResourceMember]] = defaultdict(list)
+        for member in entity_members:
+            if member.entity_type:
+                members_by_type[member.entity_type].append(member)
+
+        accessible_ids: set[int] = set()
+        for entity_type, members in members_by_type.items():
+            resolver = get_entity_resolver(entity_type)
+            if resolver is None:
+                continue
+            entity_ids = sorted(
+                {member.entity_id for member in members if member.entity_id}
+            )
+            matched = resolver.match_entity_bindings(
+                db,
+                user_id,
+                entity_type,
+                entity_ids,
+            )
+            if not matched:
+                continue
+            accessible_ids.update(
+                member.resource_id for member in members if member.entity_id in matched
+            )
+        return accessible_ids
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get KnowledgeBase display name."""
