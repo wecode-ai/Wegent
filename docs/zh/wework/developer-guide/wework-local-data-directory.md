@@ -21,18 +21,4 @@ Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`�
 - `device-config.json`、`device_id`：本机设备标识。
 
 `WEGENT_EXECUTOR_HOME` 环境变量可以覆盖默认 Executor Home。显式设置该变量时，
-Wework 不会对默认目录执行迁移，用于隔离会话、测试和自定义部署。
-
-## 旧目录迁移
-
-首次以默认目录启动时，Wework 会自动把旧数据迁移到 `~/.wework`：
-
-1. 优先迁移 `~/.wegent-executor`。
-2. 再合并更早的 `~/.wecode/wegent-executor`。
-
-迁移规则：
-
-- `~/.wework` 不存在时，直接重命名整个旧目录，保留文件属性、目录结构和软链接。
-- 新旧目录同时存在时，递归合并不冲突的内容；`~/.wework` 中的现有文件始终优先。
-- 同名冲突的旧内容归档到 `~/.wework/.legacy-migration-conflicts/<来源>/`，不会覆盖或丢失数据。
-- 迁移完成后旧目录会被移除，运行期不再读取旧路径。
+适用于隔离会话、测试和自定义部署。
