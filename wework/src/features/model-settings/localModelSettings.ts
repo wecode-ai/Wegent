@@ -622,6 +622,12 @@ export function findLocalModelConfigByModelName(
   modelName?: string | null
 ): LocalModelConfig | null {
   const id = localModelIdFromModelName(modelName)
-  if (!id) return null
-  return readStoredConfigs().find(config => config.id === id) ?? null
+  const configs = readStoredConfigs()
+  if (id) return configs.find(config => config.id === id) ?? null
+  if (!modelName) return null
+  return (
+    configs.find(
+      config => config.codexCatalogModelId === modelName || config.catalogEntry?.slug === modelName
+    ) ?? null
+  )
 }
