@@ -14,7 +14,9 @@ Skill 为 AI 提供特定任务的操作说明和资源；插件可以组合 Ski
 
 ### 使用内置应用插件
 
-Wegent 云端市场会预先提供 `wegent-sites` 和 `wegent-mini-program`，但不会提前安装到每个用户。打开 **应用** 后，可以在 **站点** 和 **小程序** 两个标签页中查看对应应用；点击 **创建** 并选择应用类型时，Wework 会为当前账号幂等安装对应插件，将插件引用写入新任务输入框，并同步到选定的在线设备。站点使用 `wegent-sites`，小程序使用 `wegent-mini-program`，后者还会带入对应的创建提示。重复点击不会创建重复安装记录。
+Wegent 云端市场会预先提供 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，但不会提前安装到每个用户。打开 **应用** 后，可以在 **站点** 和 **小程序** 两个标签页中查看对应应用；点击 **创建** 并选择应用类型时，Wework 会先检查选定在线设备是否已经安装对应插件，已安装时会直接将插件引用写入新任务输入框。未安装时，Wework 会为当前账号幂等安装并同步插件到该设备。
+
+内置应用插件属于 `visibility=workspace`，站点使用 `plugin://wegent-sites@wegent`，小程序使用 `plugin://weibo-miniapp-h5-develop-agent@wegent`，后者还会带入插件提供的创建提示。安装和同步期间，应用页会显示正在安装插件的提示；重复点击会复用当前设备上已安装的插件，不会创建重复安装记录或重复发起安装。
 
 Wegent 市场发布和上传同时接受包含 `.codex-plugin/plugin.json` 或 `.claude-plugin/plugin.json` 的插件包。Backend 会在入库前补齐缺少的运行时清单，因此每个已安装插件都会同步到设备的 Codex 和 Claude Code 插件目录。
 

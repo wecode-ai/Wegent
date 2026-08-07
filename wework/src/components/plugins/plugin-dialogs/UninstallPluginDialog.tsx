@@ -48,10 +48,10 @@ export function UninstallPluginDialog({
         <p className="mt-2 text-sm leading-5 text-text-secondary">
           {t(
             'workbench.plugins_uninstall_plugin_description',
-            '{{name}} 将从当前账号和本机卸载，并清除本机登录态与安装缓存；市场仍可重新安装。',
+            '{{name}} 将从当前账号和本机卸载，并清除本机登录态与运行时安装记录；市场仍可重新安装。',
             {
               name: pluginName,
-              defaultValue: `${pluginName} 将从当前账号和本机卸载，并清除本机登录态与安装缓存；市场仍可重新安装。`,
+              defaultValue: `${pluginName} 将从当前账号和本机卸载，并清除本机登录态与运行时安装记录；市场仍可重新安装。`,
             }
           )}
         </p>
