@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_enables_deferred_tool_search_for_all_gpt_56_profiles() {
+    fn catalog_enables_deferred_tool_search_only_for_verified_profiles() {
         let catalog = catalog();
         let models = catalog["models"].as_array().expect("models array");
 
@@ -659,6 +659,14 @@ mod tests {
                 .find(|model| model["slug"] == slug)
                 .unwrap_or_else(|| panic!("missing GPT 5.6 model {slug}"));
             assert_eq!(model["supports_search_tool"], true);
+        }
+
+        for slug in [KIMI_K3_MODEL, KIMI_K27_MODEL] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing model {slug}"));
+            assert_eq!(model["supports_search_tool"], false);
         }
     }
 
