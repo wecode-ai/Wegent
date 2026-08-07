@@ -250,6 +250,10 @@ class DeliveryAsset(LoopNode):
 
 
 _MYSQL_UNSET_DATETIME = datetime(1970, 1, 1, 0, 0, 1)
+_MYSQL_UNSET_DATETIMES = (
+    datetime(1970, 1, 1, 0, 0, 0),
+    _MYSQL_UNSET_DATETIME,
+)
 _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "cloud_project_id": "",
     "parent_id": "",
@@ -349,12 +353,12 @@ def loop_node_non_nullable_attributes(connection: Connection) -> frozenset[str]:
 
 def loop_datetime_is_unset(column: object) -> object:
     """Match unset datetimes in both nullable and sentinel schemas."""
-    return or_(column.is_(None), column == _MYSQL_UNSET_DATETIME)
+    return or_(column.is_(None), column.in_(_MYSQL_UNSET_DATETIMES))
 
 
 def loop_datetime_value_is_unset(value: datetime | None) -> bool:
     """Match an unset datetime value in both nullable and sentinel schemas."""
-    return value is None or value == _MYSQL_UNSET_DATETIME
+    return value is None or value in _MYSQL_UNSET_DATETIMES
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)

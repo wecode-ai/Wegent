@@ -20,8 +20,13 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, ProjectChatAgent
-from app.models.loop_item_execution import LoopItemExecution
+from app.models.delivery import (
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
+)
+from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,18 @@ PRIORITY_WEIGHTS = {
 
 DEFAULT_MAX_RETRIES = 1
 DEFAULT_LEASE_SECONDS = 5 * 60
+
+
+def _optional_text(value: str) -> str | None:
+    return value or None
+
+
+def _optional_user_id(value: int) -> int | None:
+    return value or None
+
+
+def _optional_datetime(value: datetime) -> datetime | None:
+    return None if loop_datetime_value_is_unset(value) else value
 
 
 def priority_weight(priority: Optional[str]) -> int:
@@ -98,7 +115,7 @@ class LoopItemExecutionService:
             cloud_project_id=item.cloud_project_id,
             agent_id=agent.id,
             execution_environment=environment,
-            execution_device_id=execution_device_id,
+            execution_device_id=execution_device_id or "",
             assigner_user_id=assigner_user_id,
             status=(
                 STATUS_PENDING_APPROVAL if mode == "manual_approval" else STATUS_QUEUED
@@ -106,7 +123,7 @@ class LoopItemExecutionService:
             priority_weight=priority_weight(priority),
             queued_at=now,
             max_retries=DEFAULT_MAX_RETRIES,
-            approval_status=("pending" if mode == "manual_approval" else None),
+            approval_status=("pending" if mode == "manual_approval" else ""),
         )
         db.add(row)
         db.flush()
@@ -151,7 +168,7 @@ class LoopItemExecutionService:
         now = utcnow()
         row.status = STATUS_CANCELLED
         row.approval_status = "rejected"
-        row.rejected_reason = reason
+        row.rejected_reason = reason or ""
         row.execution_note = reason or "Robot creator rejected the run"
         row.completed_at = now
         db.commit()
@@ -597,7 +614,7 @@ class LoopItemExecutionService:
             return row
         row.status = STATUS_COMPLETED
         row.completed_at = utcnow()
-        row.lease_expires_at = None
+        row.lease_expires_at = EPOCH_TIME
         if note:
             row.execution_note = note
         db.commit()
@@ -623,12 +640,12 @@ class LoopItemExecutionService:
             row.retry_attempt += 1
             row.status = STATUS_QUEUED
             row.queued_at = now
-            row.lease_expires_at = None
+            row.lease_expires_at = EPOCH_TIME
             row.error_message = self._error_text(error)[:2000]
         else:
             row.status = STATUS_FAILED
             row.completed_at = now
-            row.lease_expires_at = None
+            row.lease_expires_at = EPOCH_TIME
             row.error_message = self._error_text(error)[:2000]
         if note:
             row.execution_note = note
@@ -687,7 +704,7 @@ class LoopItemExecutionService:
         if terminal == STATUS_COMPLETED:
             row.status = STATUS_COMPLETED
             row.completed_at = now
-            row.lease_expires_at = None
+            row.lease_expires_at = EPOCH_TIME
         elif terminal in {STATUS_FAILED, STATUS_CANCELLED}:
             db.flush()
             data = payload.get("data")
@@ -960,22 +977,22 @@ class LoopItemExecutionService:
                 "agent_id": execution.agent_id,
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,
-                "execution_device_id": execution.execution_device_id,
+                "execution_device_id": _optional_text(execution.execution_device_id),
                 "status": execution.status,
                 "priority_weight": execution.priority_weight,
-                "queued_at": execution.queued_at,
-                "started_at": execution.started_at,
-                "completed_at": execution.completed_at,
-                "lease_expires_at": execution.lease_expires_at,
-                "heartbeat_at": execution.heartbeat_at,
+                "queued_at": _optional_datetime(execution.queued_at),
+                "started_at": _optional_datetime(execution.started_at),
+                "completed_at": _optional_datetime(execution.completed_at),
+                "lease_expires_at": _optional_datetime(execution.lease_expires_at),
+                "heartbeat_at": _optional_datetime(execution.heartbeat_at),
                 "retry_attempt": execution.retry_attempt,
                 "error_message": execution.error_message,
                 "execution_note": execution.execution_note,
-                "approval_status": execution.approval_status,
-                "approved_by_user_id": execution.approved_by_user_id,
-                "rejected_reason": execution.rejected_reason,
-                "runtime_device_id": execution.runtime_device_id,
-                "runtime_task_id": execution.runtime_task_id,
+                "approval_status": _optional_text(execution.approval_status),
+                "approved_by_user_id": _optional_user_id(execution.approved_by_user_id),
+                "rejected_reason": _optional_text(execution.rejected_reason),
+                "runtime_device_id": _optional_text(execution.runtime_device_id),
+                "runtime_task_id": _optional_text(execution.runtime_task_id),
                 "version": execution.version,
                 "created_at": execution.created_at,
                 "updated_at": execution.updated_at,
@@ -1017,7 +1034,7 @@ class LoopItemExecutionService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
-                LoopItemExecution.lease_expires_at.is_not(None),
+                ~loop_datetime_is_unset(LoopItemExecution.lease_expires_at),
                 LoopItemExecution.lease_expires_at < stale_threshold,
             )
             .all()

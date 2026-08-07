@@ -211,7 +211,7 @@ class LoopItemService:
             .filter(
                 ProjectChatMessage.message_id == message_id,
                 ProjectChatMessage.task_id == item.id,
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -303,7 +303,7 @@ class LoopItemService:
                 db.query(ProjectChatMessage)
                 .filter(
                     ProjectChatMessage.message_id == message_id,
-                    ProjectChatMessage.deleted_at.is_(None),
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
                 .first()
             )

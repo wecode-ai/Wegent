@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -62,6 +63,15 @@ PROJECT_CHAT_FAILED_EVENTS = {
     "runtime_task.cancelled",
     "runtime.tasks.cancelled",
 }
+
+
+def _task_id_filter(column: object, task_id: str | None) -> object:
+    """Match a task id in both nullable dev schemas and sentinel schemas."""
+    if task_id:
+        return column == task_id
+    return or_(column.is_(None), column == "")
+
+
 PROJECT_CHAT_COMPLETED_STATUSES = {"completed", "done", "succeeded", "success", "idle"}
 PROJECT_CHAT_FAILED_STATUSES = {"failed", "failure", "error", "cancelled", "canceled"}
 PROJECT_CHAT_TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled"}
@@ -253,12 +263,14 @@ class ProjectChatService:
         )
         query = db.query(ProjectChatMessage).filter(
             ProjectChatMessage.project_id == request.project_id,
-            ProjectChatMessage.deleted_at.is_(None),
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
         )
         if request.task_id:
-            query = query.filter(ProjectChatMessage.task_id == request.task_id)
+            query = query.filter(
+                _task_id_filter(ProjectChatMessage.task_id, request.task_id)
+            )
         else:
-            query = query.filter(ProjectChatMessage.task_id.is_(None))
+            query = query.filter(_task_id_filter(ProjectChatMessage.task_id, None))
         if request.after_sequence > 0:
             rows = (
                 query.filter(ProjectChatMessage.id > request.after_sequence)
@@ -331,15 +343,15 @@ class ProjectChatService:
             message_id=message_id,
             client_message_id=request.client_message_id,
             project_id=request.project_id,
-            task_id=request.task_id,
+            task_id=request.task_id or "",
             sender_type="user",
             sender_id=str(user_id),
             sender_name=user_name,
             message_type="text",
             content=request.content,
             metadata_json=metadata,
-            reply_to_message_id=reply_to_message_id,
-            thread_root_message_id=root_message_id,
+            reply_to_message_id=reply_to_message_id or "",
+            thread_root_message_id=root_message_id or "",
             status="completed",
         )
         db.add(row)
@@ -368,7 +380,7 @@ class ProjectChatService:
             .filter(
                 ProjectChatMessage.message_id == reply_to_message_id,
                 ProjectChatMessage.project_id == project_id,
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -377,12 +389,7 @@ class ProjectChatService:
                 status.HTTP_404_NOT_FOUND,
                 "reply target message not found",
             )
-        target_task_id = target.task_id
-        if (task_id is None) != (target_task_id is None) or (
-            task_id is not None
-            and target_task_id is not None
-            and task_id != target_task_id
-        ):
+        if (task_id or "") != (target.task_id or ""):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "reply target belongs to a different task thread",
@@ -416,9 +423,9 @@ class ProjectChatService:
                 .filter(
                     ProjectChatMessage.message_id == request.trigger_message_id,
                     ProjectChatMessage.project_id == request.project_id,
-                    ProjectChatMessage.task_id == request.task_id,
+                    _task_id_filter(ProjectChatMessage.task_id, request.task_id),
                     ProjectChatMessage.sender_type == "user",
-                    ProjectChatMessage.deleted_at.is_(None),
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
                 .first()
             )
@@ -460,23 +467,23 @@ class ProjectChatService:
         row = ProjectChatMessage(
             message_id=message_id,
             project_id=request.project_id,
-            task_id=request.task_id,
+            task_id=request.task_id or "",
             sender_type="agent",
             sender_id=request.agent_id,
             sender_name=str(configured_agent.title or configured_agent.name),
             message_type="agent_chunk",
             content="",
             metadata_json=metadata,
-            trigger_message_id=request.trigger_message_id,
-            reply_to_message_id=trigger.message_id if trigger else None,
+            trigger_message_id=request.trigger_message_id or "",
+            reply_to_message_id=trigger.message_id if trigger else "",
             thread_root_message_id=(
                 (trigger.thread_root_message_id or trigger.message_id)
                 if trigger
-                else None
+                else ""
             ),
             agent_id=request.agent_id,
-            runtime_device_id=request.runtime_device_id,
-            runtime_task_id=request.runtime_task_id,
+            runtime_device_id=request.runtime_device_id or "",
+            runtime_task_id=request.runtime_task_id or "",
             status="streaming",
         )
         db.add(row)
@@ -509,7 +516,7 @@ class ProjectChatService:
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status == "streaming",
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .order_by(ProjectChatMessage.id.desc())
             .first()
@@ -722,7 +729,7 @@ class ProjectChatService:
                 ProjectChatMessage.trigger_message_id == parent.message_id,
                 ProjectChatMessage.agent_id == parent.agent_id,
                 ProjectChatMessage.sender_id == f"{parent.agent_id}:{child_id}",
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -745,8 +752,8 @@ class ProjectChatService:
                 thread_root_message_id=parent.thread_root_message_id
                 or parent.message_id,
                 agent_id=parent.agent_id,
-                runtime_device_id=parent.runtime_device_id,
-                runtime_task_id=parent.runtime_task_id,
+                runtime_device_id=parent.runtime_device_id or "",
+                runtime_task_id=parent.runtime_task_id or "",
                 status="completed",
             )
             db.add(existing)
@@ -809,7 +816,7 @@ class ProjectChatService:
                 ProjectChatMessage.agent_id == agent_id,
                 ProjectChatMessage.runtime_device_id == runtime_device_id,
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -863,11 +870,11 @@ class ProjectChatService:
                 row.sender_name if agent is None else str(agent.title or agent.name)
             ),
             "trigger_message_id": (
-                trigger.message_id if trigger else row.trigger_message_id
+                trigger.message_id if trigger else (row.trigger_message_id or None)
             ),
             "project_chat_message_id": row.message_id,
-            "runtime_device_id": row.runtime_device_id,
-            "runtime_task_id": row.runtime_task_id,
+            "runtime_device_id": row.runtime_device_id or None,
+            "runtime_task_id": row.runtime_task_id or None,
             "updated_at": now.isoformat(),
         }
         if prompt:
@@ -1031,10 +1038,10 @@ class ProjectChatService:
             .filter(
                 ProjectChatMessage.message_id == request.message_id,
                 ProjectChatMessage.project_id == request.project_id,
-                ProjectChatMessage.task_id == request.task_id,
+                _task_id_filter(ProjectChatMessage.task_id, request.task_id),
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status == "streaming",
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -1048,7 +1055,7 @@ class ProjectChatService:
                 ProjectChatMessage.message_id == row.trigger_message_id,
                 ProjectChatMessage.sender_type == "user",
                 ProjectChatMessage.sender_id == str(user_id),
-                ProjectChatMessage.deleted_at.is_(None),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .first()
         )
@@ -1252,9 +1259,9 @@ class ProjectChatService:
         return ProjectChatMessageView(
             sequence_number=row.id,
             message_id=row.message_id,
-            client_message_id=row.client_message_id,
+            client_message_id=row.client_message_id or None,
             project_id=row.project_id,
-            task_id=row.task_id,
+            task_id=row.task_id or None,
             sender={
                 "type": row.sender_type,
                 "id": row.sender_id,
@@ -1263,10 +1270,10 @@ class ProjectChatService:
             type=row.message_type,
             content=row.content,
             metadata=row.metadata_json if isinstance(row.metadata_json, dict) else {},
-            trigger_message_id=row.trigger_message_id,
-            reply_to_message_id=row.reply_to_message_id,
-            root_message_id=row.thread_root_message_id,
-            agent_id=row.agent_id,
+            trigger_message_id=row.trigger_message_id or None,
+            reply_to_message_id=row.reply_to_message_id or None,
+            root_message_id=row.thread_root_message_id or None,
+            agent_id=row.agent_id or None,
             runtime_address=runtime_address,
             status=row.status,
             created_at=row.created_at.isoformat(),

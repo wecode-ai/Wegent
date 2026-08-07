@@ -17,6 +17,7 @@ from typing import Optional
 
 import celery.signals
 from prometheus_client import Counter, Gauge
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
@@ -353,7 +354,10 @@ async def _dispatch_queued_executions(db: Session) -> int:
         .filter(
             LoopItemExecution.execution_environment == "local",
             LoopItemExecution.status == "queued",
-            LoopItemExecution.execution_device_id.is_(None),
+            or_(
+                LoopItemExecution.execution_device_id.is_(None),
+                LoopItemExecution.execution_device_id == "",
+            ),
             ProjectChatAgent.status == "active",
         )
         .order_by(

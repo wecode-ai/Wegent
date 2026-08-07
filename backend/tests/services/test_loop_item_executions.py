@@ -11,7 +11,12 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_value_is_unset,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.services.loop_item_executions.service import (
@@ -257,7 +262,7 @@ def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) 
     done = loop_item_execution_service.complete(test_db, execution_id=claimed.id)
     assert done is not None
     assert done.status == "completed"
-    assert done.lease_expires_at is None
+    assert loop_datetime_value_is_unset(done.lease_expires_at)
     # The slot is free again.
     next_claim = loop_item_execution_service.claim(
         test_db,

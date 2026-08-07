@@ -23,19 +23,29 @@ def upgrade() -> None:
     if "reply_to_message_id" not in columns:
         op.add_column(
             "project_chat_messages",
-            sa.Column("reply_to_message_id", sa.String(length=64), nullable=True),
+            sa.Column(
+                "reply_to_message_id",
+                sa.String(length=64),
+                nullable=False,
+                server_default="",
+            ),
         )
     if "thread_root_message_id" not in columns:
         op.add_column(
             "project_chat_messages",
-            sa.Column("thread_root_message_id", sa.String(length=64), nullable=True),
+            sa.Column(
+                "thread_root_message_id",
+                sa.String(length=64),
+                nullable=False,
+                server_default="",
+            ),
         )
     indexes = {
         index["name"] for index in inspector.get_indexes("project_chat_messages")
     }
-    if "ix_project_chat_thread_order" not in indexes:
+    if "idx_project_chat_thread_order" not in indexes:
         op.create_index(
-            "ix_project_chat_thread_order",
+            "idx_project_chat_thread_order",
             "project_chat_messages",
             ["thread_root_message_id", "id"],
             unique=False,
@@ -48,9 +58,9 @@ def downgrade() -> None:
     indexes = {
         index["name"] for index in inspector.get_indexes("project_chat_messages")
     }
-    if "ix_project_chat_thread_order" in indexes:
+    if "idx_project_chat_thread_order" in indexes:
         op.drop_index(
-            "ix_project_chat_thread_order",
+            "idx_project_chat_thread_order",
             table_name="project_chat_messages",
         )
     columns = {

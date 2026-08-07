@@ -16,7 +16,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_index(
-        "ix_exec_status_device",
+        "idx_exec_status_device",
         "loop_item_executions",
         ["status", "execution_device_id"],
         unique=False,
@@ -24,4 +24,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_exec_status_device", table_name="loop_item_executions")
+    op.drop_index("idx_exec_status_device", table_name="loop_item_executions")
