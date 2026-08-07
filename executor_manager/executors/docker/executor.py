@@ -43,6 +43,7 @@ from executor_manager.executors.docker.utils import (
     get_container_status,
     get_running_task_details,
 )
+from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
@@ -185,7 +186,11 @@ class DockerExecutor(Executor):
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
-                self._attach_executor_info(task_dict, execution_status)
+                attach_executor_info(
+                    task_dict,
+                    execution_status["executor_name"],
+                    execution_status.get("executor_namespace"),
+                )
                 # Check if container needs to be recreated (not running or doesn't exist)
                 if self._should_recreate_container(executor_name, task_id):
                     execution_status["executor_name"] = executor_name
@@ -199,7 +204,11 @@ class DockerExecutor(Executor):
                 execution_status["executor_name"] = generate_executor_name(
                     task_id, subtask_id, user_name
                 )
-                self._attach_executor_info(task_dict, execution_status)
+                attach_executor_info(
+                    task_dict,
+                    execution_status["executor_name"],
+                    execution_status.get("executor_namespace"),
+                )
 
                 self._create_new_container(task_dict, task_info, execution_status)
         except Exception as e:
@@ -244,23 +253,6 @@ class DockerExecutor(Executor):
             "user_name": user_name,
             "executor_name": executor_name,
         }
-
-    @staticmethod
-    def _attach_executor_info(task: Dict[str, Any], status: Dict[str, Any]) -> None:
-        """Attach resolved executor info to the payload sent to the container."""
-        executor_name = status.get("executor_name")
-        if not executor_name:
-            return
-
-        executor_namespace = status.get("executor_namespace") or ""
-        metadata = task.get("metadata")
-        if isinstance(metadata, dict):
-            metadata["executor_name"] = executor_name
-            metadata["executor_namespace"] = executor_namespace
-            return
-
-        task["executor_name"] = executor_name
-        task["executor_namespace"] = executor_namespace
 
     def _should_recreate_container(self, executor_name: str, task_id: int) -> bool:
         """Check if container should be recreated due to stale or non-running state.
