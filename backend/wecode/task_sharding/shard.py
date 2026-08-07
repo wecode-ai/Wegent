@@ -132,6 +132,7 @@ def _model_for_table(source_model: type, table_name: str, class_prefix: str) -> 
             (object,),
             {
                 "__module__": __name__,
+                "__source_model__": source_model,
                 "__table__": table,
                 **_copy_public_constants(source_model),
                 **_copy_public_classmethods(source_model),
