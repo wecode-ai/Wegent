@@ -231,7 +231,10 @@
     "remove_added_skill_confirm": "Remove \u201c{{skill}}\u201d from your capabilities? The source Skill will not be deleted.",
     "remove_from_team_success": "Skill removed from team",
     "remove_from_team_failed": "Failed to remove Skill from team",
-    "remove_from_team_confirm": "Remove “{{skill}}” from “{{group}}”? The source Skill will not be deleted."
+    "remove_from_team_confirm": "Remove “{{skill}}” from “{{group}}”? The source Skill will not be deleted.",
+    "remove_from_team_agent_success": "Agent removed from team",
+    "remove_from_team_agent_failed": "Failed to remove Agent from team",
+    "remove_from_team_agent_confirm": "Remove “{{agent}}” from “{{group}}”? The source Agent will not be deleted."
   },
   "publish": {
     "description": "Select an existing Agent or Skill and publish it to the marketplace",
