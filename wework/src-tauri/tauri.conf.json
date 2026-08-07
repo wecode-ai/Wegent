@@ -22,10 +22,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["sidebar"]
-        },
+        "transparent": false,
         "dragDropEnabled": false,
         "trafficLightPosition": {
           "x": 19,

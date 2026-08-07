@@ -89,6 +89,21 @@ To validate local updater behavior, serve the script output directory:
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
+## Window Surfaces
+
+The Wework main window and detached workspace windows must use opaque Tauri
+windows that are fully covered by the WebView theme surface. Do not enable
+`transparent`, `windowEffects`, or native vibrancy materials for these windows.
+Transparent window edges are composed differently across macOS versions and
+graphics environments, which can expose the desktop or appear as translucent
+or gray borders.
+
+The system drag panel and Popout Window are separate lightweight overlays and
+are not covered by this rule. Changes to ordinary window backgrounds, title
+bars, or creation options must verify both the main window and detached
+workspace windows and retain automated assertions that prevent native
+transparency from being re-enabled.
+
 ## Tauri Dependency Upgrades
 
 Update the Rust core dependencies and frontend toolchain together so development, testing, and release builds do not use different Tauri versions:

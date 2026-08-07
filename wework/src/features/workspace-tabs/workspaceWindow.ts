@@ -1,6 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { LogicalPosition } from '@tauri-apps/api/dpi'
-import { Effect } from '@tauri-apps/api/window'
 import { getPlatform } from '@/lib/platform'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { toBrowserPath } from '@/lib/navigation'
@@ -42,8 +41,7 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<boolean
     focus: true,
     visible: false,
     resizable: true,
-    transparent: platform === 'mac',
-    windowEffects: platform === 'mac' ? { effects: [Effect.Sidebar] } : undefined,
+    transparent: false,
     decorations: platform !== 'win',
     titleBarStyle: platform === 'mac' ? 'overlay' : undefined,
     hiddenTitle: platform === 'mac',

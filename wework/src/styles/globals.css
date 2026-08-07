@@ -15,7 +15,7 @@
   --color-primary-contrast: 255 255 255;
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
-  --color-titlebar: 229 231 234;
+  --color-titlebar: 247 247 248;
   --color-sidebar: 243 243 243 / 0.92;
   --color-sidebar-unfocused: 246 246 246 / 0.88;
   --color-sidebar-active: 26 28 31 / 0.07;
@@ -221,7 +221,7 @@
   --color-primary-contrast: 11 18 20;
   --color-border: 55 61 70;
   --color-muted: 38 42 48;
-  --color-titlebar: 20 22 25;
+  --color-titlebar: 28 31 36;
   --color-sidebar: 33 33 33 / 0.96;
   --color-sidebar-unfocused: 40 40 40 / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
@@ -279,12 +279,6 @@ body {
 html[data-system-drag-panel='true'],
 html[data-system-drag-panel='true'] body,
 html[data-system-drag-panel='true'] #root {
-  background: transparent;
-}
-
-html[data-desktop-vibrancy='true'],
-html[data-desktop-vibrancy='true'] body,
-html[data-desktop-vibrancy='true'] #root {
   background: transparent;
 }
 
