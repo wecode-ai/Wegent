@@ -106,6 +106,7 @@ import {
   setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
+import { findBrowserTabByPopupParent } from '@/features/browser-tabs/browserPopupRouting'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -407,6 +408,7 @@ function normalizeRightWorkspaceBrowserState(
 ): RightWorkspaceBrowserState {
   return {
     label: state?.label ?? label,
+    nativeLabel: state?.nativeLabel ?? null,
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
@@ -430,15 +432,6 @@ function browserLabelForRightWorkspaceTab(
 ): string {
   const suffix = getRightWorkspaceBrowserLabelSuffix(tab)
   return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
-}
-
-function findRightWorkspaceBrowserTabByLabel(
-  states: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
-  label?: string | null
-): RightWorkspaceBrowserTab | null {
-  if (!label) return null
-  const entry = Object.entries(states).find(([, state]) => state?.label === label)
-  return entry ? (entry[0] as RightWorkspaceBrowserTab) : null
 }
 
 function createInitialBrowserWorkspaceState({
@@ -2174,7 +2167,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
-      const targetByLabel = findRightWorkspaceBrowserTabByLabel(
+      const targetByLabel = findBrowserTabByPopupParent(
         states,
         request.targetLabel ?? request.label
       )
@@ -2218,8 +2211,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useEffect(() => {
     if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
     const listener = listenEmbeddedBrowserPopupRequests(request => {
-      if (!findRightWorkspaceBrowserTabByLabel(browserStatesRef.current, request.parentLabel))
-        return
+      const parentTab = findBrowserTabByPopupParent(
+        browserStatesRef.current,
+        request.parentLabel,
+        request.parentNativeLabel
+      )
+      if (!parentTab) return
       routeEmbeddedBrowserOpenRequest({
         id: request.popupId,
         url: request.url,

@@ -29,6 +29,7 @@ describe('WorkspaceBrowserPanelContainer', () => {
     }
 
     const onTitleChange = vi.fn()
+    const onNativeLabelChange = vi.fn()
 
     render(
       <WorkspaceBrowserPanel
@@ -36,6 +37,7 @@ describe('WorkspaceBrowserPanelContainer', () => {
         label="workspace-browser-task-1"
         openRequest={openRequest}
         onTitleChange={onTitleChange}
+        onNativeLabelChange={onNativeLabelChange}
       />
     )
 
@@ -45,6 +47,7 @@ describe('WorkspaceBrowserPanelContainer', () => {
       label: 'workspace-browser-task-1',
       openRequest,
       onTitleChange,
+      onNativeLabelChange,
     })
   })
 })

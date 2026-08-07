@@ -84,6 +84,7 @@ function getRightWorkspaceBrowserTabSuffix(tab: RightWorkspaceBrowserTab) {
 
 export interface RightWorkspaceBrowserState {
   label: string
+  nativeLabel?: string | null
   browserSessionId: string
   title: string | null
   faviconUrl: string | null
@@ -472,6 +473,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                 }
                 onFaviconChange={faviconUrl => onBrowserStateChange(tab, { faviconUrl })}
                 onTitleChange={title => onBrowserStateChange(tab, { title })}
+                onNativeLabelChange={nativeLabel => onBrowserStateChange(tab, { nativeLabel })}
               />
             </div>
           )
