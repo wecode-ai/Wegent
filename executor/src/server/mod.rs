@@ -44,6 +44,7 @@ use crate::{
         TaskHeartbeatController,
     },
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
+    process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
 };
@@ -1326,10 +1327,18 @@ fn workspace_root() -> PathBuf {
 }
 
 async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
+    let requested_environment = request
+        .process
+        .envs
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let process_environment = process_environment::process_env(&requested_environment);
     let mut command = Command::new(&request.process.cmd);
     command
         .args(&request.process.args)
-        .envs(&request.process.envs)
+        .env_clear()
+        .envs(process_environment)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -1885,6 +1894,25 @@ impl IntoResponse for HttpError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn envd_process_filters_exported_bash_functions() {
+        let request = ProcessStartRequest {
+            process: ProcessStartConfig {
+                cmd: "/bin/bash".to_owned(),
+                args: vec!["-c".to_owned(), "printf ready".to_owned()],
+                envs: HashMap::from([("BASH_FUNC_which%%".to_owned(), "() {".to_owned())]),
+                cwd: None,
+            },
+        };
+
+        let output = run_envd_process(&request).await;
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.stdout, b"ready");
+        assert!(output.stderr.is_empty());
+    }
 
     #[test]
     fn sanitized_json_preview_redacts_nested_secrets() {
