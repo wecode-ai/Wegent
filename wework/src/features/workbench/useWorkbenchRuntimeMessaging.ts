@@ -546,6 +546,23 @@ export function useWorkbenchRuntimeMessaging({
         resolveAutomaticModel(modelSelection.models)
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+      const friendlyTitle =
+        !options?.ephemeral && preferences?.friendlyTaskTitlesEnabled === true
+          ? preferences.friendlyTaskTitleModel
+            ? {
+                modelId: preferences.friendlyTaskTitleModel.executionModelId,
+                modelType: preferences.friendlyTaskTitleModel.executionModelType,
+                modelOptions: preferences.friendlyTaskTitleModel.options,
+              }
+            : executionModel.modelId
+              ? {
+                  modelId: executionModel.modelId,
+                  modelType: executionModel.modelType,
+                  modelOptions: executionModel.modelOptions,
+                }
+              : null
+          : null
       const runtime = inferRuntimeName(selectedModel)
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -686,17 +703,7 @@ export function useWorkbenchRuntimeMessaging({
               options: selectedModelOptions,
             }
           : null,
-        ...(!options?.ephemeral &&
-        preferences?.friendlyTaskTitlesEnabled === true &&
-        preferences.friendlyTaskTitleModel
-          ? {
-              friendlyTitle: {
-                modelId: preferences.friendlyTaskTitleModel.executionModelId,
-                modelType: preferences.friendlyTaskTitleModel.executionModelType,
-                modelOptions: preferences.friendlyTaskTitleModel.options,
-              },
-            }
-          : {}),
+        ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],

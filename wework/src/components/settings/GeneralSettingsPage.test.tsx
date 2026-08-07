@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 const defaultPreferences: AppPreferences = {
@@ -28,6 +30,8 @@ const defaultPreferences: AppPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: [],
 }
 
@@ -68,6 +72,8 @@ vi.mock('@/tauri/appPreferences', () => ({
     appshotsPlaySound: true,
     popoutWindowShortcut: 'Alt+Shift+Space',
     popoutWindowProjectlessDefaultEnabled: false,
+    friendlyTaskTitlesEnabled: false,
+    friendlyTaskTitleModel: null,
     quickPhrases: [],
   },
   getAppPreferences: getAppPreferencesMock,
@@ -183,6 +189,48 @@ describe('GeneralSettingsPage', () => {
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
     })
+  })
+
+  test('keeps friendly titles off by default and uses the task model when enabled', async () => {
+    const taskModel = {
+      name: 'gpt-5',
+      type: 'runtime',
+      displayName: 'GPT-5',
+    }
+    const workbench = {
+      projectChat: {
+        models: [taskModel],
+        selectedModel: taskModel,
+      },
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const toggle = await screen.findByTestId('friendly-task-titles-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        friendlyTaskTitlesEnabled: true,
+        friendlyTaskTitleModel: null,
+      })
+    })
+
+    const modelSelect = screen.getByTestId('friendly-task-title-model-select')
+    expect(
+      (within(modelSelect).getByRole('option', { name: '与任务相同' }) as HTMLOptionElement)
+        .selected
+    ).toBe(true)
+    expect(
+      within(modelSelect).queryByRole('option', { name: '请选择模型' })
+    ).not.toBeInTheDocument()
   })
 
   test('enables the system drag panel by default and persists disabling it', async () => {
