@@ -2,22 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::{
-    follow_up_thread_mode, mark_runtime_model_switch, runtime_model_selection_changed,
-    FollowUpThreadMode,
-};
+use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
     handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
-}
-
-#[test]
-fn follow_up_thread_mode_preserves_ephemeral_direct_semantics() {
-    assert_eq!(follow_up_thread_mode(true), FollowUpThreadMode::Direct);
-    assert_eq!(follow_up_thread_mode(false), FollowUpThreadMode::Resume);
 }
 
 #[test]

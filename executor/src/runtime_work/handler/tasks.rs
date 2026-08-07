@@ -552,24 +552,8 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
-        // A send that targets an already-bound task is a follow-up turn. Resume
-        // the Codex thread up front so a thread without a durable rollout (for
-        // example a legacy ephemeral run) rejects the send instead of failing
-        // after acceptance; the caller can then start a fresh continuable run.
-        // After a successful resume the thread is loaded and subscribed, so the
-        // turn itself sends directly into the same session.
-        let (direct_thread_id, resume_thread_id) = if let Some(link) = link_for_send {
-            match self.resume_codex_thread_for_action(link, &thread_id).await {
-                Ok(resumed_thread_id) => (Some(resumed_thread_id), None),
-                Err(error) => return Ok(task_action_failure(link, error)),
-            }
-        } else {
-            let thread_mode = follow_up_thread_mode(ephemeral);
-            (
-                (thread_mode == FollowUpThreadMode::Direct).then(|| thread_id.clone()),
-                (thread_mode == FollowUpThreadMode::Resume).then_some(thread_id),
-            )
-        };
+        let direct_thread_id = ephemeral.then(|| thread_id.clone());
+        let resume_thread_id = (!ephemeral).then_some(thread_id);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.spawn_turn(SpawnTurnRequest {
@@ -1115,20 +1099,6 @@ fn runtime_guidance_failure(
         "taskId": local_task_id,
         "runtime": "codex",
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FollowUpThreadMode {
-    Direct,
-    Resume,
-}
-
-pub(super) fn follow_up_thread_mode(ephemeral: bool) -> FollowUpThreadMode {
-    if ephemeral {
-        FollowUpThreadMode::Direct
-    } else {
-        FollowUpThreadMode::Resume
-    }
 }
 
 pub(super) fn resolve_codex_turn_id(

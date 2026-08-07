@@ -740,7 +740,7 @@ def test_claimed_run_builds_complete_model_config_matching_app_send(
         "model_id": "moonshot-kimi-k2.7-code-highspeed",
         "api_format": "responses",
         "protocol": "openai-responses",
-        "base_url": "https://copilot.weibo.com",
+        "base_url": "https://gateway.example.com",
         "api_key": "sk-wecode-test",
         "default_headers": {"wecode-source": "agent", "wecode-user": "tester"},
         "upstream_api_format": "anthropic-messages",
@@ -758,7 +758,7 @@ def test_claimed_run_builds_complete_model_config_matching_app_send(
     assert payload is not None
     model_config = payload["executionRequest"]["model_config"]
     assert model_config == full_config
-    assert model_config["base_url"] == "https://copilot.weibo.com"
+    assert model_config["base_url"] == "https://gateway.example.com"
     assert model_config["model_id"] == "moonshot-kimi-k2.7-code-highspeed"
     assert model_config["upstream_api_format"] == "anthropic-messages"
 
@@ -785,7 +785,7 @@ def test_public_cloud_model_uses_backend_gateway_config(
                         "env": {
                             "model": "claude",
                             "api_key": "secret-key",
-                            "base_url": "https://copilot.weibo.com",
+                            "base_url": "https://gateway.example.com",
                             "model_id": "moonshot-kimi-k2.7-code-highspeed",
                         }
                     }
