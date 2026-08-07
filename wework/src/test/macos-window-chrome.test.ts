@@ -6,6 +6,8 @@ interface TauriWindowConfig {
   titleBarStyle?: string
   hiddenTitle?: boolean
   decorations?: boolean
+  transparent?: boolean
+  windowEffects?: unknown
   dragDropEnabled?: boolean
   trafficLightPosition?: {
     x: number
@@ -37,6 +39,8 @@ describe('macOS window chrome', () => {
     expect(mainWindow.titleBarStyle).toBe('Overlay')
     expect(mainWindow.hiddenTitle).toBe(true)
     expect(mainWindow.decorations).toBe(true)
+    expect(mainWindow.transparent).toBe(false)
+    expect(mainWindow).not.toHaveProperty('windowEffects')
     expect(mainWindow.trafficLightPosition).toEqual({ x: 19, y: 21 })
   })
 

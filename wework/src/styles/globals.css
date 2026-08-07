@@ -281,12 +281,6 @@ html[data-system-drag-panel='true'] #root {
   background: transparent;
 }
 
-html[data-desktop-vibrancy='true'],
-html[data-desktop-vibrancy='true'] body,
-html[data-desktop-vibrancy='true'] #root {
-  background: transparent;
-}
-
 button,
 input,
 textarea {

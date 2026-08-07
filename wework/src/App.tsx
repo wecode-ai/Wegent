@@ -33,7 +33,6 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
@@ -475,7 +474,6 @@ function AppShell() {
   const isTauri = isTauriRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
-  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
@@ -503,15 +501,6 @@ function AppShell() {
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
-
-  useEffect(() => {
-    if (!usesDesktopVibrancy) return undefined
-
-    document.documentElement.dataset.desktopVibrancy = 'true'
-    return () => {
-      delete document.documentElement.dataset.desktopVibrancy
-    }
-  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -704,9 +693,7 @@ function AppShell() {
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
               ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-              : usesDesktopVibrancy
-                ? 'overflow-hidden bg-transparent'
-                : 'overflow-hidden bg-surface',
+              : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >
