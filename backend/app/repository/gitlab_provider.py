@@ -45,7 +45,11 @@ class GitLabProvider(RepositoryProvider):
             git_domain: Optional domain to filter a specific GitLab entry
 
         Returns:
-            List of dictionaries containing git_domain, git_token, type
+            List of dictionaries containing git_domain, git_token, type. The token is
+            decrypted here, at the one place entries are built, so every caller below
+            holds something usable. Tokens are stored encrypted, and passing the
+            ciphertext to GitLab reads as an authentication failure rather than as a
+            configuration error.
 
         Raises:
             HTTPException: Raised when GitLab information is not configured
@@ -61,7 +65,7 @@ class GitLabProvider(RepositoryProvider):
                 entries.append(
                     {
                         "git_domain": info.get("git_domain", ""),
-                        "git_token": info.get("git_token", ""),
+                        "git_token": self.decrypt_token(info.get("git_token", "")),
                         "type": info.get("type", ""),
                     }
                 )
@@ -288,8 +292,11 @@ class GitLabProvider(RepositoryProvider):
                         self._fetch_all_repositories_async(user, git_token, git_domain)
                     )
 
-            except requests.exceptions.RequestException:
-                # skip failed domain, continue others
+            except requests.exceptions.RequestException as e:
+                # Skip the failed domain and keep the others, but say so: silently
+                # returning fewer repositories is indistinguishable from the user
+                # owning none, which hides an expired or rejected token.
+                self._log_domain_failure("list repositories", git_domain, e)
                 continue
 
         return all_repos
@@ -628,8 +635,10 @@ class GitLabProvider(RepositoryProvider):
                         for r in filtered_repos
                     ]
                 )
-            except requests.exceptions.RequestException:
-                # skip this domain on error
+            except requests.exceptions.RequestException as e:
+                # Same reasoning as get_repositories: an empty search result and a
+                # rejected token must not look alike in the logs.
+                self._log_domain_failure("search repositories", git_domain, e)
                 continue
 
         return all_results

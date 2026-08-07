@@ -66,7 +66,7 @@ class GiteaProvider(RepositoryProvider):
                 entries.append(
                     {
                         "git_domain": info.get("git_domain", ""),
-                        "git_token": info.get("git_token", ""),
+                        "git_token": self.decrypt_token(info.get("git_token", "")),
                         "type": info.get("type", ""),
                         "user_name": info.get("user_name", ""),
                     }
@@ -227,7 +227,8 @@ class GiteaProvider(RepositoryProvider):
                         for repo in mapped_repos
                     ]
                 )
-            except requests.exceptions.RequestException:
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("list repositories", git_domain, e)
                 continue
 
         return all_repos
@@ -573,7 +574,8 @@ class GiteaProvider(RepositoryProvider):
                         for r in filtered_repos
                     ]
                 )
-            except requests.exceptions.RequestException:
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("search repositories", git_domain, e)
                 continue
 
         return all_results

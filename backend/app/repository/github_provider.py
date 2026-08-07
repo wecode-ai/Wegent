@@ -66,7 +66,7 @@ class GitHubProvider(RepositoryProvider):
                 entries.append(
                     {
                         "git_domain": info.get("git_domain", ""),
-                        "git_token": info.get("git_token", ""),
+                        "git_token": self.decrypt_token(info.get("git_token", "")),
                         "type": info.get("type", ""),
                     }
                 )
@@ -199,8 +199,8 @@ class GitHubProvider(RepositoryProvider):
                         for repo in repos
                     ]
                 )
-            except requests.exceptions.RequestException:
-                # skip failed domain, continue others
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("list repositories", git_domain, e)
                 continue
 
         return all_repos
@@ -575,8 +575,8 @@ class GitHubProvider(RepositoryProvider):
                         for r in filtered_repos
                     ]
                 )
-            except requests.exceptions.RequestException:
-                # skip this domain on error
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("search repositories", git_domain, e)
                 continue
 
         return all_results
