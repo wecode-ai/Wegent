@@ -187,9 +187,13 @@ export function AttachmentImagePreview({
   const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
   const previewContainerRef = useRef<HTMLElement | null>(null)
   const previewIdentity = `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
+  const attachmentRef = useRef(attachment)
   const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
     previewContainerRef.current = element
   }, [])
+  useEffect(() => {
+    attachmentRef.current = attachment
+  }, [attachment])
   const gallery = useMemo(
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
     [attachment, galleryAttachments]
@@ -235,6 +239,7 @@ export function AttachmentImagePreview({
 
     let isMounted = true
     let objectUrl: string | null = null
+    const targetAttachment = attachmentRef.current
 
     async function loadPreview() {
       setPreviewUrl(null)
@@ -244,7 +249,7 @@ export function AttachmentImagePreview({
       setZoom(1)
 
       try {
-        const loaded = await loadAttachmentImageUrl(attachment)
+        const loaded = await loadAttachmentImageUrl(targetAttachment)
         objectUrl = loaded.objectUrl
         if (isMounted) {
           setPreviewUrl(loaded.url)
@@ -253,7 +258,7 @@ export function AttachmentImagePreview({
         }
       } catch {
         if (isMounted) {
-          rememberFailedAttachmentPreview(attachment)
+          rememberFailedAttachmentPreview(targetAttachment)
           setHasError(true)
         }
       }
@@ -267,7 +272,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment, shouldLoadPreview])
+  }, [previewIdentity, shouldLoadPreview])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
@@ -275,10 +280,11 @@ export function AttachmentImagePreview({
     let isMounted = true
     let objectUrl: string | null = null
     const nextIndex = clampIndex(lightboxIndex, gallery.length)
-    const selectedAttachment = gallery[nextIndex] ?? attachment
+    const currentAttachment = attachmentRef.current
+    const selectedAttachment = gallery[nextIndex] ?? currentAttachment
     const reusablePreviewUrl =
-      selectedAttachment.id === attachment.id &&
-      selectedAttachment.local_preview_url === attachment.local_preview_url
+      selectedAttachment.id === currentAttachment.id &&
+      selectedAttachment.local_preview_url === currentAttachment.local_preview_url
         ? previewUrl
         : null
 
@@ -321,7 +327,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment, disableLightbox, gallery, isLightboxOpen, lightboxIndex, previewUrl])
+  }, [disableLightbox, gallery, isLightboxOpen, lightboxIndex, previewIdentity, previewUrl])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
