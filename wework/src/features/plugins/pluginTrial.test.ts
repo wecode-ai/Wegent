@@ -172,6 +172,20 @@ describe('plugin trial state', () => {
     expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework) ')
   })
 
+  test('falls back to the personal marketplace for personal managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'personal'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework-personal) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')

@@ -21,6 +21,7 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
+import { managedMarketplaceName } from '@/features/plugins/pluginMarketplaceIdentity'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
@@ -49,33 +50,15 @@ function pluginSourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
   return payload && typeof payload === 'object' ? payload : {}
 }
 
-function marketplaceNameForVisibility(visibility?: string | null): string | null {
-  switch (visibility) {
-    case 'personal':
-      return 'wework-personal'
-    case 'workspace':
-      return 'wegent'
-    case 'public':
-      return 'wework'
-    default:
-      return null
-  }
-}
-
 function installedPluginMarketplaces(plugin: InstalledPlugin): string[] {
   const payload = pluginSourcePayload(plugin)
   const metadataNamespace =
     typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace !== 'default'
       ? plugin.metadata.namespace
       : null
-  const managedMarketplace =
-    plugin.spec.source.providerKey === 'wegent-market' ||
-    plugin.spec.source.providerKey === 'wegent-marketplace'
-      ? (marketplaceNameForVisibility(plugin.spec.visibility) ?? 'wegent')
-      : null
   return [
     typeof payload.marketplaceName === 'string' ? payload.marketplaceName : null,
-    managedMarketplace,
+    managedMarketplaceName(plugin),
     plugin.spec.source.marketplace,
     metadataNamespace,
   ]
@@ -175,7 +158,9 @@ function isApplicationPluginSyncConfirmed(
 ): boolean {
   if (!sync) return false
   const pluginId = installedPluginId(plugin)
-  const targetResult = sync.results.find(result => result.device_id === deviceId)
+  const targetResult = Array.isArray(sync.results)
+    ? sync.results.find(result => result.device_id === deviceId)
+    : null
   if (targetResult) {
     return (
       targetResult.success &&

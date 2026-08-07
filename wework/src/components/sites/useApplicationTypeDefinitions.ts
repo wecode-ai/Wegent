@@ -57,7 +57,21 @@ function readCachedApplicationTypes(): ApplicationTypeDescriptor[] | null {
     const raw = window.localStorage.getItem(APPLICATION_TYPES_CACHE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as { items?: unknown }
-    return Array.isArray(parsed.items) ? (parsed.items as ApplicationTypeDescriptor[]) : null
+    if (!Array.isArray(parsed.items)) return null
+    const items = parsed.items
+    const valid = items.every(item => {
+      if (!item || typeof item !== 'object') return false
+      const create = (item as { create?: unknown }).create
+      if (create === undefined || create === null) return true
+      if (typeof create !== 'object') return false
+      const pluginName = (create as { plugin_name?: unknown }).plugin_name
+      const marketplaceName = (create as { marketplace_name?: unknown }).marketplace_name
+      return (
+        (pluginName === undefined || typeof pluginName === 'string') &&
+        (marketplaceName === undefined || typeof marketplaceName === 'string')
+      )
+    })
+    return valid ? (items as ApplicationTypeDescriptor[]) : null
   } catch {
     return null
   }

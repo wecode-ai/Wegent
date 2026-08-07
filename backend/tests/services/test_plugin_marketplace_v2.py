@@ -2637,3 +2637,69 @@ def test_reconcile_stale_installed_catalog_refs_after_reimport(test_db, test_use
         assert device_row.state == "pending"
         assert device_row.desired_release_id == release.id
         assert device_row.error_code == ""
+
+
+def test_reconcile_updates_visibility_only_marketplace_change(test_db, test_user):
+    service = PluginMarketplaceService()
+    plugin = Plugin(
+        slug="weibo-api-wiki",
+        name="weibo-api-wiki",
+        display_name="Weibo API Wiki",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+        visibility="workspace",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="0.3.2",
+        manifest_json={"name": "weibo-api-wiki"},
+        interface_json={"displayName": "Weibo API Wiki"},
+        storage_key=f"plugins/{plugin.id}/1/deadbeef.zip",
+        sha256="a" * 64,
+        size_bytes=12,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": [{"name": "wiki"}]}},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+
+    installed = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="weibo-api-wiki",
+        json={
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "weibo-api-wiki", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "providerKey": "wegent-market",
+                    "pluginKey": "weibo-api-wiki",
+                    "catalogItemId": str(plugin.id),
+                    "marketplace": "wework",
+                },
+                "origin": "market",
+                "pluginId": plugin.id,
+                "releaseId": release.id,
+                "enabled": True,
+                "installState": "installed",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(installed)
+    test_db.commit()
+
+    changed = service.reconcile_stale_installed_catalog_refs(
+        test_db, user_id=test_user.id
+    )
+
+    assert changed == 1
+    test_db.refresh(installed)
+    assert installed.json["spec"]["source"]["marketplace"] == "wegent"

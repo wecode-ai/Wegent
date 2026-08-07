@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import io
 import json
 import zipfile
@@ -492,6 +493,62 @@ def test_builtin_plugin_validation_fails_when_manifest_name_does_not_match(
 
 def stat_mode(external_attr: int) -> int:
     return (external_attr >> 16) & 0o777
+
+
+def test_install_builtin_plugin_normalizes_legacy_public_row(test_db, test_user):
+    package_bytes = _create_plugin_zip(BUILTIN_SITES_PLUGIN_NAME)
+    row = Kind(
+        user_id=BUILTIN_PLUGIN_OWNER_ID,
+        kind="PluginMarketplaceItem",
+        name=BUILTIN_SITES_PLUGIN_NAME,
+        namespace="default",
+        json={
+            "kind": "PluginMarketplaceItem",
+            "metadata": {"name": BUILTIN_SITES_PLUGIN_NAME, "namespace": "default"},
+            "spec": {
+                "id": 0,
+                "remotePluginId": "wegent~Plugin_0",
+                "name": BUILTIN_SITES_PLUGIN_NAME,
+                "displayName": "Sites",
+                "description": "Build sites",
+                "version": "1.0.0",
+                "visibility": "public",
+                "featured": True,
+                "ownerUserId": BUILTIN_PLUGIN_OWNER_ID,
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(row)
+    test_db.flush()
+    payload = dict(row.json)
+    spec = dict(payload["spec"])
+    spec["id"] = row.id
+    payload["spec"] = spec
+    row.json = payload
+    test_db.add(
+        SkillBinary(
+            kind_id=row.id,
+            type="plugin",
+            file_name=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
+            binary_data=package_bytes,
+            file_size=len(package_bytes),
+            file_hash=hashlib.sha256(package_bytes).hexdigest(),
+        )
+    )
+    test_db.commit()
+
+    installed = InstalledPluginService().install_builtin_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        plugin_key=BUILTIN_SITES_PLUGIN_NAME,
+    )
+
+    test_db.refresh(row)
+    assert row.json["spec"]["visibility"] == "workspace"
+    assert installed.spec.source.providerKey == "wegent-marketplace"
+    assert installed.spec.source.pluginKey == BUILTIN_SITES_PLUGIN_NAME
+    assert installed.spec.source.marketplace == "wegent"
 
 
 def test_install_builtin_plugin_rejects_missing_system_item(test_db, test_user):

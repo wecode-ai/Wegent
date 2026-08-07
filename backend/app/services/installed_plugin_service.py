@@ -379,11 +379,19 @@ class InstalledPluginService:
                 detail=f"Built-in plugin is unavailable: {plugin_key}",
             )
         spec = self._get_spec(row)
-        if spec.get("visibility") not in {"workspace", "public"}:
+        visibility = spec.get("visibility")
+        if visibility not in {"workspace", "public"}:
             raise HTTPException(
                 status_code=503,
                 detail=f"Built-in plugin is unavailable: {plugin_key}",
             )
+        if visibility == "public":
+            payload = dict(row.json) if isinstance(row.json, dict) else {}
+            normalized_spec = dict(payload.get("spec") or {})
+            normalized_spec["visibility"] = "workspace"
+            payload["spec"] = normalized_spec
+            row.json = payload
+            db.flush()
         return self.install_marketplace_plugin(
             db=db,
             user_id=user_id,

@@ -2349,11 +2349,13 @@ class PluginMarketplaceService:
                 target_release = release
             if not target_release:
                 return False
+            expected_marketplace = marketplace_name_for_visibility(matched.visibility)
             if (
                 not needs_repair
                 and plugin_id == matched.id
                 and release_id == target_release.id
                 and str(source.get("catalogItemId") or "") == str(matched.id)
+                and str(source.get("marketplace") or "") == expected_marketplace
             ):
                 return False
             self._apply_catalog_ref_to_installed_kind(

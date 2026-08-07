@@ -5656,6 +5656,44 @@ async function verifySitesPluginAutoInstall(control) {
     1,
     'Creating a Mini Program did not install its application plugin on demand'
   )
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', '[data-testid="sites-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="applications-tab-miniapp"]')
+  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
+    text: 'E2E Mini Program',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const miniProgramReuseRequestsBefore = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    reuseSnapshot => reuseSnapshot.text.includes('创建并发布一个小程序'),
+    'Recreating a Mini Program did not reuse the installed application plugin',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_COMPOSER_SELECTOR
+  )
+  const miniProgramReuseRequestsAfter = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  assert.equal(
+    miniProgramReuseRequestsAfter - miniProgramReuseRequestsBefore,
+    0,
+    'Creating a Mini Program again should reuse the installed application plugin'
+  )
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     snapshot.testIds.includes('sites-create-error'),
@@ -5841,7 +5879,10 @@ function installedMiniProgramPlugin() {
       },
       sourcePayload: { filename: 'weibo-miniapp-h5-develop-agent.zip' },
     },
-    status: { state: 'Available' },
+    status: {
+      state: 'Available',
+      devices: [{ deviceId: 'local-device', state: 'installed' }],
+    },
   }
 }
 

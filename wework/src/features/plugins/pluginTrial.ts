@@ -1,6 +1,7 @@
 import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
+import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
@@ -68,25 +69,6 @@ function firstPluginSkill(plugin: InstalledPlugin) {
 function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
   const payload = plugin.spec.sourcePayload
   return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
-}
-
-function marketplaceNameForVisibility(visibility?: string | null): string | null {
-  switch (visibility) {
-    case 'personal':
-      return 'wework-personal'
-    case 'workspace':
-      return 'wegent'
-    case 'public':
-      return 'wework'
-    default:
-      return null
-  }
-}
-
-function managedMarketplaceName(plugin: InstalledPlugin): string | null {
-  const providerKey = plugin.spec.source?.providerKey
-  if (providerKey !== 'wegent-market' && providerKey !== 'wegent-marketplace') return null
-  return marketplaceNameForVisibility(plugin.spec.visibility) ?? 'wegent'
 }
 
 function pluginMentionPath(plugin: InstalledPlugin): string | null {

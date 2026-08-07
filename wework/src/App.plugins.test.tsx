@@ -1349,6 +1349,61 @@ describe('App plugins route', () => {
     )
   })
 
+  test('opens the application chat when legacy sync omits per-device results', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        const sync = successfulSitesDeviceSync()
+        delete (sync as Partial<typeof sync>).results
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync,
+            }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await createSiteFromMenu()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '站点',
+      }
+    )
+  })
+
   test('keeps Sites open when the target device sync is not confirmed', async () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input)

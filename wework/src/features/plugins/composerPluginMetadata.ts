@@ -1,5 +1,6 @@
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import { pluginTrialTemplates } from './pluginTrial'
+import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()
@@ -80,25 +81,6 @@ function isComposerVisiblePlugin(plugin: InstalledPlugin): boolean {
     Boolean(plugin.spec.enabled) &&
     (plugin.spec.installState === 'installed' || plugin.spec.installState === 'update_available')
   )
-}
-
-function marketplaceNameForVisibility(visibility?: string | null): string | null {
-  switch (visibility) {
-    case 'personal':
-      return 'wework-personal'
-    case 'workspace':
-      return 'wegent'
-    case 'public':
-      return 'wework'
-    default:
-      return null
-  }
-}
-
-function managedMarketplaceName(plugin: InstalledPlugin): string | null {
-  const providerKey = plugin.spec.source?.providerKey
-  if (providerKey !== 'wegent-market' && providerKey !== 'wegent-marketplace') return null
-  return marketplaceNameForVisibility(plugin.spec.visibility) ?? 'wegent'
 }
 
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
