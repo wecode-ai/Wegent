@@ -11,6 +11,10 @@ import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
 const STORAGE_KEY = 'wework.appearance'
 const APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
+const LEGACY_DEFAULT_SIDEBARS = {
+  light: '229 229 231 / 0.72',
+  dark: '31 35 41 / 0.82',
+} as const
 
 function normalizeBackgroundVisibility(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -43,9 +47,17 @@ function mergeBackground(
   }
 }
 
-function mergePalette(base: ThemePalette, update: unknown): ThemePalette {
+function mergePalette(
+  base: ThemePalette,
+  update: unknown,
+  legacyDefaultSidebar: string
+): ThemePalette {
   if (!update || typeof update !== 'object') return base
   const next = { ...base, ...(update as Partial<ThemePalette>) }
+
+  if (next.sidebar === legacyDefaultSidebar) {
+    next.sidebar = base.sidebar
+  }
 
   if (!next.mobileDrawer || next.mobileDrawer.includes('/')) {
     next.mobileDrawer = base.mobileDrawer
@@ -123,8 +135,8 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
       ...update.darkBackground,
       imagePath: update.darkBackground?.imagePath ?? legacyUpdate.darkBackgroundImagePath ?? null,
     }),
-    light: mergePalette(defaultAppearance.light, update.light),
-    dark: mergePalette(defaultAppearance.dark, update.dark),
+    light: mergePalette(defaultAppearance.light, update.light, LEGACY_DEFAULT_SIDEBARS.light),
+    dark: mergePalette(defaultAppearance.dark, update.dark, LEGACY_DEFAULT_SIDEBARS.dark),
   }
 }
 

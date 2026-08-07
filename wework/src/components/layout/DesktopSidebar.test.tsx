@@ -205,18 +205,16 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
-  test('switches sidebar focus tokens with browser focus events', () => {
+  test('keeps the sidebar color stable across browser focus changes', () => {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
 
     act(() => window.dispatchEvent(new Event('focus')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'true')
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
 
     act(() => window.dispatchEvent(new Event('blur')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'false')
-    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
   })
 
   test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
