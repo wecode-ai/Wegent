@@ -132,6 +132,9 @@ class GiteaProvider(RepositoryProvider):
             git_domain = entry.get("git_domain") or ""
             if not git_token:
                 continue
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             api_base_url = self._get_api_base_url(git_domain)
 
@@ -247,9 +250,12 @@ class GiteaProvider(RepositoryProvider):
         git_token = git_info["git_token"]
         git_domain = git_info["git_domain"]
         user_name = git_info.get("user_name", "")
-
+        
         if not git_token:
             raise HTTPException(status_code=400, detail="Git token not configured")
+        
+        # Decrypt token if encrypted
+        git_token = self.decrypt_token(git_token)
 
         api_base_url = self._get_api_base_url(git_domain)
 
@@ -406,6 +412,9 @@ class GiteaProvider(RepositoryProvider):
             git_domain = entry.get("git_domain") or ""
             if not git_token:
                 continue
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
             if full_cached:
@@ -850,3 +859,5 @@ class GiteaProvider(RepositoryProvider):
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Failed to check Gitea repository access: {str(e)}")
             raise HTTPException(status_code=502, detail=f"Gitea API error: {str(e)}")
+
+
