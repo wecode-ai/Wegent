@@ -1858,15 +1858,18 @@ class KnowledgeBaseTool(BaseTool):
             if source.get("index") in referenced_indexes
         ]
         sources_by_index = {source["index"]: source for source in source_references}
-        seen_segments: set[tuple[int, int, int]] = set()
+        seen_segments: set[tuple[Any, int, int]] = set()
         for chunk in all_chunks:
             metadata = chunk.get("metadata") or {}
             start_sec = metadata.get("video_start_sec")
             end_sec = metadata.get("video_end_sec")
             document_id = chunk.get("document_id")
-            if not all(
-                isinstance(value, int) for value in (start_sec, end_sec, document_id)
-            ):
+            # start_sec/end_sec must be ints (frontend seeks by seconds); document_id
+            # may be an int OR a UUID string depending on the storage backend, so only
+            # require it to be a non-empty value.
+            if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
+                continue
+            if not document_id:
                 continue
             if start_sec < 0 or end_sec <= start_sec:
                 continue

@@ -495,6 +495,42 @@ class TestKnowledgeBaseTool:
         )
 
     @pytest.mark.asyncio
+    async def test_format_rag_result_supports_uuid_document_id(self):
+        """document_id may be a UUID string (ES-backed KBs), not an int.
+
+        The video-segment upgrade must still fire so the reference is not
+        downgraded to a plain text card.
+        """
+        tool = KnowledgeBaseTool()
+        uuid_doc_id = "fa6d3616-a5a6-4b9b-8cec-a0a4171ae13e"
+        kb_chunks = {
+            1: [
+                {
+                    "content": (
+                        "### 章节 1：开场 (00:00 - 00:06)\n"
+                        "> **本段摘要**：短视频开场内容。"
+                    ),
+                    "source": "811.video.md",
+                    "score": 0.9,
+                    "document_id": uuid_doc_id,
+                    "metadata": {
+                        "video_segment_id": "segment_0_6",
+                        "video_start_sec": 0,
+                        "video_end_sec": 6,
+                    },
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 1))
+
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["source_type"] == "wegent_video_segment"
+        assert result["sources"][0]["document_id"] == uuid_doc_id
+        assert result["sources"][0]["segments"][0]["start_sec"] == 0
+        assert result["sources"][0]["segments"][0]["end_sec"] == 6
+
+    @pytest.mark.asyncio
     async def test_restricted_mode_no_rag_does_not_recommend_document_tools(self):
         """Restricted mode should not suggest kb_ls or kb_head when RAG is unavailable."""
         tool = KnowledgeBaseTool(
