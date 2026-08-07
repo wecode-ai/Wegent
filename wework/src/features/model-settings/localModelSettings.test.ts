@@ -3,8 +3,10 @@ import {
   clearLocalModelConfigs,
   deepSeekCatalogModelIdFor,
   deleteLocalModelConfig,
+  findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  localModelName,
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
@@ -106,6 +108,18 @@ describe('localModelSettings', () => {
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
     expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+  })
+
+  test('finds a custom model by its local and Codex catalog names', () => {
+    const model = saveLocalModelConfig({
+      id: 'custom-responses',
+      displayName: 'Custom Responses',
+      modelId: 'responses-model',
+      baseUrl: 'https://responses.example/v1',
+    })
+
+    expect(findLocalModelConfigByModelName(localModelName(model))).toEqual(model)
+    expect(findLocalModelConfigByModelName(model.codexCatalogModelId)).toEqual(model)
   })
 
   test('persists a vision proxy reference and clears it when that model is deleted', () => {

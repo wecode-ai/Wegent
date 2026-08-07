@@ -238,20 +238,20 @@ const DEFAULT_MODEL_LABEL = 'GPT 5.6 Luna'
 const LOCAL_MODEL_CASES = [
   {
     protocol: 'responses',
-    optionId: 'local-model:desktop-e2e-responses',
-    label: 'Desktop E2E Responses',
+    optionId: 'wework-custom-desktop-e2e-responses',
+    label: 'wework-custom-desktop-e2e-responses',
     modelId: 'desktop-e2e-responses-model',
   },
   {
     protocol: 'chat',
-    optionId: 'local-model:desktop-e2e-chat',
-    label: 'Desktop E2E Chat',
+    optionId: 'wework-custom-desktop-e2e-chat',
+    label: 'wework-custom-desktop-e2e-chat',
     modelId: 'desktop-e2e-chat-model',
   },
   {
     protocol: 'anthropic',
-    optionId: 'local-model:desktop-e2e-anthropic',
-    label: 'Desktop E2E Anthropic',
+    optionId: 'wework-custom-desktop-e2e-anthropic',
+    label: 'wework-custom-desktop-e2e-anthropic',
     modelId: 'desktop-e2e-anthropic-model',
   },
 ]
@@ -311,8 +311,8 @@ const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const LOCAL_MODEL_SWITCH_INVALID_CALL_ID = 'functions.exec_command:0'
 const LOCAL_MODEL_SWITCH_ARTIFACT = 'wework-model-switch-protocol.txt'
 const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_COMMAND'
-const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
-const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
+const PROVIDER_SWITCH_LUNA_OPTION_ID = 'wework-custom-desktop-e2e-luna-overseas'
+const PROVIDER_SWITCH_LUNA_LABEL = 'wework-custom-desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
 // the official option is served from the cloud model catalog with a canonical
