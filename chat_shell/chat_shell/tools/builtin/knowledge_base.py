@@ -1653,6 +1653,13 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 source_index += 1
 
+        # Upgrade video-document sources to wegent_video_segment (same logic as
+        # the RAG path) so direct-injection references also render as video
+        # segment players when chunk metadata carries time ranges.
+        self._upgrade_video_source_references(source_references, chunks_used)
+        for chunk in chunks_used:
+            chunk.pop("metadata", None)
+
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )
@@ -1767,6 +1774,63 @@ class KnowledgeBaseTool(BaseTool):
             ensure_ascii=False,
         )
 
+    def _upgrade_video_source_references(
+        self,
+        source_references: list[dict[str, Any]],
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        """Upgrade video-document sources to wegent_video_segment with time ranges.
+
+        Shared by the RAG and direct-injection formatting paths. For each chunk
+        whose metadata carries ``video_start_sec``/``video_end_sec``, find its
+        source reference (matched by document_id) and set ``source_type`` plus a
+        ``segments`` list so the frontend renders a video segment player instead
+        of a plain text card.
+        """
+        sources_by_document_id: dict[Any, dict[str, Any]] = {}
+        for source in source_references:
+            doc_id = source.get("document_id")
+            if doc_id is not None and doc_id not in sources_by_document_id:
+                sources_by_document_id[doc_id] = source
+
+        seen_segments: set[tuple[Any, int, int]] = set()
+        for chunk in chunks:
+            metadata = chunk.get("metadata") or {}
+            start_sec = metadata.get("video_start_sec")
+            end_sec = metadata.get("video_end_sec")
+            document_id = chunk.get("document_id")
+            # start_sec/end_sec must be ints (frontend seeks by seconds);
+            # document_id may be an int OR a UUID string depending on the
+            # storage backend, so only require it to be a non-empty value.
+            if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
+                continue
+            if not document_id:
+                continue
+            if start_sec < 0 or end_sec <= start_sec:
+                continue
+            source = sources_by_document_id.get(document_id)
+            if source is None:
+                continue
+            segment_key = (document_id, start_sec, end_sec)
+            if segment_key in seen_segments:
+                continue
+            seen_segments.add(segment_key)
+            source["source_type"] = "wegent_video_segment"
+            source["document_id"] = document_id
+            segment_title, segment_description = _extract_video_segment_copy(
+                chunk.get("content", "")
+            )
+            source.setdefault("segments", []).append(
+                {
+                    "id": metadata.get("video_segment_id"),
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "score": chunk.get("score"),
+                    "title": segment_title,
+                    "description": segment_description,
+                }
+            )
+
     async def _format_rag_result(
         self,
         kb_chunks: Dict[Any, List[Dict[str, Any]]],
@@ -1812,6 +1876,7 @@ class KnowledgeBaseTool(BaseTool):
                             "index": source_index,
                             "title": source_title,
                             "kb_id": internal_kb_id,
+                            "document_id": chunk.get("document_id"),
                             "source_id": source_id,
                             "source_type": chunk.get("source_type"),
                             "source_uri": chunk.get("source_uri"),
@@ -1857,44 +1922,7 @@ class KnowledgeBaseTool(BaseTool):
             for source in source_references
             if source.get("index") in referenced_indexes
         ]
-        sources_by_index = {source["index"]: source for source in source_references}
-        seen_segments: set[tuple[Any, int, int]] = set()
-        for chunk in all_chunks:
-            metadata = chunk.get("metadata") or {}
-            start_sec = metadata.get("video_start_sec")
-            end_sec = metadata.get("video_end_sec")
-            document_id = chunk.get("document_id")
-            # start_sec/end_sec must be ints (frontend seeks by seconds); document_id
-            # may be an int OR a UUID string depending on the storage backend, so only
-            # require it to be a non-empty value.
-            if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
-                continue
-            if not document_id:
-                continue
-            if start_sec < 0 or end_sec <= start_sec:
-                continue
-            source = sources_by_index.get(chunk.get("source_index"))
-            if source is None:
-                continue
-            segment_key = (document_id, start_sec, end_sec)
-            if segment_key in seen_segments:
-                continue
-            seen_segments.add(segment_key)
-            source["source_type"] = "wegent_video_segment"
-            source["document_id"] = document_id
-            segment_title, segment_description = _extract_video_segment_copy(
-                chunk.get("content", "")
-            )
-            source.setdefault("segments", []).append(
-                {
-                    "id": metadata.get("video_segment_id"),
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "score": chunk.get("score"),
-                    "title": segment_title,
-                    "description": segment_description,
-                }
-            )
+        self._upgrade_video_source_references(source_references, all_chunks)
         for chunk in all_chunks:
             chunk.pop("metadata", None)
         retrieval_summary = self._with_citation_counts(

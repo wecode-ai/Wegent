@@ -436,6 +436,39 @@ class TestKnowledgeBaseTool:
         assert result_dict["chunks_used"] == 1
 
     @pytest.mark.asyncio
+    async def test_direct_injection_upgrades_video_segments(self):
+        """Direct-injection references must also become video segments."""
+        tool = KnowledgeBaseTool()
+        uuid_doc_id = "fa6d3616-a5a6-4b9b-8cec-a0a4171ae13e"
+
+        injection_result = {
+            "injected_content": "视频内容",
+            "chunks_used": [
+                {
+                    "content": "### 章节 1：开场 (00:00 - 00:06)\n摘要",
+                    "source": "811.video.md",
+                    "score": 0.9,
+                    "document_id": uuid_doc_id,
+                    "knowledge_base_id": 1,
+                    "metadata": {
+                        "video_segment_id": "segment_0_6",
+                        "video_start_sec": 0,
+                        "video_end_sec": 6,
+                    },
+                },
+            ],
+            "decision_details": {"strategy": "all_or_nothing"},
+        }
+
+        result = await tool._format_direct_injection_result(injection_result, "query")
+        result_dict = json.loads(result)
+
+        assert result_dict["sources"][0]["source_type"] == "wegent_video_segment"
+        assert result_dict["sources"][0]["document_id"] == uuid_doc_id
+        assert result_dict["sources"][0]["segments"][0]["start_sec"] == 0
+        assert result_dict["sources"][0]["segments"][0]["end_sec"] == 6
+
+    @pytest.mark.asyncio
     async def test_format_rag_result(self):
         """Test _format_rag_result."""
         tool = KnowledgeBaseTool()
