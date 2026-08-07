@@ -247,7 +247,8 @@
   --color-sidebar-unfocused: 246 246 246;
 }
 
-[data-theme='dark'][data-sidebar-translucent='false'] {
+[data-theme='dark'][data-sidebar-translucent='false'],
+[data-theme='dark'] [data-sidebar-translucent='false'] {
   --color-sidebar: 33 33 33;
   --color-sidebar-unfocused: 40 40 40;
 }
