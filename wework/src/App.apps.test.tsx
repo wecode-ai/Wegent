@@ -249,11 +249,10 @@ describe('App center route', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('应用')
     expect(screen.getByRole('tab', { name: /应用/ })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('desktop-auxiliary-surface')).toHaveClass(
-      'app-view-surface',
-      'rounded-xl',
-      'border'
-    )
+    expect(screen.getByTestId('desktop-auxiliary-surface')).toHaveClass('h-full')
+    expect(screen.getByTestId('desktop-auxiliary-surface')).not.toHaveClass('app-view-surface')
+    expect(screen.getByTestId('desktop-auxiliary-surface')).not.toHaveClass('rounded-xl')
+    expect(screen.getByTestId('desktop-auxiliary-surface')).not.toHaveClass('border')
     expect(screen.getByTestId('workspace-tab-add')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
@@ -285,6 +284,7 @@ describe('App center route', () => {
       'data-src',
       'https://app.example.com/login/oidc?access_token=cloud-token&token_type=bearer&login_success=true'
     )
+    expect(screen.getByTestId('app-iframe-wegent')).toHaveClass('app-view-surface')
   })
 
   test('renders the global Chrome titlebar on the workbench route', async () => {
@@ -295,11 +295,10 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
-    expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass(
-      'app-view-surface',
-      'rounded-xl',
-      'border'
-    )
+    expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass('h-full')
+    expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('app-view-surface')
+    expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('rounded-xl')
+    expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('border')
   })
 
   test('keeps duplicate task tabs as independent persistent workbench instances', async () => {

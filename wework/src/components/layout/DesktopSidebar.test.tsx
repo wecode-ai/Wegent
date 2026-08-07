@@ -205,21 +205,19 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
-  test('switches sidebar focus tokens with browser focus events', () => {
+  test('keeps the sidebar color stable across browser focus changes', () => {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
 
     act(() => window.dispatchEvent(new Event('focus')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'true')
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
 
     act(() => window.dispatchEvent(new Event('blur')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'false')
-    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
   })
 
-  test('keeps the shared right border on Windows', () => {
+  test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -232,6 +230,10 @@ describe('DesktopSidebar', () => {
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
     expect(sidebar).toHaveClass('border-r')
+    // Windows WebView2 cannot render a translucent window, so the sidebar opts
+    // out of the translucent background. The dark-theme CSS in globals.css must
+    // keep this opaque background dark instead of falling back to light.
+    expect(sidebar).toHaveAttribute('data-sidebar-translucent', 'false')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {
@@ -2308,7 +2310,18 @@ describe('DesktopSidebar', () => {
 
   test('keeps an unavailable remote-only project visible with its IP and gray status', () => {
     renderSidebar({
-      devices: [localDevice()],
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
       runtimeWork: {
         projects: [
           {
@@ -2317,7 +2330,7 @@ describe('DesktopSidebar', () => {
               {
                 id: 91,
                 deviceId: 'remote-device',
-                deviceName: '10.201.3.200',
+                deviceName: 'Remote Host',
                 deviceStatus: 'offline',
                 available: false,
                 workspacePath: '/home/ubuntu/workspace/Wegent',
@@ -2350,7 +2363,7 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getByText('Remote Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-text-muted))]',
       'opacity-55'
@@ -2467,7 +2480,7 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveStyle({
       backgroundColor: '#1FD660',
     })

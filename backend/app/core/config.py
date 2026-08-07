@@ -549,6 +549,13 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
+    # How long a repository read may take before it is given up on. These run inside
+    # a user-facing request -- resolving a repository, checking access, reading HEAD
+    # -- and `requests` has no default timeout, so without one an unresponsive
+    # provider holds the worker until the OS gives up on the socket. Configurable
+    # because the right number depends on how far away the git host is.
+    REPOSITORY_READ_TIMEOUT_SECONDS: int = 15
+
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600

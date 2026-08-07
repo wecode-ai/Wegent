@@ -44,6 +44,7 @@ import {
   getComposerApps,
   publishComposerApps,
   readComposerAppsSnapshot,
+  shouldSuppressComposerAppsSync,
   subscribeComposerApps,
 } from './composerAppsSnapshot'
 import {
@@ -640,6 +641,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       // The toolbar picker asks slash to re-publish when Vite HMR has split the
       // module singleton or the picker opened before the first publish landed.
       const onRequestSync = () => {
+        if (shouldSuppressComposerAppsSync()) return
         if (appsRef.current.length > 0) publishComposerApps(appsRef.current)
       }
       window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
@@ -651,7 +653,13 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       // shared composer app inventory after install/uninstall.
       return subscribeComposerApps(() => {
         const next = getComposerApps()
-        if (next.length === 0) return
+        if (next.length === 0) {
+          setApps([])
+          appsLoadedRef.current = true
+          setAppsLoadError(false)
+          setAppsLoading(false)
+          return
+        }
         setApps(current => {
           if (
             current.length === next.length &&

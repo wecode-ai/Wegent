@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin, PluginRelease
 from app.models.skill_binary import SkillBinary
+from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
@@ -182,7 +183,7 @@ class PluginMarketplaceMigrationService:
                     "providerKey": "wework-market",
                     "pluginKey": plugin.name,
                     "catalogItemId": str(plugin.id),
-                    "marketplace": "wework",
+                    "marketplace": marketplace_name_for_visibility(plugin.visibility),
                 }
             )
             spec.update(

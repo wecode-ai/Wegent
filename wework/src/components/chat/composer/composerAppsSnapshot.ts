@@ -8,6 +8,7 @@ type ComposerAppsListener = () => void
 type ComposerAppsStore = {
   memoryApps: LocalDeviceApp[]
   listeners: Set<ComposerAppsListener>
+  suppressEmptySync: boolean
 }
 
 declare global {
@@ -22,12 +23,13 @@ declare global {
  */
 function getStore(): ComposerAppsStore {
   if (typeof window === 'undefined') {
-    return { memoryApps: [], listeners: new Set() }
+    return { memoryApps: [], listeners: new Set(), suppressEmptySync: false }
   }
   if (!window.__weworkComposerAppsStore) {
     window.__weworkComposerAppsStore = {
       memoryApps: [],
       listeners: new Set(),
+      suppressEmptySync: false,
     }
   }
   return window.__weworkComposerAppsStore
@@ -88,6 +90,7 @@ export function publishComposerApps(apps: LocalDeviceApp[]): void {
   if (apps.length === 0) return
   const store = getStore()
   store.memoryApps = apps
+  store.suppressEmptySync = false
   writeComposerAppsSnapshot(apps)
   notifyComposerAppsListeners()
 }
@@ -96,9 +99,15 @@ export function publishComposerApps(apps: LocalDeviceApp[]): void {
 export function replaceComposerApps(apps: LocalDeviceApp[]): void {
   const store = getStore()
   store.memoryApps = apps
+  store.suppressEmptySync = apps.length === 0
   if (apps.length > 0) writeComposerAppsSnapshot(apps)
   else clearComposerAppsSnapshot()
   notifyComposerAppsListeners()
+}
+
+export function shouldSuppressComposerAppsSync(): boolean {
+  const store = getStore()
+  return store.suppressEmptySync && store.memoryApps.length === 0
 }
 
 export function subscribeComposerApps(listener: ComposerAppsListener): () => void {

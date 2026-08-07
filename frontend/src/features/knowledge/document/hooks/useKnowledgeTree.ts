@@ -12,7 +12,7 @@ import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { listGroups } from '@/apis/groups'
 import { getOrganizationNamespace, listKnowledgeBases } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 import type { Group } from '@/types/group'
 import {
   buildNamespaceRoleMap,
@@ -26,7 +26,11 @@ export interface TreeNode {
   id: string
   type: TreeNodeType
   label: string
+  /** Icon name, for the category roots that still choose one by name. */
   icon?: string
+  /** Which kind of knowledge base this node is, when it is one. Carried instead of
+   *  an icon name so the tree does not repeat the icon rule a fourth time. */
+  kbType?: KnowledgeBaseType
   /** Knowledge base data (only for kb-leaf nodes) */
   knowledgeBase?: KnowledgeBase
   /** Group data (only for group-item nodes) */
@@ -328,7 +332,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       id: `kb-${kb.id}`,
       type: 'kb-leaf' as TreeNodeType,
       label: kb.name,
-      icon: kb.kb_type === 'classic' ? 'folder' : 'book',
+      kbType: kb.kb_type,
       knowledgeBase: kb,
       docCount: kb.document_count,
       scope: 'personal' as const,
@@ -350,7 +354,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
         id: `kb-${kb.id}`,
         type: 'kb-leaf' as TreeNodeType,
         label: kb.name,
-        icon: kb.kb_type === 'classic' ? 'folder' : 'book',
+        kbType: kb.kb_type,
         knowledgeBase: kb,
         docCount: kb.document_count,
         scope: 'personal' as const,
@@ -399,7 +403,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
         id: `kb-${kb.id}`,
         type: 'kb-leaf' as TreeNodeType,
         label: kb.name,
-        icon: kb.kb_type === 'classic' ? 'folder' : 'book',
+        kbType: kb.kb_type,
         knowledgeBase: kb,
         docCount: kb.document_count,
         scope: 'group' as const,
@@ -470,7 +474,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       id: `kb-${kb.id}`,
       type: 'kb-leaf' as TreeNodeType,
       label: kb.name,
-      icon: kb.kb_type === 'classic' ? 'folder' : 'book',
+      kbType: kb.kb_type,
       knowledgeBase: kb,
       docCount: kb.document_count,
       scope: 'organization' as const,

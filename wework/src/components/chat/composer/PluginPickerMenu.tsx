@@ -55,9 +55,19 @@ export function PluginPickerMenu({
   const [loading, setLoading] = useState(() => Boolean(onListLocalApps) && apps.length === 0)
   const [reloadToken, setReloadToken] = useState(0)
 
-  const applySharedApps = (items: LocalDeviceApp[] = getComposerApps()) => {
-    const next = paintComposerApps(items)
-    if (next.length === 0) return false
+  const applySharedApps = (
+    items: LocalDeviceApp[] = getComposerApps(),
+    options?: { allowEmpty?: boolean }
+  ) => {
+    const next = options?.allowEmpty && items.length === 0 ? [] : paintComposerApps(items)
+    if (next.length === 0) {
+      if (options?.allowEmpty) {
+        hasCachedAppsRef.current = false
+        setApps([])
+        setLoading(false)
+      }
+      return false
+    }
     hasCachedAppsRef.current = true
     setApps(next)
     setLoading(false)
@@ -66,7 +76,7 @@ export function PluginPickerMenu({
 
   useEffect(() => {
     return subscribeComposerApps(() => {
-      applySharedApps()
+      applySharedApps(getComposerApps(), { allowEmpty: true })
     })
   }, [])
 

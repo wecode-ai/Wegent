@@ -469,6 +469,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       .then(response => {
         if (!cancelled) {
           const loadedGoal = response.accepted ? response.goal : null
+          const resolvedGoal = loadedGoal ?? seededGoal?.goal ?? null
           if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
             console.info('[Wework] Runtime goal hydration resolved', {
               address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
@@ -476,10 +477,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               goalStatus: loadedGoal?.status ?? null,
             })
           }
-          setRuntimeConversationGoal(runtimeTaskLoadTarget.address, loadedGoal)
+          setRuntimeConversationGoal(runtimeTaskLoadTarget.address, resolvedGoal)
           lifecycleStore.goalStatusReceived(
             runtimeTaskLoadTarget.address,
-            loadedGoal?.status ?? seededGoal?.goal.status ?? null
+            resolvedGoal?.status ?? null
           )
           if (loadedGoal?.status === 'active') {
             void refreshWorkListsRef.current().catch(() => undefined)

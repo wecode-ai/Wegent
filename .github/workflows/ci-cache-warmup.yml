@@ -1,0 +1,440 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI Cache Warmup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/actions/**"
+      - ".github/claude-code-cli/**"
+      - ".github/scripts/classify-ci-cache-warmup.sh"
+      - ".github/scripts/install-executor-rust-system-dependencies.sh"
+      - ".github/scripts/install-playwright-browser.sh"
+      - ".github/scripts/install-wework-tauri-system-dependencies.sh"
+      - ".github/scripts/lib/apt-packages.sh"
+      - ".github/workflows/ci-cache-warmup.yml"
+      - ".github/workflows/e2e-tests.yml"
+      - ".github/workflows/lint.yml"
+      - ".github/workflows/test.yml"
+      - ".github/workflows/wework-e2e.yml"
+      - "backend/uv.lock"
+      - "executor/**"
+      - "executor_manager/uv.lock"
+      - "frontend/e2e/fixtures/claudecode-executor/**"
+      - "frontend/package.json"
+      - "frontend/src/**"
+      - "knowledge_engine/uv.lock"
+      - "package.json"
+      - "packages/*/package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "shared/assets/**"
+      - "shared/uv.lock"
+      - "wegent-cli/requirements.txt"
+      - "wework/package.json"
+      - "wework/src-tauri/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cache-warmup-main
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: Detect Cache Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.classify.outputs.docker }}
+      executor_rust: ${{ steps.classify.outputs.executor_rust }}
+      node: ${{ steps.classify.outputs.node }}
+      python: ${{ steps.classify.outputs.python }}
+      wework_rust: ${{ steps.classify.outputs.wework_rust }}
+      wework_target: ${{ steps.classify.outputs.wework_target }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify cache changes
+        id: classify
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] ||
+            [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+            [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]] ||
+            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            .github/scripts/classify-ci-cache-warmup.sh --all
+          else
+            git diff --name-only "$BEFORE_SHA...$GITHUB_SHA" |
+              .github/scripts/classify-ci-cache-warmup.sh
+          fi
+
+  warm-node:
+    name: Warm Node, Playwright, and Next.js Caches
+    needs: changes
+    if: needs.changes.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up writable Node workspace cache
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          save-cache: "true"
+
+      - name: Resolve Playwright version
+        id: playwright-version
+        working-directory: ./frontend
+        run: |
+          version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore shared Playwright browsers
+        id: playwright-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-v2-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: ./frontend
+        run: ../.github/scripts/install-playwright-browser.sh
+
+      - name: Save shared Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
+
+      - name: Add Claude Code CLI to PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Restore shared Claude Code CLI
+        id: claude-code-cli-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .github/claude-code-cli/node_modules
+          key: ${{ runner.os }}-node-24-claude-code-cli-v3-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
+
+      - name: Install Claude Code CLI
+        if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        run: npm ci --prefix .github/claude-code-cli
+
+      - name: Save shared Claude Code CLI
+        if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .github/claude-code-cli/node_modules
+          key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
+
+      - name: Restore shared Next.js build cache
+        id: nextjs-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ./frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-e2e-v2-
+
+      - name: Build frontend cache
+        if: steps.nextjs-cache.outputs.cache-hit != 'true'
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_TELEMETRY_DISABLED: 1
+          RUNTIME_INTERNAL_API_URL: http://localhost:8000
+          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
+        run: pnpm run build
+
+      - name: Save shared Next.js build cache
+        if: steps.nextjs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ./frontend/.next/cache
+          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
+
+  warm-python:
+    name: Warm Python ${{ matrix.python-version }} Cache
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and writable uv cache
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: ${{ matrix.python-version }}
+          save-cache: "true"
+
+      - name: Populate Python dependency cache
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          case "$PYTHON_VERSION" in
+            3.10)
+              (cd shared && uv sync --dev)
+              (cd backend && uv sync)
+              ;;
+            3.11)
+              (cd shared && uv sync --dev)
+              (cd backend && uv sync --dev)
+              (cd executor_manager && uv sync --dev)
+              ;;
+            3.12)
+              (cd knowledge_engine && uv sync --dev)
+              ;;
+          esac
+
+      - name: Restore shared wegent CLI pip cache
+        if: matrix.python-version == '3.10'
+        id: wegent-cli-pip-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-wegent-cli-v2-${{ hashFiles('wegent-cli/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-wegent-cli-v2-
+
+      - name: Populate wegent CLI pip cache
+        if: matrix.python-version == '3.10' && steps.wegent-cli-pip-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r wegent-cli/requirements.txt pytest pytest-cov pytest-mock
+
+      - name: Save shared wegent CLI pip cache
+        if: matrix.python-version == '3.10' && steps.wegent-cli-pip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/pip
+          key: ${{ steps.wegent-cli-pip-cache.outputs.cache-primary-key }}
+
+  warm-executor-rust:
+    name: Warm Executor Rust Cache
+    needs: changes
+    if: needs.changes.outputs.executor_rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Configure executor target directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          components: clippy
+
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
+        with:
+          save-cache: "true"
+
+      - name: Install executor Rust system dependencies
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
+
+      - name: Compile executor tests
+        working-directory: ./executor
+        run: cargo test --all-features --no-run
+
+      - name: Compile executor Clippy targets
+        working-directory: ./executor
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  warm-wework-windows-rust:
+    name: Warm Wework Windows Rust Cache
+    needs: changes
+    if: needs.changes.outputs.wework_rust == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Cache Wework Cargo sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-${{ hashFiles('wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-
+
+      - name: Compile Wework Rust for Windows
+        working-directory: ./wework/src-tauri
+        run: cargo check --locked --target x86_64-pc-windows-msvc
+
+  warm-wework-desktop-target:
+    name: Warm Wework Desktop Cargo Target
+    needs: changes
+    if: needs.changes.outputs.wework_target == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set APT cache key
+        id: apt-cache-key
+        run: |
+          week="$(date -u +'%G-%V')"
+          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Restore shared Tauri system packages
+        id: wework-apt-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wework-apt/archives
+          key: ${{ steps.apt-cache-key.outputs.key }}
+          restore-keys: |
+            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
+
+      - name: Install Tauri build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: .github/scripts/install-wework-tauri-system-dependencies.sh full redis
+
+      - name: Save shared Tauri system packages
+        if: steps.wework-apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wework-apt/archives
+          key: ${{ steps.wework-apt-cache.outputs.cache-primary-key }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+
+      - name: Restore shared Wework desktop E2E Cargo dependencies
+        id: wework-desktop-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-desktop-e2e-v2-
+
+      - name: Prepare bundled sidecars
+        if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
+        working-directory: ./wework
+        run: |
+          pnpm run prepare:codex --materialize
+          pnpm run prepare:dws
+
+      - name: Build Wework desktop Core E2E binaries
+        if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
+        env:
+          CI: true
+          WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build.json
+          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
+          WEWORK_E2E_MODEL_SERVER_PORT: "43112"
+        run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+
+      - name: Save shared Wework desktop E2E Cargo dependencies
+        if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
+
+  warm-executor-e2e-image:
+    name: Warm Executor E2E Image Cache
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build and cache ClaudeCode Source Executor Image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: frontend/e2e/fixtures/claudecode-executor/Dockerfile
+          load: true
+          tags: wegent/e2e-claudecode-executor:latest
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e,mode=max

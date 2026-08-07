@@ -59,7 +59,6 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
@@ -630,6 +629,8 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 }
 
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  const deviceName = deviceState.device?.name?.trim()
+  if (deviceName) return deviceName
   return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
 }
 
@@ -2680,7 +2681,6 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const windowFocused = useWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -3288,7 +3288,6 @@ export function DesktopSidebar({
   return (
     <aside
       data-testid={containerTestId}
-      data-window-focused={windowFocused}
       data-sidebar-translucent={
         isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
       }
@@ -3301,9 +3300,6 @@ export function DesktopSidebar({
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
-        !windowFocused &&
-          !(background.imagePath && background.inSidebar) &&
-          'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
       )}

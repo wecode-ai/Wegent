@@ -376,6 +376,15 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
     logger.info("✓ IM channel task completion handler registered")
 
+    # Register code wiki run completion handler. A version's outcome is normally
+    # reported by the agent itself; this covers the agent never getting to speak,
+    # where the version would otherwise stay RUNNING until the staleness sweep looks
+    # at it — which only happens when the next run starts.
+    from app.services.knowledge.code_wiki.task_completion import conclude_code_wiki_run
+
+    event_bus.subscribe(TaskCompletedEvent, conclude_code_wiki_run)
+    logger.info("✓ Code wiki run completion handler registered")
+
     # Register inbox auto-process handler
     from app.core.events import QueueMessageCreatedEvent
     from app.services.inbox.auto_process_handler import handle_inbox_message_created

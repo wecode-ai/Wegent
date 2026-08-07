@@ -2617,7 +2617,6 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to locate home directory: {error}"))?;
-    local_executor::migrate_legacy_executor_homes(&home)?;
     Ok(home.join(".wework"))
 }
 
@@ -2706,10 +2705,6 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         candidates.push(executor_home.join("device_id"));
     }
     if let Some(home) = dirs::home_dir() {
-        if let Err(error) = local_executor::migrate_legacy_executor_homes(&home) {
-            log::warn!("Failed to migrate legacy Wework home: {error}");
-            return None;
-        }
         if let Some(device_id) = read_device_config(home.join(".wework").join("device-config.json"))
         {
             return Some(device_id);

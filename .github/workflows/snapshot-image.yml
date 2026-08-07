@@ -94,28 +94,20 @@ jobs:
         image:
           - name: wegent-backend
             dockerfile: docker/backend/Dockerfile
-            cache_scope: backend
           - name: wegent-executor
             dockerfile: docker/executor/Dockerfile
-            cache_scope: executor
           - name: wegent-executor-manager
             dockerfile: docker/executor_manager/Dockerfile
-            cache_scope: executor-manager
           - name: wegent-web
             dockerfile: docker/frontend/Dockerfile
-            cache_scope: frontend
           - name: wegent-chat-shell
             dockerfile: docker/chat_shell/Dockerfile
-            cache_scope: chat-shell
           - name: wegent-knowledge-runtime
             dockerfile: docker/knowledge_runtime/Dockerfile
-            cache_scope: knowledge-runtime
           - name: wegent-knowledge-doc-converter
             dockerfile: docker/knowledge_doc_converter/Dockerfile
-            cache_scope: knowledge-doc-converter
           - name: wegent-standalone
             dockerfile: docker/standalone/Dockerfile
-            cache_scope: standalone
 
     steps:
       - name: Checkout code
@@ -182,8 +174,8 @@ jobs:
           push: true
           platforms: ${{ matrix.platform.value }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:${{ needs.prepare-snapshot.outputs.app_version }}-${{ matrix.platform.suffix }}
-          cache-from: type=gha,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
-          cache-to: type=gha,mode=max,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:buildcache-${{ matrix.platform.suffix }}
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:buildcache-${{ matrix.platform.suffix }},mode=max
           build-args: ${{ steps.build-args.outputs.args }}
 
   build-executor-binaries:
@@ -238,9 +230,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
+
       - name: Install executor Rust system dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
 
       - name: Add Rust target
         if: matrix.target == 'macos-amd64'

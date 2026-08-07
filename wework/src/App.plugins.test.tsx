@@ -301,7 +301,7 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
-      name: 'wegent-mini-program',
+      name: 'weibo-miniapp-h5-develop-agent',
       namespace: 'default',
       labels: { id: '102' },
     },
@@ -309,17 +309,17 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
       source: {
         type: 'marketplace',
         providerKey: 'wegent-marketplace',
-        pluginKey: 'wegent-mini-program',
+        pluginKey: 'weibo-miniapp-h5-develop-agent',
         catalogItemId: '102',
         marketplace: 'wegent',
       },
-      displayName: '小程序',
+      displayName: '微博小程序开发助手',
       description: 'Build and publish mini programs',
       version: '0.1.0',
       installState: 'installed',
       enabled: true,
       componentStates: {},
-      manifest: { name: 'wegent-mini-program' },
+      manifest: { name: 'weibo-miniapp-h5-develop-agent' },
       components: {
         skills: [],
         commands: [],
@@ -333,12 +333,12 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
         bins: [],
       },
       interface: {
-        displayName: '小程序',
+        displayName: '微博小程序开发助手',
         defaultPrompt: ['创建并发布一个小程序'],
       },
       packageRef: null,
       sourcePayload: {
-        filename: 'wegent-mini-program.zip',
+        filename: 'weibo-miniapp-h5-develop-agent.zip',
       },
     },
     status: { state: 'enabled' },
@@ -349,7 +349,7 @@ function successfulSitesDeviceSync() {
   return {
     success: true,
     device_id: 'local-device',
-    mode: 'merge',
+    mode: 'replace',
     skills: [],
     plugins: [{ id: 101, name: 'wegent-sites', status: 'synced' }],
     mcps: [],
@@ -371,13 +371,29 @@ function successfulSitesDeviceSync() {
   }
 }
 
+function sitesSyncWithUnrelatedDeviceFailure() {
+  const sync = successfulSitesDeviceSync()
+  sync.success = false
+  sync.failed = 1
+  sync.results.push({
+    device_id: 'remote-device',
+    success: false,
+    error: 'device rejected historical plugin',
+    skills: [],
+    plugins: [{ id: 202, name: 'historical-plugin', status: 'failed' }],
+    mcps: [],
+    errors: [{ error: 'device rejected historical plugin' }],
+  })
+  return sync
+}
+
 function successfulMiniProgramDeviceSync() {
   return {
     success: true,
     device_id: 'local-device',
-    mode: 'merge',
+    mode: 'replace',
     skills: [],
-    plugins: [{ id: 102, name: 'wegent-mini-program', status: 'synced' }],
+    plugins: [{ id: 102, name: 'weibo-miniapp-h5-develop-agent', status: 'synced' }],
     mcps: [],
     errors: [],
     synced: 1,
@@ -389,12 +405,64 @@ function successfulMiniProgramDeviceSync() {
         success: true,
         error: null,
         skills: [],
-        plugins: [{ id: 102, name: 'wegent-mini-program', status: 'synced' }],
+        plugins: [{ id: 102, name: 'weibo-miniapp-h5-develop-agent', status: 'synced' }],
         mcps: [],
         errors: [],
       },
     ],
   }
+}
+
+function installedOnLocalDevice(plugin: InstalledPlugin): InstalledPlugin {
+  const releaseId = plugin.spec.releaseId ?? 1
+  return {
+    ...plugin,
+    status: {
+      ...plugin.status,
+      devices: [
+        {
+          deviceId: 'local-device',
+          desiredReleaseId: releaseId,
+          actualReleaseId: releaseId,
+          state: 'installed',
+          attemptCount: 1,
+          lastSyncAt: '2026-08-07T05:41:42Z',
+          updatedAt: '2026-08-07T05:41:42Z',
+        },
+      ],
+    },
+  }
+}
+
+function applicationTypesResponse() {
+  return {
+    items: [
+      {
+        app_type: 'web',
+        enabled: true,
+        order: 10,
+        capabilities: ['create', 'publish', 'delete'],
+        create: {
+          plugin_name: 'wegent-sites',
+          marketplace_name: 'wegent',
+        },
+      },
+      {
+        app_type: 'miniapp',
+        enabled: true,
+        order: 20,
+        capabilities: ['create', 'open_experience'],
+        create: {
+          plugin_name: 'weibo-miniapp-h5-develop-agent',
+          marketplace_name: 'wegent',
+        },
+      },
+    ],
+  }
+}
+
+function cacheApplicationTypes() {
+  localStorage.setItem('wework:sites-application-types', JSON.stringify(applicationTypesResponse()))
 }
 
 vi.mock('@/features/auth/AuthProvider', () => ({
@@ -761,6 +829,8 @@ function mockSystemSkillsFetch() {
         payload = { items: [] }
       } else if (url.includes('/plugins/installed')) {
         payload = { items: [] }
+      } else if (url.includes('/sites/app-types')) {
+        payload = applicationTypesResponse()
       } else {
         payload = skillsResponse
       }
@@ -882,6 +952,13 @@ describe('App plugins route', () => {
           json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
         } as Response
       }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
       if (url.includes('/sites?')) {
         return {
           ok: true,
@@ -948,6 +1025,13 @@ describe('App plugins route', () => {
     localStorage.setItem('auth_token', 'wegent-secret')
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        } as Response
+      }
       if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
         return {
           ok: true,
@@ -957,6 +1041,13 @@ describe('App plugins route', () => {
               plugin: installedCodexSitesPlugin(),
               sync: successfulSitesDeviceSync(),
             }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
         } as Response
       }
       if (url.includes('/sites?')) {
@@ -1024,7 +1115,14 @@ describe('App plugins route', () => {
     localStorage.setItem('auth_token', 'wegent-secret')
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input)
-      if (url.includes('/plugins/builtin/wegent-mini-program/ensure-installed')) {
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed')) {
         return {
           ok: true,
           status: 200,
@@ -1033,6 +1131,13 @@ describe('App plugins route', () => {
               plugin: installedCodexMiniProgramPlugin(),
               sync: successfulMiniProgramDeviceSync(),
             }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
         } as Response
       }
       if (url.includes('/sites?')) {
@@ -1053,7 +1158,7 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-mini-program/ensure-installed',
+      '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1062,8 +1167,240 @@ describe('App plugins route', () => {
     )
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
-        input: '[$小程序](plugin://wegent-mini-program@wegent) 创建并发布一个小程序',
-        pluginName: '小程序',
+        input:
+          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序开发助手',
+      }
+    )
+  })
+
+  test('opens the Mini Program plugin from the local device installation without reinstalling', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [installedOnLocalDevice(installedCodexMiniProgramPlugin())],
+            }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed')) {
+        throw new Error('ensure should not be called for a locally installed plugin')
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites?app_type=miniapp')
+
+    renderApp()
+    await screen.findByText('还没有小程序')
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+    await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) =>
+          String(input).includes('/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed')
+        )
+    ).toBe(false)
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序开发助手',
+      }
+    )
+  })
+
+  test('installs the requested application plugin when the local device only has a same-name public plugin', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    const publicSitesPlugin = installedOnLocalDevice(installedCodexSitesPlugin())
+    publicSitesPlugin.spec.visibility = 'public'
+    publicSitesPlugin.spec.source.marketplace = 'wework'
+
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [publicSitesPlugin] }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync: successfulSitesDeviceSync(),
+            }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await screen.findByText('还没有站点')
+    await createSiteFromMenu()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ device_id: 'local-device' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '站点',
+      }
+    )
+  })
+
+  test('opens the application chat when the target device sync succeeds and another device fails', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync: sitesSyncWithUnrelatedDeviceFailure(),
+            }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await createSiteFromMenu()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '站点',
+      }
+    )
+  })
+
+  test('opens the application chat when legacy sync omits per-device results', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        } as Response
+      }
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        const sync = successfulSitesDeviceSync()
+        delete (sync as Partial<typeof sync>).results
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync,
+            }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await createSiteFromMenu()
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '站点',
       }
     )
   })
@@ -1076,6 +1413,13 @@ describe('App plugins route', () => {
           ok: true,
           status: 200,
           json: () => Promise.resolve({ plugin: installedCodexSitesPlugin() }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
         } as Response
       }
       return {
@@ -1114,6 +1458,13 @@ describe('App plugins route', () => {
             }),
         } as Response
       }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
       return {
         ok: true,
         status: 200,
@@ -1136,11 +1487,21 @@ describe('App plugins route', () => {
   test('does not install Sites until an online compatible target device is selected', async () => {
     workbenchValue.state.devices = []
     workbenchValue.state.standaloneDeviceId = null
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-    } as Response)
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      } as Response
+    })
     window.history.pushState({}, '', '/sites')
 
     renderApp()
@@ -1164,6 +1525,13 @@ describe('App plugins route', () => {
       const url = String(input)
       if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
         throw new Error('plugin install failed')
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
       }
       return {
         ok: true,
@@ -1195,6 +1563,13 @@ describe('App plugins route', () => {
           text: () => Promise.resolve('{"detail":"Not Found"}'),
         } as Response
       }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
       return {
         ok: true,
         status: 200,
@@ -1223,6 +1598,7 @@ describe('App plugins route', () => {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
     }
+    cacheApplicationTypes()
     window.history.pushState({}, '', '/sites')
 
     renderApp()

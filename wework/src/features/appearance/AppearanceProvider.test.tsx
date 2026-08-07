@@ -231,6 +231,33 @@ describe('AppearanceProvider', () => {
     )
   })
 
+  test('migrates the old default sidebar colors to the quieter palette', () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        light: {
+          sidebar: '229 229 231 / 0.72',
+        },
+        dark: {
+          sidebar: '31 35 41 / 0.82',
+        },
+      })
+    )
+
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    expect(localStorage.getItem('wework.appearance')).toContain(
+      `"sidebar":"${lightPalette.sidebar}"`
+    )
+    expect(localStorage.getItem('wework.appearance')).toContain(
+      `"sidebar":"${darkPalette.sidebar}"`
+    )
+  })
+
   test('normalizes stored background settings and preserves old configuration defaults', () => {
     localStorage.setItem(
       'wework.appearance',
