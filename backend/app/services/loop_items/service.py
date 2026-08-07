@@ -564,7 +564,8 @@ class LoopItemService:
                 config = bot_config(agent)
                 loop_item_execution_service.create_for_assignment(
                     db,
-                    item=item,
+                    loop_item_id=item.id,
+                    cloud_project_id=item.cloud_project_id,
                     agent=agent,
                     assigner_user_id=user_id,
                     environment=str(config.get("execution_environment") or "local"),
@@ -1088,10 +1089,15 @@ class LoopItemService:
                 status.HTTP_409_CONFLICT,
                 "Task is not assigned to a robot",
             )
+        if item.version != values.version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
         loop_item_execution_service.approve(
             db, execution_id=execution.id, user_id=user_id
         )
         metadata = dict(item.metadata_json or {})
+        # The versioned update commits both the run approval and the item
+        # change in one transaction; on a version race it rolls the approval
+        # back instead of half-applying it.
         updated = self._versioned_metadata_update(db, item, values.version, metadata)
         agent = (
             db.get(ProjectChatAgent, item.assignee_agent_id)
@@ -1125,6 +1131,8 @@ class LoopItemService:
                 status.HTTP_409_CONFLICT,
                 "Task is not assigned to a robot",
             )
+        if item.version != values.version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
         loop_item_execution_service.reject(
             db,
             execution_id=execution.id,
@@ -1132,6 +1140,8 @@ class LoopItemService:
             reason=values.reason,
         )
         metadata = dict(item.metadata_json or {})
+        # Same transaction rule as approve_run: the versioned update owns the
+        # commit so a stale-version request cannot half-apply the rejection.
         updated = self._versioned_metadata_update(db, item, values.version, metadata)
         agent = (
             db.get(ProjectChatAgent, item.assignee_agent_id)
@@ -1565,10 +1575,17 @@ class LoopItemService:
             )
             for execution in execution_rows:
                 executions_by_item.setdefault(execution.loop_item_id, execution)
+        external_index_rows: list[LoopItem] = []
         for item in items:
             metadata = (
                 item.metadata_json if isinstance(item.metadata_json, dict) else {}
             )
+            if (
+                metadata.get("external_index") is True
+                or metadata.get("external_shadow") is True
+            ):
+                external_index_rows.append(item)
+                continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
             execution = executions_by_item.get(item.id)
             result.append(
@@ -1594,6 +1611,43 @@ class LoopItemService:
                     "approval": self._approval_view(execution),
                 }
             )
+        # External provider index rows are local pointers only; their display
+        # data comes from the live provider issue (one GET per assigned task).
+        if external_index_rows:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            for item in external_index_rows:
+                try:
+                    view = external_loop_item_provider.get(db, item.id, user_id)
+                except Exception:
+                    logger.warning(
+                        "[MyWork] Skip external index row id=%s",
+                        item.id,
+                        exc_info=True,
+                    )
+                    continue
+                project = project_by_id.get(str(item.cloud_project_id))
+                if project is None:
+                    continue
+                metadata = (
+                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
+                )
+                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+                result.append(
+                    {
+                        **view,
+                        "project_key": project.project_key,
+                        "project_name": project.name,
+                        "has_active_task": item.id in active_task_items,
+                        "assignment_history": (
+                            assignment_history
+                            if isinstance(assignment_history, list)
+                            else []
+                        ),
+                    }
+                )
         return result
 
     @staticmethod
@@ -1727,7 +1781,8 @@ class LoopItemService:
             config = bot_config(agent)
             loop_item_execution_service.create_for_assignment(
                 db,
-                item=item,
+                loop_item_id=item.id,
+                cloud_project_id=item.cloud_project_id,
                 agent=agent,
                 assigner_user_id=user_id,
                 environment=str(config.get("execution_environment") or "local"),

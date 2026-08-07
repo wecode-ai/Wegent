@@ -273,3 +273,35 @@ describe('TodoEditor assignment chain', () => {
     expect(screen.queryByTestId('cloud-todo-assignment-chain-trigger')).not.toBeInTheDocument()
   })
 })
+
+describe('TodoEditor comments by provider', () => {
+  it('closes task comments for DingTalk AI Table tasks', () => {
+    const aitableProject = {
+      ...project,
+      task_provider: 'dingtalk_aitable' as const,
+    } as unknown as CloudProject
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={aitableProject}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-detail-activity-rail-empty')).not.toBeInTheDocument()
+    expect(screen.queryByText('评论 / 动态')).not.toBeInTheDocument()
+  })
+
+  it('keeps the comment rail for local tasks without a chat client', () => {
+    render(editorElement(baseItem))
+
+    expect(screen.getByTestId('cloud-todo-detail-activity-rail-empty')).toBeInTheDocument()
+    expect(screen.getByText('评论 / 动态')).toBeInTheDocument()
+  })
+})

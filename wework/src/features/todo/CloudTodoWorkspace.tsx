@@ -61,6 +61,7 @@ import {
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { ProjectAutomationView } from './ProjectAutomationView'
+import { projectSupportsRobotAutomation } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
@@ -868,6 +869,9 @@ export function CloudTodoWorkspace({
     []
   )
   const selectedProject = projects.find(project => project.id === selectedProjectId) ?? null
+  const selectedProjectAutomationSupported = selectedProject
+    ? projectSupportsRobotAutomation(selectedProject)
+    : false
   const apiForProjectId = useCallback(
     (projectId: string) => {
       const project = projects.find(candidate => candidate.id === projectId)
@@ -1855,7 +1859,8 @@ export function CloudTodoWorkspace({
                         文件
                       </button>
                     )}
-                    {selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                    {selectedProject.access_role !== 'RestrictedAnalyst' &&
+                    selectedProjectAutomationSupported ? (
                       <button
                         type="button"
                         data-testid="cloud-project-automation-view"
@@ -1904,7 +1909,8 @@ export function CloudTodoWorkspace({
                       {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                         <option value="files">文件</option>
                       ) : null}
-                      {selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                      {selectedProject.access_role !== 'RestrictedAnalyst' &&
+                      selectedProjectAutomationSupported ? (
                         <option value="automation">自动化</option>
                       ) : null}
                       {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') ? (
@@ -1984,14 +1990,23 @@ export function CloudTodoWorkspace({
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
                 <AITableView api={aitableApi} project={selectedProject} />
-              ) : projectView === 'automation' && selectedProjectApi ? (
+              ) : projectView === 'automation' &&
+                selectedProjectAutomationSupported &&
+                selectedProjectApi ? (
                 <ProjectAutomationView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   executionApi={
                     selectedProject.location === 'local'
                       ? services.localLoopItemExecutionApi
-                      : undefined
+                      : selectedProjectApi
+                        ? {
+                            list: (projectId, options) =>
+                              selectedProjectApi
+                                .listLoopItemExecutions(projectId, options)
+                                .then(response => response.items),
+                          }
+                        : undefined
                   }
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}

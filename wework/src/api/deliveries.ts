@@ -111,6 +111,37 @@ export interface CloudLoopItem {
   source_cells?: Record<string, unknown>
 }
 
+export interface CloudLoopItemExecution {
+  id: number
+  loop_item_id: string
+  cloud_project_id: string
+  task_title: string
+  task_status?: string | null
+  task_priority?: string | null
+  agent_id: string
+  assigner_user_id: number
+  execution_environment: string
+  execution_device_id?: string | null
+  status: string
+  priority_weight: number
+  queued_at?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  lease_expires_at?: string | null
+  heartbeat_at?: string | null
+  retry_attempt: number
+  error_message?: string | null
+  execution_note?: string | null
+  approval_status?: string | null
+  approved_by_user_id?: number | null
+  rejected_reason?: string | null
+  runtime_device_id?: string | null
+  runtime_task_id?: string | null
+  version: number
+  created_at: string
+  updated_at: string
+}
+
 export interface CloudLoopItemAttachment {
   id: string
   loop_item_id: string
@@ -379,6 +410,52 @@ export function createDeliveryApi(client: HttpClient) {
       if (filters?.executionState) query.set('execution_state', filters.executionState)
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
+    },
+    listLoopItemExecutions(
+      projectId: CloudProjectIdInput,
+      options: { agent_id?: string; status?: string } = {}
+    ): Promise<{ items: CloudLoopItemExecution[] }> {
+      const query = new URLSearchParams()
+      if (options.agent_id) query.set('agent_id', options.agent_id)
+      if (options.status) query.set('status', options.status)
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      return client
+        .get<{
+          items: Array<Record<string, unknown>>
+        }>(`/v1/cloud-projects/${projectId}/executions${suffix}`)
+        .then(response => ({
+          items: response.items.map(row => ({
+            id: Number(row.id),
+            loop_item_id: String(row.loopItemId ?? ''),
+            cloud_project_id: String(row.cloudProjectId ?? ''),
+            task_title: String(row.taskTitle ?? ''),
+            task_status: row.taskStatus == null ? null : String(row.taskStatus),
+            task_priority: row.taskPriority == null ? null : String(row.taskPriority),
+            agent_id: String(row.agentId ?? ''),
+            assigner_user_id: Number(row.assignerUserId ?? 0),
+            execution_environment: String(row.executionEnvironment ?? ''),
+            execution_device_id:
+              row.executionDeviceId == null ? null : String(row.executionDeviceId),
+            status: String(row.status ?? ''),
+            priority_weight: Number(row.priorityWeight ?? 0),
+            queued_at: row.queuedAt == null ? null : String(row.queuedAt),
+            started_at: row.startedAt == null ? null : String(row.startedAt),
+            completed_at: row.completedAt == null ? null : String(row.completedAt),
+            lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
+            heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+            retry_attempt: Number(row.retryAttempt ?? 0),
+            error_message: row.errorMessage == null ? null : String(row.errorMessage),
+            execution_note: row.executionNote == null ? null : String(row.executionNote),
+            approval_status: row.approvalStatus == null ? null : String(row.approvalStatus),
+            approved_by_user_id: row.approvedByUserId == null ? null : Number(row.approvedByUserId),
+            rejected_reason: row.rejectedReason == null ? null : String(row.rejectedReason),
+            runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
+            runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
+            version: Number(row.version ?? 1),
+            created_at: String(row.createdAt ?? ''),
+            updated_at: String(row.updatedAt ?? ''),
+          })),
+        }))
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)

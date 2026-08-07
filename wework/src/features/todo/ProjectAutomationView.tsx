@@ -2,7 +2,7 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
-import { ProjectQueueView } from './ProjectQueueView'
+import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -20,7 +20,7 @@ export function ProjectAutomationView({
   api: DeliveryApi
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
-  executionApi?: WorkbenchServices['localLoopItemExecutionApi']
+  executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
   currentUserId?: string | number

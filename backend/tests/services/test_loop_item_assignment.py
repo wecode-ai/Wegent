@@ -253,6 +253,88 @@ def test_reject_run_cancels_with_reason(test_db: Session, test_user: User) -> No
     assert execution.rejected_reason == "Not now"
 
 
+def test_approve_with_stale_version_has_no_side_effects(
+    test_db: Session, test_user: User
+) -> None:
+    """A stale-version approve must 409 and leave the run pending.
+
+    Regression: approve used to commit the run transition before the item
+    version check, so a conflicting request half-applied the approval and
+    dispatched the run even though the client saw "TODO changed".
+    """
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    item = _make_item(test_db, project, test_user)
+    assigned = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+    execution = _active_execution(test_db, assigned)
+    assert execution is not None
+    assert execution.status == "pending_approval"
+
+    with pytest.raises(HTTPException, match="TODO changed"):
+        loop_item_service.approve_run(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemApproval(version=assigned.version + 1),
+        )
+
+    execution = _active_execution(test_db, assigned)
+    assert execution is not None
+    assert execution.status == "pending_approval"
+    assert execution.approval_status == "pending"
+    assert execution.approved_by_user_id != test_user.id
+
+
+def test_reject_with_stale_version_has_no_side_effects(
+    test_db: Session, test_user: User
+) -> None:
+    """A stale-version reject must 409 and leave the run pending."""
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    item = _make_item(test_db, project, test_user)
+    assigned = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+    execution = _active_execution(test_db, assigned)
+    assert execution is not None
+    assert execution.status == "pending_approval"
+
+    with pytest.raises(HTTPException, match="TODO changed"):
+        loop_item_service.reject_run(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemApproval(version=assigned.version + 1),
+        )
+
+    execution = _active_execution(test_db, assigned)
+    assert execution is not None
+    assert execution.status == "pending_approval"
+    assert execution.approval_status == "pending"
+
+
 def test_assign_requires_admin_and_visible_bot(
     test_db: Session, test_user: User
 ) -> None:

@@ -99,7 +99,8 @@ def _make_execution(
 ) -> LoopItemExecution:
     execution = loop_item_execution_service.create_for_assignment(
         db,
-        item=item,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
         agent=bot,
         assigner_user_id=user.id,
         environment="cloud",
@@ -385,8 +386,11 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     )
     assert claimed is not None
 
+    task = loop_item_execution_service.resolve_task_context(
+        test_db, execution=claimed, user_id=test_user.id
+    )
     payload = loop_item_execution_service.build_runtime_payload(
-        test_db, execution=claimed
+        test_db, execution=claimed, task=task
     )
     assert payload is not None
     execution_request = payload.get("executionRequest")
@@ -577,8 +581,11 @@ def test_claimed_run_builds_complete_model_config_matching_app_send(
         "app.services.chat.trigger.unified._build_codex_runtime_model_config",
         return_value=full_config,
     ):
+        task = loop_item_execution_service.resolve_task_context(
+            test_db, execution=claimed, user_id=test_user.id
+        )
         payload = loop_item_execution_service.build_runtime_payload(
-            test_db, execution=claimed
+            test_db, execution=claimed, task=task
         )
     assert payload is not None
     model_config = payload["executionRequest"]["model_config"]
@@ -637,8 +644,11 @@ def test_public_cloud_model_uses_backend_gateway_config(
     )
     assert claimed is not None
 
+    task = loop_item_execution_service.resolve_task_context(
+        test_db, execution=claimed, user_id=test_user.id
+    )
     payload = loop_item_execution_service.build_runtime_payload(
-        test_db, execution=claimed
+        test_db, execution=claimed, task=task
     )
     assert payload is not None
     model_config = payload["executionRequest"]["model_config"]
@@ -678,7 +688,8 @@ def test_unbound_local_robot_can_be_claimed_by_creator_device(
     item = _make_item(test_db, project, test_user)
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
-        item=item,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
         agent=bot,
         assigner_user_id=test_user.id,
         environment="local",

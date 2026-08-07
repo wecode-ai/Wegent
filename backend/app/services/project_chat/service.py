@@ -809,10 +809,18 @@ class ProjectChatService:
         runtime_device_id: str,
         runtime_task_id: str,
     ) -> ProjectChatMessage | None:
+        trigger_filter = (
+            or_(
+                ProjectChatMessage.trigger_message_id.is_(None),
+                ProjectChatMessage.trigger_message_id == "",
+            )
+            if not trigger_message_id
+            else ProjectChatMessage.trigger_message_id == trigger_message_id
+        )
         return (
             db.query(ProjectChatMessage)
             .filter(
-                ProjectChatMessage.trigger_message_id == trigger_message_id,
+                trigger_filter,
                 ProjectChatMessage.agent_id == agent_id,
                 ProjectChatMessage.runtime_device_id == runtime_device_id,
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
@@ -859,6 +867,10 @@ class ProjectChatService:
 
         now = datetime.now(UTC).replace(tzinfo=None)
         task_metadata = dict(task.metadata_json or {})
+        external_index = (
+            task_metadata.get("external_index") is True
+            or task_metadata.get("external_shadow") is True
+        )
         previous_state = task_metadata.get(TASK_AI_STATE_KEY)
         previous_state = previous_state if isinstance(previous_state, dict) else {}
         next_state = {
@@ -889,7 +901,11 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            if task.status not in {"in_progress", "in_review", "completed"}:
+            if not external_index and task.status not in {
+                "in_progress",
+                "in_review",
+                "completed",
+            }:
                 task.status = "in_progress"
                 task.completed_at = ProjectChatService._loop_unset_datetime(db)
                 task.sort_order = 0
@@ -1014,6 +1030,15 @@ class ProjectChatService:
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
+        task_metadata = (
+            task.metadata_json if isinstance(task.metadata_json, dict) else {}
+        )
+        if (
+            task_metadata.get("external_index") is True
+            or task_metadata.get("external_shadow") is True
+        ):
+            # External provider tasks keep their status in provider labels.
+            return
         task.status = "in_review"
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
@@ -1104,6 +1129,10 @@ class ProjectChatService:
             .first()
         )
         if task is None:
+            if project.task_provider in {"github", "gitlab"}:
+                # External provider tasks have no local task row; chat threads
+                # are keyed by the provider issue id and need no existence row.
+                return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         return project
 

@@ -13,6 +13,7 @@ multi-worker cloud dispatchers never double-claim a run.
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -21,6 +22,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
+    CloudProject,
     LoopItem,
     ProjectChatAgent,
     loop_datetime_is_unset,
@@ -29,6 +31,19 @@ from app.models.delivery import (
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TaskContext:
+    """Minimal live task data needed to run one execution."""
+
+    id: str
+    cloud_project_id: str
+    title: str
+    description: str
+    status: str | None
+    priority: str | None
+
 
 STATUS_PENDING_APPROVAL = "pending_approval"
 STATUS_QUEUED = "queued"
@@ -93,7 +108,8 @@ class LoopItemExecutionService:
         self,
         db: Session,
         *,
-        item: LoopItem,
+        loop_item_id: str,
+        cloud_project_id: str,
         agent: ProjectChatAgent,
         assigner_user_id: int,
         environment: str,
@@ -111,8 +127,8 @@ class LoopItemExecutionService:
         mode = str(bot_config(agent).get("execution_mode") or "auto")
         now = utcnow()
         row = LoopItemExecution(
-            loop_item_id=item.id,
-            cloud_project_id=item.cloud_project_id,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
             agent_id=agent.id,
             execution_environment=environment,
             execution_device_id=execution_device_id or "",
@@ -146,7 +162,10 @@ class LoopItemExecutionService:
         row.approved_by_user_id = user_id
         row.approved_at = now
         row.execution_note = ""
-        db.commit()
+        # Do not commit here: callers fold this change into one transaction
+        # with their own versioned item update, so a stale-version conflict
+        # rolls the approval back instead of half-applying it.
+        db.flush()
         db.refresh(row)
         return row
 
@@ -171,7 +190,9 @@ class LoopItemExecutionService:
         row.rejected_reason = reason or ""
         row.execution_note = reason or "Robot creator rejected the run"
         row.completed_at = now
-        db.commit()
+        # Same transaction rule as approve: the caller owns the commit so a
+        # concurrent version conflict cannot leave a half-applied rejection.
+        db.flush()
         db.refresh(row)
         return row
 
@@ -724,8 +745,43 @@ class LoopItemExecutionService:
         db.refresh(row)
         return row
 
+    def resolve_task_context(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        user_id: int,
+    ) -> Optional[TaskContext]:
+        """Resolve live task data for a run from the provider or local store."""
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        project = db.get(CloudProject, execution.cloud_project_id)
+        if project is not None and project.task_provider in {"github", "gitlab"}:
+            view = external_loop_item_provider.task_view(
+                db, execution.loop_item_id, user_id
+            )
+            return TaskContext(**view)
+        item = db.get(LoopItem, execution.loop_item_id)
+        if item is None:
+            return None
+        return TaskContext(
+            id=item.id,
+            cloud_project_id=str(item.cloud_project_id or ""),
+            title=item.title or item.name or "",
+            description=item.description or "",
+            status=item.status,
+            priority=item.priority,
+        )
+
     def build_runtime_payload(
-        self, db: Session, *, execution: LoopItemExecution
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        task: TaskContext,
     ) -> Optional[dict]:
         """Build the runtime.tasks.create payload for a claimed run.
 
@@ -733,13 +789,12 @@ class LoopItemExecutionService:
         sides create the exact task the App would have created.
         """
 
-        from app.models.delivery import LoopItem, ProjectChatAgent
+        from app.models.delivery import ProjectChatAgent
         from app.models.user import User
         from app.services.project_chat.service import bot_config
 
-        item = db.get(LoopItem, execution.loop_item_id)
         agent = db.get(ProjectChatAgent, execution.agent_id)
-        if item is None or agent is None:
+        if task is None or agent is None:
             return None
         creator = (
             db.get(User, agent.created_by_user_id) if agent.created_by_user_id else None
@@ -771,11 +826,11 @@ class LoopItemExecutionService:
             # (same as an App send); everything else keeps its direct config.
             model_config = gateway_config or resolved
         return self._build_runtime_payload(
-            item=item,
+            item=task,
             agent=agent,
             creator=creator,
             team=team,
-            prompt=self.build_robot_prompt(item, agent),
+            prompt=self.build_robot_prompt(task, agent),
             model_config=model_config,
         )
 
@@ -944,10 +999,14 @@ class LoopItemExecutionService:
         include_terminal: bool = False,
         limit: int = 200,
     ) -> list[dict]:
-        """Return queue rows joined with their task display data."""
+        """Return queue rows without task display data.
 
-        query = db.query(LoopItemExecution, LoopItem).join(
-            LoopItem, LoopItem.id == LoopItemExecution.loop_item_id
+        Display fields are filled by the caller (local task rows or the live
+        external provider), so the execution table never duplicates tasks.
+        """
+
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.cloud_project_id == project_id
         )
         if agent_id:
             query = query.filter(LoopItemExecution.agent_id == agent_id)
@@ -969,11 +1028,11 @@ class LoopItemExecutionService:
         return [
             {
                 "id": execution.id,
-                "loop_item_id": item.id,
-                "cloud_project_id": item.cloud_project_id,
-                "task_title": item.title or item.name or "",
-                "task_status": item.status,
-                "task_priority": item.priority,
+                "loop_item_id": execution.loop_item_id,
+                "cloud_project_id": execution.cloud_project_id,
+                "task_title": None,
+                "task_status": None,
+                "task_priority": None,
                 "agent_id": execution.agent_id,
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,
@@ -997,7 +1056,7 @@ class LoopItemExecutionService:
                 "created_at": execution.created_at,
                 "updated_at": execution.updated_at,
             }
-            for execution, item in rows
+            for execution in rows
         ]
 
     def active_for_item(
@@ -1011,6 +1070,18 @@ class LoopItemExecutionService:
                 LoopItemExecution.loop_item_id == item_id,
                 LoopItemExecution.status.in_(ACTIVE_STATUSES),
             )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+
+    def latest_for_item(
+        self, db: Session, *, item_id: str
+    ) -> Optional[LoopItemExecution]:
+        """Return the newest run for a task regardless of terminal state."""
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.loop_item_id == item_id)
             .order_by(LoopItemExecution.id.desc())
             .first()
         )

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
-from app.models.delivery import LoopItem, ProjectChatAgent
+from app.models.delivery import ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.services.device_service import device_service
@@ -545,15 +545,17 @@ async def _dispatch_execution(
     task and its runtime events update the execution record.
     """
 
-    item = db.get(LoopItem, execution.loop_item_id)
     agent = db.get(ProjectChatAgent, execution.agent_id)
-    if item is None or agent is None:
-        raise RuntimeError(f"Execution {execution.id} lost its task or robot")
     creator = (
         db.get(User, agent.created_by_user_id) if agent.created_by_user_id else None
     )
-    if creator is None or not execution.execution_device_id:
+    if agent is None or creator is None or not execution.execution_device_id:
         raise RuntimeError(f"Execution {execution.id} has no creator or bound device")
+    task = loop_item_execution_service.resolve_task_context(
+        db, execution=execution, user_id=creator.id
+    )
+    if task is None:
+        raise RuntimeError(f"Execution {execution.id} lost its task")
     routing_user_id = routing_user_id or (
         _device_owner_user_id(db, execution.execution_device_id) or creator.id
     )
@@ -564,8 +566,10 @@ async def _dispatch_execution(
     if not online:
         raise RuntimeError("Device went offline before dispatch")
 
-    prompt = loop_item_execution_service.build_robot_prompt(item, agent)
-    payload = loop_item_execution_service.build_runtime_payload(db, execution=execution)
+    prompt = loop_item_execution_service.build_robot_prompt(task, agent)
+    payload = loop_item_execution_service.build_runtime_payload(
+        db, execution=execution, task=task
+    )
     if payload is None:
         raise RuntimeError(f"Execution {execution.id} payload cannot be built")
     # Give every run a unique runtime task id so its events map back to this
@@ -603,8 +607,8 @@ async def _dispatch_execution(
         from app.schemas.project_chat import ProjectChatAgentStart
 
         start_request = ProjectChatAgentStart(
-            project_id=str(item.cloud_project_id),
-            task_id=item.id,
+            project_id=str(task.cloud_project_id),
+            task_id=task.id,
             trigger_message_id=None,
             agent_id=agent.id,
             runtime_device_id=execution.execution_device_id,
@@ -626,7 +630,7 @@ async def _dispatch_execution(
     logger.info(
         "[RobotQueue] Dispatched execution=%s task=%s agent=%s device=%s runtime_task=%s",
         execution.id,
-        item.id,
+        task.id,
         agent.id,
         execution.execution_device_id,
         runtime_task_id,

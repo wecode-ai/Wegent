@@ -12,7 +12,12 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.ws.device_namespace import _project_chat_runtime_event_sync
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+)
 from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -1642,3 +1647,39 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].message_id == response.message_id
     assert messages[-1].status == "completed"
     assert messages[-1].metadata["run_status"] == "completed"
+
+
+def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(
+    test_db: Session, test_user: User
+) -> None:
+    """Queue-dispatched runs have no trigger message; repeated starts for the
+    same runtime task must reuse the streaming row instead of duplicating it
+    (MySQL stores the unset trigger as an empty string, not NULL)."""
+
+    project = create_project(test_db, test_user)
+    request = ProjectChatAgentStart(
+        projectId=project.id,
+        agentId="12",
+        runtimeDeviceId="device-1",
+        runtimeTaskId="runtime-task-1",
+        model="gpt-5.5-codex",
+    )
+    first = project_chat_service.start_agent_response(
+        test_db, user_id=test_user.id, request=request
+    )
+    second = project_chat_service.start_agent_response(
+        test_db, user_id=test_user.id, request=request
+    )
+
+    assert first.message_id == second.message_id
+    rows = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.agent_id == "12",
+            ProjectChatMessage.runtime_task_id == "runtime-task-1",
+            ProjectChatMessage.runtime_device_id == "device-1",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .all()
+    )
+    assert len(rows) == 1

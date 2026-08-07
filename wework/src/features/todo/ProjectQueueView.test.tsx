@@ -69,6 +69,43 @@ function services(): WorkbenchServices {
 }
 
 describe('ProjectQueueView', () => {
+  it('loads all robot executions in one batch and groups them by robot', async () => {
+    const mock = services()
+    const list = vi.fn(async () => [
+      {
+        id: 101,
+        loop_item_id: 'T-3',
+        cloud_project_id: '11',
+        task_title: 'Bot queued task',
+        task_status: 'pending',
+        task_priority: 'medium',
+        agent_id: 'bot-1',
+        assigner_user_id: 1,
+        status: 'queued',
+        queued_at: null,
+        started_at: null,
+        completed_at: null,
+        execution_note: null,
+        version: 1,
+        created_at: '2026-08-07T00:00:00Z',
+        updated_at: '2026-08-07T00:00:00Z',
+      },
+    ])
+    render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={{ id: '11', task_provider: 'gitlab', name: 'GitLab' } as never}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        executionApi={{ list }}
+        currentUserId={1}
+        onOpenTask={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByText('Bot queued task')).toBeInTheDocument()
+    expect(list).toHaveBeenCalledWith('11', {})
+  })
+
   it('renders derived queues for the current user and visible robots', async () => {
     const mock = services()
     const listLoopItems = mock.deliveryApi!.listLoopItems as ReturnType<typeof vi.fn>

@@ -747,7 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
-      ? editProps.project.current_user_name
+      ? editProps?.project?.current_user_name
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null)
@@ -1066,7 +1066,10 @@ export function TodoEditor(props: TodoEditorProps) {
   // layout so the task detail shape matches the design even before chat
   // connectivity is available.
   const activityView =
-    item && editProps?.project && props.projectChatClient ? (
+    item &&
+    editProps?.project &&
+    editProps.project.task_provider !== 'dingtalk_aitable' &&
+    props.projectChatClient ? (
       <TaskActivityView
         key={`${item.id}:${item.assignee_agent_id ?? 'unassigned'}`}
         client={props.projectChatClient}
@@ -1645,7 +1648,7 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
               {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
 
-              {twoColumn && item
+              {twoColumn && item && editProps?.project?.task_provider !== 'dingtalk_aitable'
                 ? (activityView ?? (
                     <section
                       data-testid="cloud-todo-detail-activity-rail-empty"

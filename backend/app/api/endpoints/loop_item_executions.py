@@ -131,7 +131,9 @@ def list_executions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionListResponse:
-    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Reporter)
+    project = require_cloud_project_role(
+        db, project_id, current_user.id, BaseRole.Reporter
+    ).project
     rows = loop_item_execution_service.list_queue(
         db,
         project_id=str(project_id),
@@ -139,6 +141,31 @@ def list_executions(
         assigner_user_id=assigner_user_id,
         status_filter=status,
     )
+    if project.task_provider in {"github", "gitlab"}:
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        issues = external_loop_item_provider.list(db, project_id, current_user.id)
+        by_id = {str(issue["id"]): issue for issue in issues}
+        for row in rows:
+            issue = by_id.get(str(row["loop_item_id"]))
+            row["task_title"] = str(issue.get("title") or "") if issue else ""
+            row["task_status"] = issue.get("status") if issue else None
+            row["task_priority"] = issue.get("priority") if issue else None
+    else:
+        item_ids = [row["loop_item_id"] for row in rows]
+        items = (
+            db.query(LoopItem).filter(LoopItem.id.in_(item_ids)).all()
+            if item_ids
+            else []
+        )
+        by_id = {item.id: item for item in items}
+        for row in rows:
+            item = by_id.get(str(row["loop_item_id"]))
+            row["task_title"] = (item.title or item.name or "") if item else ""
+            row["task_status"] = item.status if item else None
+            row["task_priority"] = item.priority if item else None
     return LoopItemExecutionListResponse(
         items=[LoopItemExecutionView.model_validate(row) for row in rows],
         total=len(rows),
@@ -185,7 +212,16 @@ def claim_execution(
     )
     view = _execution_view(db, row, include_payload=True) if row else None
     if view is not None:
-        payload = loop_item_execution_service.build_runtime_payload(db, execution=row)
+        task = loop_item_execution_service.resolve_task_context(
+            db, execution=row, user_id=current_user.id
+        )
+        payload = (
+            loop_item_execution_service.build_runtime_payload(
+                db, execution=row, task=task
+            )
+            if task is not None
+            else None
+        )
         view.execution_payload = payload
     return view
 
@@ -234,8 +270,15 @@ def claim_my_next_execution(
             )
         ):
             view = _execution_view(db, row, include_payload=True)
-            payload = loop_item_execution_service.build_runtime_payload(
-                db, execution=row
+            task = loop_item_execution_service.resolve_task_context(
+                db, execution=row, user_id=current_user.id
+            )
+            payload = (
+                loop_item_execution_service.build_runtime_payload(
+                    db, execution=row, task=task
+                )
+                if task is not None
+                else None
             )
             view.execution_payload = payload
             return view

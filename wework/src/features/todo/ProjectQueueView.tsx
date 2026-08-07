@@ -1,7 +1,6 @@
 import { Bot, CheckCircle2, Clock3, Inbox, LoaderCircle, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
+import type { CloudLoopItem, CloudLoopItemExecution, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -9,6 +8,33 @@ import { cn } from '@/lib/utils'
 import type { TFunction } from 'i18next'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
+
+type QueueExecution = Pick<
+  CloudLoopItemExecution,
+  | 'id'
+  | 'loop_item_id'
+  | 'cloud_project_id'
+  | 'assigner_user_id'
+  | 'agent_id'
+  | 'task_title'
+  | 'task_status'
+  | 'task_priority'
+  | 'status'
+  | 'queued_at'
+  | 'started_at'
+  | 'completed_at'
+  | 'execution_note'
+  | 'version'
+  | 'created_at'
+  | 'updated_at'
+>
+
+export interface ExecutionListApi {
+  list: (
+    projectId: string,
+    options: { agent_id?: string; status?: string }
+  ) => Promise<QueueExecution[]>
+}
 
 const QUEUE_STATES = new Set([
   'assigned',
@@ -45,13 +71,13 @@ function isInQueue(item: CloudLoopItem): boolean {
   return QUEUE_STATES.has(item.execution_state)
 }
 
-function executionInQueue(execution: LocalLoopItemExecution): boolean {
+function executionInQueue(execution: QueueExecution): boolean {
   // Keep terminal failed runs visible with their error state, matching the
   // cloud queue (which keeps 'failed' execution_state items in the columns).
   return ['pending_approval', 'queued', 'claimed', 'running', 'failed'].includes(execution.status)
 }
 
-function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
+function executionToItem(execution: QueueExecution): CloudLoopItem {
   return {
     id: execution.loop_item_id,
     cloud_project_id: execution.cloud_project_id,
@@ -60,7 +86,7 @@ function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
     created_by_user_id: execution.assigner_user_id,
     assignee_user_id: null,
     assignee_agent_id: execution.agent_id,
-    assignee_agent_name: execution.agent_name,
+    assignee_agent_name: undefined,
     title: execution.task_title,
     description: '',
     status: execution.task_status ?? 'inbox',
@@ -168,7 +194,7 @@ export function ProjectQueueView({
   api: DeliveryApi
   project: CloudProject
   projectChatAgentApi?: NonNullable<WorkbenchServices['projectChatAgentApi']>
-  executionApi?: NonNullable<WorkbenchServices['localLoopItemExecutionApi']>
+  executionApi?: ExecutionListApi
   currentUserId?: string | number
   onOpenTask?: (item: CloudLoopItem) => void
   embedded?: boolean
@@ -202,10 +228,18 @@ export function ProjectQueueView({
         setMyTasks(myResponse.items)
         const queues: Record<string, CloudLoopItem[]> = {}
         if (executionApi) {
+          const all = await executionApi.list(project.id, {})
+          if (!active) return
+          const byAgent = new Map<string, QueueExecution[]>()
+          for (const execution of all) {
+            const bucket = byAgent.get(execution.agent_id) ?? []
+            bucket.push(execution)
+            byAgent.set(execution.agent_id, bucket)
+          }
           for (const agent of nextAgents) {
-            const executions = await executionApi.list(project.id, { agent_id: agent.id })
-            if (!active) return
-            queues[agent.id] = executions.filter(executionInQueue).map(executionToItem)
+            queues[agent.id] = (byAgent.get(agent.id) ?? [])
+              .filter(executionInQueue)
+              .map(executionToItem)
           }
         } else {
           for (const agent of nextAgents) {
@@ -393,7 +427,7 @@ export function ProjectQueueView({
                 ) : (
                   column.items.filter(isVisible).map(item => (
                     <button
-                      key={item.id}
+                      key={item.execution_id ? `${item.id}:${item.execution_id}` : item.id}
                       type="button"
                       data-testid={`project-queue-task-${item.id}`}
                       onClick={() => onOpenTask?.(item)}

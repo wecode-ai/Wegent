@@ -48,6 +48,7 @@ from app.schemas.project_chat import (
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
 from app.services.loop_items import loop_item_service
+from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
@@ -175,6 +176,14 @@ def assign_loop_item(
     there is no separate queue storage.
     """
 
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.assign(
+            db, item_id, current_user.id, values
+        )
+        from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+        background_tasks.add_task(dispatch_queues_background)
+        return LoopItemResponse.model_validate(response)
     item = loop_item_service.assign(
         db,
         project_id=project_id,
@@ -205,6 +214,18 @@ def approve_loop_item_run(
 ) -> LoopItemResponse:
     """Approve a pending robot run. Only the robot creator can approve."""
 
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.approve_run(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+        from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+        background_tasks.add_task(dispatch_queues_background)
+        return LoopItemResponse.model_validate(response)
     item = loop_item_service.approve_run(
         db,
         project_id=project_id,
@@ -235,6 +256,15 @@ def reject_loop_item_run(
 ) -> LoopItemResponse:
     """Reject a pending robot run. Only the robot creator can reject."""
 
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.reject_run(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+        return LoopItemResponse.model_validate(response)
     item = loop_item_service.reject_run(
         db,
         project_id=project_id,

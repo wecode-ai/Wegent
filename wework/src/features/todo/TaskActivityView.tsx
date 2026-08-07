@@ -764,7 +764,7 @@ export function TaskActivityView({
               {t('workbench.task_activity_run_now')}
             </button>
           ) : null}
-          {task.status === 'in_review' ? (
+          {task.status === 'in_review' || task.ai_state?.status === 'completed' ? (
             <div
               data-testid={`cloud-task-activity-review-actions-${task.id}`}
               className="flex items-center gap-1.5"

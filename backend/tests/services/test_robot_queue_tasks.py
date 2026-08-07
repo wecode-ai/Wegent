@@ -77,7 +77,8 @@ def _make_execution(
     db.refresh(item)
     execution = loop_item_execution_service.create_for_assignment(
         db,
-        item=item,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
         agent=agent,
         assigner_user_id=user.id,
         environment="local",

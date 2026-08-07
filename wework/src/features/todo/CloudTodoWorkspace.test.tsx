@@ -1277,6 +1277,28 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
   })
 
+  it('hides the automation tab for DingTalk AI Table project spaces', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, task_provider: 'dingtalk_aitable' as const }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
+    expect(screen.queryByText('自动化')).not.toBeInTheDocument()
+  })
+
   it('opens the global search with Command+K and opens a task result', async () => {
     render(
       <CloudTodoWorkspace
