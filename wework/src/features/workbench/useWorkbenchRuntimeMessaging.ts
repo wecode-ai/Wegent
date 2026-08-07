@@ -15,6 +15,7 @@ import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -154,6 +155,8 @@ export function useWorkbenchRuntimeMessaging({
   refreshWorkLists,
   rememberExecutionDevice,
 }: UseWorkbenchRuntimeMessagingOptions) {
+  const appPreferences = useAppPreferencesState()
+  const preferences = appPreferences?.preferences
   const reportError = useCallback(
     (error: string, options?: RuntimePaneActionOptions) => {
       if (options?.onError) {
@@ -683,6 +686,17 @@ export function useWorkbenchRuntimeMessaging({
               options: selectedModelOptions,
             }
           : null,
+        ...(!options?.ephemeral &&
+        preferences?.friendlyTaskTitlesEnabled === true &&
+        preferences.friendlyTaskTitleModel
+          ? {
+              friendlyTitle: {
+                modelId: preferences.friendlyTaskTitleModel.executionModelId,
+                modelType: preferences.friendlyTaskTitleModel.executionModelType,
+                modelOptions: preferences.friendlyTaskTitleModel.options,
+              },
+            }
+          : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
@@ -938,6 +952,7 @@ export function useWorkbenchRuntimeMessaging({
     },
     [
       attachmentSelection,
+      preferences,
       dispatch,
       executorClient,
       lifecycleStore,

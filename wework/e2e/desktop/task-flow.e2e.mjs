@@ -315,9 +315,9 @@ const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog.
-const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+// the official option is served from the cloud model catalog with a canonical
+// model id that does not collide with the local Codex catalog.
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
@@ -13533,7 +13533,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     await control.command('dispatchLocalModelSettingsChanged', '')
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
-    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
     const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
     assert.equal(
@@ -13545,11 +13544,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       recoveredModelMenu.testIds.includes(synthesizedModelOption),
       false,
       'The Backend-synthesized runtime Codex duplicate remained visible'
-    )
-    assert.equal(
-      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
-      false,
-      'The legacy GPT 5.5 Codex model remained visible'
     )
     assert.equal(
       (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
