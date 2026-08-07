@@ -726,6 +726,7 @@
     "browser_open_external": "在外部浏览器中打开",
     "browser_more_actions": "更多操作",
     "browser_clear_data": "清除浏览数据",
+    "browser_clear_all": "清除所有浏览数据",
     "browser_clear_cookies": "清除 Cookie",
     "browser_clear_cache": "清除缓存",
     "browser_clear_started": "开始清除浏览数据",

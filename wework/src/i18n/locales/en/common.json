@@ -727,6 +727,7 @@
     "browser_open_external": "Open in external browser",
     "browser_more_actions": "More actions",
     "browser_clear_data": "Clear browsing data",
+    "browser_clear_all": "Clear all browsing data",
     "browser_clear_cookies": "Clear cookies",
     "browser_clear_cache": "Clear cache",
     "browser_clear_started": "Clearing browsing data...",
