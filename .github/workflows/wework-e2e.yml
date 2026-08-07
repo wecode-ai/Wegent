@@ -530,7 +530,7 @@ jobs:
         run: |
           pnpm run prepare:codex
           pnpm run prepare:dws
-          codex_bin="$(find "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
+          codex_bin="$(find -L "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
 
