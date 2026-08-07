@@ -5,6 +5,7 @@
       "display_name": "GPT 5.6 Sol",
       "description": "GPT 5.6 Sol profile for agentic coding",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "visibility": "list",
       "priority": 1,
       "context_window": 272000,
@@ -15,6 +16,7 @@
       "display_name": "GPT 5.6 Terra",
       "description": "GPT 5.6 Terra profile for agentic coding",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "visibility": "list",
       "priority": 2,
       "context_window": 272000,
@@ -25,6 +27,7 @@
       "display_name": "GPT 5.6 Luna",
       "description": "GPT 5.6 Luna profile for agentic coding",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "visibility": "list",
       "priority": 3,
       "context_window": 272000,
@@ -35,6 +38,7 @@
       "display_name": "GPT 5.6 Sol",
       "description": "Wework GPT 5.6 Sol compatibility profile",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "context_window": 272000,
       "max_context_window": 272000
     },
@@ -43,6 +47,7 @@
       "display_name": "GPT 5.6 Terra",
       "description": "Wework GPT 5.6 Terra compatibility profile",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "context_window": 272000,
       "max_context_window": 272000
     },
@@ -51,6 +56,7 @@
       "display_name": "GPT 5.6 Luna",
       "description": "Wework GPT 5.6 Luna compatibility profile",
       "apply_patch_tool_type": "freeform",
+      "supports_search_tool": true,
       "context_window": 272000,
       "max_context_window": 272000
     }
