@@ -873,7 +873,7 @@ describe('App plugins route', () => {
         connectedAt: '2026-07-15T00:00:00.000Z',
       })
     )
-    vi.mocked(fetch).mockImplementation(async input => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/users/me')) {
         return {
@@ -918,12 +918,13 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
+    vi.stubGlobal('fetch', fetchMock)
     window.history.pushState({}, '', '/sites')
 
     renderApp()
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
@@ -933,7 +934,7 @@ describe('App plugins route', () => {
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(fetch).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:9100/api/plugins/builtin/wegent-sites/ensure-installed',
       expect.objectContaining({
         method: 'POST',

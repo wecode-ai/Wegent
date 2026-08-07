@@ -160,6 +160,35 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('forwards an active task title change without refreshing runtime work', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onRefreshWorkLists = vi.fn()
+    const onRuntimeTaskTitleUpdated = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onRefreshWorkLists,
+      onRuntimeTaskTitleUpdated,
+    })
+
+    handlers.onRuntimeTaskTitleUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
+
+    expect(onRefreshWorkLists).not.toHaveBeenCalled()
+    expect(onRuntimeTaskTitleUpdated).toHaveBeenCalledWith({
+      taskId: 'runtime-task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
+  })
+
   test('inserts an idle supervisor correction before its assistant turn starts', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

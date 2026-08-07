@@ -130,6 +130,59 @@
   }
 }
 
+@keyframes runtime-task-title-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-125%);
+  }
+
+  14%,
+  82% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(215%);
+  }
+}
+
+.runtime-task-title {
+  display: block;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.runtime-task-title-shimmer {
+  animation: runtime-task-title-sheen 760ms ease-out both;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgb(var(--color-focus) / 0.12),
+    rgb(var(--color-focus) / 0.42),
+    rgb(255 255 255 / 0.34),
+    rgb(var(--color-focus) / 0.12),
+    transparent
+  );
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 54%;
+  z-index: 1;
+}
+
+.runtime-task-title > [data-sidebar-drag-activator] {
+  position: relative;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-task-title-shimmer {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 .suffix-roll-out-up,
 .suffix-roll-in-up,
 .suffix-roll-out-down,
