@@ -21,7 +21,7 @@ def _load_migration(filename: str) -> ModuleType:
 def test_plugin_marketplace_v2_is_single_revision_on_main_head() -> None:
     migration = _load_migration("20260804_d4e5f6a7b8c9_add_plugin_marketplace_v2.py")
     assert migration.revision == "d4e5f6a7b8c9"
-    assert migration.down_revision == "b9c0d1e2f3a4"
+    assert migration.down_revision == "a8b9c0d1e2f3"
     source = Path(migration.__file__).read_text(encoding="utf-8")
     assert "allow_copy" in source
     assert "purpose" in source
