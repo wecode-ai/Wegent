@@ -1655,9 +1655,7 @@ export function PluginsWorkspace({
     const request = ensureMarketplaceConnectors(item)
       .then(() =>
         installFromLocal
-          ? localPluginApi
-              .selectMarketplace(localMarketplaceId!)
-              .then(() => localPluginApi.installAvailablePlugin(item.id))
+          ? localPluginApi.installAvailablePlugin(item.id, localMarketplaceId!)
           : pluginApi
               .installMarketplacePlugin(item.id, currentDeviceId)
               .then(response => response.plugin)
