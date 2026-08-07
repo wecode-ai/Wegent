@@ -15,6 +15,7 @@ import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
+import type { AppPreferences } from '@/tauri/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
   findWorkbenchDevice,
@@ -36,6 +37,7 @@ import type {
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeTaskFriendlyTitleConfig,
   SkillRef,
   TurnFileChangesSummary,
   UnifiedModel,
@@ -137,6 +139,40 @@ export function runtimeThreadId(address?: RuntimeTaskAddress | null): string | n
   if (!isRecord(handle)) return null
   const threadId = handle.sessionId ?? handle.session_id ?? handle.threadId ?? handle.thread_id
   return typeof threadId === 'string' && threadId.trim() ? threadId : null
+}
+
+export function friendlyTitleForTask(
+  preferences:
+    | Pick<AppPreferences, 'friendlyTaskTitlesEnabled' | 'friendlyTaskTitleModel'>
+    | undefined,
+  models: UnifiedModel[],
+  executionModel: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>,
+  ephemeral?: boolean
+): RuntimeTaskFriendlyTitleConfig | null {
+  if (ephemeral || preferences?.friendlyTaskTitlesEnabled !== true) return null
+
+  const configuredModel = preferences.friendlyTaskTitleModel
+  const configuredModelIsAvailable =
+    configuredModel &&
+    models.some(
+      model => model.name === configuredModel.modelName && model.type === configuredModel.modelType
+    )
+  if (configuredModel) {
+    if (!configuredModelIsAvailable) return null
+    return {
+      modelId: configuredModel.executionModelId,
+      modelType: configuredModel.executionModelType,
+      modelOptions: configuredModel.options,
+    }
+  }
+
+  return executionModel.modelId
+    ? {
+        modelId: executionModel.modelId,
+        modelType: executionModel.modelType,
+        modelOptions: executionModel.modelOptions,
+      }
+    : null
 }
 
 export function useWorkbenchRuntimeMessaging({
@@ -546,6 +582,13 @@ export function useWorkbenchRuntimeMessaging({
         resolveAutomaticModel(modelSelection.models)
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+      const friendlyTitle = friendlyTitleForTask(
+        preferences,
+        modelSelection.models,
+        executionModel,
+        options?.ephemeral
+      )
       const runtime = inferRuntimeName(selectedModel)
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -686,17 +729,7 @@ export function useWorkbenchRuntimeMessaging({
               options: selectedModelOptions,
             }
           : null,
-        ...(!options?.ephemeral &&
-        preferences?.friendlyTaskTitlesEnabled === true &&
-        preferences.friendlyTaskTitleModel
-          ? {
-              friendlyTitle: {
-                modelId: preferences.friendlyTaskTitleModel.executionModelId,
-                modelType: preferences.friendlyTaskTitleModel.executionModelType,
-                modelOptions: preferences.friendlyTaskTitleModel.options,
-              },
-            }
-          : {}),
+        ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],

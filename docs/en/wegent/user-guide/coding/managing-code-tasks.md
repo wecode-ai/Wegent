@@ -77,6 +77,15 @@ Click the model selector to override the agent's default model:
 
 When you switch to a different model in an existing Wework conversation, Wework asks for confirmation first. Different models may interpret existing context differently and may vary in tool support, response style, and task continuity. After confirmation, the new model is used for the next message; a response already in progress continues with the previous model. No warning is shown when selecting a model for a new conversation or reselecting the model that is already chosen.
 
+#### Friendly Titles
+
+You can enable **Use friendly titles** under **Settings > General > Runtime**. It is off by default, and enabling it requires a title-generation model:
+
+- **Same as task**: The default option. Each new task uses the model actually selected for that task to generate its title.
+- **A specific model**: Used only to generate the title asynchronously; it does not change the model used by the task itself.
+
+Title generation never blocks task submission. If a selected title model is no longer available, Wework skips title generation and still creates the task normally.
+
 #### Knowledge Base Context
 
 Click the context button to add knowledge bases:
