@@ -2294,6 +2294,8 @@ async function waitForSnapshot(
       testId.startsWith('runtime-local-task-') ||
       testId.startsWith('composer-plugin-') ||
       testId.startsWith('plugin-trial-') ||
+      testId.startsWith('workspace-') ||
+      testId.startsWith('bottom-workspace-') ||
       [
         'goal-status-bar',
         'pause-response-button',
@@ -8392,6 +8394,7 @@ class RealCloudEnvironment {
       DEVICE_TYPE: 'cloud',
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
+      WEGENT_WORKSPACE_ROOTS: this.workspacePath,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
