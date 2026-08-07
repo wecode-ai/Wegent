@@ -410,7 +410,35 @@ pub fn preview_feedback_bundle(
     app: tauri::AppHandle,
     request: FeedbackExportRequest,
 ) -> Result<FeedbackPreviewResult, String> {
-    let bundle = build_pending_bundle(&app, &request)?;
+    let started_at = Instant::now();
+    log::info!(
+        "Feedback preview started: include_runtime_logs={}, include_task_info={}, include_screenshot={}, include_system_info={}, attachment_count={}",
+        request.include_runtime_logs,
+        request.include_task_info,
+        request.include_screenshot,
+        request.include_system_info,
+        request.attachments.len()
+    );
+    let bundle = build_pending_bundle(&app, &request).map_err(|error| {
+        log::warn!(
+            "Feedback preview failed: stage=collect, elapsed_ms={}",
+            started_at.elapsed().as_millis()
+        );
+        error
+    })?;
+    let source_bytes = bundle
+        .entries
+        .iter()
+        .map(|entry| entry.data.len() as u64)
+        .sum::<u64>();
+    let collect_elapsed_ms = started_at.elapsed().as_millis();
+    log::info!(
+        "Feedback preview collected: report_id={}, entry_count={}, source_bytes={}, elapsed_ms={}",
+        bundle.report_id,
+        bundle.entries.len(),
+        source_bytes,
+        collect_elapsed_ms
+    );
     let staging_id = format!(
         "{:x}-{:x}-{}",
         SystemTime::now()
@@ -421,7 +449,28 @@ pub fn preview_feedback_bundle(
         std::thread::current().name().unwrap_or("feedback")
     );
     let staging_path = feedback_staging_directory(&app)?.join(format!("{staging_id}.zip"));
-    write_pending_bundle(&bundle, &staging_path)?;
+    let write_started_at = Instant::now();
+    write_pending_bundle(&bundle, &staging_path).map_err(|error| {
+        log::warn!(
+            "Feedback preview failed: report_id={}, stage=write_bundle, elapsed_ms={}",
+            bundle.report_id,
+            started_at.elapsed().as_millis()
+        );
+        error
+    })?;
+    let bundle_bytes = fs::metadata(&staging_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or_default();
+    log::info!(
+        "Feedback preview ready: report_id={}, entry_count={}, source_bytes={}, bundle_bytes={}, collect_elapsed_ms={}, write_elapsed_ms={}, elapsed_ms={}",
+        bundle.report_id,
+        bundle.entries.len(),
+        source_bytes,
+        bundle_bytes,
+        collect_elapsed_ms,
+        write_started_at.elapsed().as_millis(),
+        started_at.elapsed().as_millis()
+    );
 
     let entries = bundle
         .entries
@@ -601,14 +650,21 @@ fn submit_feedback_bundle_blocking(
         })?;
     let status = response.status();
     if !status.is_success() {
+        let response_content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+        let response_body = response.text().unwrap_or_default();
+        let response_detail = feedback_response_detail(&response_body);
         log::warn!(
-            "Feedback submission failed: report_id={report_id}, endpoint={endpoint}, stage=response, elapsed_ms={}, http_status={status}",
-            started_at.elapsed().as_millis()
+            "Feedback submission failed: report_id={report_id}, endpoint={endpoint}, stage=response, elapsed_ms={}, http_status={status}, response_content_type={response_content_type}, response_bytes={}, response_detail_present={}",
+            started_at.elapsed().as_millis(),
+            response_body.len(),
+            response_detail.is_some()
         );
-        let message = response
-            .json::<serde_json::Value>()
-            .ok()
-            .and_then(|value| value.get("detail")?.as_str().map(str::to_owned))
+        let message = response_detail
             .unwrap_or_else(|| format!("Feedback submission failed with HTTP {status}"));
         return Err(message);
     }
@@ -669,6 +725,14 @@ fn feedback_error_kind(error: &(dyn std::error::Error + 'static)) -> &'static st
     } else {
         "other"
     }
+}
+
+fn feedback_response_detail(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("detail")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 struct IncompleteArchive {
@@ -888,8 +952,9 @@ fn write_zip_bytes(
 mod tests {
     use super::{
         collect_log_entries, decode_data_url, empty_task_context,
-        estimated_decoded_attachment_size, feedback_endpoint_summary, redact, redact_home_path,
-        redact_json_value, sanitize_attachment_name, LogManifestEntry, PendingEntry,
+        estimated_decoded_attachment_size, feedback_endpoint_summary, feedback_response_detail,
+        redact, redact_home_path, redact_json_value, sanitize_attachment_name, LogManifestEntry,
+        PendingEntry,
     };
     use std::collections::HashSet;
     use std::fs;
@@ -936,6 +1001,19 @@ mod tests {
             "https://feedback.example.com:8443/api/v1/feedback"
         );
         assert_eq!(feedback_endpoint_summary("not a URL"), "invalid");
+    }
+
+    #[test]
+    fn extracts_only_structured_feedback_error_details() {
+        assert_eq!(
+            feedback_response_detail(r#"{"detail":"Feedback channel unavailable"}"#),
+            Some("Feedback channel unavailable".to_string())
+        );
+        assert_eq!(feedback_response_detail("<html>gateway error</html>"), None);
+        assert_eq!(
+            feedback_response_detail(r#"{"detail":{"message":"invalid"}}"#),
+            None
+        );
     }
 
     #[test]
