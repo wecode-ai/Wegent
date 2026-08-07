@@ -506,7 +506,7 @@ def test_creating_a_wiki_starts_its_first_run(
     """Otherwise a new wiki sits empty until somebody finds the regenerate button,
     which is not a flow anyone would guess. TestClient runs background tasks before
     returning, so the call is observable here."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run") as start:
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run") as start:
         kb_id = _create_wiki(test_client, auth_headers)
 
     start.assert_called_once()
@@ -527,7 +527,7 @@ def test_the_first_run_does_not_block_the_response(
 
     # The queued function takes ids, not the request's session and user: it runs
     # after the response, by which time that session is closed.
-    parameters = list(inspect.signature(endpoint._start_the_first_run).parameters)
+    parameters = list(inspect.signature(endpoint.start_first_run).parameters)
     assert parameters == ["user_id", "knowledge_base_id"]
 
 
@@ -924,7 +924,7 @@ def test_a_wiki_that_has_never_run_says_so(
 ):
     """The reader offers to generate; it needs to know there is nothing to wait
     for rather than inferring it from an empty page tree."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     body = test_client.get(_status_url(kb_id), headers=auth_headers).json()
@@ -971,7 +971,7 @@ def test_a_running_wiki_reports_the_run_rather_than_looking_idle(
     """Until this existed the regenerate button was only disabled for the duration
     of its own request, so reloading the page made a running wiki look idle and the
     next click came back as an unexplained conflict."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     generation = _record_a_running_generation(test_db, kb_id)
 
@@ -990,7 +990,7 @@ def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
 ):
     """Stale is not busy: triggering again reclaims it and starts afresh. Reported
     separately so the client can offer that instead of saying the wiki is busy."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_running_generation(test_db, kb_id, quiet_for_hours=7)
 
@@ -1007,7 +1007,7 @@ def test_reading_the_status_needs_only_read_access(
 ):
     """Whether the wiki is busy is what explains why regenerating is unavailable.
     Requiring write access to learn it would leave a reader with an opaque button."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     # No repository write access is granted anywhere in this test.
@@ -1062,7 +1062,7 @@ def test_the_history_explains_why_a_wiki_has_no_pages(
 ):
     """The screen this exists for: every run failed, so the reader sees an empty
     wiki and the only useful answer is in a run that already ended."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_finished_generation(
         test_db,
@@ -1087,7 +1087,7 @@ def test_the_history_is_newest_first(
     test_db: Session,
     kind_services_use_test_db,
 ):
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     first = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
     second = _record_a_finished_generation(test_db, kb_id, status="FAILED")
@@ -1108,7 +1108,7 @@ def test_the_published_version_is_marked_in_the_history(
     from app.models.kind import Kind
     from app.services.knowledge.code_wiki.publisher import PUBLISHED_GENERATION_KEY
 
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     published = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
     later = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
@@ -1136,7 +1136,7 @@ def test_a_run_still_going_reports_no_finish_time(
 ):
     """completed_at defaults to the epoch rather than NULL, so reporting it raw
     would have every in-flight run claim it finished in 1970."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_running_generation(test_db, kb_id)
 
@@ -1153,7 +1153,7 @@ def test_reading_the_history_needs_only_read_access(
 ):
     """Same reasoning as the status beside it: a reader denied the explanation is
     left with a broken page and nothing to act on."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     assert test_client.get(_history_url(kb_id), headers=auth_headers).status_code == 200
@@ -1196,7 +1196,7 @@ def test_an_existing_wiki_stays_readable_when_the_rollout_is_off(
     """
     from app.core.wiki_config import wiki_settings
 
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
@@ -1221,7 +1221,7 @@ def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
     """
     from app.core.wiki_config import wiki_settings
 
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
@@ -1260,7 +1260,7 @@ def test_the_history_reports_a_failed_task_beside_a_completed_version(
     """
     from app.models.task import TaskResource
 
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
 
     test_db.add(
@@ -1291,7 +1291,7 @@ def test_a_run_with_no_task_reports_no_task_status(
 ):
     """A run whose task could not be created has nothing to report, and must not be
     made to look as though its task succeeded."""
-    with patch("app.api.endpoints.knowledge_code_wiki._start_the_first_run"):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
     _record_a_finished_generation(test_db, kb_id, status="FAILED", task_id=0)
 

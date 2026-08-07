@@ -30,14 +30,17 @@ from typing import Optional, Sequence
 from sqlalchemy.orm import Session
 
 from app.core.wiki_config import wiki_settings
+from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import KnowledgeBaseType
 from app.schemas.task import TaskCreate
+from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
     FailureCode,
+    GenerationInFlight,
     finish_generation,
     published_commit,
     record_failure_reason,
@@ -512,3 +515,37 @@ def republish_generation(
         result.published,
     )
     return result
+
+
+def start_first_run(user_id: int, knowledge_base_id: int) -> None:
+    """Begin generating the wiki that was just created.
+
+    Without this a new wiki is empty until somebody finds the regenerate button,
+    which is not a flow anyone would guess.
+
+    Runs after the response, on its own session: the request's session is closed by
+    then, and reading the repository's HEAD can take the full connect timeout, which
+    is not something the caller should wait through. Failures are logged rather than
+    raised — the knowledge base is already saved, the reader shows an empty state,
+    and its own button starts a run.
+    """
+    db = SessionLocal()
+    try:
+        knowledge_base = KnowledgeService._get_knowledge_base_record(
+            db, knowledge_base_id
+        )
+        user = db.query(User).filter(User.id == user_id).first()
+        if knowledge_base is None or user is None:  # pragma: no cover - just committed
+            return
+        start_run(db, knowledge_base=knowledge_base, user=user)
+    except (CodeWikiRunError, GenerationInFlight) as e:
+        logger.warning(
+            "[code_wiki] first run not started for kb %s: %s", knowledge_base_id, e
+        )
+    except Exception:  # pragma: no cover - defensive
+        db.rollback()
+        logger.exception(
+            "[code_wiki] first run not started for kb %s", knowledge_base_id
+        )
+    finally:
+        db.close()

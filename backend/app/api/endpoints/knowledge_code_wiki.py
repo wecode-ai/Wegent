@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.wiki_config import wiki_settings
-from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -77,6 +76,7 @@ from app.services.knowledge.code_wiki.run_mode import ChangedPath
 from app.services.knowledge.code_wiki.runner import (
     CodeWikiRunError,
     republish_generation,
+    start_first_run,
     start_run,
 )
 from app.services.knowledge.code_wiki.source import (
@@ -307,7 +307,7 @@ def create_code_wiki(
         # which is a network call that can take the full connect timeout when the
         # host is slow. Blocking the response on it makes creating a wiki appear to
         # hang, and then to have failed, when the knowledge base is already saved.
-        background_tasks.add_task(_start_the_first_run, current_user.id, result.id)
+        background_tasks.add_task(start_first_run, current_user.id, result.id)
         return result
     except IntegrityError as e:
         # The same caller asking twice at once. UNIQUE (source_url, kind_id) settles
@@ -375,40 +375,6 @@ def _readable_code_wiki(db: Session, user: User, knowledge_base_id: int) -> Kind
             status_code=status.HTTP_404_NOT_FOUND, detail="Code wiki not found"
         )
     return knowledge_base
-
-
-def _start_the_first_run(user_id: int, knowledge_base_id: int) -> None:
-    """Begin generating the wiki that was just created.
-
-    Without this a new wiki is empty until somebody finds the regenerate button,
-    which is not a flow anyone would guess.
-
-    Runs after the response, on its own session: the request's session is closed by
-    then, and reading the repository's HEAD can take the full connect timeout, which
-    is not something the caller should wait through. Failures are logged rather than
-    raised — the knowledge base is already saved, the reader shows an empty state,
-    and its own button starts a run.
-    """
-    db = SessionLocal()
-    try:
-        knowledge_base = KnowledgeService._get_knowledge_base_record(
-            db, knowledge_base_id
-        )
-        user = db.query(User).filter(User.id == user_id).first()
-        if knowledge_base is None or user is None:  # pragma: no cover - just committed
-            return
-        start_run(db, knowledge_base=knowledge_base, user=user)
-    except (CodeWikiRunError, GenerationInFlight) as e:
-        logger.warning(
-            "[code_wiki] first run not started for kb %s: %s", knowledge_base_id, e
-        )
-    except Exception:  # pragma: no cover - defensive
-        db.rollback()
-        logger.exception(
-            "[code_wiki] first run not started for kb %s", knowledge_base_id
-        )
-    finally:
-        db.close()
 
 
 def _assert_caller_may_regenerate(

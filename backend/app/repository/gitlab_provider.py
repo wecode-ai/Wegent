@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
+from app.repository.file_status import FileStatus
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.url_util import build_url
@@ -1020,14 +1021,14 @@ class GitLabProvider(RepositoryProvider):
             if not path:
                 continue
             if entry.get("new_file"):
-                status = "A"
+                status = FileStatus.ADDED
             elif entry.get("deleted_file"):
-                status = "D"
+                status = FileStatus.DELETED
             elif entry.get("renamed_file"):
-                status = "R"
+                status = FileStatus.RENAMED
             else:
-                status = "M"
-            changed.append({"path": path, "status": status})
+                status = FileStatus.MODIFIED
+            changed.append({"path": path, "status": status.value})
         return changed
 
     def describe_repository(

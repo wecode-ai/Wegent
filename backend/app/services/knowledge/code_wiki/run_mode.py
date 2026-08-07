@@ -27,6 +27,8 @@ from enum import Enum
 from fnmatch import fnmatchcase
 from typing import Optional, Sequence
 
+from app.repository.file_status import STRUCTURAL_STATUSES
+
 
 class RunMode(str, Enum):
     """How much of the wiki a single run rebuilds."""
@@ -41,13 +43,18 @@ class ChangedPath:
     """One entry from the diff between the last documented commit and HEAD."""
 
     path: str
-    # Git name-status letter: "A" added, "M" modified, "D" deleted, "R" renamed.
+    # Git name-status letter, named by ``FileStatus``. Carried as a plain string
+    # because it arrives from a provider through a dict.
     status: str
 
     @property
     def is_structural_move(self) -> bool:
-        """Whether this entry adds or removes a file rather than editing one."""
-        return self.status.upper().startswith(("A", "D", "R"))
+        """Whether this entry adds, removes or moves a file rather than editing one.
+
+        Matched on the first character because git writes a similarity score after
+        the letter for renames and copies -- "R097", not "R".
+        """
+        return self.status[:1].upper() in STRUCTURAL_STATUSES
 
 
 # Files that describe how the project is built or what it depends on. A change here
