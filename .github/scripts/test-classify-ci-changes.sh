@@ -164,11 +164,31 @@ assert_case "explicit all modules" "$all_true" --all
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
+assert_case "shared CI actions validate all modules" "$all_true" \
+  ".github/actions/setup-sccache/action.yml"
+
+assert_case "cache warmup classifier validates all modules" "$all_true" \
+  ".github/scripts/classify-ci-cache-warmup.sh"
+
+assert_case "cache policy changes validate all modules" "$all_true" \
+  ".github/scripts/test-ci-cache-policy.sh"
+
+assert_case "release workflow changes validate all modules" "$all_true" \
+  ".github/workflows/publish-image.yml"
+
+assert_case "cache warmup changes validate all modules" "$all_true" \
+  ".github/workflows/ci-cache-warmup.yml"
+
 assert_case "ci:all label forces all modules" "$all_true" --all
 
 platform_e2e_expected="${all_false/platform_e2e=false/platform_e2e=true}"
 assert_case "docker changes run platform E2E" "$platform_e2e_expected" \
   "docker/docker-compose.yml"
+
+executor_dependency_expected="${platform_e2e_expected/executor=false/executor=true}"
+assert_case "executor dependency setup changes run executor and platform E2E" \
+  "$executor_dependency_expected" \
+  ".github/scripts/install-executor-rust-system-dependencies.sh"
 
 wework_e2e_expected="${all_false/wework_e2e=false/wework_e2e=true}"
 assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \

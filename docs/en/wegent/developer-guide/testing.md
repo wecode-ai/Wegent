@@ -226,9 +226,12 @@ frontend/src/__tests__/
 
 ### GitHub Actions Workflow
 
-The `.github/workflows/test.yml` workflow runs automatically on:
-- Pushes to `main`
-- Pull requests targeting `main`
+The test and cache workflows run automatically as follows:
+
+- `.github/workflows/test.yml` responds to PRs targeting `main` and merge-queue
+  checks.
+- `.github/workflows/ci-cache-warmup.yml` prewarms shared caches after related
+  dependencies, source, or CI configuration enter `main`.
 
 CI first runs `.github/scripts/classify-ci-changes.sh` to select module jobs from
 the changed paths. Dependency relationships are included. For example, a
@@ -249,6 +252,37 @@ validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`
 always appear and verify that every selected job actually succeeded. Skipped,
 unrelated modules do not make the summary fail.
+
+### CI Cache Ownership
+
+Large caches are prewarmed and owned by `main`. Pull requests and merge-queue
+runs may restore the default-branch cache, but they do not save another copy:
+
+- Linux workspace `node_modules` has one shared cache keyed by the Node version
+  and `pnpm-lock.yaml`. Tests, Lint, platform E2E, and Wework E2E reuse it.
+- uv caches downloads and build results only, not project `.venv` directories.
+  Python 3.10, 3.11, and 3.12 each have one shared cache whose key includes the
+  dependency lockfiles, and CI pruning runs before save.
+- Playwright browsers, the Next.js build cache, the Claude Code CLI, and desktop
+  Cargo targets use explicit restore/save steps; only `refs/heads/main` saves.
+- Rust unit tests, the Windows check, release and snapshot binaries, and the
+  macOS memory gate use sccache. Non-`main` jobs access the shared compiler cache
+  in read-only mode.
+- Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
+  several desktop jobs must reuse the same complete binary output.
+- Platform E2E, Release, and Snapshot Docker BuildKit caches live in
+  corresponding GHCR build-cache tags instead of consuming GitHub Actions
+  dependency cache storage.
+- Executor and Tauri system dependency installers first check packages already
+  present on the runner. Only `main` writes the APT download cache; PRs restore
+  it read-only.
+
+`.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
+lockfile, or cache implementation changes enter `main`. It downloads
+dependencies or compiles cache entries without repeating tests already
+validated by the merge queue. Do not add large automatically saved PR or
+merge-group caches. Use `actions/cache/restore` plus a `main`-only
+`actions/cache/save`, or reuse the existing shared action.
 
 ### Writing GitHub Actions Outputs
 
@@ -293,7 +327,7 @@ become ready for review.
 
 The full platform E2E suite runs daily at 02:00 UTC, and the full Wework E2E
 suite runs daily at 04:00 UTC. Scheduled runs use a different concurrency group
-from `main` pushes, so they do not cancel each other.
+from PR and merge-queue runs, so they do not cancel each other.
 
 ### Coverage Reports
 

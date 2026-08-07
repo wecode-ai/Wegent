@@ -226,9 +226,11 @@ frontend/src/__tests__/
 
 ### GitHub Actions 工作流
 
-`.github/workflows/test.yml` 工作流在以下情况下自动运行：
-- 推送到 `main` 分支
-- 向 `main` 分支提交的拉取请求
+测试与缓存工作流在以下情况下自动运行：
+
+- `.github/workflows/test.yml` 响应面向 `main` 的 PR 和 merge queue。
+- `.github/workflows/ci-cache-warmup.yml` 在相关依赖、源码或 CI 配置进入 `main`
+  后预热共享缓存。
 
 CI 会先运行 `.github/scripts/classify-ci-changes.sh`，根据改动路径决定需要执行的
 模块任务。模块依赖也会纳入判断，例如修改 `shared/` 时会同时运行 Backend、
@@ -245,6 +247,32 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
 不会导致汇总任务误报失败。
+
+### CI 缓存所有权
+
+大型缓存由 `main` 分支统一预热。PR 和 merge queue 可以恢复 `main` 缓存，但不会
+保存新的副本：
+
+- Linux workspace `node_modules` 按 Node 版本和 `pnpm-lock.yaml` 建立一份共享缓存，
+  供 Tests、Lint、平台 E2E 和 Wework E2E 使用。
+- uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
+  按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
+- Playwright browser、Next.js build cache、Claude Code CLI 和桌面 Cargo target
+  采用显式 restore/save；只有 `refs/heads/main` 可以 save。
+- Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
+  输出。非 `main` 任务以只读模式访问共享 sccache。
+- Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
+  在多个桌面 job 之间复用同一套完整二进制产物。
+- 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
+  build cache tag，不占用 GitHub Actions dependency cache 配额。
+- Executor 和 Tauri 系统依赖安装前先检查 runner 已安装的软件包；APT 下载缓存只有
+  `main` 写入，PR 只恢复。
+
+`.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
+`main` 后运行。它只下载依赖或编译缓存，不重复执行已经由 merge queue 验证过的
+测试。不要在 PR/merge-group 上新增大型自动保存缓存；需要增加缓存时，应采用
+`actions/cache/restore` 和仅限 `main` 的 `actions/cache/save`，或使用已有共享
+action。
 
 ### 写入 GitHub Actions 输出
 
@@ -283,7 +311,7 @@ Frontend、Executor、Executor Manager、Shared、Chat Shell、Chat Core、Docke
 Draft PR 跳过昂贵的 E2E，转为 Ready for review 后再运行。
 
 完整的平台 E2E 每天 UTC 02:00 定时运行；完整 Wework E2E 每天 UTC 04:00 定时
-运行。定时任务与 `main` push 使用不同的 concurrency group，互相不会取消。
+运行。定时任务与 PR、merge queue 使用不同的 concurrency group，互相不会取消。
 
 ### 覆盖率报告
 

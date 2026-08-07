@@ -29,7 +29,14 @@ classify_path() {
   case "$path" in
     .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
+      .github/workflows/ci-cache-warmup.yml | \
+      .github/workflows/publish-image.yml | \
+      .github/workflows/snapshot-image.yml | \
+      .github/workflows/wework-app.yml | \
+      .github/actions/* | \
+      .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
+      .github/scripts/test-ci-cache-policy.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       mark_all
       return
@@ -37,9 +44,14 @@ classify_path() {
     .github/workflows/e2e-tests.yml | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
+      .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/start-frontend-e2e-server.sh)
+      changed[platform_e2e]=true
+      ;;
+    .github/scripts/install-executor-rust-system-dependencies.sh)
+      changed[executor]=true
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | \
