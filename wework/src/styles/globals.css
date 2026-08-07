@@ -16,8 +16,7 @@
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
   --color-titlebar: 247 247 248;
-  --color-sidebar: 243 243 243 / 0.92;
-  --color-sidebar-unfocused: 246 246 246 / 0.88;
+  --color-sidebar: 246 246 246 / 0.88;
   --color-sidebar-active: 26 28 31 / 0.07;
   --color-sidebar-hover: 26 28 31 / 0.05;
   --color-sidebar-marked: 255 244 214;
@@ -222,8 +221,7 @@
   --color-border: 55 61 70;
   --color-muted: 38 42 48;
   --color-titlebar: 28 31 36;
-  --color-sidebar: 33 33 33 / 0.96;
-  --color-sidebar-unfocused: 40 40 40 / 0.92;
+  --color-sidebar: 40 40 40 / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
   --color-sidebar-hover: 255 255 255 / 0.06;
   --color-sidebar-marked: 82 64 24;
@@ -243,14 +241,12 @@
 }
 
 [data-sidebar-translucent='false'] {
-  --color-sidebar: 243 243 243;
-  --color-sidebar-unfocused: 246 246 246;
+  --color-sidebar: 246 246 246;
 }
 
 [data-theme='dark'][data-sidebar-translucent='false'],
 [data-theme='dark'] [data-sidebar-translucent='false'] {
-  --color-sidebar: 33 33 33;
-  --color-sidebar-unfocused: 40 40 40;
+  --color-sidebar: 40 40 40;
 }
 
 * {

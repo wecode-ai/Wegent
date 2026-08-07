@@ -392,6 +392,8 @@ may reveal on hover/focus but must remain keyboard accessible.
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Keep the sidebar base surface stable when the application window gains or
+  loses focus. Window focus must not darken the task or work-items sidebar.
 - Sortable sidebar rows must keep the sortable container separate from the
   pointer activator. Only the primary icon-and-label or label region may start
   pointer sorting, after at least `6px` of movement; trailing actions, metadata,
