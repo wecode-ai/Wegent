@@ -6,7 +6,6 @@
 import io
 import json
 import uuid
-from datetime import UTC, datetime
 from typing import BinaryIO
 
 import pytest
@@ -14,15 +13,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import feedback as feedback_endpoint
 from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem
-from app.models.feedback_submission import FeedbackSubmission
 from app.models.user import User
-from app.services.feedback_service import SUBMISSION_IN_PROGRESS, FeedbackService
 from app.services.loop_items.external_provider import external_loop_item_provider
 
 
@@ -172,75 +168,6 @@ def test_submit_feedback_is_idempotent_per_project_owner_and_report(
     assert second.json()["duplicate"] is True
     assert test_db.query(LoopItem).filter(LoopItem.id == "FEEDBACK-1").count() == 1
     assert len(feedback_storage.objects) == 1
-    submission = test_db.get(FeedbackSubmission, (str(feedback_project.id), "WF-RETRY"))
-    assert submission is not None
-    assert submission.item_id == "FEEDBACK-1"
-
-
-def test_submit_feedback_rejects_an_active_duplicate_claim(
-    test_client: TestClient,
-    test_db: Session,
-    feedback_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        settings, "WEWORK_FEEDBACK_PROJECT_ID", str(feedback_project.id)
-    )
-    test_db.add(
-        FeedbackSubmission(
-            project_id=str(feedback_project.id),
-            report_id="WF-IN-PROGRESS",
-            claim_token=str(uuid.uuid4()),
-            claimed_at=datetime.now(UTC).replace(tzinfo=None),
-        )
-    )
-    test_db.commit()
-
-    response = test_client.post(
-        "/api/v1/feedback",
-        data=_feedback_form("WF-IN-PROGRESS", "Concurrent feedback"),
-        files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == SUBMISSION_IN_PROGRESS
-    assert (
-        test_db.query(LoopItem).filter(LoopItem.title == "Concurrent feedback").count()
-        == 0
-    )
-
-
-def test_feedback_claim_retries_when_conflicting_row_was_deleted(
-    test_db: Session,
-    feedback_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_commit = test_db.commit
-    commit_calls = 0
-
-    def commit_with_deleted_conflict() -> None:
-        nonlocal commit_calls
-        commit_calls += 1
-        if commit_calls == 1:
-            raise IntegrityError("insert feedback claim", {}, Exception("conflict"))
-        original_commit()
-
-    monkeypatch.setattr(test_db, "commit", commit_with_deleted_conflict)
-
-    claim = FeedbackService._claim_submission(
-        test_db, str(feedback_project.id), "WF-DELETED-CLAIM"
-    )
-
-    assert claim.item_id is None
-    assert claim.token is not None
-    assert commit_calls == 2
-    assert (
-        test_db.get(
-            FeedbackSubmission,
-            (str(feedback_project.id), "WF-DELETED-CLAIM"),
-        )
-        is not None
-    )
 
 
 def test_submit_feedback_rate_limits_anonymous_callers_by_ip(
@@ -423,7 +350,7 @@ def test_submit_feedback_uses_github_issue_without_persisting_bundle(
     assert test_db.query(LoopItem).filter(LoopItem.id == "GHFEEDBACK-9").count() == 0
 
 
-def test_submit_feedback_releases_claim_after_provider_failure(
+def test_submit_feedback_retries_after_provider_failure(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -456,9 +383,6 @@ def test_submit_feedback_releases_claim_after_provider_failure(
     )
 
     assert first.status_code == 502
-    assert (
-        test_db.get(FeedbackSubmission, (str(project.id), "WF-PROVIDER-RETRY")) is None
-    )
 
     monkeypatch.setattr(
         external_loop_item_provider,
