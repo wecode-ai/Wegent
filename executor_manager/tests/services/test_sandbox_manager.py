@@ -7,7 +7,7 @@
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -429,14 +429,14 @@ class TestSandboxManager:
         restore.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_ensure_sandbox_workspace_creates_task_directory(
+    async def test_ensure_sandbox_workspace_creates_required_directories(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
         mock_httpx_async_client,
         mocker,
     ):
-        """Test workspace initialization creates the task-scoped directory."""
+        """Test initialization creates sandbox home and task workspace."""
         manager = sandbox_manager_with_mock_redis
         mocker.patch(
             "executor_manager.services.sandbox.manager.httpx.AsyncClient",
@@ -446,11 +446,18 @@ class TestSandboxManager:
         error = await manager._ensure_sandbox_workspace(sample_sandbox)
 
         assert error is None
-        mock_httpx_async_client.post.assert_awaited_once_with(
-            "http://localhost:10001/filesystem.Filesystem/MakeDir",
-            json={"path": "/workspace/12345"},
-            headers={"Content-Type": "application/json"},
-        )
+        assert mock_httpx_async_client.post.await_args_list == [
+            call(
+                "http://localhost:10001/filesystem.Filesystem/MakeDir",
+                json={"path": "/home/user"},
+                headers={"Content-Type": "application/json"},
+            ),
+            call(
+                "http://localhost:10001/filesystem.Filesystem/MakeDir",
+                json={"path": "/workspace/12345"},
+                headers={"Content-Type": "application/json"},
+            ),
+        ]
 
     @pytest.mark.asyncio
     async def test_ensure_sandbox_workspace_accepts_existing_directory(
@@ -460,7 +467,7 @@ class TestSandboxManager:
         mock_httpx_async_client,
         mocker,
     ):
-        """Test an existing task workspace keeps initialization idempotent."""
+        """Test existing sandbox directories keep initialization idempotent."""
         manager = sandbox_manager_with_mock_redis
         mock_httpx_async_client.post.return_value.status_code = 409
         mocker.patch(
@@ -471,6 +478,7 @@ class TestSandboxManager:
         error = await manager._ensure_sandbox_workspace(sample_sandbox)
 
         assert error is None
+        assert mock_httpx_async_client.post.await_count == 2
         mock_httpx_async_client.post.return_value.raise_for_status.assert_not_called()
 
     @pytest.mark.asyncio

@@ -740,46 +740,47 @@ class SandboxManager(metaclass=SingletonMeta):
         },
     )
     async def _ensure_sandbox_workspace(self, sandbox: Sandbox) -> Optional[str]:
-        """Ensure the task workspace directory exists in the sandbox runtime."""
+        """Ensure required sandbox directories exist in the runtime."""
         task_id = sandbox.metadata.get("task_id")
         if task_id is None:
             return "Failed to initialize sandbox workspace: task_id is missing"
         if not sandbox.base_url:
             return "Failed to initialize sandbox workspace: base_url is missing"
 
-        workspace_path = f"/workspace/{task_id}"
+        directory_paths = ("/home/user", f"/workspace/{task_id}")
+        directory_path = directory_paths[0]
         url = f"{sandbox.base_url.rstrip('/')}/filesystem.Filesystem/MakeDir"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    url,
-                    json={"path": workspace_path},
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == httpx.codes.CONFLICT:
+                for directory_path in directory_paths:
+                    response = await client.post(
+                        url,
+                        json={"path": directory_path},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    if response.status_code == httpx.codes.CONFLICT:
+                        logger.info(
+                            "[SandboxManager] Sandbox directory already exists "
+                            "sandbox_id=%s path=%s",
+                            sandbox.sandbox_id,
+                            directory_path,
+                        )
+                        continue
+                    response.raise_for_status()
                     logger.info(
-                        "[SandboxManager] Sandbox workspace already exists "
+                        "[SandboxManager] Sandbox directory initialized "
                         "sandbox_id=%s path=%s",
                         sandbox.sandbox_id,
-                        workspace_path,
+                        directory_path,
                     )
-                    return None
-                response.raise_for_status()
-
-            logger.info(
-                "[SandboxManager] Sandbox workspace initialized "
-                "sandbox_id=%s path=%s",
-                sandbox.sandbox_id,
-                workspace_path,
-            )
             return None
         except httpx.HTTPStatusError as exc:
             return (
-                f"Failed to initialize sandbox workspace {workspace_path}: "
+                f"Failed to initialize sandbox directory {directory_path}: "
                 f"HTTP {exc.response.status_code}"
             )
         except Exception as exc:
-            return f"Failed to initialize sandbox workspace {workspace_path}: {exc}"
+            return f"Failed to initialize sandbox directory {directory_path}: {exc}"
 
     def _build_sandbox_archive_payload(self, sandbox: Sandbox) -> Dict[str, str]:
         """Build backend archive/restore callback payload for a sandbox."""
