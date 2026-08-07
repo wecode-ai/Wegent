@@ -337,17 +337,7 @@ EXECUTOR_PORT_RANGE_MIN: 10001      # Port range start
 EXECUTOR_PORT_RANGE_MAX: 10100      # Port range end
 NETWORK: wegent-network              # Docker network
 EXECUTOR_IMAGE: wegent-executor:latest # Executor image
-WARMPOOL_ENABLED: false              # Enable the shared warm pool
-WARMPOOL_TEMPLATE_NAME: ""           # Shared Sandbox/non-Git Executor template
 ```
-
-#### Kubernetes Executor warm pool
-
-Standard non-Git `online` tasks in Kubernetes share the same `SandboxTemplate` and `SandboxWarmPool` selected by `WARMPOOL_TEMPLATE_NAME` with interactive Sandboxes; no dedicated Executor pool is created. A task is treated as a Git task and continues through direct Pod creation when it carries `git_url`, `git_repo`, `git_repo_id`, a `git_worktree` workspace, or repository data in its workspace. Tasks using a custom Executor image or `base_image` also continue through direct Pod creation. A configured user Git account alone does not make the current task a Git task.
-
-A warm Pod starts with static runtime configuration only. It does not contain a task ID, authentication token, skill identity, or task heartbeat ID. After Executor Manager claims the Pod, it applies non-sensitive task labels; the first `/v1/responses` request then binds the logical Executor identity and starts the dynamic task heartbeat. Non-Git Executor prewarming is enabled by default and does not require `EXECUTOR_WARMPOOL_ENABLED`; `WARMPOOL_ENABLED` is the shared-pool master switch. Before rollout, upgrade the shared template to an image that contains dynamic task heartbeat support and matches `EXECUTOR_IMAGE`, then verify both Sandbox and non-Git Executor flows.
-
-Warm Executor deletion uses the `SandboxClaim` as the ownership boundary. Explicit deletion, task-ID deletion, and orphan cleanup delete the Claim first so the controller cascades cleanup to the Sandbox, Service, and Pod. After a non-Git Executor claim is bound, its Claim and Pod carry `pool-profile=executor-standard`, the task ID, and `pool-state=bound`. Orphan scans process only those bound Pods, explicitly exclude unclaimed shared-pool capacity and interactive Sandboxes, and use Claim labels to find bindings whose Pod is already missing. Successful deletion also removes the task heartbeat, RunningTaskTracker state, and Redis executor binding.
 
 ---
 
