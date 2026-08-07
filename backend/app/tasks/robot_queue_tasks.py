@@ -13,6 +13,7 @@ device through the same runtime RPC channel the App uses.
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 import celery.signals
@@ -76,12 +77,14 @@ def _robot_queue_loop() -> asyncio.AbstractEventLoop:
     if _ROBOT_QUEUE_LOOP is None or _ROBOT_QUEUE_LOOP.is_closed():
         _ROBOT_QUEUE_LOOP = asyncio.new_event_loop()
         # Celery prefork children inherit the Socket.IO singleton bound to the
-        # parent's (dead) event loop. Recreate it lazily so the next
-        # get_sio() binds to OUR loop instead of failing with
-        # "attached to a different loop".
-        import app.core.socketio as socketio_module
+        # parent's (dead) event loop; only those separate processes must rebind
+        # it to the task loop. Embedded celery threads share the live uvicorn
+        # singleton, and resetting it here would orphan every connected device
+        # (their acks would never reach the recreated server).
+        if os.environ.get("FORKED_BY_MULTIPROCESSING"):
+            import app.core.socketio as socketio_module
 
-        socketio_module._sio_instance = None
+            socketio_module._sio_instance = None
     return _ROBOT_QUEUE_LOOP
 
 
