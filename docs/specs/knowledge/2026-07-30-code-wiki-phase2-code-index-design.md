@@ -154,6 +154,32 @@ app 上,没有额外网络隔离。
 一期没动是因为它是既有行为,可能有我们不知道的运维脚本在用。本期一并处理:删掉这条路径,
 `_internal_caller` 的 `None` 分支随之消失,所有权检查不再有例外。
 
+## 7.6 旧 wiki 渲染优化的去留(需逐条确认)
+
+旧阅读器(`WikiContent.tsx` 等,随 PR5b 删除)在渲染上做过不少工作。新阅读器
+`WikiPageContent.tsx` 改用共享的 `EnhancedMarkdown`,**大部分能力是有的,少数是旧的独有**。
+下面是逐条比对的结果,本期要决定哪些值得搬过来。
+
+**共享渲染器已经具备,不用管**:GFM(`remark-gfm-safe`)、数学公式(`remark-math` +
+`rehype-katex`)、内嵌 HTML(`rehype-raw`)、代码高亮(`react-syntax-highlighter` Prism)、
+Mermaid 与 LaTeX 的特殊块解析。这几样旧渲染器有的,它都有。
+
+**旧的独有,需要判断**:
+
+| 能力 | 旧实现 | 说明 |
+| --- | --- | --- |
+| 图表放大查看 | `DiagramModal.tsx` | 点击图表全屏,支持滚轮缩放、`+`/`-` 快捷键、重置、`Esc` 关闭。一份架构图在正文宽度里往往看不清,这个对 code wiki 尤其相关 |
+| Mermaid 主题跟随 | `useMermaidInit.ts` | 监听主题切换并重新初始化 Mermaid(`theme: 'base'` + `themeVariables`)。不做的话暗色模式下图表配色可能不协调 |
+| 代码块配色 | `wikiStyles.ts` | 自定义了明暗两套代码块与语法高亮配色(Tokyo Night / One Light 风格) |
+
+**判断这三条时要问的是同一个问题**:它们是「旧 wiki 特有的样式偏好」,还是「阅读长篇技术文档
+普遍需要的能力」?如果是后者,正确的落点是 `EnhancedMarkdown` 本身而不是 code wiki 的阅读器
+——那样聊天、笔记本、wiki 都受益,也不会再出现一份渲染逻辑分两处维护的局面(那正是 PR5b
+删掉旧渲染器的理由)。
+
+我的初判:**图表放大最值得做,且应该做进 `EnhancedMarkdown`**;主题跟随要先确认共享渲染器
+在暗色下的实际表现再定;代码块配色属于样式偏好,除非有人明确提出,否则不值得引入第二套。
+
 ## 8. 早期 spike(降风险,可与一期并行,不进一期交付)
 
 验证整个投资的最大假设——**代码 RAG 的 Ask 在我们的栈/模型约束下能否达到 DeepWiki 级价值**——在大投入前止损。
