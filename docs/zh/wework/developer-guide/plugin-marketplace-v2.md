@@ -106,9 +106,9 @@ erDiagram
 
 ## 4. 来源与身份
 
-| 场景             | `origin`  | `sourceProvider` | UI 标记                  |
-| ---------------- | --------- | ---------------- | ------------------------ |
-| 本机创建         | `created` | 本地             | 我创建的                 |
+| 场景                       | `origin`  | `sourceProvider` | UI 标记                  |
+| -------------------------- | --------- | ---------------- | ------------------------ |
+| 本机创建                   | `created` | 本地             | 我创建的                 |
 | Wegent 自研 / 国内适配镜像 | `market`  | `wegent`         | Wegent 官方              |
 | 精选 Codex 镜像            | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
 | 用户投稿审核通过           | `market`  | `user`           | 社区插件/作者            |
@@ -118,6 +118,8 @@ erDiagram
 > 「国内公开」Tab；不要再标成 `codex`。
 
 “我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
+
+插件运行时身份使用 `plugin://<plugin-name>@<marketplace-name>`。受管市场名由 visibility 统一推导：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。前端生成试用 mention、Composer app metadata 和应用创建插件匹配时必须复用同一套映射，并且只在 `providerKey` 为 `wegent-market` 或 `wegent-marketplace` 的受管安装记录上应用该回退规则。普通 `public` 插件仍合法；只有系统所有者 `user_id=0` 的内置应用插件行若仍保存为旧的 `public`，才会在内置安装路径中规范化为当前注册表定义的 `workspace / wegent`。
 
 ## 5. 核心流程
 

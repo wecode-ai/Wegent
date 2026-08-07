@@ -58,6 +58,8 @@ Use `uv run python scripts/migrate_plugin_marketplace_v2.py` for a restartable l
 
 The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and Chrome DevTools, followed by high-value Chinese collaboration plugins. Every candidate requires a product-value, license, ownership, authentication, and security review; the Codex marketplace is never mirrored wholesale.
 
+Runtime plugin identity uses `plugin://<plugin-name>@<marketplace-name>`. Managed marketplace names are derived from visibility through one shared mapping: `personal -> wework-personal`, `workspace -> wegent`, and `public -> wework`. The frontend must reuse the same mapping when generating trial mentions, Composer app metadata, and application-create plugin matching, and should only apply that fallback to managed install rows whose `providerKey` is `wegent-market` or `wegent-marketplace`. Ordinary `public` plugins remain valid. Only built-in application plugin rows owned by the system `user_id=0` and still stored with legacy `public` visibility are normalized to the current registry identity, `workspace / wegent`, during the built-in installation path.
+
 ## Publishing WeWork official plugins
 
 First-party plugins are maintained in
