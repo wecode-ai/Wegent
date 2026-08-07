@@ -427,11 +427,38 @@ if ! grep -q "wework_desktop_core_e2e_matrix" "$wework_workflow" ||
   exit 1
 fi
 
+core_cache_step="$(
+  extract_named_workflow_step \
+    <(sed -n \
+      '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
+      "$wework_workflow") \
+    "Restore shared Wework desktop E2E Cargo dependencies"
+)"
 desktop_cache_step="$(
-  extract_named_workflow_step "$wework_workflow" "Cache Cargo dependencies"
+  extract_named_workflow_step \
+    <(sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' \
+      "$wework_workflow") \
+    "Restore shared Wework desktop E2E Cargo dependencies"
+)"
+core_cache_key="$(
+  sed -n 's/^          key:[[:space:]]*//p' <<<"$core_cache_step"
 )"
 desktop_cache_key="$(
   sed -n 's/^          key:[[:space:]]*//p' <<<"$desktop_cache_step"
+)"
+core_cache_restore_keys="$(
+  awk '
+    /^          restore-keys:/ {
+      in_restore_keys = 1
+      next
+    }
+    in_restore_keys && /^          [[:alnum:]_-]+:/ {
+      exit
+    }
+    in_restore_keys {
+      print
+    }
+  ' <<<"$core_cache_step"
 )"
 desktop_cache_restore_keys="$(
   awk '
@@ -447,11 +474,44 @@ desktop_cache_restore_keys="$(
     }
   ' <<<"$desktop_cache_step"
 )"
+if [[ "$(grep -c \
+  "name: Restore shared Wework desktop E2E Cargo dependencies" \
+  "$wework_workflow")" -ne 2 ]]; then
+  printf 'Wework desktop E2E build jobs must restore the shared Cargo cache\n' >&2
+  exit 1
+fi
+
+if [[ "$core_cache_key" != "$desktop_cache_key" ]] ||
+  [[ "$core_cache_restore_keys" != "$desktop_cache_restore_keys" ]]; then
+  printf 'Wework desktop E2E build jobs must share one Cargo cache key\n' >&2
+  exit 1
+fi
+
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key" ||
-  ! grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_restore_keys"; then
-  printf 'Wework desktop E2E caches must be isolated by E2E command\n' >&2
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v2-' \
+  <<<"$desktop_cache_key" ||
+  grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key"; then
+  printf 'Wework desktop E2E Cargo cache key must not vary by command\n' >&2
+  exit 1
+fi
+
+desktop_cache_save_step="$(
+  extract_named_workflow_step \
+    "$wework_workflow" \
+    "Save shared Wework desktop E2E Cargo dependencies"
+)"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if [[ "$(grep -c \
+  "name: Save shared Wework desktop E2E Cargo dependencies" \
+  "$wework_workflow")" -ne 1 ]] ||
+  ! grep -Fq "if: github.ref == 'refs/heads/main'" \
+    <<<"$desktop_cache_save_step" ||
+  ! grep -Fq \
+    'key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}' \
+    <<<"$desktop_cache_save_step"; then
+  printf 'Only main may save the shared Wework desktop E2E Cargo cache\n' >&2
   exit 1
 fi
 
