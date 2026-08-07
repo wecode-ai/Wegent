@@ -1490,6 +1490,7 @@
     "friendly_task_titles_model": "标题模型",
     "friendly_task_titles_model_desc": "仅用于生成任务标题，不影响当前任务使用的模型。",
     "friendly_task_titles_model_task": "与任务相同",
+    "friendly_task_titles_model_unavailable": "{{modelName}}（不可用）",
     "general_settings_privacy_title": "隐私",
     "general_settings_telemetry": "帮助改进 Wework",
     "general_settings_telemetry_description": "发送匿名使用情况、性能和错误数据。不会采集聊天、代码、文件路径、终端内容或凭据。",

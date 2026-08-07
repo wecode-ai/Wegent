@@ -38,7 +38,14 @@ const defaultPreferences: AppPreferences = {
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const applyLanguagePreferenceMock = vi.hoisted(() => vi.fn())
-const translateMock = vi.hoisted(() => (key: string, fallback?: string) => fallback ?? key)
+const translateMock = vi.hoisted(
+  () => (key: string, fallback?: string, options?: { modelName?: string }) => {
+    if (key === 'workbench.friendly_task_titles_model_unavailable') {
+      return `${options?.modelName ?? ''}（不可用）`
+    }
+    return fallback ?? key
+  }
+)
 const importExternalContentMock = vi.hoisted(() => vi.fn())
 const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
 
@@ -231,6 +238,48 @@ describe('GeneralSettingsPage', () => {
     expect(
       within(modelSelect).queryByRole('option', { name: '请选择模型' })
     ).not.toBeInTheDocument()
+  })
+
+  test('shows an unavailable saved friendly title model for replacement', async () => {
+    const taskModel = {
+      name: 'gpt-5',
+      type: 'runtime',
+      displayName: 'GPT-5',
+    }
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      friendlyTaskTitlesEnabled: true,
+      friendlyTaskTitleModel: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        executionModelId: 'removed-model',
+        executionModelType: 'runtime',
+      },
+    })
+
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            projectChat: {
+              models: [taskModel],
+              selectedModel: taskModel,
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const modelSelect = await screen.findByTestId('friendly-task-title-model-select')
+    expect(
+      (
+        within(modelSelect).getByRole('option', {
+          name: 'removed-model（不可用）',
+        }) as HTMLOptionElement
+      ).selected
+    ).toBe(true)
   })
 
   test('enables the system drag panel by default and persists disabling it', async () => {

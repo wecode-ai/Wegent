@@ -303,10 +303,10 @@ export function GeneralSettingsPage() {
   }
 
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
+  const friendlyTitleModels = workbench?.projectChat.models ?? []
   const friendlyTitleModelKey = friendlyTitleModel
     ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
     : FRIENDLY_TITLE_TASK_MODEL_VALUE
-  const friendlyTitleModels = workbench?.projectChat.models ?? []
 
   return (
     <SettingsPage data-testid="general-settings-page">
@@ -463,6 +463,20 @@ export function GeneralSettingsPage() {
                   <option value={FRIENDLY_TITLE_TASK_MODEL_VALUE}>
                     {t('workbench.friendly_task_titles_model_task', '与任务相同')}
                   </option>
+                  {friendlyTitleModel &&
+                    !friendlyTitleModels.some(
+                      model =>
+                        model.name === friendlyTitleModel.modelName &&
+                        model.type === friendlyTitleModel.modelType
+                    ) && (
+                      <option value={friendlyTitleModelKey}>
+                        {t(
+                          'workbench.friendly_task_titles_model_unavailable',
+                          `${friendlyTitleModel.modelName}（不可用）`,
+                          { modelName: friendlyTitleModel.modelName }
+                        )}
+                      </option>
+                    )}
                   {friendlyTitleModels.map(model => (
                     <option
                       key={`${model.type}:${model.name}`}

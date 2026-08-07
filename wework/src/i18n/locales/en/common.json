@@ -1491,6 +1491,7 @@
     "friendly_task_titles_model": "Title model",
     "friendly_task_titles_model_desc": "Used only to generate task titles and does not affect the model used for the task.",
     "friendly_task_titles_model_task": "Same as task",
+    "friendly_task_titles_model_unavailable": "{{modelName}} (unavailable)",
     "general_settings_privacy_title": "Privacy",
     "general_settings_telemetry": "Help improve Wework",
     "general_settings_telemetry_description": "Send anonymous usage, performance, and error data. Chats, code, file paths, terminal content, and credentials are never collected.",

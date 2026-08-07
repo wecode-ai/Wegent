@@ -84,7 +84,7 @@ You can enable **Use friendly titles** under **Settings > General > Runtime**. I
 - **Same as task**: The default option. Each new task uses the model actually selected for that task to generate its title.
 - **A specific model**: Used only to generate the title asynchronously; it does not change the model used by the task itself.
 
-Title generation never blocks task submission. If the title model is temporarily unavailable, the task continues and keeps its original title.
+Title generation never blocks task submission. If a selected title model is no longer available, Wework skips title generation and still creates the task normally.
 
 #### Knowledge Base Context
 
