@@ -528,7 +528,7 @@ jobs:
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex
+          pnpm run prepare:codex --materialize
           pnpm run prepare:dws
           codex_bin="$(find -L "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"

@@ -1202,6 +1202,7 @@ export function useWorkbenchRuntimeMessaging({
         dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
         return false
       }
+      const failedMessage = messageSource[failedMessageIndex]
 
       const previousUserMessage =
         retryUserMessageOverride?.role === 'user'
@@ -1229,6 +1230,7 @@ export function useWorkbenchRuntimeMessaging({
           address: state.currentRuntimeTask,
           message: previousUserMessage.content,
           clientUserMessageId: previousUserMessage.id,
+          retrySourceTurnId: failedMessage.turnId ?? failedMessage.subtaskId,
           ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),

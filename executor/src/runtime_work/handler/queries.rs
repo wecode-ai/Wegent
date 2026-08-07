@@ -289,6 +289,7 @@ impl RuntimeWorkRpcHandler {
         let mut messages = transcript_messages;
         if let Some(link) = local_link.as_ref() {
             attach_user_message_presentations(&mut messages, user_message_presentations(link));
+            remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
         let running = local_execution_running;
         let message_count = messages.len();

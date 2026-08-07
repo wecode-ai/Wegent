@@ -1,12 +1,13 @@
 fn cached_transcript_response(
     link: &RuntimeTaskLink,
-    messages: Vec<Value>,
+    mut messages: Vec<Value>,
     context_usage: Option<Value>,
     running: bool,
     limit: Option<usize>,
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
+    remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
@@ -20,6 +21,34 @@ fn cached_transcript_response(
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
     })
+}
+
+pub(super) fn remove_superseded_transcript_turns(
+    messages: &mut Vec<Value>,
+    runtime_handle: &Value,
+) {
+    let superseded_turn_ids = runtime_handle
+        .get("supersededTranscriptTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty())
+        .collect::<Vec<_>>();
+    if superseded_turn_ids.is_empty() {
+        return;
+    }
+
+    messages.retain(|message| {
+        string_field(message, "turnId")
+            .or_else(|| string_field(message, "turn_id"))
+            .or_else(|| string_field(message, "subtaskId"))
+            .or_else(|| string_field(message, "subtask_id"))
+            .map_or(true, |turn_id| {
+                !superseded_turn_ids.contains(&turn_id.as_str())
+            })
+    });
 }
 
 #[derive(Clone, Copy)]

@@ -7092,6 +7092,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         address: expect.objectContaining({ taskId: 'runtime-restored' }),
         message: '修复 CI',
+        retrySourceTurnId: 'reused-subtask',
       })
     )
   })
