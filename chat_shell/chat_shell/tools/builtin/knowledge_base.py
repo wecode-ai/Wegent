@@ -1653,13 +1653,6 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 source_index += 1
 
-        # Upgrade video-document sources to wegent_video_segment (same logic as
-        # the RAG path) so direct-injection references also render as video
-        # segment players when chunk metadata carries time ranges.
-        self._upgrade_video_source_references(source_references, chunks_used)
-        for chunk in chunks_used:
-            chunk.pop("metadata", None)
-
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )
