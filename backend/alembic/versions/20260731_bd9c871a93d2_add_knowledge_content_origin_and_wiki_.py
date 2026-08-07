@@ -1,7 +1,7 @@
 """add knowledge content origin and wiki generation kb link
 
 Revision ID: bd9c871a93d2
-Revises: b9c0d1e2f3a4
+Revises: e5f6a7b8c9d0
 
 Adds the two things a code wiki needs to coexist with ordinary knowledge content:
 
@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "bd9c871a93d2"
-down_revision: Union[str, Sequence[str], None] = "b9c0d1e2f3a4"
+down_revision: Union[str, Sequence[str], None] = "e5f6a7b8c9d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
