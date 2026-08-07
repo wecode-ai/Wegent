@@ -200,8 +200,8 @@ shared/tests/
 
 - **Cryptography**: Encryption and decryption of sensitive data (Git tokens, API keys)
 - **Data Masking**: Automatic masking of sensitive information in logs and outputs
-  - GitHub tokens (github*pat*\*)
-  - Anthropic API keys (sk-ant-api03-\*)
+  - GitHub tokens (`github_pat_*`)
+  - Anthropic API keys (`sk-ant-api03-*`)
   - OpenAI API keys
   - Generic API keys and secrets
   - File path protection (no false positives)

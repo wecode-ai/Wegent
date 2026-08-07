@@ -37,6 +37,7 @@ classify_path() {
       .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/lib/apt-packages.sh | \
+      .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       mark_all

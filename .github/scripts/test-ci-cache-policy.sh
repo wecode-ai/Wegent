@@ -15,76 +15,7 @@ validate_yaml_steps() {
   local mode="$1"
   local file="$2"
 
-  awk -v mode="$mode" '
-    function indentation(line, trimmed) {
-      trimmed = line
-      sub(/^[[:space:]]*/, "", trimmed)
-      return length(line) - length(trimmed)
-    }
-    function validate_step() {
-      if (mode == "workflow-cache" && writes_cache && !main_only) {
-        exit 1
-      }
-      if (mode == "action-cache" && writes_cache && !input_guarded) {
-        exit 1
-      }
-      if (mode == "checkout" && checkout && !drops_credentials) {
-        exit 1
-      }
-      writes_cache = 0
-      main_only = 0
-      input_guarded = 0
-      checkout = 0
-      drops_credentials = 0
-    }
-    function inspect(line) {
-      if (line ~ /uses: actions\/cache\/save@/ ||
-          (mode == "action-cache" && line ~ /uses: actions\/cache@/)) {
-        writes_cache = 1
-      }
-      if (line ~ /if:.*github\.ref.*refs\/heads\/main/) {
-        main_only = 1
-      }
-      if (line ~ /if:.*inputs\.save-cache/) {
-        input_guarded = 1
-      }
-      if (line ~ /uses: actions\/checkout@/) {
-        checkout = 1
-      }
-      if (line ~ /persist-credentials:[[:space:]]*false/) {
-        drops_credentials = 1
-      }
-    }
-    /^[[:space:]]*steps:[[:space:]]*$/ {
-      if (in_steps) {
-        validate_step()
-      }
-      in_steps = 1
-      steps_indent = indentation($0)
-      step_indent = steps_indent + 2
-      next
-    }
-    {
-      current_indent = indentation($0)
-      if (in_steps && $0 !~ /^[[:space:]]*(#.*)?$/ &&
-          current_indent <= steps_indent) {
-        validate_step()
-        in_steps = 0
-      }
-      if (in_steps && current_indent == step_indent &&
-          $0 ~ /^[[:space:]]*-[[:space:]]+/) {
-        validate_step()
-      }
-      if (in_steps) {
-        inspect($0)
-      }
-    }
-    END {
-      if (in_steps) {
-        validate_step()
-      }
-    }
-  ' "$file"
+  ruby "$script_dir/lib/validate-ci-cache-policy.rb" "$mode" "$file"
 }
 
 assert_step_policy_rejects() {
@@ -98,11 +29,13 @@ assert_step_policy_rejects() {
 }
 
 assert_step_policy_rejects workflow-cache "Workflow cache policy" \
-  $'steps:\n  - if: github.ref == \'refs/heads/main\'\n    run: true\n  - uses: actions/cache/save@0123456789012345678901234567890123456789'
+  $'steps: # inline comments are valid YAML\n  - if: github.ref == \'refs/heads/main\'\n    run: true\n  - uses: actions/cache/save@0123456789012345678901234567890123456789'
 assert_step_policy_rejects action-cache "Composite action cache policy" \
   $'steps:\n  - if: inputs.save-cache == \'true\'\n    run: true\n  - uses: actions/cache@0123456789012345678901234567890123456789'
 assert_step_policy_rejects checkout "Checkout credential policy" \
   $'steps:\n  - uses: actions/checkout@0123456789012345678901234567890123456789\n  - run: true\n    with:\n      persist-credentials: false'
+assert_step_policy_rejects docker-sha "Docker action SHA policy" \
+  $'steps:\n  - uses: "docker/login-action@main"'
 
 assert_warmup_case() {
   local name="$1"
@@ -260,15 +193,10 @@ if ! validate_yaml_steps checkout "$warmup_workflow" ||
   fail "Warmup checkouts must drop credentials and safely handle missing history"
 fi
 
-while IFS= read -r docker_action_ref; do
-  if [[ ! "$docker_action_ref" =~ ^[[:xdigit:]]{40}$ ]]; then
-    fail "Docker actions introduced by cache workflows must be pinned by SHA"
-  fi
-done < <(
-  sed -nE \
-    's/.*uses: docker\/(login|setup-buildx|build-push)-action@([^ #]+).*/\2/p' \
-    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"
-)
+if ! ruby "$script_dir/lib/validate-ci-cache-policy.rb" docker-sha \
+  "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+  fail "Docker actions introduced by cache workflows must be pinned by SHA"
+fi
 
 claude_cli_lock=".github/claude-code-cli/package-lock.json"
 claude_cli_key="node-24-claude-code-cli-v3-\${{ hashFiles('$claude_cli_lock') }}"

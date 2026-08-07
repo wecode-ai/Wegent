@@ -200,8 +200,8 @@ shared/tests/
 
 - **加密**：敏感数据的加密和解密（Git 令牌、API 密钥）
 - **数据脱敏**：日志和输出中敏感信息的自动脱敏
-  - GitHub 令牌（github*pat*\*）
-  - Anthropic API 密钥（sk-ant-api03-\*）
+  - GitHub 令牌（`github_pat_*`）
+  - Anthropic API 密钥（`sk-ant-api03-*`）
   - OpenAI API 密钥
   - 通用 API 密钥和 secrets
   - 文件路径保护（无误报）

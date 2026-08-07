@@ -170,6 +170,9 @@ assert_case "shared CI actions validate all modules" "$all_true" \
 assert_case "shared apt helper validates all modules" "$all_true" \
   ".github/scripts/lib/apt-packages.sh"
 
+assert_case "cache policy helper validates all modules" "$all_true" \
+  ".github/scripts/lib/validate-ci-cache-policy.rb"
+
 assert_case "cache warmup classifier validates all modules" "$all_true" \
   ".github/scripts/classify-ci-cache-warmup.sh"
 
