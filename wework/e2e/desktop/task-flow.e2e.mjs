@@ -315,9 +315,9 @@ const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog.
-const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+// the official option is served from the cloud model catalog with a canonical
+// model id that does not collide with the local Codex catalog.
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
