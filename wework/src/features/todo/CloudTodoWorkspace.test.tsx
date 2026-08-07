@@ -29,6 +29,24 @@ vi.mock('./ProjectSpaceChatSidebar', () => ({
   ),
 }))
 
+vi.mock('./AiChatModal', () => ({
+  AiChatModal: ({
+    task,
+    open,
+    onClose,
+  }: {
+    task?: { id: string }
+    open: boolean
+    onClose: () => void
+  }) => (
+    <div data-testid="ai-chat-modal" data-task-id={task?.id} data-open={open ? 'yes' : 'no'}>
+      <button type="button" data-testid="ai-chat-modal-close" onClick={onClose}>
+        关闭
+      </button>
+    </div>
+  ),
+}))
+
 const project = {
   id: 11,
   public_id: 'cloud-public-id',
@@ -333,13 +351,41 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('与 AI 沟通')
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('私信 AI')
     await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
     expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
       'data-project-id',
       '11'
     )
     expect(screen.getByTestId('project-space-chat-sidebar')).toBeInTheDocument()
+  })
+
+  it('opens the AI chat modal from the task detail without closing the detail', async () => {
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    const aiChatButton = await screen.findByTestId('cloud-todo-open-ai-chat')
+    expect(aiChatButton).toHaveTextContent('私信 AI')
+    await userEvent.click(aiChatButton)
+
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', 'WEG-1')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
+    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'no')
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-open-ai-chat'))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
   it('hides task ids and configures the properties shown on board cards', async () => {

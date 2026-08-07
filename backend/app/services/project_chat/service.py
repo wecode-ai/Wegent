@@ -171,6 +171,7 @@ class ProjectChatService:
             updated_by_user_id=user_id,
             status="active",
             device_id=request.execution_device_id,
+            local_project_id=request.local_project_id,
             metadata_json={
                 "runtime": request.runtime,
                 "model": request.model,
@@ -238,6 +239,8 @@ class ProjectChatService:
             metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
         if request.execution_mode is not None:
             metadata[BOT_EXECUTION_MODE_KEY] = request.execution_mode
+        if "local_project_id" in request.model_fields_set:
+            row.local_project_id = request.local_project_id
         row.metadata_json = metadata
         if request.status is not None:
             row.status = request.status
@@ -1275,6 +1278,7 @@ class ProjectChatService:
                 if isinstance(config.get("execution_device_id"), str)
                 else None
             ),
+            local_project_id=row.local_project_id,
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
             version=row.version,

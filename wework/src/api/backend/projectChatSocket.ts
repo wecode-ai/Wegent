@@ -59,6 +59,8 @@ export interface ProjectChatClient {
     mentions?: ProjectChatMention[]
     replyToMessageId?: string | null
     model?: string | null
+    /** Bound local code project chosen by the user for this comment's run. */
+    localProjectId?: number | null
   }) => Promise<ProjectChatMessage>
   startAgentResponse: (input: {
     projectId: string

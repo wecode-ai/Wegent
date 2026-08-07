@@ -13,7 +13,7 @@ import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projec
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
@@ -37,6 +37,7 @@ interface TaskActivityViewProps {
   currentUserId?: string | number
   onTaskUpdated?: (task: CloudLoopItem) => void
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjects?: ProjectWithTasks[]
   // When true, the chat client owns the AI execution lifecycle (local project
   // spaces enqueue a robot run inside send), so the shared runtime-task start
   // flow must not run again.
@@ -54,12 +55,13 @@ export function TaskActivityView({
   currentUserId,
   onTaskUpdated,
   projectChatAgentApi,
+  localProjects = [],
   selfManagedExecution = false,
   rail = false,
   linear = false,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
-  const { services, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
+  const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
@@ -69,6 +71,30 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
+  // The code project shown on the task page: the runtime code task bound to
+  // this board task. Used as the default parent-comment execution project.
+  const taskPageProject = useMemo(() => {
+    const deviceId = task.ai_state?.runtime_device_id
+    const runtimeTaskId = task.ai_state?.runtime_task_id
+    if (!deviceId || !runtimeTaskId || !state.runtimeWork) return null
+    for (const projectWork of state.runtimeWork.projects) {
+      for (const workspace of projectWork.deviceWorkspaces) {
+        if (
+          workspace.deviceId === deviceId &&
+          workspace.projectId != null &&
+          workspace.tasks.some(item => item.taskId === runtimeTaskId)
+        ) {
+          return localProjects.find(project => project.id === workspace.projectId) ?? null
+        }
+      }
+    }
+    return null
+  }, [
+    localProjects,
+    state.runtimeWork,
+    task.ai_state?.runtime_device_id,
+    task.ai_state?.runtime_task_id,
+  ])
   const [executionDetail, setExecutionDetail] = useState<{
     address: RuntimeTaskAddress
     senderName: string
@@ -135,6 +161,9 @@ export function TaskActivityView({
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [cardAiErrors, setCardAiErrors] = useState<Record<string, string>>({})
   const [newCommentDraft, setNewCommentDraft] = useState('')
+  const [selectedCommentProjectId, setSelectedCommentProjectId] = useState<number | ''>(
+    taskPageProject?.id ?? ''
+  )
   const [loading, setLoading] = useState(Boolean(client))
   const [sending, setSending] = useState(false)
   const [cancellingMessageId, setCancellingMessageId] = useState<string | null>(null)
@@ -349,6 +378,13 @@ export function TaskActivityView({
     () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
     [agents, task.assignee_agent_id]
   )
+  const robotBoundProject = useMemo(
+    () =>
+      assignedAgent?.localProjectId
+        ? (localProjects.find(project => project.id === assignedAgent.localProjectId) ?? null)
+        : null,
+    [assignedAgent, localProjects]
+  )
   const activeUserId = currentUserId ?? chatCurrentUserId
   const isBotCreator = assignedAgent
     ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
@@ -494,6 +530,7 @@ export function TaskActivityView({
         project,
         task,
         agent: assignedAgent,
+        executionProject: robotBoundProject,
         prompt: buildRobotRoleDescription(assignedAgent),
         messages,
         models: availableModels,
@@ -559,6 +596,7 @@ export function TaskActivityView({
           project,
           task,
           agent: assignedAgent,
+          executionProject: robotBoundProject,
           prompt: text,
           trigger: message,
           messages,
@@ -598,6 +636,11 @@ export function TaskActivityView({
     setSending(true)
     setError(null)
     try {
+      const userSelectedProject =
+        selectedCommentProjectId !== ''
+          ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
+          : null
+      const executionProject = userSelectedProject ?? robotBoundProject
       const activeMentions = assignedAgent
         ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
         : []
@@ -609,6 +652,9 @@ export function TaskActivityView({
         mentions: activeMentions,
         replyToMessageId: null,
         model: selectedModel?.name ?? null,
+        ...(projectLocation === 'local' && executionProject
+          ? { localProjectId: executionProject.id }
+          : {}),
       })
       followCardRef.current = message.messageId
       setMessages(current => mergeProjectChatMessages(current, [message]))
@@ -623,6 +669,7 @@ export function TaskActivityView({
           project,
           task,
           agent: assignedAgent,
+          executionProject,
           prompt: text,
           trigger: message,
           messages,
@@ -990,6 +1037,39 @@ export function TaskActivityView({
             !compact && 'pt-2'
           )}
         >
+          {localProjects.length > 0 ? (
+            <label className="mb-2 flex h-7 max-w-[280px] items-center rounded-lg border border-border bg-muted/50 pl-2 pr-1">
+              <span className="sr-only">{t('workbench.task_activity_execution_project')}</span>
+              <select
+                data-testid="cloud-task-activity-execution-project"
+                value={selectedCommentProjectId}
+                onChange={event =>
+                  setSelectedCommentProjectId(
+                    event.target.value === '' ? '' : Number(event.target.value)
+                  )
+                }
+                className="h-full w-full appearance-none truncate bg-transparent text-xs text-text-primary outline-none"
+              >
+                <option value="">{t('workbench.task_activity_execution_project_none')}</option>
+                {taskPageProject ? (
+                  <option value={taskPageProject.id}>
+                    {t('workbench.task_activity_execution_project_task', {
+                      name: taskPageProject.name,
+                    })}
+                  </option>
+                ) : null}
+                {localProjects
+                  .filter(project => project.id !== taskPageProject?.id)
+                  .map(project => (
+                    <option key={project.id} value={project.id}>
+                      {t('workbench.task_activity_execution_project_option', {
+                        name: project.name,
+                      })}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ) : null}
           <div className="task-detail-comment-chat-input">
             <ChatInput
               value={newCommentDraft}

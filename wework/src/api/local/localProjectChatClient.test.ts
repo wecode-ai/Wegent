@@ -98,6 +98,48 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
+  it('carries the selected local code project into the comment and enqueue payload', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'todos.comment.create') {
+        return commentRecord({
+          content: '@Bot 跑一下',
+          metadata: {
+            mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
+            local_project_id: 91,
+          },
+        })
+      }
+      return {}
+    })
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+
+    await client.send({
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'cm-1',
+      text: '@Bot 跑一下',
+      mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
+      localProjectId: 91,
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'todos.comment.create',
+      expect.objectContaining({
+        comment: expect.objectContaining({
+          metadata: expect.objectContaining({ local_project_id: 91 }),
+        }),
+      })
+    )
+    expect(request).toHaveBeenCalledWith(
+      'executions.enqueue',
+      expect.objectContaining({
+        payload: expect.objectContaining({ local_project_id: 91 }),
+      })
+    )
+  })
+
   it('delivers initial comments and polls for status updates', async () => {
     vi.useFakeTimers()
     const streaming = commentRecord({

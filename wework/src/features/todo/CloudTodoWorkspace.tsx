@@ -72,6 +72,7 @@ import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
+import { AiChatModal } from './AiChatModal'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
 type RootView = 'projects' | 'my-work'
@@ -733,6 +734,8 @@ export function CloudTodoWorkspace({
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
+  const [aiChatOpen, setAiChatOpen] = useState(false)
+  const [aiChatEverOpened, setAiChatEverOpened] = useState(false)
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [aitableGroupFilter, setAitableGroupFilter] = useState('')
@@ -1646,6 +1649,11 @@ export function CloudTodoWorkspace({
     }
   }
 
+  const aiChatProject =
+    selectedItem !== null
+      ? projects.find(project => project.id === selectedItem.cloud_project_id)
+      : undefined
+
   return (
     <div
       className={cn(
@@ -2057,15 +2065,15 @@ export function CloudTodoWorkspace({
                     ref={projectHeaderAskAiRef}
                     type="button"
                     data-testid="cloud-project-ask-ai"
-                    aria-label="与 AI 沟通"
-                    title="与 AI 沟通"
+                    aria-label={t('workbench.project_chat')}
+                    title={t('workbench.project_chat')}
                     onClick={() => {
                       setProjectAssistantOpen(true)
                     }}
                     className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
                   >
                     <Bot className="h-3.5 w-3.5" />
-                    {projectHeaderLevel < 1 ? '与 AI 沟通' : null}
+                    {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
                   </button>
                 ) : null}
                 {projectView === 'board' && (
@@ -2130,6 +2138,7 @@ export function CloudTodoWorkspace({
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}
+                  localProjects={localProjects}
                   project={selectedProject}
                   currentUserId={selectedProject.current_user_id}
                   canManageAgents={['Owner', 'Maintainer'].includes(
@@ -2521,6 +2530,7 @@ export function CloudTodoWorkspace({
           projectChatClient={selectedProjectChatClient}
           selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
+          localProjects={localProjects}
           aitableApi={
             projects.find(project => project.id === selectedItem.cloud_project_id)
               ?.task_provider === 'dingtalk_aitable'
@@ -2530,7 +2540,14 @@ export function CloudTodoWorkspace({
           item={selectedItem}
           project={projects.find(project => project.id === selectedItem.cloud_project_id)}
           allItems={detailAllItems}
-          onClose={() => setSelectedItem(null)}
+          onClose={() => {
+            setSelectedItem(null)
+            setAiChatOpen(false)
+          }}
+          onOpenAiChat={() => {
+            setAiChatEverOpened(true)
+            setAiChatOpen(true)
+          }}
           onAddChild={() => openTodoCreation(selectedItem)}
           onUpdated={updated => {
             setItems(current => current.map(item => (item.id === updated.id ? updated : item)))
@@ -2545,6 +2562,16 @@ export function CloudTodoWorkspace({
           }}
         />
       )}
+      {selectedItem && aiChatProject && (aiChatEverOpened || aiChatOpen) ? (
+        <AiChatModal
+          key={`ai-chat-${selectedItem.id}`}
+          project={aiChatProject}
+          localProjects={localProjects}
+          task={selectedItem ?? undefined}
+          open={aiChatOpen}
+          onClose={() => setAiChatOpen(false)}
+        />
+      ) : null}
       {createProjectOpen && (
         <ProjectDialog
           availableApis={availableProjectSpaceApis}

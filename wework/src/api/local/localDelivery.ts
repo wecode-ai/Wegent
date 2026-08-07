@@ -291,6 +291,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   execution_environment?: string
   execution_mode?: string
   execution_device_id?: string | null
+  local_project_id?: number | null
   created_by_user_id?: number | null
   version?: number
   created_at?: string
@@ -311,6 +312,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
       (record.execution_environment as LocalProjectChatAgent['executionEnvironment']) ?? 'local',
     executionMode: (record.execution_mode as LocalProjectChatAgent['executionMode']) ?? 'auto',
     executionDeviceId: record.execution_device_id ?? null,
+    localProjectId: record.local_project_id ?? null,
     createdByUserId: record.created_by_user_id ?? null,
     version: record.version ?? 1,
     createdAt: record.created_at ?? '',
@@ -337,6 +339,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
+        localProjectId?: number | null
       }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.create', {
@@ -349,6 +352,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_environment: input.executionEnvironment ?? 'local',
           execution_mode: input.executionMode ?? 'auto',
           execution_device_id: input.executionDeviceId ?? null,
+          local_project_id: input.localProjectId ?? null,
           created_by_user_id: currentUserId ?? null,
         },
       })
@@ -367,6 +371,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
+        localProjectId?: number | null
       }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.update', {
@@ -382,6 +387,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_environment: input.executionEnvironment,
           execution_mode: input.executionMode,
           execution_device_id: input.executionDeviceId,
+          local_project_id: input.localProjectId,
         },
       })
       return localAgent(record)

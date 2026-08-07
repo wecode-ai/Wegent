@@ -160,6 +160,21 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     if (!execution) return
     const deviceId = claimDeviceId ?? 'local-device'
 
+    // Bind the run to a local code project: the user-selected project on the
+    // triggering comment wins, then the robot's bound project, then nothing.
+    let boundLocalProjectId: number | null =
+      typeof execution.execution_payload?.local_project_id === 'number'
+        ? execution.execution_payload.local_project_id
+        : null
+    if (boundLocalProjectId == null && services.projectChatAgentApi) {
+      try {
+        const agents = await services.projectChatAgentApi.list(execution.cloud_project_id)
+        boundLocalProjectId =
+          agents.find(agent => agent.id === execution.agent_id)?.localProjectId ?? null
+      } catch {
+        // Agent list failures keep the current no-project behavior.
+      }
+    }
     const taskId = `codex-queue-${execution.id}-${Date.now()}`
     const prompt = queuePrompt(execution)
     const systemPrompt = execution.agent_system_prompt ?? ''
@@ -179,6 +194,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       title: execution.task_title,
       cloudProjectId: execution.cloud_project_id,
       deviceId: execution.execution_device_id ?? deviceId,
+      ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
       ...(executionModel?.modelId ? { modelId: executionModel.modelId } : {}),
       ...(executionModel?.modelType ? { modelType: executionModel.modelType } : {}),
       ...(executionModel?.modelOptions ? { modelOptions: executionModel.modelOptions } : {}),

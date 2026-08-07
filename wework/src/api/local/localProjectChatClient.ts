@@ -150,7 +150,10 @@ export function createLocalProjectChatClient(
         sender_id: currentUserId,
         sender_name: currentUserName,
         content: input.text,
-        metadata: { mentions },
+        metadata: {
+          mentions,
+          ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+        },
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
@@ -161,7 +164,11 @@ export function createLocalProjectChatClient(
         task_id: input.taskId ?? '',
         agent_id: agentMention.id,
         trigger_message_id: created.message_id,
-        payload: { text: input.text, trigger_message_id: created.message_id },
+        payload: {
+          text: input.text,
+          trigger_message_id: created.message_id,
+          ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+        },
       })
     }
     return commentToMessage(created)

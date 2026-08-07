@@ -627,6 +627,7 @@ impl LocalTaskStore {
             "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
         });
         metadata["execution_device_id"] = json!(input.execution_device_id);
+        metadata["local_project_id"] = json!(input.local_project_id);
         connection.execute(
             "INSERT INTO loop_items (
                 id, resource_type, project_space, cloud_project_id, name, title,
@@ -685,6 +686,9 @@ impl LocalTaskStore {
         }
         if let Some(device) = input.execution_device_id.as_ref() {
             metadata["execution_device_id"] = json!(device);
+        }
+        if let Some(local_project_id) = input.local_project_id {
+            metadata["local_project_id"] = json!(local_project_id);
         }
         let status = input
             .status
@@ -2169,6 +2173,7 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .get("execution_device_id")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        local_project_id: metadata.get("local_project_id").and_then(Value::as_i64),
         created_by_user_id: row.created_by_user_id,
         version: row.version,
         created_at: row.created_at,
@@ -2535,6 +2540,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some(mode.to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: Some(7),
                 },
             )
@@ -3087,6 +3093,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: Some(42),
                 },
             )
@@ -3094,6 +3101,71 @@ mod tests {
         assert_eq!(agent.created_by_user_id, 42);
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].created_by_user_id, 42);
+    }
+
+    #[test]
+    fn chat_agent_persists_local_project_binding() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Bound Bot".to_owned(),
+                    model: None,
+                    system_prompt: None,
+                    visibility: None,
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: Some(7),
+                    created_by_user_id: Some(7),
+                },
+            )
+            .unwrap();
+        assert_eq!(agent.local_project_id, Some(7));
+        let listed = store.list_chat_agents(&project.id).unwrap();
+        assert_eq!(listed[0].local_project_id, Some(7));
+
+        let updated = store
+            .update_chat_agent(
+                &project.id,
+                &agent.id,
+                ChatAgentUpdate {
+                    version: agent.version,
+                    name: None,
+                    model: None,
+                    system_prompt: None,
+                    status: None,
+                    visibility: None,
+                    execution_environment: None,
+                    execution_mode: None,
+                    execution_device_id: None,
+                    local_project_id: Some(Some(9)),
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.local_project_id, Some(9));
+
+        let cleared = store
+            .update_chat_agent(
+                &project.id,
+                &agent.id,
+                ChatAgentUpdate {
+                    version: updated.version,
+                    name: None,
+                    model: None,
+                    system_prompt: None,
+                    status: None,
+                    visibility: None,
+                    execution_environment: None,
+                    execution_mode: None,
+                    execution_device_id: None,
+                    local_project_id: Some(None),
+                },
+            )
+            .unwrap();
+        assert_eq!(cleared.local_project_id, None);
     }
 
     #[test]
@@ -3112,6 +3184,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: None,
                 },
             )
@@ -3174,6 +3247,7 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     // Robots created before device binding have no device.
                     execution_device_id: None,
+                    local_project_id: None,
                     created_by_user_id: Some(7),
                 },
             )
@@ -3288,6 +3362,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: Some(7),
                 },
             )
@@ -3344,6 +3419,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: Some(7),
                 },
             )
@@ -3595,6 +3671,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    local_project_id: None,
                     created_by_user_id: None,
                 },
             )

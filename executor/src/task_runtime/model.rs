@@ -102,6 +102,8 @@ pub struct ChatAgentCreate {
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
     #[serde(default)]
+    pub local_project_id: Option<i64>,
+    #[serde(default)]
     pub created_by_user_id: Option<i64>,
 }
 
@@ -116,6 +118,9 @@ pub struct ChatAgentUpdate {
     pub execution_environment: Option<String>,
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
+    /// Explicit `null` clears the binding; a missing key keeps it unchanged.
+    #[serde(default)]
+    pub local_project_id: Option<Option<i64>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,6 +136,7 @@ pub struct ChatAgent {
     pub execution_environment: String,
     pub execution_mode: String,
     pub execution_device_id: Option<String>,
+    pub local_project_id: Option<i64>,
     pub created_by_user_id: i64,
     pub version: i64,
     pub created_at: String,

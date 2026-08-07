@@ -12,6 +12,8 @@ export interface ProjectChatAgent {
   executionEnvironment: 'local' | 'cloud'
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
+  /** The bound local code project (task feature) this robot runs in. */
+  localProjectId: number | null
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -29,6 +31,7 @@ export type ProjectChatAgentInput = Pick<
   | 'executionEnvironment'
   | 'executionMode'
   | 'executionDeviceId'
+  | 'localProjectId'
 >
 
 export function createProjectChatAgentApi(client: HttpClient) {

@@ -2,6 +2,7 @@ import { Bot, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
@@ -12,12 +13,14 @@ export function ProjectChatAgentsSection({
   projectChatAgentApi,
   deviceApi,
   modelApi,
+  localProjects,
   canManage,
 }: {
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
+  localProjects: ProjectWithTasks[]
   canManage: boolean
 }) {
   const { t } = useTranslation('common')
@@ -40,6 +43,7 @@ export function ProjectChatAgentsSection({
   const [agentExecutionMode, setAgentExecutionMode] =
     useState<ProjectChatAgent['executionMode']>('auto')
   const [agentExecutionDeviceId, setAgentExecutionDeviceId] = useState<string>('')
+  const [agentLocalProjectId, setAgentLocalProjectId] = useState<number | ''>('')
   const [availableDevices, setAvailableDevices] = useState<
     Array<{ device_id: string; device_type?: string; status?: string }>
   >([])
@@ -110,6 +114,7 @@ export function ProjectChatAgentsSection({
     setAgentExecutionEnvironment('local')
     setAgentExecutionMode('auto')
     setAgentExecutionDeviceId('')
+    setAgentLocalProjectId('')
   }
 
   async function archiveChatAgent(agent: ProjectChatAgent) {
@@ -138,6 +143,7 @@ export function ProjectChatAgentsSection({
     setAgentVisibility(agent.visibility)
     setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
     setAgentExecutionMode(agent.executionMode)
+    setAgentLocalProjectId(agent.localProjectId ?? '')
     const boundDevice = agent.executionDeviceId ?? ''
     const deviceIsLocalCapable = availableDevices.some(
       device =>
@@ -170,6 +176,7 @@ export function ProjectChatAgentsSection({
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
           executionDeviceId: agentExecutionDeviceId,
+          localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
         })
         setChatAgents(current => [...current, agent])
         setCreatingChatAgent(false)
@@ -183,6 +190,7 @@ export function ProjectChatAgentsSection({
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
           executionDeviceId: agentExecutionDeviceId || null,
+          localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
         })
         setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
         setEditingChatAgent(null)
@@ -247,6 +255,13 @@ export function ProjectChatAgentsSection({
                   {agent.executionMode === 'manual_approval'
                     ? t('workbench.project_chat_agent_mode_manual')
                     : t('workbench.project_chat_agent_mode_auto')}
+                  {agent.localProjectId
+                    ? ` · ${t('workbench.project_chat_agent_bound_project', {
+                        name:
+                          localProjects.find(project => project.id === agent.localProjectId)
+                            ?.name ?? String(agent.localProjectId),
+                      })}`
+                    : ''}
                   {agent.createdByUserName
                     ? ` · ${t('workbench.project_chat_agent_creator', {
                         name: agent.createdByUserName,
@@ -422,6 +437,26 @@ export function ProjectChatAgentsSection({
                     {device.status ? `（${device.status}）` : ''}
                   </option>
                 ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-text-muted">
+              {t('workbench.project_chat_agent_execution_project')}
+            </span>
+            <select
+              data-testid="cloud-project-chat-agent-execution-project"
+              value={agentLocalProjectId}
+              onChange={event =>
+                setAgentLocalProjectId(event.target.value === '' ? '' : Number(event.target.value))
+              }
+              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+            >
+              <option value="">{t('workbench.project_chat_agent_execution_project_none')}</option>
+              {localProjects.map(project => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
             </select>
           </label>
           <div className="flex justify-end gap-2">

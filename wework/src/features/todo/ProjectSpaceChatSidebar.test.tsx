@@ -155,7 +155,7 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('project-space-chat-header')).toHaveClass('h-[52px]')
     expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('91')
     expect(screen.getByTestId('project-space-chat-resize-handle')).toHaveAccessibleName(
-      '调整 AI 对话宽度'
+      '调整私信 AI 宽度'
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-empty-state-text',

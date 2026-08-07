@@ -1,7 +1,12 @@
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import type { Attachment, RuntimeAdditionalContext, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ProjectWithTasks,
+  RuntimeAdditionalContext,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ModelOptions, ModelSelectionConfig, ModelType, UnifiedModel } from '@/types/api'
@@ -12,7 +17,7 @@ export interface TaskAiRuntimeBridge {
   createProjectRuntimeTask: (
     input: string,
     options: {
-      project?: null
+      project?: ProjectWithTasks | null
       modelId?: string | null
       collaborationMode?: 'default' | 'plan'
       cloudProjectId?: string
@@ -56,6 +61,9 @@ export interface StartTaskAiRunInput {
   project: CloudProject
   task: CloudLoopItem
   agent: ProjectChatAgent
+  /** Bound local code project (task feature). Resolved before calling:
+   * user selection first, then the robot's binding, then none. */
+  executionProject?: ProjectWithTasks | null
   prompt: string
   trigger?: ProjectChatMessage
   autoRetry?: boolean
@@ -132,6 +140,7 @@ export async function startTaskAiRun({
   project,
   task,
   agent,
+  executionProject,
   prompt,
   trigger,
   autoRetry,
@@ -269,7 +278,7 @@ export async function startTaskAiRun({
   }
 
   const address = await runtime.createProjectRuntimeTask(prompt, {
-    project: null,
+    project: executionProject ?? null,
     ...(executionModel ? { executionModel } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     collaborationMode: 'default',

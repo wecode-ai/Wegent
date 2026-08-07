@@ -31,6 +31,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
+    local_project_id: int | None = Field(default=None)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
@@ -43,6 +44,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     execution_environment: BotExecutionEnvironment | None = None
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
+    local_project_id: int | None = Field(default=None)
 
 
 class ProjectChatAgentView(ProjectChatSchema):
@@ -57,6 +59,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     execution_environment: BotExecutionEnvironment
     execution_mode: BotExecutionMode
     execution_device_id: str | None
+    local_project_id: int | None
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int

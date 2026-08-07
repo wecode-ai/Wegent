@@ -45,6 +45,7 @@ import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'
+import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -489,8 +490,11 @@ export type TodoEditorProps = {
   projectChatClient?: ProjectChatClient
   selfManagedExecution?: boolean
   currentUserId?: string | number
+  localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
+  /** Opens the project AI chat (私信 AI) from the task detail. */
+  onOpenAiChat?: () => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -1078,6 +1082,7 @@ export function TodoEditor(props: TodoEditorProps) {
         currentUserId={props.currentUserId}
         onTaskUpdated={editProps.onUpdated}
         projectChatAgentApi={props.projectChatAgentApi}
+        localProjects={props.localProjects}
         selfManagedExecution={props.selfManagedExecution}
         linear
       />
@@ -1452,6 +1457,17 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           {twoColumn && !isCreate ? (
             <>
+              {props.onOpenAiChat ? (
+                <button
+                  type="button"
+                  data-testid="cloud-todo-open-ai-chat"
+                  onClick={props.onOpenAiChat}
+                  className="mr-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                >
+                  <Bot className="h-3.5 w-3.5 text-violet-600" />
+                  {t('workbench.project_chat')}
+                </button>
+              ) : null}
               {dirty || saving ? (
                 <button
                   type="button"

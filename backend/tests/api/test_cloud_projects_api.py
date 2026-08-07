@@ -1043,6 +1043,63 @@ def test_loop_item_ai_assignee_is_project_scoped_and_exclusive(
     assert reassigned.json()["assignee_agent_id"] is None
 
 
+def test_cloud_project_robot_binds_local_project(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="api-local-dev-1",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "local"},
+                "metadata": {"name": "api-local-dev-1"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "robotbind", "name": "Robot binding"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Bound Reviewer",
+            "runtime": "codex",
+            "executionEnvironment": "local",
+            "executionDeviceId": "api-local-dev-1",
+            "localProjectId": 91,
+        },
+    )
+    assert agent.status_code == 201
+    body = agent.json()
+    assert body["localProjectId"] == 91
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{body['id']}",
+        headers=_auth(test_token),
+        json={"version": body["version"], "localProjectId": 92},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["localProjectId"] == 92
+
+    cleared = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{body['id']}",
+        headers=_auth(test_token),
+        json={"version": updated.json()["version"], "localProjectId": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["localProjectId"] is None
+
+
 def test_cloud_project_owner_can_manage_members(
     test_client: TestClient,
     test_db: Session,
