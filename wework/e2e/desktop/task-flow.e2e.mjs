@@ -193,8 +193,8 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
-const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
+const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
 )
 const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
@@ -3602,7 +3602,11 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledRangeKiB = memorySampleRangeKiB(settledWindow)
+  const baselineDomNodeCount = Math.max(
+    ...baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE).map(sample => sample.domNodeCount)
+  )
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
+  const settledDomNodeGrowth = settledDomNodeCount - baselineDomNodeCount
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -3611,14 +3615,16 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         limits: {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
-          maxSettledDomNodeCount: MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
+          maxSettledDomNodeGrowth: MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
         },
         summary: {
           peakGrowthKiB,
           settledGrowthKiB,
           settledRangeKiB,
           peakDomNodeCount,
+          baselineDomNodeCount,
           settledDomNodeCount,
+          settledDomNodeGrowth,
           baselineSampleCount: baselineSamples.length,
         },
         samples,
@@ -3634,8 +3640,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
   )
   assert.ok(
-    settledDomNodeCount <= MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
-    `WebContent DOM retained ${settledDomNodeCount} nodes after rendering the long response`
+    settledDomNodeGrowth <= MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
+    `WebContent DOM retained ${settledDomNodeGrowth} additional nodes after rendering the long response`
   )
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
