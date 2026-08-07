@@ -9347,6 +9347,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       return vi.fn()
     })
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -9385,7 +9386,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus },
+        local: { updateTaskTrackingStatus, updateTaskTrackingTitle },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -9419,6 +9420,21 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
         expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
         'succeeded'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeTaskTitleUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'friendly-title',
+        deviceId: 'device-1',
+        title: '修复登录回调',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        '修复登录回调'
       )
     )
   })

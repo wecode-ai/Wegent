@@ -913,6 +913,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const api = projectSpaceApiFor(projectToBind)
     if (!api) return
     const bindingTaskTitle =
+      runtimeTaskTitle ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||
       t('workbench.untitled_task', '未命名任务')
     let active = true
@@ -951,6 +952,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pendingCloudProject,
     pendingTodoItem,
     projectSpaceApiFor,
+    runtimeTaskTitle,
     setPendingCloudContext,
     t,
   ])

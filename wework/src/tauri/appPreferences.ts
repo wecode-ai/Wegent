@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import type { ModelSelectionConfig } from '@/types/api'
 
 export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
@@ -37,7 +38,17 @@ export interface AppPreferences {
   appshotsPlaySound: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
+  friendlyTaskTitlesEnabled: boolean
+  friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
   quickPhrases: QuickPhrase[]
+}
+
+export interface FriendlyTaskTitleModelConfig {
+  modelName: string
+  modelType: ModelSelectionConfig['modelType']
+  executionModelId: string
+  executionModelType: ModelSelectionConfig['modelType']
+  options?: ModelSelectionConfig['options']
 }
 
 export type QuickPhraseMode = 'normal' | 'plan' | 'goal'
@@ -96,6 +107,8 @@ export interface AppPreferencesPatch {
   appshotsPlaySound?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
+  friendlyTaskTitlesEnabled?: boolean
+  friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
   quickPhrases?: QuickPhrase[]
 }
 
@@ -145,6 +158,8 @@ export const defaultAppPreferences: AppPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: defaultQuickPhrases,
 }
 
@@ -276,11 +291,54 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.popoutWindowProjectlessDefaultEnabled === 'boolean'
         ? record.popoutWindowProjectlessDefaultEnabled
         : defaultAppPreferences.popoutWindowProjectlessDefaultEnabled,
+    friendlyTaskTitlesEnabled:
+      typeof record.friendlyTaskTitlesEnabled === 'boolean'
+        ? record.friendlyTaskTitlesEnabled
+        : defaultAppPreferences.friendlyTaskTitlesEnabled,
+    friendlyTaskTitleModel: normalizeFriendlyTaskTitleModel(record.friendlyTaskTitleModel),
     quickPhrases: Array.isArray(record.quickPhrases)
       ? record.quickPhrases
           .flatMap(item => normalizeQuickPhrase(item))
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
+  }
+}
+
+function normalizeFriendlyTaskTitleModel(value: unknown): FriendlyTaskTitleModelConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Partial<FriendlyTaskTitleModelConfig>
+  const modelName = typeof record.modelName === 'string' ? record.modelName.trim() : ''
+  const executionModelId =
+    typeof record.executionModelId === 'string' ? record.executionModelId.trim() : ''
+  if (!modelName || !executionModelId) return null
+  const modelType =
+    record.modelType === 'public' ||
+    record.modelType === 'user' ||
+    record.modelType === 'group' ||
+    record.modelType === 'runtime'
+      ? record.modelType
+      : null
+  const executionModelType =
+    record.executionModelType === 'public' ||
+    record.executionModelType === 'user' ||
+    record.executionModelType === 'group' ||
+    record.executionModelType === 'runtime'
+      ? record.executionModelType
+      : null
+  const options =
+    record.options && typeof record.options === 'object' && !Array.isArray(record.options)
+      ? Object.fromEntries(
+          Object.entries(record.options).flatMap(([key, option]) =>
+            typeof option === 'string' ? [[key, option]] : []
+          )
+        )
+      : undefined
+  return {
+    modelName,
+    modelType,
+    executionModelId,
+    executionModelType,
+    ...(options ? { options } : {}),
   }
 }
 

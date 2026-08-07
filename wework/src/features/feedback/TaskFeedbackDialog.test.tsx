@@ -369,6 +369,41 @@ describe('TaskFeedbackDialog', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
   })
 
+  test('logs a safe failure classification with the report ID when submission fails', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const feedbackApi = {
+      submit: vi.fn().mockRejectedValue(new Error('Feedback submission failed with HTTP 413')),
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({})}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Cannot send messages' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith('[Wework] Feedback submission failed', {
+        reportId: 'WF-1',
+        errorKind: 'http_413',
+      })
+    )
+    expect(trackMock).toHaveBeenCalledWith('operation_failed', { operation: 'feedback' })
+  })
+
   test('never touches task context or the screenshot without opting into full task data', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)

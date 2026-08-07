@@ -42,13 +42,27 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 `auth.json` 时，该分组不会出现在模型选择器中；Provider 模型、本地自定义模型和云端模型
 仍按各自配置展示。如果所有来源都没有可用模型，选择器直接显示“暂无可用模型”。
 
+## 使用友好标题
+
+在 **设置 → 通用 → 任务运行** 中打开 **使用友好标题**，并选择一个可用模型后，Wework 会在新建任务
+时异步生成简洁的中文标题。创建不会等待标题模型返回：任务先使用用户输入的原始标题创建，
+标题生成完成后才替换显示名称并出现短暂扫光效果。
+
+标题生成使用独立的轻量模型调用，不会向任务会话写入消息，也不会改变主任务的运行、完成或
+失败状态。手动重命名的任务不会被之后的自动标题覆盖。生成失败时，原始标题会保留，任务仍可
+正常创建和运行。
+
+普通新建任务默认是独立会话，不会因为之前打开过项目任务而自动加入远程项目或看板。只有在
+发送前明确选择项目空间，或为任务显式关联项目空间时，Wework 才会同步该任务；已关联的任务
+在友好标题生成后会将更新后的标题同步到对应的本地或云端看板。
+
 ## 自定义 Codex 模型
 
 在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek 和 GLM profile；填写对应平台的 API Key 后，可以从提供商的 `/models` 接口读取可用模型。连接地址、接口协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
 
 DeepSeek profile 使用原生 Responses API，展示当前可用于 Codex 的 `deepseek-v4-flash` 和 `deepseek-v4-pro`。两者均使用 1,048,576 tokens 上下文、默认 `high` 推理等级、实时 Web Search 和 freeform `apply_patch`；连接测试也会要求模型真实返回 `apply_patch` custom tool call。旧版由 Wework 管理的 DeepSeek Chat Completions 配置会自动迁移到 Responses API。当前模型目录声明文本输入且关闭图片生成，因此图片生成和图片理解不会在该 profile 下显示为可用能力。
 
- 文本模型可以引用另一个明确声明图片输入能力的模型作为“视觉代理模型”。本地模型的引用在 Wework 本地模型设置中维护；云端模型的引用必须在 Wegent Web 管理端配置，Wework 只读取 Backend 下发的 `visionSidecarModel` 引用，不提供云端模型编辑入口。执行时，Wework 在请求主模型前调用视觉模型描述每张图片，再用描述文本替换 `input_image`。任何配置视觉代理的文本模型都会使用内部通用的 `wework-vision-sidecar` 能力目录项，使 Codex 可以接收图片，同时原始图片只发送给视觉模型，不发送给文本主模型。视觉代理支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 接口；单轮最多处理 8 个不同图片描述，单张图片最大 20 MB，描述失败时会插入明确的错误文本。远程视觉接口必须使用 HTTPS；仅 `localhost` 和回环 IP 可使用 HTTP，且视觉请求不会跟随重定向，避免凭证被发送到未授权的后续地址。
+文本模型可以引用另一个明确声明图片输入能力的模型作为“视觉代理模型”。本地模型的引用在 Wework 本地模型设置中维护；云端模型的引用必须在 Wegent Web 管理端配置，Wework 只读取 Backend 下发的 `visionSidecarModel` 引用，不提供云端模型编辑入口。执行时，Wework 在请求主模型前调用视觉模型描述每张图片，再用描述文本替换 `input_image`。任何配置视觉代理的文本模型都会使用内部通用的 `wework-vision-sidecar` 能力目录项，使 Codex 可以接收图片，同时原始图片只发送给视觉模型，不发送给文本主模型。视觉代理支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 接口；单轮最多处理 8 个不同图片描述，单张图片最大 20 MB，描述失败时会插入明确的错误文本。远程视觉接口必须使用 HTTPS；仅 `localhost` 和回环 IP 可使用 HTTP，且视觉请求不会跟随重定向，避免凭证被发送到未授权的后续地址。
 
 每个自定义模型都可以设置可选的“分组”，模型选择器会使用该名称组织模型。Kimi Coding 默认填写“Kimi”，用户可以修改或清空；未设置分组的模型统一显示在“自定义模型”下。
 
