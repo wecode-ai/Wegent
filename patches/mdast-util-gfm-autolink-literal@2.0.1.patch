@@ -1,0 +1,49 @@
+diff --git a/lib/index.js b/lib/index.js
+index 66c3928db0d9187245161e7a7191ff69f848aeaf..a80f26fea4726f7451634288c81d68fd00f379b0 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -131,8 +131,8 @@ function transformGfmAutolinkLiterals(tree) {
+   findAndReplace(
+     tree,
+     [
+       [/(https?:\/\/|www(?=\.))([-.\w]+)([^ \t\r\n]*)/gi, findUrl],
+-      [/(?<=^|\s|\p{P}|\p{S})([-.\w+]+)@([-\w]+(?:\.[-\w]+)+)/gu, findEmail]
++      [/(^|[\s\p{P}\p{S}])([-\w.+]+)@([-\w]+(?:\.[-\w]+)+)/gu, findEmail]
+     ],
+     {ignore: ['link', 'linkReference']}
+   )
+@@ -189,25 +189,28 @@ function findUrl(_, protocol, domain, path, match) {
+ /**
+  * @type {ReplaceFunction}
+  * @param {string} _
++ * @param {string} prefix
+  * @param {string} atext
+  * @param {string} label
+- * @param {RegExpMatchObject} match
+- * @returns {Link | false}
++ * @returns {Array<PhrasingContent> | Link | false}
+  */
+-function findEmail(_, atext, label, match) {
++function findEmail(_, prefix, atext, label) {
+   if (
+-    // Not an expected previous character.
+-    !previous(match, true) ||
++    // A slash must not start a literal email autolink.
++    prefix === '/' ||
+     // Label ends in not allowed character.
+     /[-\d_]$/.test(label)
+   ) {
+     return false
+   }
+ 
+-  return {
++  /** @type {Link} */
++  const result = {
+     type: 'link',
+     title: null,
+     url: 'mailto:' + atext + '@' + label,
+     children: [{type: 'text', value: atext + '@' + label}]
+   }
++
++  return prefix ? [{type: 'text', value: prefix}, result] : result
+ }

@@ -296,6 +296,10 @@ pnpm run dev
 
 仓库根目录的 `pnpm-workspace.yaml` 已声明 pnpm 安装所需的依赖构建脚本 allowlist，并关闭非交互环境下的 `node_modules` 重建确认。开发者和 Git hooks 应从仓库根目录运行 `pnpm install`，不要在子目录中单独维护 `approve-builds` 配置。
 
+`pnpm-workspace.yaml` 也可以通过 `patchedDependencies` 固化第三方依赖的兼容性修复。新增或更新补丁时，应同时提交 `patches/` 中对应的补丁文件并刷新根目录 `pnpm-lock.yaml`；不要直接修改已安装的 `node_modules`。
+
+Wework 的生产构建以 Safari 13 为兼容目标，从而支持 OS X 10.13 自带的 WebKit。新增浏览器端依赖后，应运行 `pnpm --filter wework build`，确保无法降级的现代语法会在发布前暴露。
+
 ### 步骤 6: 安装 Executor Manager
 
 [本地开发](/executor_manager/README_zh.md)

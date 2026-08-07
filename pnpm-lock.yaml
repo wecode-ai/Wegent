@@ -6,6 +6,10 @@ settings:
 
 packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
 
+patchedDependencies:
+  '@pierre/diffs@1.2.11': b934397587fb6a2ed04a474dfb8cd1866bc68ea8e62c163dee833a68d5cee1ba
+  mdast-util-gfm-autolink-literal@2.0.1: 156a7a5a49bb4242dc933a0273aa684b51b341db9fe62b4c1ea7677576a7e1f3
+
 importers:
 
   .:
@@ -566,7 +570,7 @@ importers:
         version: 1.7.0(@headless-tree/core@1.7.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@pierre/diffs':
         specifier: ^1.2.11
-        version: 1.2.11(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 1.2.11(patch_hash=b934397587fb6a2ed04a474dfb8cd1866bc68ea8e62c163dee833a68d5cee1ba)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@pierre/trees':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -757,6 +761,9 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
+      acorn:
+        specifier: ^8.15.0
+        version: 8.17.0
       autoprefixer:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
@@ -11160,7 +11167,7 @@ snapshots:
     dependencies:
       pako: 1.0.11
 
-  '@pierre/diffs@1.2.11(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@pierre/diffs@1.2.11(patch_hash=b934397587fb6a2ed04a474dfb8cd1866bc68ea8e62c163dee833a68d5cee1ba)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@pierre/theme': 1.0.3
       '@pierre/theming': 0.0.1(@pierre/theme@1.0.3)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(shiki@4.2.0)
@@ -16218,7 +16225,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-autolink-literal@2.0.1:
+  mdast-util-gfm-autolink-literal@2.0.1(patch_hash=156a7a5a49bb4242dc933a0273aa684b51b341db9fe62b4c1ea7677576a7e1f3):
     dependencies:
       '@types/mdast': 4.0.4
       ccount: 2.0.1
@@ -16266,7 +16273,7 @@ snapshots:
   mdast-util-gfm@3.1.0:
     dependencies:
       mdast-util-from-markdown: 2.0.3
-      mdast-util-gfm-autolink-literal: 2.0.1
+      mdast-util-gfm-autolink-literal: 2.0.1(patch_hash=156a7a5a49bb4242dc933a0273aa684b51b341db9fe62b4c1ea7677576a7e1f3)
       mdast-util-gfm-footnote: 2.1.0
       mdast-util-gfm-strikethrough: 2.0.0
       mdast-util-gfm-table: 2.0.0

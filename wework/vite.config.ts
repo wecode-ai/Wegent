@@ -63,6 +63,9 @@ export default defineConfig({
     entries: ['index.html'],
   },
   build: {
+    // OS X 10.13 ships Safari 13.1, which cannot parse Vite's modern default
+    // output target (Safari 16.4).
+    target: 'safari13',
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,
