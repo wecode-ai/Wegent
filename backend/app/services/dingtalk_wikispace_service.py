@@ -110,8 +110,16 @@ class DingTalkWikiSpaceService:
     @staticmethod
     @trace_sync()
     def is_configured(user: User) -> bool:
-        """Check if the user has DingTalk WikiSpace MCP configured and enabled."""
-        return DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user) is not None
+        """Check if wikispace sync is fully configured for the user.
+
+        Both MCP services are required: WikiSpace MCP discovers knowledge
+        bases, Docs MCP enumerates their documents. Reporting readiness with
+        only one of them would offer a sync that is guaranteed to fail.
+        """
+        return (
+            DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user) is not None
+            and DingTalkDocService.get_user_dingtalk_mcp_url(user) is not None
+        )
 
     @staticmethod
     @trace_async()
@@ -212,8 +220,13 @@ class DingTalkWikiSpaceService:
                         len(tool_names),
                         tool_names,
                     )
-                except Exception:
-                    logger.warning("Could not list wikispace MCP tools")
+                except Exception as exc:
+                    # Keep the exception type for diagnosis while excluding
+                    # message contents, which may carry provider URLs or data.
+                    logger.warning(
+                        "Could not list wikispace MCP tools (%s)",
+                        type(exc).__name__,
+                    )
 
                 # Paginate through all org-level knowledge bases.
                 page_token: str | None = None
@@ -417,11 +430,16 @@ class DingTalkWikiSpaceService:
                     )
 
                     try:
+                        # Accumulate per-KB nodes into a temporary list so a
+                        # mid-pagination failure discards the partial snapshot
+                        # instead of leaking incomplete documents into the sync.
+                        nodes_for_kb: list[dict[str, Any]] = []
                         await DingTalkWikiSpaceService._list_nodes_in_wikispace(
                             session=session,
                             workspace_id=kb_id,
-                            all_nodes=all_nodes,
+                            all_nodes=nodes_for_kb,
                         )
+                        all_nodes.extend(nodes_for_kb)
                         # Only add the KB root folder AFTER successfully listing contents.
                         all_nodes.append(kb_as_folder)
                     except Exception:
@@ -454,10 +472,14 @@ class DingTalkWikiSpaceService:
         seen: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for node in nodes:
+            # Prefer node-level identifiers: workspaceId identifies the
+            # containing knowledge base, so two documents in one KB sharing
+            # only workspaceId must not collapse into each other. KB root
+            # entries carry no node-level id and still resolve via workspaceId.
             node_id = next(
                 (
                     node.get(key)
-                    for key in ("nodeId", "workspaceId", "id", "dingtalk_node_id")
+                    for key in ("nodeId", "id", "dingtalk_node_id", "workspaceId")
                     if node.get(key)
                 ),
                 None,

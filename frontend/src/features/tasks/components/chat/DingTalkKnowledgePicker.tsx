@@ -108,7 +108,7 @@ function DingTalkPickerNotConfigured({ label }: { label: string }) {
       <div className="text-sm text-text-muted">{label}</div>
       <Link
         href="/settings?section=integrations&tab=integrations"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-primary/80"
+        className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 text-sm font-medium text-primary transition-colors hover:text-primary/80"
         data-testid="dingtalk-go-to-configure"
       >
         {t('dingtalkDocs.goToConfigure')}
@@ -138,7 +138,7 @@ function DingTalkPickerSyncEmpty({
         type="button"
         onClick={onSync}
         disabled={syncing}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-primary/80 disabled:opacity-50"
+        className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 text-sm font-medium text-primary transition-colors hover:text-primary/80 disabled:opacity-50"
         data-testid="dingtalk-empty-sync-button"
       >
         <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
