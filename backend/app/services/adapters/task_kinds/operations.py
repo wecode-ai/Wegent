@@ -26,7 +26,12 @@ from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team, Workspace
-from app.schemas.task import ArchivedTask, TaskCreate, TaskUpdate
+from app.schemas.task import (
+    MAX_TASK_DELETE_BATCH_SIZE,
+    ArchivedTask,
+    TaskCreate,
+    TaskUpdate,
+)
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.readers.kinds import KindType, kindReader
@@ -948,6 +953,64 @@ class TaskOperationsMixin:
                 db=db, task_id=task_id, user_id=user_id, client_origin=client_origin
             )
         return len(task_ids)
+
+    def bulk_delete_tasks(
+        self,
+        db: Session,
+        *,
+        task_ids: list[int],
+        user_id: int,
+        client_origin: Optional[str] = None,
+    ) -> int:
+        """Soft delete a list of tasks owned by a user."""
+        count = 0
+        for task_id in task_ids:
+            try:
+                self.delete_task(
+                    db=db, task_id=task_id, user_id=user_id, client_origin=client_origin
+                )
+                count += 1
+            except Exception as exc:
+                db.rollback()
+                logger.exception(
+                    "bulk_delete_tasks: failed to delete task_id=%s error=%s",
+                    task_id,
+                    exc,
+                )
+        return count
+
+    def delete_all_personal_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: Optional[str] = None,
+    ) -> int:
+        """Soft delete all active personal (non-group-chat) tasks owned by a user."""
+        tasks = task_stores.task_store.list_archivable_active_tasks(
+            db,
+            user_id=user_id,
+            scope="all",
+            client_origin=client_origin,
+            exclude_group_chats=True,
+            limit=MAX_TASK_DELETE_BATCH_SIZE,
+        )
+        task_ids = [task.id for task in tasks]
+        count = 0
+        for task_id in task_ids:
+            try:
+                self.delete_task(
+                    db=db, task_id=task_id, user_id=user_id, client_origin=client_origin
+                )
+                count += 1
+            except Exception as exc:
+                db.rollback()
+                logger.exception(
+                    "delete_all_personal_tasks: failed to delete task_id=%s error=%s",
+                    task_id,
+                    exc,
+                )
+        return count
 
     def _archive_tasks(self, db: Session, tasks: list[TaskResource]) -> int:
         archived_count = 0
