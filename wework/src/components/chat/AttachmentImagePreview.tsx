@@ -49,6 +49,10 @@ function clampIndex(value: number, length: number): number {
   return Math.min(length - 1, Math.max(0, value))
 }
 
+function attachmentPreviewIdentity(attachment: Attachment): string {
+  return `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
+}
+
 async function loadAttachmentImageUrl(
   attachment: Attachment
 ): Promise<{ url: string; objectUrl: string | null }> {
@@ -186,7 +190,7 @@ export function AttachmentImagePreview({
   const [zoom, setZoom] = useState(1)
   const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
   const previewContainerRef = useRef<HTMLElement | null>(null)
-  const previewIdentity = `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
+  const previewIdentity = attachmentPreviewIdentity(attachment)
   const attachmentRef = useRef(attachment)
   const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
     previewContainerRef.current = element
@@ -283,8 +287,7 @@ export function AttachmentImagePreview({
     const currentAttachment = attachmentRef.current
     const selectedAttachment = gallery[nextIndex] ?? currentAttachment
     const reusablePreviewUrl =
-      selectedAttachment.id === currentAttachment.id &&
-      selectedAttachment.local_preview_url === currentAttachment.local_preview_url
+      attachmentPreviewIdentity(selectedAttachment) === attachmentPreviewIdentity(currentAttachment)
         ? previewUrl
         : null
 

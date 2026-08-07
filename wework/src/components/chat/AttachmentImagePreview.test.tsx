@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
@@ -24,6 +24,19 @@ function remoteAttachment(id: number): Attachment {
     status: 'ready',
     file_extension: '.png',
     created_at: '2026-08-07T00:00:00.000Z',
+  }
+}
+
+function localPathAttachment(id: number, localPath: string): Attachment {
+  return {
+    id,
+    filename: `image-${id}.png`,
+    file_size: 1,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: '.png',
+    created_at: '2026-08-07T00:00:00.000Z',
+    local_path: localPath,
   }
 }
 
@@ -117,5 +130,47 @@ describe('AttachmentImagePreview', () => {
 
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(screen.getByTestId('preview-loading')).toBeInTheDocument()
+  })
+
+  test('lightbox loads the selected attachment when equal ids differ by local_path', async () => {
+    const first = localPathAttachment(1, '/a.png')
+    const second = localPathAttachment(1, '/b.png')
+    render(
+      <AttachmentImagePreview
+        attachment={first}
+        galleryAttachments={[first, second]}
+        galleryIndex={0}
+        buttonTestId="preview-button"
+        imageTestId="preview-image"
+        loadingTestId="preview-loading"
+        errorTestId="preview-error"
+        imageClassName="h-20 w-20"
+        placeholderClassName="h-20 w-20"
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-image')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('preview-button'))
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'asset://localhost/a.png'
+      )
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('attachment-image-next'))
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'asset://localhost/b.png'
+      )
+    })
   })
 })
