@@ -3827,6 +3827,7 @@ async function verifyWorkspaceDocumentTabs(control) {
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
