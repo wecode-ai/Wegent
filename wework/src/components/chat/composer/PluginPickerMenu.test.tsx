@@ -13,6 +13,7 @@ import {
   COMPOSER_APPS_REQUEST_SYNC_EVENT,
   clearComposerAppsSnapshot,
   publishComposerApps,
+  replaceComposerApps,
   resetComposerAppsMemory,
 } from './composerAppsSnapshot'
 import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
@@ -210,6 +211,25 @@ describe('PluginPickerMenu', () => {
 
     await act(async () => resolveApps([]))
     expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+  })
+
+  test('clears visible plugins when the shared composer app store is explicitly emptied', async () => {
+    publishComposerApps([superpowersApp])
+    const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(
+      await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).toBeInTheDocument()
+
+    act(() => replaceComposerApps([]))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+      ).not.toBeInTheDocument()
+    )
   })
 
   test('shows plugins published by slash autocomplete even when fetch returns empty', async () => {

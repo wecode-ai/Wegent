@@ -5601,17 +5601,10 @@ async function verifyAutomationLifecycle(control, workspacePath) {
 }
 
 async function verifySitesPluginAutoInstall(control) {
-  const bootstrapStartedAt = Date.now()
-  while (
-    control.sitesConnectionBootstrapRequests === 0 &&
-    Date.now() - bootstrapStartedAt < WORKBENCH_READY_TIMEOUT_MS
-  ) {
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
   assert.equal(
     control.sitesConnectionBootstrapRequests,
-    1,
-    'Connecting the cloud account did not initialize the Sites plugin exactly once'
+    0,
+    'Connecting the cloud account unexpectedly initialized the Sites plugin'
   )
 
   await control.command('navigate', 'body', { value: '/sites' })
@@ -5632,6 +5625,11 @@ async function verifySitesPluginAutoInstall(control) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const miniProgramInstallRequestsBefore = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
   await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -5648,13 +5646,23 @@ async function verifySitesPluginAutoInstall(control) {
     /创建并发布一个小程序/,
     'Creating a Mini Program did not place the requested application prompt in the composer'
   )
+  const miniProgramInstallRequestsAfter = control.httpRequests.filter(
+    request =>
+      request.method === 'POST' &&
+      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  ).length
+  assert.equal(
+    miniProgramInstallRequestsAfter - miniProgramInstallRequestsBefore,
+    1,
+    'Creating a Mini Program did not install its application plugin on demand'
+  )
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     snapshot.testIds.includes('sites-create-error'),
     false,
     'The Sites page reported an installation error after opening the plugin in chat'
   )
-  await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
+  await captureVerificationScreenshot(control, 'plugins-05-application-plugin-installed.png')
 
   const miniProgramPluginSelector =
     '[data-testid="composer-plugin-chip-weibo-miniapp-h5-develop-agent"]'
