@@ -17,8 +17,13 @@ import {
 } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
-import type { ResourceLibraryListing, ResourceLibraryPublicationUpdateRequest } from '../types'
+import type {
+  MarketplaceExampleConversation,
+  ResourceLibraryListing,
+  ResourceLibraryPublicationUpdateRequest,
+} from '../types'
 import { CapabilityScopeSelector, type CapabilityPublishTarget } from './CapabilityScopeSelector'
+import { ExampleConversationsEditor } from './ExampleConversationsEditor'
 import { MarketplaceTagSelector } from './MarketplaceTagSelector'
 
 interface PublicationSettingsDialogProps {
@@ -42,6 +47,9 @@ export function PublicationSettingsDialog({
   const [target, setTarget] = useState<CapabilityPublishTarget>('personal')
   const [groupNames, setGroupNames] = useState<string[]>([])
   const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
+  const [exampleConversations, setExampleConversations] = useState<
+    MarketplaceExampleConversation[]
+  >([])
   const supportsMarketplaceTags =
     listing?.resource_type === 'agent' || listing?.resource_type === 'skill'
 
@@ -50,6 +58,7 @@ export function PublicationSettingsDialog({
     const nextGroupNames = listing.target_groups || []
     setGroupNames(nextGroupNames)
     setMarketplaceTags(listing.tags)
+    setExampleConversations(listing.example_conversations || [])
     setTarget(
       listing.status === 'published'
         ? 'marketplace'
@@ -66,6 +75,14 @@ export function PublicationSettingsDialog({
       allow_personal_install: target === 'marketplace',
       allow_group_install: target !== 'personal',
       ...(target === 'marketplace' && supportsMarketplaceTags ? { tags: marketplaceTags } : {}),
+      ...(target === 'marketplace' && listing?.resource_type === 'agent'
+        ? {
+            example_conversations: exampleConversations.map(item => ({
+              title: item.title.trim(),
+              url: item.url.trim(),
+            })),
+          }
+        : {}),
     })
   }
 
@@ -104,6 +121,14 @@ export function PublicationSettingsDialog({
           </div>
         )}
 
+        {target === 'marketplace' && listing?.resource_type === 'agent' && (
+          <ExampleConversationsEditor
+            value={exampleConversations}
+            onChange={setExampleConversations}
+            testIdPrefix="publication-example-conversations"
+          />
+        )}
+
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {t('actions.cancel')}
@@ -114,7 +139,12 @@ export function PublicationSettingsDialog({
             disabled={
               saving ||
               (target === 'team' && groupNames.length === 0) ||
-              (target === 'marketplace' && supportsMarketplaceTags && marketplaceTags.length === 0)
+              (target === 'marketplace' &&
+                supportsMarketplaceTags &&
+                marketplaceTags.length === 0) ||
+              (target === 'marketplace' &&
+                listing?.resource_type === 'agent' &&
+                exampleConversations.some(item => !item.title.trim() || !item.url.trim()))
             }
             onClick={handleSave}
             data-testid="publication-settings-save"

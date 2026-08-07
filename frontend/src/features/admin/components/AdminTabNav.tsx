@@ -33,6 +33,7 @@ import {
   Cable,
   FileText,
   Globe,
+  Store,
   ChartNoAxesCombined,
 } from 'lucide-react'
 
@@ -47,6 +48,7 @@ export type AdminTabId =
   | 'public-bots'
   | 'templates'
   | 'api-keys'
+  | 'marketplace'
   | 'system-config'
   | 'im-channels'
   | 'connector-apps'
@@ -86,6 +88,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-bots', label: t('admin:tabs.public_bots'), icon: Bot },
     { id: 'templates', label: t('admin:tabs.templates'), icon: LayoutTemplate },
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
+    { id: 'marketplace', label: t('admin:tabs.marketplace'), icon: Store },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'connector-apps', label: t('admin:tabs.connector_apps'), icon: Cable },

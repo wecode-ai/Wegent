@@ -143,7 +143,11 @@ export function DiscoverResources({
           resourceType,
           ...(keyword ? { keyword } : {}),
           ...(selectedTag ? { tags: [selectedTag] } : {}),
-          ...(systemOnly && !selectedTag ? { systemOnly: true } : {}),
+          ...(systemOnly && !selectedTag
+            ? resourceType === 'agent' || resourceType === 'skill'
+              ? { featuredOnly: true }
+              : { systemOnly: true }
+            : {}),
           targetNamespace,
           cursor,
           limit: RESOURCE_LIBRARY_PAGE_SIZE,
