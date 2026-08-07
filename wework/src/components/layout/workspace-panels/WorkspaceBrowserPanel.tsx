@@ -1932,6 +1932,9 @@ export function WorkspaceBrowserPanel({
     return state.approval.reason || state.message || t('workbench.browser_agent_approval_reason')
   }
 
+  const clearLocalFilePreviewToast = useCallback(() => setLocalFilePreviewToast(null), [])
+  const clearClearDataNotice = useCallback(() => setClearDataNotice(null), [])
+
   return (
     <div
       data-testid="workspace-browser-panel"
@@ -2266,13 +2269,13 @@ export function WorkspaceBrowserPanel({
         key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
         message={localFilePreviewToast?.message ?? null}
         tone="error"
-        onClear={() => setLocalFilePreviewToast(null)}
+        onClear={clearLocalFilePreviewToast}
       />
       <TransientNotice
         key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
         message={clearDataNotice?.message ?? null}
         tone={clearDataNotice?.tone}
-        onClear={() => setClearDataNotice(null)}
+        onClear={clearClearDataNotice}
       />
       {invalidTlsCertificate ? (
         <div
