@@ -10,7 +10,8 @@
 
 'use client'
 
-import { BookOpen, Database, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { KnowledgeBaseIcon } from '../KnowledgeBaseIcon'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBase } from '@/types/knowledge'
 
@@ -37,8 +38,6 @@ export function KbItem({
   secondaryText,
   showDocCount = false,
 }: KbItemProps) {
-  const isClassic = kb.kb_type === 'classic'
-
   return (
     <div
       className={cn(
@@ -50,11 +49,7 @@ export function KbItem({
     >
       {/* Icon */}
       <span className="flex-shrink-0">
-        {isClassic ? (
-          <Database className="w-3.5 h-3.5 text-text-secondary" />
-        ) : (
-          <BookOpen className="w-3.5 h-3.5 text-primary" />
-        )}
+        <KnowledgeBaseIcon kbType={kb.kb_type} />
       </span>
 
       {/* Name */}

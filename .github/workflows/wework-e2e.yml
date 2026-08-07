@@ -194,18 +194,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Core E2E build Cargo dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore shared Wework desktop E2E Cargo dependencies
+        id: wework-desktop-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-core-build-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-core-build-e2e-
-            ${{ runner.os }}-wework-desktop-
+            ${{ runner.os }}-wework-desktop-e2e-v2-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -221,6 +221,17 @@ jobs:
           WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
           WEWORK_E2E_MODEL_SERVER_PORT: "43112"
         run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+
+      - name: Save shared Wework desktop E2E Cargo dependencies
+        if: github.ref == 'refs/heads/main' && steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
 
       - name: Archive Wework desktop Core E2E build
         run: .github/scripts/archive-wework-core-e2e-build.sh
@@ -435,17 +446,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore shared Wework desktop E2E Cargo dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-${{ matrix.command }}-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-${{ matrix.command }}-e2e-
+            ${{ runner.os }}-wework-desktop-e2e-v2-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework

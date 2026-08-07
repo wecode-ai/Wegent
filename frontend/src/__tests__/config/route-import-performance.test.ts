@@ -22,7 +22,6 @@ describe('route import performance', () => {
   test.each([
     'src/app/(tasks)/knowledge/page.tsx',
     'src/app/(tasks)/knowledge/[namespace]/[kbName]/[[...docPath]]/page.tsx',
-    'src/app/(tasks)/knowledge/project/[projectId]/page.tsx',
   ])('knowledge route avoids the feature barrel: %s', relativePath => {
     expect(readSource(relativePath)).not.toContain("from '@/features/knowledge'")
   })

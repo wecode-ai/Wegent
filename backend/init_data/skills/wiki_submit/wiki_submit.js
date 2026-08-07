@@ -29,8 +29,16 @@ function getTaskInfo() {
 }
 
 /**
- * Get auth token from TASK_INFO or environment variable.
- * Priority: TASK_INFO.auth_token > WIKI_TOKEN env var > argument
+ * Get the token this skill authenticates with.
+ *
+ * Priority: TASK_INFO.auth_token > WEGENT_SKILL_IDENTITY_TOKEN > WIKI_TOKEN > argument
+ *
+ * WEGENT_SKILL_IDENTITY_TOKEN is what an executor actually sets, and is the token
+ * the write API is built to accept. TASK_INFO is kept first for the runtimes that
+ * provide it; AUTH_TOKEN is deliberately not used, because it is a task token with
+ * no `sub` claim and the API's user lookup rejects it -- which is exactly what
+ * "Invalid authorization token" was reporting.
+ *
  * @param {string|undefined} argValue - Value from command line argument
  * @returns {string|undefined}
  */
@@ -40,12 +48,16 @@ function getAuthToken(argValue) {
   if (taskInfo && taskInfo.auth_token) {
     return taskInfo.auth_token
   }
-  
+
+  if (process.env.WEGENT_SKILL_IDENTITY_TOKEN) {
+    return process.env.WEGENT_SKILL_IDENTITY_TOKEN
+  }
+
   // Fallback to WIKI_TOKEN environment variable
   if (process.env.WIKI_TOKEN) {
     return process.env.WIKI_TOKEN
   }
-  
+
   // Finally use argument value
   return argValue
 }
@@ -149,6 +161,34 @@ function makeRequest(url, options, body) {
 }
 
 /**
+ * Read one page of the generation being written.
+ * @param {string} endpoint - Write endpoint URL, used to derive the read URL
+ * @param {string} token - Authorization token
+ * @param {number} generationId - Wiki generation ID
+ * @param {string} pagePath - Stable page path
+ * @returns {Promise<object>}
+ */
+async function readPage(endpoint, token, generationId, pagePath) {
+  // The read endpoint sits beside the write one under /generations. A custom
+  // endpoint that does not end in that suffix would make this a no-op and build a
+  // wrong URL, whose 404 would then read as "page does not exist".
+  const suffix = /\/generations\/contents\/?$/
+  if (!suffix.test(endpoint)) {
+    console.error(`Error: cannot derive the read URL from endpoint '${endpoint}'.`)
+    console.error("It must end in '/generations/contents'.")
+    process.exit(1)
+  }
+  const base = endpoint.replace(suffix, '')
+  const url = `${base}/generations/${generationId}/pages?path=${encodeURIComponent(pagePath)}`
+
+  return makeRequest(
+    url,
+    { method: 'GET', headers: { Authorization: `Bearer ${token}` } },
+    null
+  )
+}
+
+/**
  * Submit wiki sections to the backend API.
  * @param {string} endpoint - API endpoint URL
  * @param {string} token - Authorization token
@@ -157,7 +197,7 @@ function makeRequest(url, options, body) {
  * @param {object|null} summary - Optional summary for completion
  * @returns {Promise<object>}
  */
-async function submitSections(endpoint, token, generationId, sections, summary = null) {
+async function submitSections(endpoint, token, generationId, sections, summary = null, removedPaths = []) {
   const headers = {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
@@ -170,6 +210,10 @@ async function submitSections(endpoint, token, generationId, sections, summary =
 
   if (summary) {
     payload.summary = summary
+  }
+
+  if (removedPaths && removedPaths.length > 0) {
+    payload.removed_paths = removedPaths
   }
 
   return makeRequest(endpoint, { method: 'POST', headers }, JSON.stringify(payload))
@@ -210,9 +254,15 @@ async function cmdSubmit(args) {
   }
 
   const section = {
-    type: args.type,
+    // Defaults to a plain chapter: a code wiki identifies pages by path, so the
+    // section type carries no meaning there and asking for one every time is noise.
+    type: args.type || 'chapter',
     title: args.title,
     content: content,
+  }
+
+  if (args.path) {
+    section.path = args.path
   }
 
   if (args.ext) {
@@ -231,7 +281,82 @@ async function cmdSubmit(args) {
     return 1
   }
 
-  console.log(`✅ Section '${args.title}' submitted successfully`)
+  console.log(`✅ Page '${args.path || args.title}' submitted successfully`)
+  return 0
+}
+
+/**
+ * Handle read command: print a page's current content.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdRead(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    process.exit(1)
+  }
+  if (!args.generationId) {
+    console.error('Error: --generation-id is required.')
+    process.exit(1)
+  }
+  if (!args.path) {
+    console.error('Error: --path is required for read command')
+    return 1
+  }
+  const generationId = parseInt(args.generationId, 10)
+
+  const result = await readPage(endpoint, token, generationId, args.path)
+
+  if (result.status === 'error') {
+    // A page that does not exist yet is an answer, not a failure: in an incremental
+    // run it means this page is new. Reported on stderr so it cannot be mistaken
+    // for content when stdout is redirected to a file.
+    // The backend's phrase, not a bare status code: any other 404 means something
+    // is misconfigured, and calling that "a new page" hides it.
+    if (/has no page at/i.test(result.message || '')) {
+      console.error(`Page '${args.path}' does not exist yet`)
+      return 0
+    }
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+
+  process.stdout.write(result.content || '')
+  return 0
+}
+
+/**
+ * Handle remove command: declare pages as gone.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdRemove(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    process.exit(1)
+  }
+  if (!args.generationId) {
+    console.error('Error: --generation-id is required.')
+    process.exit(1)
+  }
+  if (!args.paths.length) {
+    console.error('Error: --path is required for remove command')
+    return 1
+  }
+  const generationId = parseInt(args.generationId, 10)
+
+  const result = await submitSections(endpoint, token, generationId, [], null, args.paths)
+
+  if (result.status === 'error') {
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+
+  console.log(`✅ Removed ${args.paths.length} page(s): ${args.paths.join(', ')}`)
   return 0
 }
 
@@ -258,6 +383,9 @@ async function cmdComplete(args) {
     structure_order: args.structureOrder || [],
   }
 
+  if (args.headCommit) {
+    summary.head_commit = args.headCommit
+  }
   if (args.model) {
     summary.model = args.model
   }
@@ -272,7 +400,30 @@ async function cmdComplete(args) {
     return 1
   }
 
-  console.log('✅ Wiki generation marked as COMPLETED')
+  // The server answers with what became of the version. It used to answer nothing,
+  // so a run whose version was refused was told it had completed while its work was
+  // discarded -- and this process is the only one that can still fix it.
+  if (result.published === false) {
+    console.error(`❌ Not published: ${result.reason || 'the publish gate refused this version'}`)
+    console.error('The pages are stored but readers still see the previous wiki.')
+    console.error('Write what is missing, then run complete again.')
+    if (result.corrections) {
+      console.error(result.corrections)
+    }
+    return 1
+  }
+
+  console.log('✅ Wiki generation completed and published')
+
+  // Printed on success too, and that is the point: broken diagrams never hold a
+  // version back, so this is the last moment anything can be done about them. Exit 0
+  // -- the run did succeed, and failing it would undo a wiki that is live and good
+  // over a figure that does not draw.
+  if (result.corrections) {
+    console.log('')
+    console.log(result.corrections)
+    console.log('Rewrite those pages and run complete again to republish.')
+  }
   return 0
 }
 
@@ -323,6 +474,8 @@ function parseArgs(argv) {
     generationId: null,
     type: null,
     title: null,
+    path: null,
+    paths: [],
     file: null,
     content: null,
     ext: null,
@@ -330,6 +483,7 @@ function parseArgs(argv) {
     model: null,
     tokensUsed: null,
     errorMessage: null,
+    headCommit: null,
   }
 
   let i = 2 // Skip 'node' and script name
@@ -358,6 +512,13 @@ function parseArgs(argv) {
         break
       case '--title':
         args.title = argv[++i]
+        break
+      case '--path':
+        args.path = argv[++i]
+        args.paths.push(args.path)
+        break
+      case '--head-commit':
+        args.headCommit = argv[++i]
         break
       case '--file':
       case '-f':
@@ -413,7 +574,9 @@ Wiki Submit Skill - Submit wiki documentation to Wegent backend
 Usage: node wiki_submit.js <command> [options]
 
 Commands:
-  submit    Submit a wiki section
+  submit    Submit a wiki page
+  read      Print a page's current content
+  remove    Declare wiki pages as gone
   complete  Mark wiki generation as completed
   fail      Mark wiki generation as failed
 
@@ -428,13 +591,23 @@ environment variable when running inside an executor container. You don't need
 to specify it manually in most cases.
 
 Submit Options:
-  --type               Section type (overview|architecture|module|api|guide|deep)
-  --title              Section title
-  --file, -f           Path to markdown file containing section content
-  --content, -c        Section content (alternative to --file)
+  --path               Stable page path, e.g. "architecture/backend". This is the
+                       page's identity: keep it the same across runs.
+  --title              Page title (required)
+  --type               Section type, defaults to "chapter"
+  --file, -f           Path to markdown file containing page content
+  --content, -c        Page content (alternative to --file)
   --ext                Extension data as JSON string
 
+Read Options:
+  --path               Page path to read. Exits 0 with no output when the page
+                       does not exist yet.
+
+Remove Options:
+  --path               Page path to remove. Repeat for several pages.
+
 Complete Options:
+  --head-commit        Commit that was documented, from \`git rev-parse HEAD\`
   --structure-order    Ordered list of section identifiers
   --model              Model name used for generation
   --tokens-used        Number of tokens used
@@ -443,8 +616,10 @@ Fail Options:
   --error-message, -m  Error message describing the failure
 
 Examples:
-  node wiki_submit.js submit --generation-id 123 --type overview --title "Project Overview" --file ./overview.md
-  node wiki_submit.js complete --generation-id 123 --structure-order "overview: Project Overview" "architecture: System Architecture"
+  node wiki_submit.js submit --generation-id 123 --path architecture/backend --title "Backend Architecture" --file ./page.md
+  node wiki_submit.js read --generation-id 123 --path architecture/backend > current.md
+  node wiki_submit.js remove --generation-id 123 --path modules/legacy-sync
+  node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD)
   node wiki_submit.js fail --generation-id 123 --error-message "Failed to analyze repository"
 `)
 }
@@ -463,8 +638,11 @@ async function main() {
   let exitCode
   switch (args.command) {
     case 'submit':
-      if (!args.type) {
-        console.error('Error: --type is required for submit command')
+      if (!args.path) {
+        // The path is the page's identity. Without one the write is accepted and the
+        // page is then skipped at publish time, so it would report success and
+        // silently produce nothing.
+        console.error('Error: --path is required for submit command')
         process.exit(1)
       }
       if (!args.title) {
@@ -472,6 +650,12 @@ async function main() {
         process.exit(1)
       }
       exitCode = await cmdSubmit(args)
+      break
+    case 'read':
+      exitCode = await cmdRead(args)
+      break
+    case 'remove':
+      exitCode = await cmdRemove(args)
       break
     case 'complete':
       exitCode = await cmdComplete(args)
