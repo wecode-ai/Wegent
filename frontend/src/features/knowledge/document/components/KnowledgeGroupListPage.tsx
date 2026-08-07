@@ -18,8 +18,6 @@ import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
   Plus,
-  BookOpen,
-  Database,
   FolderOpen,
   Star,
   ChevronDown,
@@ -28,6 +26,7 @@ import {
   Trash2,
   FolderOutput,
 } from 'lucide-react'
+import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -39,7 +38,6 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import type {
   KnowledgeBase,
   KnowledgeBaseType,
@@ -152,15 +150,6 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
   }
 }
 
-/** Get icon for KB type */
-/** Get icon for KB type */
-function KbTypeIcon({ kbType, className }: { kbType?: string; className?: string }) {
-  const isClassic = kbType === 'classic'
-  if (isClassic) {
-    return <Database className={cn('text-text-secondary', className)} />
-  }
-  return <BookOpen className={cn('text-primary', className)} />
-}
 export function KnowledgeGroupListPage({
   groupId: _groupId,
   groupName,
@@ -647,7 +636,7 @@ function KnowledgeBaseRow({
       {/* Name column */}
       <TableCell className="px-6 py-3 overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
-          <KbTypeIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
+          <KnowledgeBaseIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
           <span className="text-sm font-medium text-text-primary truncate">{kb.name}</span>
           {isFavorite && <Star className="w-4 h-4 text-yellow-500 fill-yellow-500 flex-shrink-0" />}
         </div>

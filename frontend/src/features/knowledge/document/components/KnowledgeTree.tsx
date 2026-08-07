@@ -24,6 +24,7 @@ import {
   Share2,
   Settings,
 } from 'lucide-react'
+import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import { Spinner } from '@/components/ui/spinner'
 import {
   DropdownMenu,
@@ -199,14 +200,6 @@ function getCategoryIcon(icon?: string, className = 'w-4 h-4') {
   }
 }
 
-// KB type icon
-// KB type icon
-function getKbIcon(icon?: string, className = 'w-3.5 h-3.5') {
-  if (icon === 'folder') {
-    return <Database className={`${className} text-text-secondary`} />
-  }
-  return <BookOpen className={`${className} text-primary`} />
-}
 // Sub-category icon
 function getSubCategoryIcon(nodeId: string, className = 'w-3.5 h-3.5') {
   if (nodeId.includes('created')) {
@@ -364,7 +357,7 @@ function TreeNodeItem({
   // Render icon
   const renderIcon = () => {
     if (isLeaf) {
-      return getKbIcon(node.icon)
+      return <KnowledgeBaseIcon kbType={node.kbType} />
     }
     if (node.type === 'category-root') {
       return getCategoryIcon(node.icon)
