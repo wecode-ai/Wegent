@@ -132,6 +132,16 @@
     "version": "版本",
     "publisher": "发布者",
     "official_publisher": "Wegent 官方",
+    "example_conversation": "示例对话",
+    "example_conversations": "示例对话",
+    "example_conversation_description": "查看真实对话示例，了解这个智能体适合处理什么任务以及输出效果。",
+    "example_conversation_publisher_description": "填写公开分享的对话链接，向其他用户展示智能体能做什么以及实际输出效果。",
+    "example_conversation_title": "示例标题",
+    "example_conversation_url": "示例对话链接",
+    "example_conversation_title_placeholder": "例如：生成产品需求文档",
+    "example_conversation_placeholder": "https://...",
+    "add_example_conversation": "添加示例对话",
+    "remove_example_conversation": "删除示例对话",
     "install_count": "添加次数",
     "people_added": "人添加",
     "official_badge": "官方",
@@ -221,7 +231,10 @@
     "remove_added_skill_confirm": "确定取消添加技能「{{skill}}」吗？源技能不会被删除。",
     "remove_from_team_success": "已从团队移除技能",
     "remove_from_team_failed": "从团队移除技能失败",
-    "remove_from_team_confirm": "确定从「{{group}}」移除技能「{{skill}}」吗？源技能不会被删除。"
+    "remove_from_team_confirm": "确定从「{{group}}」移除技能「{{skill}}」吗？源技能不会被删除。",
+    "remove_from_team_agent_success": "已从团队移除智能体",
+    "remove_from_team_agent_failed": "从团队移除智能体失败",
+    "remove_from_team_agent_confirm": "确定从「{{group}}」移除智能体「{{agent}}」吗？源智能体不会被删除。"
   },
   "publish": {
     "description": "选择已有智能体或技能并发布到市场",
