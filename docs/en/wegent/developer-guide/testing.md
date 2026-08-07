@@ -273,8 +273,9 @@ runs may restore the default-branch cache, but they do not save another copy:
   The Claude Code CLI uses a repository `package-lock.json` to pin the complete
   dependency graph and package integrity.
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
-  macOS memory gate use sccache. Non-`main` jobs access the shared compiler cache
-  in read-only mode.
+  macOS memory gate use sccache. The `main` warmup runs the same desktop
+  `--build-only` flow on `macos-14`; non-`main` jobs access the shared compiler
+  cache in read-only mode.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
@@ -285,9 +286,9 @@ runs may restore the default-branch cache, but they do not save another copy:
   it read-only.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
-lockfile, or cache implementation changes enter `main`. It downloads
-dependencies or compiles cache entries without repeating tests already
-validated by the merge queue. Do not add large automatically saved PR or
+lockfile, or cache implementation changes enter `main`, and rejects manual
+warmups from non-`main` refs. It downloads dependencies or compiles cache
+entries without repeating tests already validated by the merge queue. Do not add large automatically saved PR or
 merge-group caches. Use `actions/cache/restore` plus a `main`-only
 `actions/cache/save`, or reuse the existing shared action.
 

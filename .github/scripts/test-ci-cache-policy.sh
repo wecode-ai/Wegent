@@ -130,6 +130,11 @@ if ! grep -q '^  push:$' "$warmup_workflow" ||
   fail "CI cache warmup must run after matching changes enter main"
 fi
 
+if ! grep -A3 '^  changes:$' "$warmup_workflow" |
+  grep -Fq "if: github.ref == 'refs/heads/main'"; then
+  fail "CI cache warmup jobs must refuse non-main workflow dispatches"
+fi
+
 node_manifests=(
   frontend/package.json
   package.json
@@ -164,6 +169,16 @@ if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
   fail "sccache must normalize paths and allow writes only from main"
+fi
+
+if ! grep -Fq 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" ||
+  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
+    grep -Fq 'runs-on: macos-14' ||
+  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
+    grep -Fq 'uses: ./.github/actions/setup-sccache' ||
+  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
+    grep -Fq 'task-flow.e2e.mjs --build-only'; then
+  fail "Wework macOS memory builds must be prewarmed with the shared sccache"
 fi
 
 if grep -R -q 'type=gha' \
