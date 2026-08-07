@@ -20,6 +20,7 @@ const baseConfig: RuntimeConfig = {
   enableDisplayQuotas: false,
   enableWiki: true,
   enableCodeKnowledgeAddRepo: true,
+  enableCodeWiki: false,
   enableProjectWorkspace: false,
   projectWorkspaceWhitelist: '',
   vscodeLinkTemplate: '',

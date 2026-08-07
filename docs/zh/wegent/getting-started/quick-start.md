@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | chat-team | 通用 AI 助手 + Mermaid 图表 |
 | translator | 多语言翻译 |
 | dev-team | Git 工作流：分支 → 编码 → 提交 → PR |
-| wiki-team | 代码库 Wiki 文档生成 |
+| code-wiki-team | 代码库 Wiki 文档生成（前端需开启 `RUNTIME_ENABLE_CODE_WIKI`） |
 
 ---
 
