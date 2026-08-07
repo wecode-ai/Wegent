@@ -14,6 +14,7 @@ import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
+import { documentViewOf } from '@/types/knowledge'
 import type {
   KnowledgeBase,
   AllGroupedKnowledgeResponse,
@@ -460,7 +461,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       const newItem: RecentAccessItem = {
         kbId: kb.id,
         kbName: kb.name,
-        kbType: (kb.kb_type as 'notebook' | 'classic') || 'notebook',
+        kbType: documentViewOf(kb.kb_type) ?? 'notebook',
         namespace: kb.namespace,
         accessedAt: Date.now(),
       }
@@ -546,7 +547,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
           ? {
               ...item,
               kbName: updatedKb.name,
-              kbType: updatedKb.kb_type || 'notebook',
+              kbType: documentViewOf(updatedKb.kb_type) ?? 'notebook',
               namespace: updatedKb.namespace,
             }
           : item

@@ -13,7 +13,14 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +29,7 @@ from app.api.endpoints._knowledge_multimodal import (
     multimodal_create_kwargs,
     multimodal_update_kwargs,
 )
+from app.api.endpoints.knowledge_code_wiki import router as code_wiki_router
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
@@ -79,6 +87,11 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Registered before any route defined here, which is load-bearing rather than tidy:
+# code wiki paths sit under the same prefix, and `/{knowledge_base_id}` below would
+# match `/code-wikis` first and try to read "code-wikis" as an id.
+router.include_router(code_wiki_router)
 
 
 def _serialize_standalone_document_detail(

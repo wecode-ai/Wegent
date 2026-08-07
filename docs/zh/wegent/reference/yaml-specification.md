@@ -452,6 +452,32 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 
 ---
 
+### 代码 Wiki 专属字段
+
+`spec.kbType = "code_wiki"` 的知识库由智能体从一个源仓库生成，下列字段**全部由系统写入**，不应手工编辑。
+
+| 字段                        | 类型    | 说明                                                                 |
+| --------------------------- | ------- | -------------------------------------------------------------------- |
+| `spec.kbType`               | string  | `notebook`、`classic` 或 `code_wiki`。**创建后不能进出 `code_wiki`** |
+| `spec.source.sourceType`    | string  | `github`、`gitlab` 或 `gitea`                                        |
+| `spec.source.sourceUrl`     | string  | 仓库地址，创建时从 URL 推导并剥除凭据                                |
+| `spec.source.projectName`   | string  | `owner/repo`                                                         |
+| `spec.source.sourceDomain`  | string  | 仓库主机                                                             |
+| `spec.publishedGenerationId`| integer | **当前生效版本的唯一权威**，0 表示尚未发布                           |
+| `spec.lastPublishedAt`      | string  | 上次发布时间，与指针同事务写入                                       |
+| `spec.lastPublishedCommit`  | string  | 生效版本所记录的 commit                                              |
+| `spec.pageOrder`            | array   | 页面路径的展示顺序；层级从路径推导，顺序只在这里                     |
+| `spec.pendingIndexCleanup`  | array   | 已删页面中尚未清理的向量库引用，下次发布时重试                       |
+
+**几个不变量：**
+
+- **`publishedGenerationId` 是唯一权威** —— 不要从「最新完成的生成」推断生效版本：一次生成可以完成后被发布闸门拒绝
+- **归属是创建者**，namespace 固定 `default` —— 归属决定了普通知识库 ACL 就能生效；能否创建、能否重新生成，另由**仓库权限**决定
+- **一个仓库一份 wiki**，由 `wiki_projects.source_url` 的唯一约束保证
+- 生成页面的 `origin` 为 `generated`；投影只增删这一类，用户内容永不受影响
+
+---
+
 ## 🤝 Collaboration
 
 Collaboration 定义了团队中 Bot 之间的交互模式和工作流程。
