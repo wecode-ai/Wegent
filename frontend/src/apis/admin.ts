@@ -392,6 +392,37 @@ export interface AdminPublicTeamIconUpload {
   url: string
 }
 
+export type AdminMarketplaceResourceType = 'agent' | 'skill'
+
+export interface AdminMarketplaceExampleConversation {
+  title: string
+  url: string
+}
+
+export interface AdminMarketplaceResource {
+  id: number
+  resource_type: AdminMarketplaceResourceType
+  name: string
+  display_name: string
+  description: string | null
+  publisher_user_name: string | null
+  is_system: boolean
+  recommendation_score: number
+  example_conversations: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceUpdate {
+  recommendation_score?: number
+  example_conversations?: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceListResponse {
+  items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
+}
+
 // Public Bot Types
 export interface AdminPublicBot {
   id: number
@@ -1090,6 +1121,23 @@ export const adminApis = {
    */
   async deletePublicTeamIcon(assetId: number): Promise<void> {
     return apiClient.delete(`/admin/public-teams/icon-assets/${assetId}`)
+  },
+
+  async getMarketplaceResources(
+    resourceType: AdminMarketplaceResourceType,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<AdminMarketplaceResourceListResponse> {
+    return apiClient.get(
+      `/admin/marketplace-resources?resource_type=${resourceType}&page=${page}&limit=${limit}`
+    )
+  },
+
+  async updateMarketplaceResource(
+    resourceId: number,
+    update: AdminMarketplaceResourceUpdate
+  ): Promise<AdminMarketplaceResource> {
+    return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
   },
 
   // ==================== Public Bot Management ====================
