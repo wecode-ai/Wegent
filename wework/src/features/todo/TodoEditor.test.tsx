@@ -87,4 +87,189 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Inspect changes 手工补充')
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('completed')
   })
+
+  it('assigns a member through the assign route with a string user id', async () => {
+    const user = userEvent.setup()
+    const assignApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 5,
+          user_id: 5,
+          user_name: '张三',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      updateLoopItem: vi.fn(async () => ({ ...baseItem, version: 2 })),
+      assignLoopItem: vi.fn(async () => ({
+        ...baseItem,
+        version: 2,
+        assignee_user_id: 5,
+        assignee_agent_id: null,
+      })),
+    } as never
+    const ownerProject = { ...project, access_role: 'Owner' } as unknown as CloudProject
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={ownerProject}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={assignApi}
+        currentUserId={1}
+      />
+    )
+
+    await screen.findByRole('option', { name: '张三' })
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'user:5')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() => {
+      expect(assignApi.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
+        version: 2,
+        assigneeType: 'user',
+        assigneeId: '5',
+      })
+    })
+  })
+
+  it('clears a member assignee through the update route instead of the assign route', async () => {
+    const user = userEvent.setup()
+    const memberItem = {
+      ...baseItem,
+      assignee_user_id: 5,
+      assignee_agent_id: null,
+    }
+    const clearApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 5,
+          user_id: 5,
+          user_name: '张三',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      updateLoopItem: vi.fn(async () => ({
+        ...memberItem,
+        version: 2,
+        assignee_user_id: null,
+        assignee_agent_id: null,
+      })),
+      assignLoopItem: vi.fn(async () => memberItem),
+    } as never
+    const ownerProject = { ...project, access_role: 'Owner' } as unknown as CloudProject
+    render(
+      <TodoEditor
+        mode="edit"
+        item={memberItem}
+        project={ownerProject}
+        allItems={[memberItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={clearApi}
+        currentUserId={1}
+      />
+    )
+
+    await screen.findByRole('option', { name: '张三' })
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), '')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() => {
+      expect(clearApi.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
+        version: 2,
+        assignee_user_id: null,
+        assignee_agent_id: null,
+      })
+    })
+    expect(clearApi.assignLoopItem).not.toHaveBeenCalled()
+  })
+})
+
+describe('TodoEditor assignment chain', () => {
+  it('shows the assignment details in a popover triggered next to the assignee', async () => {
+    const user = userEvent.setup()
+    const chainApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        { id: 1, user_id: 1, user_name: '张三', email: null, role: 'Developer' },
+        { id: 2, user_id: 2, user_name: '李四', email: null, role: 'Developer' },
+      ]),
+    } as never
+    const chainItem = {
+      ...baseItem,
+      assignment_history: [
+        {
+          by_user_id: 1,
+          to_type: 'user' as const,
+          to_id: '2',
+          to_name: '李四',
+          action: 'assign' as const,
+          at: '2026-08-01T10:00:00',
+        },
+        {
+          by_user_id: 2,
+          to_type: 'agent' as const,
+          to_id: 'agent-1',
+          to_name: '智能体A',
+          action: 'reassign' as const,
+          at: '2026-08-02T11:30:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    const onClose = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        item={chainItem}
+        project={project}
+        allItems={[chainItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={onClose}
+        api={chainApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-assignment-chain')).not.toBeInTheDocument()
+    const trigger = screen.getByTestId('cloud-todo-assignment-chain-trigger')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(trigger)
+
+    const popover = screen.getByTestId('cloud-todo-assignment-chain-popover')
+    expect(popover).toHaveTextContent('指派详情')
+    expect(popover).toHaveTextContent('张三')
+    expect(popover).toHaveTextContent('李四')
+    expect(popover).toHaveTextContent('智能体A')
+    expect(popover).toHaveTextContent('指派')
+    expect(popover).toHaveTextContent('转派')
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByTestId('cloud-todo-assignment-chain-popover')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not render the trigger when the item has no assignment history', () => {
+    render(editorElement(baseItem))
+    expect(screen.queryByTestId('cloud-todo-assignment-chain-trigger')).not.toBeInTheDocument()
+  })
 })

@@ -56,6 +56,7 @@ export interface CloudLoopItem {
   assignee_agent_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
+  can_approve?: boolean
   assignment_history?: Array<{
     by_user_id: number
     to_type: 'user' | 'agent' | null
@@ -431,7 +432,7 @@ export function createDeliveryApi(client: HttpClient) {
       data: {
         version: number
         assigneeType: 'user' | 'agent'
-        assigneeId: string | number
+        assigneeId: string
       }
     ): Promise<CloudLoopItem> {
       return client.post(

@@ -1182,6 +1182,8 @@ fn board_loop_item(
         updated_at: now,
         completed_at: None,
         assignee_agent_id: None,
+        execution_id: None,
+        execution_state: None,
     }
 }
 

@@ -181,6 +181,11 @@ function services(): WorkbenchServices {
         updated_at: '2026-07-22T00:00:00Z',
       })),
     },
+    deviceApi: {
+      listDevices: vi.fn(async () => [
+        { device_id: 'local-device', device_type: 'local', status: 'online' },
+      ]),
+    },
   } as unknown as WorkbenchServices
 }
 
@@ -1108,6 +1113,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    await screen.findByRole('option', { name: /local-device/ })
+    await userEvent.selectOptions(
+      screen.getByTestId('cloud-project-chat-agent-device'),
+      'local-device'
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
     await waitFor(() => expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalled())
@@ -1173,6 +1184,15 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(addButton).not.toBeDisabled()
     await userEvent.click(addButton)
+    await screen.findByRole('option', { name: /local-device/ })
+    await userEvent.selectOptions(
+      screen.getByTestId('cloud-project-chat-agent-device'),
+      'local-device'
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-agent-2')).toBeInTheDocument()
+    )
     expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledTimes(1)
   })
 
@@ -1218,6 +1238,29 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-project-chat-agents')).toBeInTheDocument()
     expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
+  })
+
+  it('shows the automation tab for local project spaces', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, project_store: 'local' as const }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.getByTestId('cloud-project-automation-view')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
   })
 
   it('opens the global search with Command+K and opens a task result', async () => {

@@ -399,6 +399,8 @@ impl AppIpcServer {
             || method.starts_with("files.")
             || method.starts_with("attachments.")
             || method.starts_with("deliveries.")
+            || method.starts_with("chat_agents.")
+            || method.starts_with("executions.")
         {
             return handle_task_runtime_request(method, params).await;
         }
@@ -425,10 +427,13 @@ impl AppIpcServer {
             return handler.handle_codex_app_server_rpc(params).await;
         }
 
-        Err(AppIpcError::new(
-            "unsupported_method",
-            format!("Unsupported app IPC method: {method}"),
-        ))
+        Err({
+            eprintln!("[app-ipc] unsupported method: {method}");
+            AppIpcError::new(
+                "unsupported_method",
+                format!("Unsupported app IPC method: {method}"),
+            )
+        })
     }
 
     pub fn event_message(&self, event: &str, payload: Value) -> Value {
@@ -1248,6 +1253,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .fail_execution(execution_id, error, requeue)
                     .map_err(task_runtime_error)?,
             )
+        }
+        "executions.recover_stale" => {
+            let (requeued, failed) = runtime
+                .recover_stale_local_executions()
+                .map_err(task_runtime_error)?;
+            Ok(json!({
+                "requeued": requeued,
+                "failed": failed,
+            }))
         }
         "files.list" => {
             let project_id = required_task_string(&params, "project_id")?;

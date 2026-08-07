@@ -13,6 +13,8 @@ const cancelRuntimeTask = vi.fn()
 const bindTask = vi.fn()
 const updateLoopItem = vi.fn()
 const getLoopItem = vi.fn()
+const approveLoopItemRun = vi.fn()
+const rejectLoopItemRun = vi.fn()
 const listModels = vi.fn()
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
@@ -32,7 +34,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       devices: [],
     },
     services: {
-      deliveryApi: { bindTask, updateLoopItem, getLoopItem },
+      deliveryApi: { bindTask, updateLoopItem, getLoopItem, approveLoopItemRun, rejectLoopItemRun },
       projectChatAgentApi: {
         list: vi.fn(async () => [
           {
@@ -43,6 +45,8 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
             model: null,
             systemPrompt: '',
             status: 'active',
+            createdByUserId: 1,
+            createdByUserName: 'Alice',
             version: 1,
             createdAt: '',
             updatedAt: '',
@@ -163,6 +167,8 @@ describe('TaskActivityView', () => {
     bindTask.mockReset()
     updateLoopItem.mockReset()
     getLoopItem.mockReset()
+    approveLoopItemRun.mockReset()
+    rejectLoopItemRun.mockReset()
     listModels.mockReset()
     attachmentSelectionMock.attachments = []
     attachmentSelectionMock.isAttachmentReadyToSend = true
@@ -1582,5 +1588,127 @@ describe('TaskActivityView', () => {
       '新评论',
       expect.objectContaining({ cloudProjectId: '11' })
     )
+  })
+
+  it('shows approve/reject for the robot creator and approves the pending run', async () => {
+    const user = userEvent.setup()
+    approveLoopItemRun.mockResolvedValue({
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: '',
+      status: 'in_review',
+      version: 2,
+      assignee_agent_id: '12',
+      execution_state: 'queued',
+    })
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'in_review',
+            version: 3,
+            assignee_agent_id: '12',
+            execution_state: 'pending_approval',
+          } as never
+        }
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-task-activity-approve-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-task-activity-reject-WEG-1')).toBeInTheDocument()
+    await user.click(await screen.findByTestId('cloud-task-activity-approve-WEG-1'))
+    await waitFor(() => expect(approveLoopItemRun).toHaveBeenCalledWith('11', 'WEG-1', 3))
+  })
+
+  it('hides approve/reject for a viewer who is not the robot creator', async () => {
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '2' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={2}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'in_review',
+            version: 3,
+            assignee_agent_id: '12',
+            execution_state: 'pending_approval',
+          } as never
+        }
+      />
+    )
+
+    await screen.findByText('Code Reviewer')
+    expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-task-activity-reject-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByText('待 Alice 批准')).toBeInTheDocument()
+  })
+
+  it('shows approve/reject when the backend marks the run as approvable by the current user', async () => {
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'in_review',
+            version: 3,
+            assignee_agent_id: '12',
+            execution_state: 'pending_approval',
+            can_approve: true,
+          } as never
+        }
+      />
+    )
+
+    await screen.findByText('Code Reviewer')
+    expect(screen.getByTestId('cloud-task-activity-approve-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-task-activity-reject-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByText('待 Alice 批准')).not.toBeInTheDocument()
   })
 })

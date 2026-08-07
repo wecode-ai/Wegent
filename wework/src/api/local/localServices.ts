@@ -2909,7 +2909,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   )
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
-  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request)
+  // Local project-space identity is the local session user, not the connected
+  // cloud account. The approval/creator checks compare against LOCAL_USER, so
+  // robots created with the cloud user id would never be approvable locally.
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: LOCAL_USER,

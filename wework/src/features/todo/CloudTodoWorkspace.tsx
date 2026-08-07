@@ -1697,6 +1697,24 @@ export function CloudTodoWorkspace({
               onSelectItem={item => {
                 if (item.can_view_detail !== false) setSelectedItem(item)
               }}
+              onApproveItem={async item => {
+                const api = apiForProjectId(item.cloud_project_id)
+                if (!api) return
+                try {
+                  const updated = await api.approveLoopItemRun(
+                    item.cloud_project_id,
+                    item.id,
+                    item.version
+                  )
+                  setMyWork(current =>
+                    current.map(entry =>
+                      entry.id === updated.id ? { ...entry, ...updated } : entry
+                    )
+                  )
+                } catch (error) {
+                  console.error('[Wework] Failed to approve task from my work', error)
+                }
+              }}
             />
           ) : loading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
@@ -1810,8 +1828,7 @@ export function CloudTodoWorkspace({
                         文件
                       </button>
                     )}
-                    {selectedProject.project_store === 'backend' &&
-                    selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                    {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                       <button
                         type="button"
                         data-testid="cloud-project-automation-view"
@@ -1860,8 +1877,7 @@ export function CloudTodoWorkspace({
                       {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                         <option value="files">文件</option>
                       ) : null}
-                      {selectedProject.project_store === 'backend' &&
-                      selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                      {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                         <option value="automation">自动化</option>
                       ) : null}
                       {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') ? (

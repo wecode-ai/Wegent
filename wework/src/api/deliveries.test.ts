@@ -40,6 +40,25 @@ describe('createDeliveryApi queue and assignment routes', () => {
     })
   })
 
+  it('assigns a task to a project member with a string user id', async () => {
+    const client = {
+      post: vi.fn(async () => ({})),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.assignLoopItem(123, 'task-1', {
+      version: 3,
+      assigneeType: 'user',
+      assigneeId: '42',
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
+      version: 3,
+      assigneeType: 'user',
+      assigneeId: '42',
+    })
+  })
+
   it('approves and rejects pending robot runs', async () => {
     const client = {
       post: vi.fn(async () => ({})),

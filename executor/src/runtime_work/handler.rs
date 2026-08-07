@@ -304,7 +304,6 @@ pub struct RuntimeWorkRpcHandler {
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
     connectors: ConnectorRuntime,
-    queue_runs: Arc<Mutex<HashMap<String, robot_queue_rpc::QueueRunContext>>>,
 }
 
 #[derive(Default)]
@@ -382,7 +381,6 @@ impl RuntimeWorkRpcHandler {
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
-            queue_runs: Arc::new(Mutex::new(HashMap::new())),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -402,7 +400,6 @@ impl RuntimeWorkRpcHandler {
         }
         handler.start_automation_scheduler();
         handler.start_supervisor_scheduler();
-        handler.start_queue_scheduler();
         handler
     }
 

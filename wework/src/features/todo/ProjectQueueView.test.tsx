@@ -197,6 +197,7 @@ describe('ProjectQueueView', () => {
             title: 'Paperwork review',
             status: 'pending',
             execution_state: 'pending_approval',
+            can_approve: true,
             assignment_history: [
               {
                 by_user_id: 2,
@@ -228,6 +229,12 @@ describe('ProjectQueueView', () => {
     await userEvent.click(screen.getByTestId('project-queue-filter-running'))
     expect(screen.getByText('Zap the runner')).toBeInTheDocument()
     expect(screen.queryByText('Paperwork review')).not.toBeInTheDocument()
+    expect(screen.queryByText('Bot queued task')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-queue-filter-all'))
+    await userEvent.click(screen.getByTestId('project-queue-filter-my-approval'))
+    expect(screen.getByText('Paperwork review')).toBeInTheDocument()
+    expect(screen.queryByText('Zap the runner')).not.toBeInTheDocument()
     expect(screen.queryByText('Bot queued task')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-queue-filter-all'))

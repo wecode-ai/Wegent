@@ -101,6 +101,8 @@ pub struct ChatAgentCreate {
     pub execution_environment: Option<String>,
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
+    #[serde(default)]
+    pub created_by_user_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -173,6 +175,7 @@ pub struct LocalExecution {
     pub max_retries: i64,
     pub agent_name: String,
     pub agent_system_prompt: String,
+    pub agent_model: Option<String>,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -377,6 +380,10 @@ pub struct LoopItem {
     pub completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_state: Option<String>,
 }
 
 pub fn default_status() -> String {

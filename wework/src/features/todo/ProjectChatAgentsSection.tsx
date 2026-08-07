@@ -21,8 +21,14 @@ export function ProjectChatAgentsSection({
   canManage: boolean
 }) {
   const { t } = useTranslation('common')
+  // Local project spaces keep their data on this device, so their robots can
+  // only execute on local-capable devices (the local executor or a companion
+  // app). A cloud-bound robot would sit in the queue forever because the local
+  // store only claims local-environment runs.
+  const localProjectOnly = project.project_store === 'local'
   const [chatAgents, setChatAgents] = useState<ProjectChatAgent[]>([])
   const [agentBusy, setAgentBusy] = useState(false)
+  const [creatingChatAgent, setCreatingChatAgent] = useState(false)
   const [editingChatAgent, setEditingChatAgent] = useState<ProjectChatAgent | null>(null)
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState('')
@@ -94,29 +100,16 @@ export function ProjectChatAgentsSection({
 
   const activeChatAgents = chatAgents.filter(agent => agent.status === 'active')
 
-  async function createChatAgent() {
-    if (agentBusy || !projectChatAgentApi) return
-    setAgentBusy(true)
-    try {
-      if (!projectChatAgentApi) throw new Error(t('workbench.project_chat_cloud_required'))
-      const agent = await projectChatAgentApi.create(project.id, {
-        name: t('workbench.project_chat_new_agent'),
-        runtime: 'codex',
-        model: null,
-        systemPrompt: '',
-        visibility: 'creator_admin',
-        executionEnvironment: 'local',
-        executionMode: 'auto',
-        executionDeviceId: null,
-      })
-      setChatAgents(current => [...current, agent])
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
-      )
-    } finally {
-      setAgentBusy(false)
-    }
+  function openCreateChatAgent() {
+    setCreatingChatAgent(true)
+    setEditingChatAgent(null)
+    setAgentName(t('workbench.project_chat_new_agent'))
+    setAgentModel('')
+    setAgentSystemPrompt('')
+    setAgentVisibility('creator_admin')
+    setAgentExecutionEnvironment('local')
+    setAgentExecutionMode('auto')
+    setAgentExecutionDeviceId('')
   }
 
   async function archiveChatAgent(agent: ProjectChatAgent) {
@@ -143,27 +136,57 @@ export function ProjectChatAgentsSection({
     setAgentModel(agent.model ?? '')
     setAgentSystemPrompt(agent.systemPrompt)
     setAgentVisibility(agent.visibility)
-    setAgentExecutionEnvironment(agent.executionEnvironment)
+    setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
     setAgentExecutionMode(agent.executionMode)
-    setAgentExecutionDeviceId(agent.executionDeviceId ?? '')
+    const boundDevice = agent.executionDeviceId ?? ''
+    const deviceIsLocalCapable = availableDevices.some(
+      device =>
+        device.device_id === boundDevice &&
+        (device.device_type === 'local' || device.device_type === 'app')
+    )
+    setAgentExecutionDeviceId(
+      localProjectOnly && boundDevice && !deviceIsLocalCapable ? '' : boundDevice
+    )
   }
 
   async function saveChatAgent() {
-    if (agentBusy || !projectChatAgentApi || !editingChatAgent || !agentName.trim()) return
+    if (
+      agentBusy ||
+      !projectChatAgentApi ||
+      !agentName.trim() ||
+      !agentExecutionDeviceId ||
+      (!creatingChatAgent && !editingChatAgent)
+    )
+      return
     setAgentBusy(true)
     try {
-      const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
-        version: editingChatAgent.version,
-        name: agentName.trim(),
-        model: agentModel.trim() || null,
-        systemPrompt: agentSystemPrompt,
-        visibility: agentVisibility,
-        executionEnvironment: agentExecutionEnvironment,
-        executionMode: agentExecutionMode,
-        executionDeviceId: agentExecutionDeviceId || null,
-      })
-      setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
-      setEditingChatAgent(null)
+      if (creatingChatAgent) {
+        const agent = await projectChatAgentApi.create(project.id, {
+          name: agentName.trim(),
+          runtime: 'codex',
+          model: agentModel.trim() || null,
+          systemPrompt: agentSystemPrompt,
+          visibility: agentVisibility,
+          executionEnvironment: agentExecutionEnvironment,
+          executionMode: agentExecutionMode,
+          executionDeviceId: agentExecutionDeviceId,
+        })
+        setChatAgents(current => [...current, agent])
+        setCreatingChatAgent(false)
+      } else if (editingChatAgent) {
+        const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
+          version: editingChatAgent.version,
+          name: agentName.trim(),
+          model: agentModel.trim() || null,
+          systemPrompt: agentSystemPrompt,
+          visibility: agentVisibility,
+          executionEnvironment: agentExecutionEnvironment,
+          executionMode: agentExecutionMode,
+          executionDeviceId: agentExecutionDeviceId || null,
+        })
+        setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+        setEditingChatAgent(null)
+      }
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
@@ -189,7 +212,7 @@ export function ProjectChatAgentsSection({
             type="button"
             data-testid="cloud-project-chat-agent-add"
             disabled={agentBusy}
-            onClick={() => void createChatAgent()}
+            onClick={openCreateChatAgent}
             className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" /> {t('workbench.project_chat_agents_add')}
@@ -259,8 +282,15 @@ export function ProjectChatAgentsSection({
           ))
         )}
       </div>
-      {canManage && editingChatAgent ? (
+      {canManage && (creatingChatAgent || editingChatAgent) ? (
         <div className="mt-3 space-y-2 rounded-xl border border-border bg-background p-3">
+          <h3 className="text-sm font-semibold">
+            {creatingChatAgent
+              ? t('workbench.project_chat_agents_add')
+              : t('workbench.project_chat_agents_edit', {
+                  name: editingChatAgent?.name ?? '',
+                })}
+          </h3>
           <input
             data-testid="cloud-project-chat-agent-name"
             value={agentName}
@@ -326,6 +356,7 @@ export function ProjectChatAgentsSection({
                 value={agentExecutionEnvironment}
                 onChange={event => {
                   const next = event.target.value as ProjectChatAgent['executionEnvironment']
+                  if (localProjectOnly && next !== 'local') return
                   setAgentExecutionEnvironment(next)
                   setAgentExecutionDeviceId(current => {
                     const currentDevice = availableDevices.find(
@@ -344,7 +375,9 @@ export function ProjectChatAgentsSection({
                 className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
               >
                 <option value="local">{t('workbench.project_chat_agent_env_local')}</option>
-                <option value="cloud">{t('workbench.project_chat_agent_env_cloud')}</option>
+                {!localProjectOnly ? (
+                  <option value="cloud">{t('workbench.project_chat_agent_env_cloud')}</option>
+                ) : null}
               </select>
             </label>
             <label className="block">
@@ -394,7 +427,10 @@ export function ProjectChatAgentsSection({
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setEditingChatAgent(null)}
+              onClick={() => {
+                setCreatingChatAgent(false)
+                setEditingChatAgent(null)
+              }}
               className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted"
             >
               {t('common.cancel')}
@@ -402,7 +438,7 @@ export function ProjectChatAgentsSection({
             <button
               type="button"
               data-testid="cloud-project-chat-agent-save"
-              disabled={agentBusy || !agentName.trim()}
+              disabled={agentBusy || !agentName.trim() || !agentExecutionDeviceId}
               onClick={() => void saveChatAgent()}
               className="h-8 rounded-lg bg-primary px-3 text-sm text-primary-foreground disabled:opacity-40"
             >

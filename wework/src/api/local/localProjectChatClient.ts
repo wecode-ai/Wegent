@@ -40,6 +40,17 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
     record.status === 'cancelled'
       ? record.status
       : 'completed'
+  const runtimeAddressRecord = record.metadata?.runtime_address
+  const runtimeAddress =
+    runtimeAddressRecord &&
+    typeof runtimeAddressRecord === 'object' &&
+    typeof (runtimeAddressRecord as { deviceId?: unknown }).deviceId === 'string' &&
+    typeof (runtimeAddressRecord as { taskId?: unknown }).taskId === 'string'
+      ? {
+          deviceId: (runtimeAddressRecord as { deviceId: string }).deviceId,
+          taskId: (runtimeAddressRecord as { taskId: string }).taskId,
+        }
+      : undefined
   return {
     sequenceNumber: record.sequence_number,
     messageId: record.message_id,
@@ -52,6 +63,7 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
     metadata: record.metadata ?? {},
     replyToMessageId: record.reply_to_message_id ?? null,
     rootMessageId: record.thread_root_message_id ?? null,
+    runtimeAddress,
     status,
     createdAt: record.created_at,
     updatedAt: record.updated_at,

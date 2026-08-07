@@ -3,6 +3,16 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test('updates the workbench user when the active identity changes', () => {
+    const state = workbenchReducer(
+      { ...initialWorkbenchState, user: { id: 1, user_name: 'alice', email: 'a@b.c' } },
+      { type: 'user_updated', user: { id: 2, user_name: 'hongyu9', email: 'h@b.c' } }
+    )
+
+    expect(state.user?.id).toBe(2)
+    expect(state.user?.user_name).toBe('hongyu9')
+  })
+
   test('selects a project and keeps runtime task empty', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'project_selected',

@@ -24,6 +24,32 @@ Project spaces provide an **Automation** entry that manages robot members and th
 
 The execution queue shows each robot task's state (pending, queued, claimed, running, failed for retry) and supports keyword search. Completed automation runs remain as comments in the task detail, where a human can accept the result or ask the robot to continue.
 
+Robots in a local project space can only bind to the local executor or a companion App device; cloud devices are reserved for cloud project spaces. The local App claims the queue every 3 seconds, keeps running tasks leased, and automatically requeues runs that were interrupted after their lease expired, so a run can never stay stuck in "running".
+
+### Run a cloud device on this machine (for development testing)
+
+Robots in a cloud project space can execute on cloud devices. During local
+development you can register this machine's executor as a `device_type=cloud`
+device with the repo script, so the cloud-device dispatch path can be verified
+locally:
+
+```bash
+bash executor/scripts/dev-cloud-device.sh start    # start and keep online (idempotent)
+bash executor/scripts/dev-cloud-device.sh status   # show running/online state
+bash executor/scripts/dev-cloud-device.sh restart  # restart with the latest source
+bash executor/scripts/dev-cloud-device.sh stop     # stop
+```
+
+- The default device id is `cloud-device-dev` (override with `DEVICE_ID`); it
+  appears under "cloud devices" in the device list after registration.
+- The script builds the latest executor, mints a 30-day token from the
+  `backend/.env` secret, and uses an isolated executor home and Codex home (it
+  never reads personal Codex credentials).
+- When creating a robot, choose the "cloud" execution environment and
+  `cloud-device-dev` as the device; assigned tasks then execute locally through
+  the cloud-device protocol and write back comments and execution records.
+- Runtime data and logs live in `~/.wegent-executor-cloud-device/`.
+
 ## Models and devices
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.

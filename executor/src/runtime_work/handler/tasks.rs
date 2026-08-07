@@ -140,10 +140,32 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
             }
         }
+        let payload_has_workspace_path = payload_workspace_path.is_some();
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
-            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+            .ok_or_else(|| {
+                log_executor_event(
+                    "runtime task create missing workspace path",
+                    &[
+                        ("task_id", local_task_id.clone()),
+                        (
+                            "payload_has_workspace_path",
+                            payload_has_workspace_path.to_string(),
+                        ),
+                        ("request_cwd", request.cwd().unwrap_or_default().to_owned()),
+                        (
+                            "standalone_chat_workspace",
+                            is_standalone_chat_workspace(&request).to_string(),
+                        ),
+                        (
+                            "request_extra_keys",
+                            format!("{:?}", request.extra.keys().collect::<Vec<_>>()),
+                        ),
+                    ],
+                );
+                AppIpcError::new("bad_request", "workspacePath is required")
+            })?;
         if request.project_workspace_path.is_none() {
             request.project_workspace_path = Some(workspace_path.clone());
         }

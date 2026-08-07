@@ -45,6 +45,10 @@ interface LocalLoopItemRecord {
   created_at: string
   updated_at: string
   completed_at: string | null
+  assignee_user_id?: number | null
+  assignee_agent_id?: string | null
+  execution_id?: number | null
+  execution_state?: string | null
 }
 
 interface LocalTaskBindingRecord {
@@ -128,6 +132,10 @@ export interface LocalLoopItemExecution {
   version: number
   created_at: string
   updated_at: string
+  agent_name: string
+  agent_system_prompt: string
+  agent_model?: string | null
+  execution_payload?: Record<string, unknown> | null
 }
 
 function stringList(value: unknown): string[] {
@@ -310,7 +318,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
   }
 }
 
-export function createLocalProjectChatAgentApi(request: LocalRequest) {
+export function createLocalProjectChatAgentApi(request: LocalRequest, currentUserId?: number) {
   return {
     async list(projectId: string): Promise<LocalProjectChatAgent[]> {
       const records = await request<LocalAgentRecord[]>('chat_agents.list', {
@@ -341,6 +349,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest) {
           execution_environment: input.executionEnvironment ?? 'local',
           execution_mode: input.executionMode ?? 'auto',
           execution_device_id: input.executionDeviceId ?? null,
+          created_by_user_id: currentUserId ?? null,
         },
       })
       return localAgent(record)
@@ -412,6 +421,42 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         reason: reason ?? null,
       })
     },
+    async claimNext(claim: {
+      execution_device_id?: string | null
+      device_capacity?: number
+      lease_seconds?: number
+    }): Promise<LocalLoopItemExecution | null> {
+      return request<LocalLoopItemExecution | null>('executions.claim_next', { claim })
+    },
+    async heartbeat(
+      executionId: number,
+      runtimeDeviceId: string | null,
+      runtimeTaskId: string | null,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution>('executions.heartbeat', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
+      })
+    },
+    async complete(executionId: number, note?: string | null) {
+      return request<LocalLoopItemExecution>('executions.complete', {
+        execution_id: executionId,
+        note: note ?? null,
+      })
+    },
+    async fail(executionId: number, error: string, requeue = true) {
+      return request<LocalLoopItemExecution>('executions.fail', {
+        execution_id: executionId,
+        error,
+        requeue,
+      })
+    },
+    async recoverStale(): Promise<{ requeued: number; failed: number }> {
+      return request<{ requeued: number; failed: number }>('executions.recover_stale', {})
+    },
   }
 }
 
@@ -432,7 +477,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : null,
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
-    assignee_user_id: null,
+    assignee_user_id: record.assignee_user_id ?? null,
+    assignee_agent_id: record.assignee_agent_id ?? null,
+    execution_id: record.execution_id ?? null,
+    execution_state: record.execution_state ?? null,
     assignee_name:
       typeof record.metadata.assignee_label === 'string'
         ? record.metadata.assignee_label || null
@@ -589,12 +637,26 @@ export function createLocalDeliveryApi(
     async listMyWork() {
       return { items: [] }
     },
-    async listLoopItems(projectId: CloudProjectId) {
+    async listLoopItems(
+      projectId: CloudProjectId,
+      options: {
+        assigneeType?: 'user' | 'agent'
+        assigneeId?: string | number
+      } = {}
+    ) {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(record => localTask(record)) }
+      let items = records.map(record => localTask(record))
+      if (options.assigneeType === 'agent' && options.assigneeId !== undefined) {
+        const agentId = String(options.assigneeId)
+        items = items.filter(item => item.assignee_agent_id === agentId)
+      } else if (options.assigneeType === 'user' && options.assigneeId !== undefined) {
+        const userId = Number(options.assigneeId)
+        items = items.filter(item => item.assignee_user_id === userId)
+      }
+      return { items }
     },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
@@ -693,7 +755,9 @@ export function createLocalDeliveryApi(
       return { items: records.map(record => localTask(record)) }
     },
     async listLoopItemAttachments(itemId: string) {
+      const projectId = await resolveProjectId(itemId)
       return request<CloudLoopItemAttachment[]>('attachments.list', {
+        project_id: projectId,
         item_id: itemId,
       })
     },

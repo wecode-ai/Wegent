@@ -61,6 +61,14 @@ export function TaskActivityView({
   const { t } = useTranslation('common')
   const { services, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
+  // Local project spaces keep their board, comments and runs in the local
+  // executor; every delivery/approval call must route to the project's space
+  // API instead of always hitting the cloud backend.
+  const projectLocation = (project as { location?: 'local' | 'cloud' }).location
+  const projectDeliveryApi =
+    projectLocation === 'local'
+      ? (services.projectSpaceApis?.local ?? services.deliveryApi)
+      : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
   const [executionDetail, setExecutionDetail] = useState<{
     address: RuntimeTaskAddress
     senderName: string
@@ -244,8 +252,8 @@ export function TaskActivityView({
 
   useEffect(() => {
     if (
-      !services.deliveryApi ||
-      typeof services.deliveryApi.getLoopItem !== 'function' ||
+      !projectDeliveryApi ||
+      typeof projectDeliveryApi.getLoopItem !== 'function' ||
       task.status === 'completed'
     ) {
       return
@@ -283,7 +291,7 @@ export function TaskActivityView({
       runtimeDeviceId: terminalResponse.runtimeAddress?.deviceId,
       runtimeTaskId: terminalResponse.runtimeAddress?.taskId,
     })
-    void services.deliveryApi
+    void projectDeliveryApi
       .getLoopItem(task.id)
       .then(updated => {
         console.info('[Wework] Task activity refreshed task after terminal AI message', {
@@ -298,7 +306,7 @@ export function TaskActivityView({
       .catch(cause => {
         setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
       })
-  }, [messages, onTaskUpdated, services.deliveryApi, t, task.id, task.status])
+  }, [messages, onTaskUpdated, projectDeliveryApi, t, task.id, task.status])
 
   const threadMessages = useMemo(
     () => messages.filter(message => message.taskId === task.id),
@@ -345,6 +353,7 @@ export function TaskActivityView({
   const isBotCreator = assignedAgent
     ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
     : false
+  const canApproveCurrentRun = task.can_approve === true || isBotCreator
   const awaitingApproval = task.execution_state === 'pending_approval'
   const aiTerminalFailure = ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(
     task.ai_state?.status ?? ''
@@ -405,10 +414,10 @@ export function TaskActivityView({
   }
 
   async function acceptTask() {
-    if (!services.deliveryApi) return
+    if (!projectDeliveryApi) return
     setError(null)
     try {
-      const updated = await services.deliveryApi.updateLoopItem(task.id, {
+      const updated = await projectDeliveryApi.updateLoopItem(task.id, {
         version: task.version,
         status: 'completed',
       })
@@ -419,14 +428,10 @@ export function TaskActivityView({
   }
 
   async function approveTaskRun() {
-    if (!services.deliveryApi || !project) return
+    if (!projectDeliveryApi || !project) return
     setError(null)
     try {
-      const updated = await services.deliveryApi.approveLoopItemRun(
-        project.id,
-        task.id,
-        task.version
-      )
+      const updated = await projectDeliveryApi.approveLoopItemRun(project.id, task.id, task.version)
       onTaskUpdated?.(updated)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.task_activity_approve_failed'))
@@ -434,12 +439,12 @@ export function TaskActivityView({
   }
 
   async function rejectTaskRun() {
-    if (!services.deliveryApi || !project) return
+    if (!projectDeliveryApi || !project) return
     const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt')) ?? undefined
     if (reason === undefined) return
     setError(null)
     try {
-      const updated = await services.deliveryApi.rejectLoopItemRun(
+      const updated = await projectDeliveryApi.rejectLoopItemRun(
         project.id,
         task.id,
         task.version,
@@ -698,7 +703,7 @@ export function TaskActivityView({
               {assignedAgent.name}
             </span>
           ) : null}
-          {awaitingApproval && isBotCreator ? (
+          {awaitingApproval && canApproveCurrentRun ? (
             <div
               data-testid={`cloud-task-activity-approval-${task.id}`}
               className="flex items-center gap-1.5"
@@ -721,9 +726,13 @@ export function TaskActivityView({
               </button>
             </div>
           ) : null}
-          {awaitingApproval && !isBotCreator ? (
+          {awaitingApproval && !canApproveCurrentRun ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700">
-              {t('workbench.task_activity_awaiting_approval')}
+              {assignedAgent?.createdByUserName
+                ? t('workbench.task_activity_awaiting_approval_with_creator', {
+                    name: assignedAgent.createdByUserName,
+                  })
+                : t('workbench.task_activity_awaiting_approval')}
             </span>
           ) : null}
           {task.execution_state === 'cancelled' ? (
@@ -779,7 +788,7 @@ export function TaskActivityView({
                   {t('workbench.task_activity_rerun')}
                 </button>
               ) : null}
-              {services.deliveryApi ? (
+              {projectDeliveryApi ? (
                 <button
                   type="button"
                   data-testid={`cloud-task-activity-accept-${task.id}`}

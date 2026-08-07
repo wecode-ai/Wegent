@@ -16,7 +16,6 @@ import {
   CircleUserRound,
   Copy,
   Download,
-  ArrowRight,
   File,
   FileText,
   Flag,
@@ -30,6 +29,7 @@ import {
   Tag,
   Trash2,
   Upload,
+  Waypoints,
   X,
 } from 'lucide-react'
 import type {
@@ -46,7 +46,9 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
@@ -497,6 +499,7 @@ export type TodoEditorProps = {
 // deliveries) and saves through a versioned update.
 export function TodoEditor(props: TodoEditorProps) {
   const { api, allItems, onClose } = props
+  const { t } = useTranslation('common')
   const createProps = props.mode === 'create' ? props : null
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
@@ -607,6 +610,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [fullScreen, setFullScreen] = useState(false)
+  const [assignmentChainOpen, setAssignmentChainOpen] = useState(false)
+  const assignmentChainTriggerRef = useRef<HTMLButtonElement>(null)
   const detailScrollRef = useRef<HTMLDivElement>(null)
 
   const editItemId = item?.id ?? null
@@ -628,7 +633,7 @@ export function TodoEditor(props: TodoEditorProps) {
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return
-    void Promise.all([
+    void Promise.allSettled([
       api.listDeliveries(editItemId),
       api.listTaskBindings(editItemId),
       api.listLoopItemAttachments(editItemId),
@@ -637,19 +642,21 @@ export function TodoEditor(props: TodoEditorProps) {
       props.projectChatAgentApi?.list(String(editProjectId)) ?? Promise.resolve([]),
     ]).then(
       ([
-        deliveryResponse,
-        taskResponse,
-        attachmentResponse,
-        collaboratorResponse,
-        memberResponse,
-        agentResponse,
+        deliveryResult,
+        taskResult,
+        attachmentResult,
+        collaboratorResult,
+        memberResult,
+        agentResult,
       ]) => {
-        setDeliveries(deliveryResponse.items)
-        setTasks(taskResponse)
-        setAttachments(attachmentResponse)
-        setCollaborators(collaboratorResponse)
-        setProjectMembers(memberResponse)
-        setProjectAgents(agentResponse.filter(agent => agent.status === 'active'))
+        if (deliveryResult.status === 'fulfilled') setDeliveries(deliveryResult.value.items)
+        if (taskResult.status === 'fulfilled') setTasks(taskResult.value)
+        if (attachmentResult.status === 'fulfilled') setAttachments(attachmentResult.value)
+        if (collaboratorResult.status === 'fulfilled') setCollaborators(collaboratorResult.value)
+        if (memberResult.status === 'fulfilled') setProjectMembers(memberResult.value)
+        if (agentResult.status === 'fulfilled') {
+          setProjectAgents(agentResult.value.filter(agent => agent.status === 'active'))
+        }
       }
     )
   }, [api, editItemId, editProjectId, props.projectChatAgentApi])
@@ -771,7 +778,7 @@ export function TodoEditor(props: TodoEditorProps) {
             version: created.version,
             assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
             assigneeId: assigneeTarget.startsWith('user:')
-              ? Number(assigneeTarget.slice(5))
+              ? assigneeTarget.slice(5)
               : assigneeTarget.slice(6),
           })
         } else {
@@ -797,6 +804,17 @@ export function TodoEditor(props: TodoEditorProps) {
       }
       props.onCreated(created)
     } catch (cause) {
+      console.error('[todo-editor] task create/assign failed', {
+        mode: 'create',
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskProvider: project?.task_provider,
+        projectLocation: (project as { location?: string } | null)?.location,
+        assigneeTarget,
+        usesAssignApi: supportsAssignApi(api),
+        error: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack : null,
+      })
       setSaveError(cause instanceof Error ? cause.message : '创建任务失败')
     } finally {
       setSaving(false)
@@ -825,12 +843,18 @@ export function TodoEditor(props: TodoEditorProps) {
           ? `user:${current.assignee_user_id}`
           : ''
       if (assigneeTarget !== currentAssigneeTarget) {
-        if (project && supportsAssignApi(api)) {
+        if (!assigneeTarget) {
+          updated = await api.updateLoopItem(current.id, {
+            version: updated.version,
+            assignee_user_id: null,
+            assignee_agent_id: null,
+          })
+        } else if (project && supportsAssignApi(api)) {
           updated = await api.assignLoopItem(project.id, current.id, {
             version: updated.version,
             assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
             assigneeId: assigneeTarget.startsWith('user:')
-              ? Number(assigneeTarget.slice(5))
+              ? assigneeTarget.slice(5)
               : assigneeTarget.slice(6),
           })
         } else {
@@ -844,7 +868,27 @@ export function TodoEditor(props: TodoEditorProps) {
         }
       }
       props.onUpdated(updated)
+      console.log('[todo-editor] task saved', {
+        itemId: updated.id,
+        version: updated.version,
+        assignee_user_id: updated.assignee_user_id ?? null,
+        assignee_agent_id: updated.assignee_agent_id ?? null,
+        assignee_name: updated.assignee_name ?? null,
+        requested_assignee_target: assigneeTarget,
+      })
     } catch (cause) {
+      console.error('[todo-editor] task save/assign failed', {
+        mode: 'edit',
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskProvider: project?.task_provider,
+        projectLocation: (project as { location?: string } | null)?.location,
+        itemId: current.id,
+        assigneeTarget,
+        usesAssignApi: supportsAssignApi(api),
+        error: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack : null,
+      })
       setSaveError(cause instanceof Error ? cause.message : '保存任务失败')
     } finally {
       setSaving(false)
@@ -1247,32 +1291,21 @@ export function TodoEditor(props: TodoEditorProps) {
         ) : (
           <span>添加</span>
         )}
+        {item?.assignment_history?.length ? (
+          <button
+            ref={assignmentChainTriggerRef}
+            type="button"
+            data-testid="cloud-todo-assignment-chain-trigger"
+            aria-label={t('todo.assignment_chain_trigger', '查看指派详情')}
+            aria-expanded={assignmentChainOpen}
+            title={t('todo.assignment_chain_trigger', '查看指派详情')}
+            onClick={() => setAssignmentChainOpen(current => !current)}
+            className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+          >
+            <Waypoints className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </RailProp>
-      {item?.assignment_history?.length ? (
-        <div
-          data-testid="cloud-todo-assignment-chain"
-          className="border-t border-border/60 px-3 py-2 text-xs text-text-muted"
-        >
-          <p className="mb-1 font-medium">指派链</p>
-          {item.assignment_history.map((entry, index) => {
-            const byName = memberNameById(projectMembers, entry.by_user_id)
-            const toName =
-              entry.to_type === 'agent'
-                ? (entry.to_name ?? '机器人')
-                : (entry.to_name ?? memberNameById(projectMembers, Number(entry.to_id)))
-            return (
-              <div key={`${entry.at}-${index}`} className="flex items-center gap-1.5 py-0.5">
-                <span className="truncate">{byName ?? `#${entry.by_user_id}`}</span>
-                <ArrowRight className="h-3 w-3 shrink-0" />
-                <span className="truncate">{toName ?? '未指派'}</span>
-                <span className="ml-auto shrink-0 text-xs">
-                  {new Date(entry.at).toLocaleString()}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      ) : null}
       <RailProp label="截止日期" control={dueInput}>
         <span className={cn(railDueDate && 'text-red-500')}>{railDueDate ?? '添加日期'}</span>
       </RailProp>
@@ -2097,6 +2130,14 @@ export function TodoEditor(props: TodoEditorProps) {
           </footer>
         ) : null}
       </section>
+      {assignmentChainOpen && item?.assignment_history?.length ? (
+        <AssignmentChainPopover
+          anchor={assignmentChainTriggerRef.current}
+          entries={item.assignment_history}
+          projectMembers={projectMembers}
+          onClose={() => setAssignmentChainOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

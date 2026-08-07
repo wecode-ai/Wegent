@@ -139,4 +139,35 @@ describe('createLocalProjectChatClient', () => {
     )
     subscription.unsubscribe()
   })
+
+  it('maps runtime_address metadata onto agent messages', async () => {
+    vi.useFakeTimers()
+    request.mockResolvedValue([
+      commentRecord({
+        id: 2,
+        message_id: 'm-2',
+        sender_type: 'agent',
+        sender_id: 'a1',
+        sender_name: 'Bot',
+        content: '搞定',
+        status: 'completed',
+        sequence_number: 2,
+        metadata: {
+          execution_id: 7,
+          runtime_address: { deviceId: 'local-device', taskId: 'codex-queue-7-123' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+
+    const subscription = await client.subscribe('p1', 't1', 0, () => {})
+
+    expect(subscription.snapshot.messages[0].runtimeAddress).toEqual({
+      deviceId: 'local-device',
+      taskId: 'codex-queue-7-123',
+    })
+    subscription.unsubscribe()
+  })
 })

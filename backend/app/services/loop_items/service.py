@@ -11,7 +11,7 @@ import logging
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -163,6 +163,9 @@ class LoopItemService:
         values["queued_at"] = execution.queued_at if execution else None
         values["execution_note"] = (
             execution.execution_note or None if execution else None
+        )
+        values["can_approve"] = self._can_approve_run(
+            db, item=item, execution=execution, user_id=user_id
         )
         values["approval"] = self._approval_view(execution)
         if isinstance(ai_state, dict):
@@ -1507,16 +1510,35 @@ class LoopItemService:
             .filter(LoopItemCollaborator.user_id == user_id)
             .all()
         }
+        my_agent_ids = {
+            agent_id
+            for (agent_id,) in db.query(ProjectChatAgent.id)
+            .filter(
+                ProjectChatAgent.created_by_user_id == user_id,
+                ProjectChatAgent.status == "active",
+                loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+            )
+            .all()
+            if agent_id
+        }
+        my_work_membership = or_(
+            LoopItem.created_by_user_id == user_id,
+            LoopItem.assignee_user_id == user_id,
+            LoopItem.id.in_(active_task_items),
+            LoopItem.id.in_(collaborator_items),
+        )
+        if my_agent_ids:
+            my_work_membership = or_(
+                my_work_membership, LoopItem.assignee_agent_id.in_(my_agent_ids)
+            )
+        my_work_filters = [
+            LoopItem.cloud_project_id.in_(project_by_id),
+            loop_datetime_is_unset(LoopItem.deleted_at),
+            my_work_membership,
+        ]
         items = (
             db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                loop_datetime_is_unset(LoopItem.deleted_at),
-                (LoopItem.created_by_user_id == user_id)
-                | (LoopItem.assignee_user_id == user_id)
-                | LoopItem.id.in_(active_task_items)
-                | LoopItem.id.in_(collaborator_items),
-            )
+            .filter(*my_work_filters)
             .order_by(LoopItem.updated_at.desc())
             .all()
         )
@@ -1566,10 +1588,30 @@ class LoopItemService:
                     "execution_note": (
                         getattr(execution, "execution_note", "") or None
                     ),
+                    "can_approve": self._can_approve_run(
+                        db, item=item, execution=execution, user_id=user_id
+                    ),
                     "approval": self._approval_view(execution),
                 }
             )
         return result
+
+    @staticmethod
+    def _can_approve_run(
+        db: Session, *, item: LoopItem, execution: Any, user_id: int
+    ) -> bool:
+        """Whether the current user is the assigned robot's creator and this
+        run is waiting for their manual approval."""
+
+        if (
+            execution is None
+            or getattr(execution, "status", None) != "pending_approval"
+        ):
+            return False
+        if not item.assignee_agent_id:
+            return False
+        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        return agent is not None and agent.created_by_user_id == user_id
 
     @staticmethod
     def _agent_visible_to_user(

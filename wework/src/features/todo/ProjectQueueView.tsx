@@ -18,6 +18,7 @@ const QUEUE_STATES = new Set([
   'running',
   'failed',
 ])
+const MY_APPROVAL_FILTER = 'my_approval'
 
 function queueStateLabel(state: string, t: TFunction): string {
   switch (state) {
@@ -45,7 +46,9 @@ function isInQueue(item: CloudLoopItem): boolean {
 }
 
 function executionInQueue(execution: LocalLoopItemExecution): boolean {
-  return ['pending_approval', 'queued', 'claimed', 'running'].includes(execution.status)
+  // Keep terminal failed runs visible with their error state, matching the
+  // cloud queue (which keeps 'failed' execution_state items in the columns).
+  return ['pending_approval', 'queued', 'claimed', 'running', 'failed'].includes(execution.status)
 }
 
 function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
@@ -56,6 +59,8 @@ function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
     parent_id: null,
     created_by_user_id: execution.assigner_user_id,
     assignee_user_id: null,
+    assignee_agent_id: execution.agent_id,
+    assignee_agent_name: execution.agent_name,
     title: execution.task_title,
     description: '',
     status: execution.task_status ?? 'inbox',
@@ -70,6 +75,7 @@ function executionToItem(execution: LocalLoopItemExecution): CloudLoopItem {
     completed_at: execution.completed_at ?? null,
     execution_id: execution.id,
     execution_state: execution.status,
+    can_approve: execution.status === 'pending_approval',
     execution_note: execution.execution_note || null,
     assignment_history: [],
   }
@@ -251,7 +257,7 @@ export function ProjectQueueView({
   }, [agents, botQueues, currentUserId, myTasks, t])
 
   const stateCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: 0 }
+    const counts: Record<string, number> = { all: 0, my_approval: 0 }
     QUEUE_STATES.forEach(state => {
       counts[state] = 0
     })
@@ -260,6 +266,9 @@ export function ProjectQueueView({
         counts.all += 1
         const state = item.execution_state ?? ''
         if (counts[state] !== undefined) counts[state] += 1
+        if (state === 'pending_approval' && item.can_approve === true) {
+          counts.my_approval += 1
+        }
       }
     }
     return counts
@@ -267,7 +276,9 @@ export function ProjectQueueView({
 
   const trimmedQuery = query.trim().toLowerCase()
   const isVisible = (item: CloudLoopItem) =>
-    (stateFilter === 'all' || item.execution_state === stateFilter) &&
+    (stateFilter === MY_APPROVAL_FILTER
+      ? item.execution_state === 'pending_approval' && item.can_approve === true
+      : stateFilter === 'all' || item.execution_state === stateFilter) &&
     (!trimmedQuery || item.title.toLowerCase().includes(trimmedQuery))
 
   return (
@@ -311,6 +322,19 @@ export function ProjectQueueView({
             {queueStateLabel(state, t)} {stateCounts[state]}
           </button>
         ))}
+        <button
+          type="button"
+          data-testid="project-queue-filter-my-approval"
+          onClick={() => setStateFilter(MY_APPROVAL_FILTER)}
+          className={cn(
+            'h-8 rounded-lg border px-3 text-xs',
+            stateFilter === MY_APPROVAL_FILTER
+              ? 'border-transparent bg-text-primary font-medium text-background'
+              : 'border-border bg-background text-text-secondary hover:bg-muted'
+          )}
+        >
+          {t('workbench.queue_filter_my_approval')} {stateCounts.my_approval}
+        </button>
         <label className="ml-auto flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
           <Search className="h-3.5 w-3.5" />
           <input

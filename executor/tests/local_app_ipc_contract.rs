@@ -424,6 +424,133 @@ async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
 }
 
 #[tokio::test]
+async fn app_ipc_reclaims_expired_local_robot_runs() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Queue project",
+                "project_key": "QUEUE",
+                "description": "",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let project_id = project["id"].as_str().unwrap().to_owned();
+
+    let agent = server
+        .dispatch(
+            "chat_agents.create",
+            json!({
+                "project_id": project_id,
+                "agent": {
+                    "name": "Queue Bot",
+                    "model": null,
+                    "system_prompt": "",
+                    "visibility": "creator_admin",
+                    "execution_environment": "local",
+                    "execution_mode": "auto",
+                    "execution_device_id": "local-device"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let agent_id = agent["id"].as_str().unwrap().to_owned();
+
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project_id,
+                "todo": {
+                    "title": "Queue task",
+                    "status": "inbox",
+                    "priority": "high"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let task_id = task["id"].as_str().unwrap().to_owned();
+    server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": task_id,
+                "todo": {
+                    "version": task["version"],
+                    "assignee_agent_id": agent_id
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let claimed = server
+        .dispatch(
+            "executions.claim_next",
+            json!({
+                "claim": {
+                    "execution_device_id": "local-device",
+                    "device_capacity": 5,
+                    "lease_seconds": 300
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let execution_id = claimed["id"].as_i64().unwrap();
+    assert_eq!(claimed["status"], "running");
+
+    // Crash the run out-of-band: expire the lease without a terminal event.
+    let connection =
+        rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
+    connection
+        .execute(
+            "UPDATE loop_item_executions
+             SET lease_expires_at = '2000-01-01T00:00:00+00:00'
+             WHERE id = ?1",
+            rusqlite::params![execution_id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let recovered = server
+        .dispatch("executions.recover_stale", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(recovered["requeued"], 1);
+    assert_eq!(recovered["failed"], 0);
+
+    let executions = server
+        .dispatch(
+            "executions.list",
+            json!({
+                "project_id": project_id,
+                "agent_id": null,
+                "status": null,
+                "include_terminal": true
+            }),
+        )
+        .await
+        .unwrap();
+    let list = executions.as_array().unwrap();
+    assert_eq!(list[0]["status"], "queued");
+    assert_eq!(list[0]["retry_attempt"], 1);
+}
+
+#[tokio::test]
 async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();

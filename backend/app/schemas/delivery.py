@@ -76,6 +76,7 @@ class LoopItemResponse(BaseModel):
     assignee_agent_name: str | None = None
     ai_state: dict[str, Any] | None = None
     execution_state: str | None = None
+    can_approve: bool = False
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
     queued_at: str | None = None
@@ -97,37 +98,60 @@ class LoopItemResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def populate_tags(cls, value: object) -> object:
-        """Fill tags from the metadata JSON when the input has no tags key."""
+        """Fill tags and metadata-derived fields when the input has no tags key."""
         if isinstance(value, dict) and "tags" not in value:
             metadata = value.get("metadata_json")
-            tags = metadata.get("tags") if isinstance(metadata, dict) else None
-            ai_state = metadata.get("ai_state") if isinstance(metadata, dict) else None
-            assignment_history = (
-                metadata.get("assignment_history")
-                if isinstance(metadata, dict)
-                else None
+            metadata = metadata if isinstance(metadata, dict) else {}
+            ai_state = (
+                value.get("ai_state")
+                if value.get("ai_state") is not None
+                else (
+                    metadata.get("ai_state")
+                    if isinstance(metadata.get("ai_state"), dict)
+                    else None
+                )
             )
-            approval = metadata.get("approval") if isinstance(metadata, dict) else None
+            assignment_history = (
+                value.get("assignment_history")
+                if value.get("assignment_history") is not None
+                else (
+                    metadata.get("assignment_history")
+                    if isinstance(metadata.get("assignment_history"), list)
+                    else []
+                )
+            )
+            approval = (
+                value.get("approval")
+                if value.get("approval") is not None
+                else (
+                    metadata.get("approval")
+                    if isinstance(metadata.get("approval"), dict)
+                    else None
+                )
+            )
+            queued_at_value = value.get("queued_at")
+            if isinstance(queued_at_value, datetime):
+                queued_at = queued_at_value.isoformat()
+            elif isinstance(queued_at_value, str):
+                queued_at = queued_at_value
+            else:
+                queued_at = metadata.get("queued_at")
             return {
                 **value,
-                "tags": _normalize_tags(tags),
-                "ai_state": ai_state if isinstance(ai_state, dict) else None,
+                "tags": _normalize_tags(metadata.get("tags")),
+                "ai_state": ai_state,
                 "execution_state": (
-                    metadata.get("execution_state")
-                    if isinstance(metadata, dict)
-                    else None
+                    value.get("execution_state")
+                    if value.get("execution_state") is not None
+                    else metadata.get("execution_state")
                 ),
-                "assignment_history": (
-                    assignment_history if isinstance(assignment_history, list) else []
-                ),
-                "approval": approval if isinstance(approval, dict) else None,
-                "queued_at": (
-                    metadata.get("queued_at") if isinstance(metadata, dict) else None
-                ),
+                "assignment_history": assignment_history,
+                "approval": approval,
+                "queued_at": queued_at,
                 "execution_note": (
-                    metadata.get("execution_note")
-                    if isinstance(metadata, dict)
-                    else None
+                    value.get("execution_note")
+                    if value.get("execution_note") is not None
+                    else metadata.get("execution_note")
                 ),
             }
         return value
