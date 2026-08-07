@@ -630,6 +630,8 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 }
 
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  const deviceName = deviceState.device?.name?.trim()
+  if (deviceName) return deviceName
   return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
 }
 

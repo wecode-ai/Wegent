@@ -53,6 +53,12 @@ export interface ApplicationTypeDescriptor {
   enabled: boolean
   order: number
   capabilities: ApplicationCapability[]
+  create?: ApplicationCreatePluginDescriptor | null
+}
+
+export interface ApplicationCreatePluginDescriptor {
+  plugin_name: string
+  marketplace_name: string
 }
 
 export interface ApplicationTypeListResponse {

@@ -12,6 +12,7 @@ Open the account menu in the lower-left corner of Wework and select **About** to
 The version shown in the About page is read from the running Tauri application package metadata,
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Tauri configuration use that value in both places.
+When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
 
 Common macOS shortcuts include:
 

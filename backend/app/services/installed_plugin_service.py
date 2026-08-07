@@ -26,6 +26,7 @@ from app.services.builtin_plugin_registry import (
     BUILTIN_PLUGIN_OWNER_ID,
     BUILTIN_PLUGINS_BY_NAME,
 )
+from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 
 
@@ -310,6 +311,8 @@ class InstalledPluginService:
         ):
             raise HTTPException(status_code=404, detail="Marketplace plugin not found")
 
+        spec = self._get_spec(row)
+        marketplace_visibility = str(spec.get("visibility") or "workspace")
         package = db.query(SkillBinary).filter(SkillBinary.kind_id == row.id).first()
         if not package or not package.binary_data:
             raise HTTPException(
@@ -339,6 +342,9 @@ class InstalledPluginService:
                 source_type="marketplace",
                 provider_key="wegent-marketplace",
                 marketplace_id=marketplace_id,
+                marketplace_name=marketplace_name_for_visibility(
+                    marketplace_visibility
+                ),
             )
 
         return self._create_installed_plugin(
@@ -352,6 +358,7 @@ class InstalledPluginService:
             source_type="marketplace",
             provider_key="wegent-marketplace",
             marketplace_id=marketplace_id,
+            marketplace_name=marketplace_name_for_visibility(marketplace_visibility),
         )
 
     def install_builtin_plugin(
@@ -372,11 +379,19 @@ class InstalledPluginService:
                 detail=f"Built-in plugin is unavailable: {plugin_key}",
             )
         spec = self._get_spec(row)
-        if spec.get("visibility") != "public":
+        visibility = spec.get("visibility")
+        if visibility not in {"workspace", "public"}:
             raise HTTPException(
                 status_code=503,
                 detail=f"Built-in plugin is unavailable: {plugin_key}",
             )
+        if visibility == "public":
+            payload = dict(row.json) if isinstance(row.json, dict) else {}
+            normalized_spec = dict(payload.get("spec") or {})
+            normalized_spec["visibility"] = "workspace"
+            payload["spec"] = normalized_spec
+            row.json = payload
+            db.flush()
         return self.install_marketplace_plugin(
             db=db,
             user_id=user_id,
@@ -396,6 +411,7 @@ class InstalledPluginService:
         source_type: str = "upload",
         provider_key: str = "codex-local",
         marketplace_id: int | None = None,
+        marketplace_name: str | None = None,
     ) -> InstalledPlugin:
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
         row.json = self._build_payload(
@@ -407,6 +423,7 @@ class InstalledPluginService:
             source_type=source_type,
             provider_key=provider_key,
             marketplace_id=marketplace_id,
+            marketplace_name=marketplace_name,
         )
         row.is_active = True
         flag_modified(row, "json")
@@ -434,6 +451,7 @@ class InstalledPluginService:
         source_type: str,
         provider_key: str,
         marketplace_id: int | None,
+        marketplace_name: str | None = None,
     ) -> InstalledPlugin:
         row = Kind(
             user_id=user_id,
@@ -455,6 +473,7 @@ class InstalledPluginService:
             source_type=source_type,
             provider_key=provider_key,
             marketplace_id=marketplace_id,
+            marketplace_name=marketplace_name,
         )
         self._upsert_package(
             db,
@@ -556,6 +575,7 @@ class InstalledPluginService:
         source_type: str = "upload",
         provider_key: str = "codex-local",
         marketplace_id: int | None = None,
+        marketplace_name: str | None = None,
     ) -> Dict[str, Any]:
         source = {
             "type": source_type,
@@ -564,7 +584,9 @@ class InstalledPluginService:
         }
         if marketplace_id is not None:
             source["catalogItemId"] = str(marketplace_id)
-            source["marketplace"] = "wegent"
+            source["marketplace"] = marketplace_name or marketplace_name_for_visibility(
+                "workspace"
+            )
 
         return {
             "apiVersion": "agent.wecode.io/v1",

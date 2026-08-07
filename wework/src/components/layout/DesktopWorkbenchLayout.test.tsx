@@ -3792,7 +3792,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const projectRow = screen.getByTestId('project-row-7')
     expect(within(projectRow).getByTestId('project-device-status-7')).toHaveTextContent(
-      '192.0.2.10'
+      'Online Device'
     )
     expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
   })
@@ -3844,7 +3844,7 @@ describe('DesktopWorkbenchLayout', () => {
     const status = within(screen.getByTestId('project-row-7')).getByTestId(
       'project-device-status-7'
     )
-    expect(status).toHaveTextContent('127.0.0.1')
+    expect(status).toHaveTextContent('Remote Device')
     expect(status).not.toHaveTextContent('9d317900')
   })
 
