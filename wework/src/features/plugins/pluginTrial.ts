@@ -51,6 +51,7 @@ interface PluginReferenceTrial {
 interface PluginTrialOptions {
   prompt?: string
   openInNewChat?: boolean
+  reference?: PluginReferenceTrial
 }
 
 function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
@@ -69,6 +70,25 @@ function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
   return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
 }
 
+function marketplaceNameForVisibility(visibility?: string | null): string | null {
+  switch (visibility) {
+    case 'personal':
+      return 'wework-personal'
+    case 'workspace':
+      return 'wegent'
+    case 'public':
+      return 'wework'
+    default:
+      return null
+  }
+}
+
+function managedMarketplaceName(plugin: InstalledPlugin): string | null {
+  const providerKey = plugin.spec.source?.providerKey
+  if (providerKey !== 'wegent-market' && providerKey !== 'wegent-marketplace') return null
+  return marketplaceNameForVisibility(plugin.spec.visibility) ?? 'wegent'
+}
+
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
   const payload = sourcePayload(plugin)
   const metadataNamespace =
@@ -79,9 +99,9 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
     plugin.spec.source?.pluginKey
   const marketplaceName =
     (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
+    managedMarketplaceName(plugin) ||
     plugin.spec.source?.marketplace ||
-    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
-    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
@@ -197,12 +217,18 @@ export function pluginTrialInput(
   const skill = firstPluginSkill(plugin)
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const referenceOverride = options.reference
   const reference =
-    pluginPath && pluginName
-      ? `[$${pluginName}](${pluginPath})`
-      : skill
-        ? `[$${skill.name}](${skillFilePath(skill.path)})`
-        : null
+    referenceOverride &&
+    referenceOverride.pluginName.trim() &&
+    referenceOverride.marketplaceName.trim() &&
+    referenceOverride.displayName.trim()
+      ? `[$${referenceOverride.displayName.trim()}](plugin://${referenceOverride.pluginName.trim()}@${referenceOverride.marketplaceName.trim()})`
+      : pluginPath && pluginName
+        ? `[$${pluginName}](${pluginPath})`
+        : skill
+          ? `[$${skill.name}](${skillFilePath(skill.path)})`
+          : null
   if (!reference) return null
   registerPluginMentionIcon(plugin, reference)
   const promptOverride = options.prompt?.trim()

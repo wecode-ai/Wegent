@@ -261,7 +261,7 @@ def test_user_cannot_publish_builtin_plugin_to_marketplace(
 
 
 @pytest.mark.parametrize("plugin_name", BUILTIN_PLUGIN_NAMES)
-def test_system_builtin_publication_forces_public_featured(test_db, plugin_name):
+def test_system_builtin_publication_forces_workspace_featured(test_db, plugin_name):
     service = InstalledPluginService()
 
     item = service.publish_marketplace_plugin(
@@ -274,7 +274,7 @@ def test_system_builtin_publication_forces_public_featured(test_db, plugin_name)
     )
 
     assert item.ownerUserId == BUILTIN_PLUGIN_OWNER_ID
-    assert item.visibility == "public"
+    assert item.visibility == "workspace"
     assert item.featured is True
 
 
@@ -361,7 +361,7 @@ def test_builtin_plugin_is_published_and_installed_idempotently(
     assert len(published) == 1
     assert published[0].name == BUILTIN_SITES_PLUGIN_NAME
     assert published[0].ownerUserId == 0
-    assert published[0].visibility == "public"
+    assert published[0].visibility == "workspace"
     assert published[0].featured is True
     test_db.refresh(legacy_row)
     assert legacy_row.is_active is False
@@ -520,7 +520,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
         user_id=BUILTIN_PLUGIN_OWNER_ID,
         package_bytes=_create_plugin_zip(name=plugin_name),
         filename=f"{plugin_name}.zip",
-        visibility="public",
+        visibility="workspace",
         featured=True,
     )
     requested_syncs = []
@@ -579,7 +579,7 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         user_id=BUILTIN_PLUGIN_OWNER_ID,
         package_bytes=_create_plugin_zip(name=BUILTIN_SITES_PLUGIN_NAME),
         filename=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
-        visibility="public",
+        visibility="workspace",
         featured=True,
     )
     sync_response = DeviceCapabilitySyncResponse(

@@ -32,6 +32,8 @@ Installation upserts account intent, creates pending device rows, sends a short-
 
 Wework sends the local Executor's stable `device_id` to catalog and mutation APIs. A catalog item is installed only when that device reports `state=installed` with `actual_release_id` equal to the desired Release. A mutation returns `502` only when the requesting device fails; failures on other devices remain visible for reconnect reconciliation. WebSocket reconnect sync writes per-plugin results back and clears completed uninstall or stale failure rows.
 
+Normal uninstall removes the confirmed device installation record and materialized runtime entry, but it does not directly clear Codex or Claude `plugins/cache`. Those caches are owned by the runtime for reuse and should only be purged by a separate garbage-collection flow that removes versions no longer referenced by any installation record.
+
 Publishing uses a unified scope picker: people (`visibility=personal`, auto-approved after scan as `purpose=restricted_share`), organization (`workspace`), or everyone (`public`). Organization and public scopes still require human review (`purpose=marketplace_publish`). Personal publish may include `targets` and `allowCopy`; the server validates recipients at submission init and applies `resource_members` after a successful scan.
 
 Create flows must target the managed `wework-personal` marketplace. If Plugin Creator still lands in the Codex default `personal` marketplace (`~/plugins` + `~/.agents`), list refresh and publish packaging atomically migrate the plugin into `wework-personal`, keep marketplace manifests in sync, and prefer that marketplace to avoid duplicates.

@@ -24,11 +24,13 @@ This directory contains YAML configuration files for initializing the Wegent sys
 - ❌ YAML changes after first startup: **Not applied to existing resources**
 
 This design ensures:
+
 - User customizations are never lost
 - Safe to restart services without data loss
 - YAML files serve as initial templates only
 
 If you want to update an existing resource to match YAML:
+
 1. Delete the resource through the UI/API
 2. Restart the service (it will be recreated from YAML)
 3. Or manually update it through the UI/API
@@ -67,7 +69,7 @@ kind: <ResourceType>
 metadata:
   name: <resource-name>
   namespace: <namespace>
-  user_id: <user-id>  # Optional, defaults to admin user
+  user_id: <user-id> # Optional, defaults to admin user
 spec:
   # Resource-specific configuration
 status:
@@ -148,7 +150,7 @@ No local code repository is required - the image contains all default resources 
 
 ### Optional built-in plugins
 
-To include the external `wegent-sites` and `wegent-mini-program` plugins in a
+To include the external `wegent-sites` and `weibo-miniapp-h5-develop-agent` plugins in a
 Backend image, stage the available plugins into `init_data/plugins`:
 
 ```bash
@@ -192,12 +194,14 @@ image build.
 To override the built-in init data with your own configuration:
 
 1. Create a custom directory with your YAML files:
+
    ```bash
    mkdir custom_init_data
    cp my-custom-resources.yaml custom_init_data/
    ```
 
 2. Uncomment and modify the volume mount in `docker-compose.yml`:
+
    ```yaml
    backend:
      volumes:
@@ -215,8 +219,8 @@ Control initialization behavior with these environment variables:
 
 ```yaml
 environment:
-  INIT_DATA_ENABLED: "True"   # Enable/disable initialization
-  INIT_DATA_DIR: /app/init_data  # Directory path (default)
+  INIT_DATA_ENABLED: "True" # Enable/disable initialization
+  INIT_DATA_DIR: /app/init_data # Directory path (default)
 ```
 
 ## Advantages
@@ -255,15 +259,18 @@ INIT_DATA_ENABLED=False
 ### Common Issues
 
 **Issue**: Resources not created
+
 - Check logs for errors
 - Verify YAML syntax is valid
 - Ensure `metadata.name` and `metadata.namespace` are set
 
 **Issue**: Resources duplicated
+
 - Resources are identified by `(user_id, kind, name, namespace)`
 - Check if any of these fields differ from existing resources
 
 **Issue**: Directory not found
+
 - Ensure `INIT_DATA_DIR` path exists
 - Check volume mount in `docker-compose.yml`
 

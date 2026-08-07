@@ -5656,7 +5656,8 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
 
-  const miniProgramPluginSelector = '[data-testid="composer-plugin-chip-wegent-mini-program"]'
+  const miniProgramPluginSelector =
+    '[data-testid="composer-plugin-chip-weibo-miniapp-h5-develop-agent"]'
   await control.command('waitFor', miniProgramPluginSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -5759,8 +5760,8 @@ function miniProgramMarketplacePlugin(installed) {
   return {
     id: 502,
     remotePluginId: 'wegent~Plugin_502',
-    name: 'wegent-mini-program',
-    displayName: '小程序',
+    name: 'weibo-miniapp-h5-develop-agent',
+    displayName: '微博小程序开发助手',
     description: 'Build and publish mini programs',
     version: '0.1.0',
     author: 'Wegent Team',
@@ -5771,7 +5772,7 @@ function miniProgramMarketplacePlugin(installed) {
     installedPluginId: installed ? 602 : null,
     sourceType: 'marketplace',
     interface: {
-      displayName: '小程序',
+      displayName: '微博小程序开发助手',
       shortDescription: 'Build and publish mini programs with Wegent',
       category: 'Productivity',
       defaultPrompt: ['创建并发布一个小程序'],
@@ -5792,7 +5793,7 @@ function miniProgramMarketplacePlugin(installed) {
       monitors: [],
       bins: [],
     },
-    manifest: { name: 'wegent-mini-program' },
+    manifest: { name: 'weibo-miniapp-h5-develop-agent' },
     ownerUserId: 0,
   }
 }
@@ -5803,7 +5804,7 @@ function installedMiniProgramPlugin() {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
-      name: 'wegent-mini-program',
+      name: 'weibo-miniapp-h5-develop-agent',
       namespace: 'default',
       labels: { id: '602' },
     },
@@ -5811,11 +5812,11 @@ function installedMiniProgramPlugin() {
       source: {
         type: 'marketplace',
         providerKey: 'wegent-marketplace',
-        pluginKey: 'wegent-mini-program',
+        pluginKey: 'weibo-miniapp-h5-develop-agent',
         catalogItemId: '502',
         marketplace: 'wegent',
       },
-      displayName: '小程序',
+      displayName: '微博小程序开发助手',
       description: marketplacePlugin.description,
       version: marketplacePlugin.version,
       author: marketplacePlugin.author,
@@ -5830,7 +5831,7 @@ function installedMiniProgramPlugin() {
         checksum: 'sha256:desktop-e2e-mini-program',
         sizeBytes: 1024,
       },
-      sourcePayload: { filename: 'wegent-mini-program.zip' },
+      sourcePayload: { filename: 'weibo-miniapp-h5-develop-agent.zip' },
     },
     status: { state: 'Available' },
   }
@@ -9288,12 +9289,20 @@ class DesktopE2EServer {
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
+            create: {
+              plugin_name: 'wegent-sites',
+              marketplace_name: 'wegent',
+            },
           },
           {
             app_type: 'miniapp',
             enabled: true,
             order: 20,
             capabilities: ['create', 'open_experience'],
+            create: {
+              plugin_name: 'weibo-miniapp-h5-develop-agent',
+              marketplace_name: 'wegent',
+            },
           },
         ],
       })
@@ -9363,7 +9372,7 @@ class DesktopE2EServer {
     }
 
     const builtinPluginMatch = url.pathname.match(
-      /^\/api\/plugins\/builtin\/(wegent-sites|wegent-mini-program)\/ensure-installed$/
+      /^\/api\/plugins\/builtin\/(wegent-sites|weibo-miniapp-h5-develop-agent)\/ensure-installed$/
     )
     if (request.method === 'POST' && builtinPluginMatch) {
       const body = await readRequestBody(request)

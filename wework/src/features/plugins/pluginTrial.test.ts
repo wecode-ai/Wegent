@@ -130,6 +130,48 @@ describe('plugin trial state', () => {
     expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
   })
 
+  test('falls back to the workspace marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('uses visibility over stale source marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'workspace'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+      marketplace: 'wework',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('falls back to the public marketplace for public managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'public'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')

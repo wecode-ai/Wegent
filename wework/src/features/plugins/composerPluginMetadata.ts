@@ -82,6 +82,25 @@ function isComposerVisiblePlugin(plugin: InstalledPlugin): boolean {
   )
 }
 
+function marketplaceNameForVisibility(visibility?: string | null): string | null {
+  switch (visibility) {
+    case 'personal':
+      return 'wework-personal'
+    case 'workspace':
+      return 'wegent'
+    case 'public':
+      return 'wework'
+    default:
+      return null
+  }
+}
+
+function managedMarketplaceName(plugin: InstalledPlugin): string | null {
+  const providerKey = plugin.spec.source?.providerKey
+  if (providerKey !== 'wegent-market' && providerKey !== 'wegent-marketplace') return null
+  return marketplaceNameForVisibility(plugin.spec.visibility) ?? 'wegent'
+}
+
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
   const payload = plugin.spec.sourcePayload
   const payloadRecord = payload && typeof payload === 'object' ? payload : {}
@@ -95,11 +114,11 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
     metadataName
   const marketplaceName =
     (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
+    managedMarketplaceName(plugin) ||
     plugin.spec.source?.marketplace ||
     // Cloud InstalledPlugin rows use namespace "default"; composer mentions need the
-    // marketplace id (wegent / openai-official / …), not the Kind namespace.
-    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
-    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
+    // marketplace id selected by visibility, not the Kind namespace.
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`

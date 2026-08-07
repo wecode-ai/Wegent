@@ -79,12 +79,20 @@ def test_list_site_app_types_returns_ordered_capabilities(
                 "enabled": True,
                 "order": 10,
                 "capabilities": ["create", "publish", "delete"],
+                "create": {
+                    "plugin_name": "wegent-sites",
+                    "marketplace_name": "wegent",
+                },
             },
             {
                 "app_type": "miniapp",
                 "enabled": True,
                 "order": 20,
                 "capabilities": ["create", "open_experience"],
+                "create": {
+                    "plugin_name": "weibo-miniapp-h5-develop-agent",
+                    "marketplace_name": "wegent",
+                },
             },
         ]
     }

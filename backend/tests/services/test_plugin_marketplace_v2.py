@@ -2623,6 +2623,7 @@ def test_reconcile_stale_installed_catalog_refs_after_reimport(test_db, test_use
     assert keeper.json["spec"]["pluginId"] == plugin.id
     assert keeper.json["spec"]["releaseId"] == release.id
     assert keeper.json["spec"]["source"]["catalogItemId"] == str(plugin.id)
+    assert keeper.json["spec"]["source"]["marketplace"] == "wegent"
     assert sum(1 for row in (stale, duplicate) if row.is_active) == 1
     assert orphan.json["spec"].get("pluginId") in (None, 0)
     assert orphan.json["spec"].get("releaseId") in (None, 0)

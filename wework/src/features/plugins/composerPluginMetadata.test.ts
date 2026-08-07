@@ -268,6 +268,93 @@ describe('appendInstalledPluginsAsComposerApps', () => {
     ])
   })
 
+  test('uses the workspace marketplace for managed installs without explicit marketplace', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wegent',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('uses visibility over stale source marketplace for managed installs', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        visibility: 'workspace',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+          marketplace: 'wework',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wegent',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('uses the public marketplace for public managed installs without explicit marketplace', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        visibility: 'public',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wework',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
   test('keeps composer apps when another installed plugin has broken components', () => {
     const broken: InstalledPlugin = {
       ...githubPlugin,
