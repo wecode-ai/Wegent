@@ -28,7 +28,7 @@ runs:
           frontend/public/fonts
           wework/node_modules
           packages/*/node_modules
-        key: ${{ runner.os }}-node-24-workspace-v2-${{ hashFiles('pnpm-lock.yaml') }}
+        key: ${{ runner.os }}-node-24-workspace-v2-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json') }}
         restore-keys: |
           ${{ runner.os }}-node-24-workspace-v2-
 

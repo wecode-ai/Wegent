@@ -22,7 +22,8 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/actions/* | .github/workflows/ci-cache-warmup.yml)
+    .github/actions/* | .github/scripts/lib/apt-packages.sh | \
+      .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
     .github/workflows/test.yml | .github/workflows/lint.yml)
@@ -47,7 +48,8 @@ classify_path() {
       changed[executor_rust]=true
       ;;
     .github/scripts/install-playwright-browser.sh | \
-      frontend/src/* | pnpm-lock.yaml)
+      frontend/src/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml | \
+      frontend/package.json | wework/package.json | packages/*/package.json)
       changed[node]=true
       ;;
     backend/uv.lock | executor_manager/uv.lock | \

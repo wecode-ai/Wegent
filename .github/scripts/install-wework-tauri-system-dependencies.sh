@@ -2,38 +2,39 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$script_dir/lib/apt-packages.sh"
+
 profile="${1:-}"
 include_redis="${2:-}"
 
+build_packages=(
+  build-essential
+  libayatana-appindicator3-dev
+  libssl-dev
+  libwebkit2gtk-4.1-dev
+  librsvg2-dev
+)
+runtime_packages=(
+  libayatana-appindicator3-dev
+  libssl-dev
+  libwebkit2gtk-4.1-dev
+  imagemagick
+  librsvg2-dev
+  xvfb
+)
+
 case "$profile" in
   build)
-    packages=(
-      build-essential
-      libayatana-appindicator3-dev
-      libssl-dev
-      libwebkit2gtk-4.1-dev
-      librsvg2-dev
-    )
+    packages=("${build_packages[@]}")
     ;;
   runtime)
-    packages=(
-      libayatana-appindicator3-dev
-      libssl-dev
-      libwebkit2gtk-4.1-dev
-      imagemagick
-      librsvg2-dev
-      xvfb
-    )
+    packages=("${runtime_packages[@]}")
     ;;
   full)
-    packages=(
-      build-essential
-      libayatana-appindicator3-dev
-      libssl-dev
-      libwebkit2gtk-4.1-dev
-      imagemagick
-      librsvg2-dev
-      xvfb
+    mapfile -t packages < <(
+      printf '%s\n' "${build_packages[@]}" "${runtime_packages[@]}" | sort -u
     )
     ;;
   *)
@@ -49,13 +50,7 @@ elif [[ -n "$include_redis" ]]; then
   exit 2
 fi
 
-missing_packages=()
-for package in "${packages[@]}"; do
-  if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null |
-    grep -q '^ii '; then
-    missing_packages+=("$package")
-  fi
-done
+mapfile -t missing_packages < <(find_missing_apt_packages "${packages[@]}")
 
 if ((${#missing_packages[@]} == 0)); then
   printf 'All Tauri system dependencies are already installed.\n'
@@ -80,4 +75,4 @@ printf 'Installing missing Tauri system dependencies: %s\n' \
 sudo apt-get "${apt_options[@]}" update
 sudo apt-get "${apt_options[@]}" install -y --no-install-recommends \
   "${missing_packages[@]}"
-sudo chown -R "$USER:$(id -gn)" "$apt_archives"
+sudo chown -R "$(id -un):$(id -gn)" "$apt_archives"

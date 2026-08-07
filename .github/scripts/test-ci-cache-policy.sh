@@ -42,6 +42,8 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
 
 node_only="${warmup_all_false/node=false/node=true}"
 assert_warmup_case "pnpm lock" "$node_only" "pnpm-lock.yaml"
+assert_warmup_case "workspace manifest" "$node_only" "pnpm-workspace.yaml"
+assert_warmup_case "Wework manifest" "$node_only" "wework/package.json"
 
 python_only="${warmup_all_false/python=false/python=true}"
 assert_warmup_case "uv lock" "$python_only" "backend/uv.lock"
@@ -80,22 +82,53 @@ for workflow in "${pr_workflows[@]}"; do
   fi
 
   if ! awk '
-    {
-      lines[NR] = $0
-    }
-    /uses: actions\/cache\/save@/ {
-      guarded = 0
-      for (line = NR - 4; line < NR; line++) {
-        if (lines[line] ~ /if:.*github\.ref.*refs\/heads\/main/) {
-          guarded = 1
-        }
-      }
-      if (!guarded) {
+    function validate_step() {
+      if (writes_cache && !main_only) {
         exit 1
       }
+      writes_cache = 0
+      main_only = 0
+    }
+    /^[[:space:]]*- name:/ {
+      validate_step()
+    }
+    /uses: actions\/cache\/save@/ {
+      writes_cache = 1
+    }
+    /if:.*github\.ref.*refs\/heads\/main/ {
+      main_only = 1
+    }
+    END {
+      validate_step()
     }
   ' "$workflow_path"; then
     fail "$workflow may save explicit caches only from main"
+  fi
+done
+
+for action_file in "$action_dir"/*/action.yml; do
+  if ! awk '
+    function validate_step() {
+      if (writes_cache && !input_guarded) {
+        exit 1
+      }
+      writes_cache = 0
+      input_guarded = 0
+    }
+    /^[[:space:]]*- name:/ {
+      validate_step()
+    }
+    /uses: actions\/cache@/ || /uses: actions\/cache\/save@/ {
+      writes_cache = 1
+    }
+    /if:.*inputs\.save-cache/ {
+      input_guarded = 1
+    }
+    END {
+      validate_step()
+    }
+  ' "$action_file"; then
+    fail "$action_file must gate cache writes on the save-cache input"
   fi
 done
 
@@ -105,10 +138,25 @@ if ! grep -q '^  push:$' "$warmup_workflow" ||
   fail "CI cache warmup must run after matching changes enter main"
 fi
 
+node_manifests=(
+  frontend/package.json
+  package.json
+  "packages/*/package.json"
+  pnpm-lock.yaml
+  pnpm-workspace.yaml
+  wework/package.json
+)
+for manifest in "${node_manifests[@]}"; do
+  if ! grep -Fq -- "- \"$manifest\"" "$warmup_workflow"; then
+    fail "CI cache warmup must watch Node workspace manifest $manifest"
+  fi
+done
+
 python_action="$action_dir/setup-python-uv-cache/action.yml"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'default: "false"' "$python_action" ||
+  ! grep -Fq 'save-cache: ${{ inputs.save-cache }}' "$python_action" ||
   ! grep -Fq 'cache-suffix: python-${{ inputs.python-version }}' \
     "$python_action"; then
   fail "Python caches must be shared by version and read-only by default"
@@ -118,6 +166,8 @@ sccache_action="$action_dir/setup-sccache/action.yml"
 # Environment variables are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
+  ! grep -Fq 'GitHub Actions cache credentials are unavailable for sccache' \
+    "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_VERSION=wegent-sccache-v1-' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
@@ -138,13 +188,30 @@ if ! grep -Fq "$docker_cache_ref" "$workflow_dir/e2e-tests.yml" ||
 fi
 
 node_action="$action_dir/setup-node-workspace/action.yml"
+workspace_manifests="hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json')"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
-workspace_key='node-24-workspace-v2-${{ hashFiles('\''pnpm-lock.yaml'\'') }}'
-if ! grep -Fq "$workspace_key" "$node_action" ||
+if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
+  ! grep -Fq "$workspace_manifests" "$node_action" ||
   ! grep -Fq 'frontend/public/fonts' "$node_action" ||
   ! grep -Fq 'default: "false"' "$node_action"; then
   fail "Node dependencies and generated fonts must share a read-only-by-default cache"
+fi
+
+checkout_count="$(grep -c 'uses: actions/checkout@' "$warmup_workflow")"
+credential_guard_count="$(
+  grep -c 'persist-credentials: false' "$warmup_workflow"
+)"
+# Shell source is matched literally in workflow source.
+# shellcheck disable=SC2016
+if [[ "$checkout_count" -ne "$credential_guard_count" ]] ||
+  ! grep -Fq 'git cat-file -e "$BEFORE_SHA^{commit}"' "$warmup_workflow"; then
+  fail "Warmup checkouts must drop credentials and safely handle missing history"
+fi
+
+if grep -Eq 'uses: docker/(login|setup-buildx|build-push)-action@v' \
+  "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+  fail "Docker actions introduced by cache workflows must be pinned by SHA"
 fi
 
 for workflow in "${pr_workflows[@]}" ci-cache-warmup.yml; do

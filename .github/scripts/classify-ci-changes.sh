@@ -36,6 +36,7 @@ classify_path() {
       .github/actions/* | \
       .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
+      .github/scripts/lib/apt-packages.sh | \
       .github/scripts/test-ci-cache-policy.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       mark_all
@@ -57,6 +58,7 @@ classify_path() {
     .github/workflows/wework-e2e.yml | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/install-wework-tauri-system-dependencies.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;

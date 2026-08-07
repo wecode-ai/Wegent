@@ -2,14 +2,12 @@
 
 set -euo pipefail
 
-packages=(pkg-config libssl-dev)
-missing=()
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$script_dir/lib/apt-packages.sh"
 
-for package in "${packages[@]}"; do
-  if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii '; then
-    missing+=("$package")
-  fi
-done
+packages=(pkg-config libssl-dev)
+mapfile -t missing < <(find_missing_apt_packages "${packages[@]}")
 
 if ((${#missing[@]} == 0)); then
   echo "Executor Rust system dependencies are already installed."

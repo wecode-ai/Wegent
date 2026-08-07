@@ -167,6 +167,9 @@ assert_case "workflow changes validate all modules" "$all_true" \
 assert_case "shared CI actions validate all modules" "$all_true" \
   ".github/actions/setup-sccache/action.yml"
 
+assert_case "shared apt helper validates all modules" "$all_true" \
+  ".github/scripts/lib/apt-packages.sh"
+
 assert_case "cache warmup classifier validates all modules" "$all_true" \
   ".github/scripts/classify-ci-cache-warmup.sh"
 
@@ -196,6 +199,9 @@ assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
+  ".github/scripts/install-wework-tauri-system-dependencies.sh"
 
 assert_desktop_case() {
   local name="$1"

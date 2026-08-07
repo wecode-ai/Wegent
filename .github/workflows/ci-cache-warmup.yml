@@ -14,6 +14,7 @@ on:
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
       - ".github/scripts/install-playwright-browser.sh"
       - ".github/scripts/install-wework-tauri-system-dependencies.sh"
+      - ".github/scripts/lib/apt-packages.sh"
       - ".github/workflows/ci-cache-warmup.yml"
       - ".github/workflows/e2e-tests.yml"
       - ".github/workflows/lint.yml"
@@ -23,12 +24,17 @@ on:
       - "executor/**"
       - "executor_manager/uv.lock"
       - "frontend/e2e/fixtures/claudecode-executor/**"
+      - "frontend/package.json"
       - "frontend/src/**"
       - "knowledge_engine/uv.lock"
+      - "package.json"
+      - "packages/*/package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "shared/assets/**"
       - "shared/uv.lock"
       - "wegent-cli/requirements.txt"
+      - "wework/package.json"
       - "wework/src-tauri/**"
   workflow_dispatch:
 
@@ -56,6 +62,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Classify cache changes
         id: classify
@@ -64,7 +71,8 @@ jobs:
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] ||
             [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
-            [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]] ||
+            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
             .github/scripts/classify-ci-cache-warmup.sh --all
           else
             git diff --name-only "$BEFORE_SHA...$GITHUB_SHA" |
@@ -77,10 +85,14 @@ jobs:
     if: needs.changes.outputs.node == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CLAUDE_CODE_CLI_VERSION: "2.1.142"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up writable Node workspace cache
         uses: ./.github/actions/setup-node-workspace
@@ -124,11 +136,11 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.npm-global
-          key: ${{ runner.os }}-node-24-claude-code-cli-v2-2.1.142
+          key: ${{ runner.os }}-node-24-claude-code-cli-v2-${{ env.CLAUDE_CODE_CLI_VERSION }}
 
       - name: Install Claude Code CLI
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
-        run: npm install -g @anthropic-ai/claude-code@2.1.142
+        run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_CLI_VERSION"
 
       - name: Save shared Claude Code CLI
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
@@ -148,6 +160,7 @@ jobs:
             ${{ runner.os }}-nextjs-e2e-v2-
 
       - name: Build frontend cache
+        if: steps.nextjs-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
@@ -180,6 +193,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Python and writable uv cache
         uses: ./.github/actions/setup-python-uv-cache
@@ -241,6 +256,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Configure executor target directory
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
@@ -276,6 +293,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -309,6 +328,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set APT cache key
         id: apt-cache-key
@@ -398,19 +419,21 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Build and cache ClaudeCode Source Executor Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
           file: frontend/e2e/fixtures/claudecode-executor/Dockerfile
