@@ -4462,4 +4462,41 @@ describe('DesktopSidebar', () => {
     expect(button).toHaveTextContent('hello 20')
     expect(button).toHaveAttribute('aria-expanded', 'true')
   })
+
+  test('does not render a standalone task workspace as a project', () => {
+    const workspacePath = '/Users/alice/.wework/workspace/chats/standalone-task'
+
+    renderSidebar({
+      projects: [],
+      devices: [localDevice({ device_id: 'device-1', name: 'Local Mac' })],
+      standaloneDeviceId: 'device-1',
+      standaloneWorkspacePath: workspacePath,
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'standalone-task',
+                workspacePath,
+                workspaceKind: 'chat',
+                title: '只显示在任务中',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(screen.queryByTestId('project-item-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-standalone-task')).toBeInTheDocument()
+  })
 })

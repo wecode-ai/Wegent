@@ -1055,6 +1055,21 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    const project = state.currentProject
+      ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+      : null
+    if (project) {
+      writeLastProjectId(user.id, project.id)
+      dispatch({
+        type: 'project_workspace_selected',
+        project,
+        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+      })
+      navigateTo('/')
+      requestNewChatComposerFocus()
+      return
+    }
+
     writeLastProjectId(user.id, null)
     dispatch({
       type: 'project_cleared',
@@ -1067,7 +1082,14 @@ export function WorkbenchProvider({
     })
     navigateTo('/')
     requestNewChatComposerFocus()
-  }, [state.devices, state.standaloneDeviceId, user])
+  }, [
+    state.currentProject,
+    state.devices,
+    state.projects,
+    state.runtimeWork,
+    state.standaloneDeviceId,
+    user,
+  ])
 
   const listLocalSkills = useCallback(
     async (forceReload = false) => {

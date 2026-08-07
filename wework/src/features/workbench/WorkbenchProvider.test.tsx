@@ -3831,7 +3831,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('starts a standalone task even when a project was last used', async () => {
+  test('restores the last used project before starting a new task', async () => {
     writeLastProjectId(1, 7)
     renderWorkbench(<ProjectSendProbe />)
 
@@ -3841,12 +3841,11 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('start new chat'))
 
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
-    expect(readLastProjectId(1)).toBeNull()
   })
 
-  test('starts a standalone task after opening a project task', async () => {
+  test('starts a new task in the project of the last opened task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 
     await waitFor(() =>
@@ -3859,9 +3858,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     await userEvent.click(screen.getByText('start new chat'))
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
-    expect(readLastProjectId(1)).toBeNull()
   })
 
   test('keeps a standalone new task unassigned when starting another new task', async () => {
@@ -4380,7 +4378,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     )
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
   })
 

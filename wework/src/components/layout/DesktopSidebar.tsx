@@ -357,12 +357,14 @@ function runtimeWorkHasWorkspace(
   workspacePath: string
 ): boolean {
   const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
-  return (runtimeWork?.projects ?? []).some(projectWork =>
-    projectWork.deviceWorkspaces.some(
-      workspace =>
-        workspace.deviceId === deviceId &&
-        normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
-    )
+  const hasMatchingWorkspace = (workspace: RuntimeDeviceWorkspace) =>
+    workspace.deviceId === deviceId &&
+    normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
+
+  return (
+    (runtimeWork?.projects ?? []).some(projectWork =>
+      projectWork.deviceWorkspaces.some(hasMatchingWorkspace)
+    ) || (runtimeWork?.chats ?? []).some(hasMatchingWorkspace)
   )
 }
 
