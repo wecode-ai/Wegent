@@ -99,17 +99,10 @@ export interface WorkspaceBrowserPanelProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   onNativeLabelChange?: (nativeLabel: string | null) => void
   onDownloadActivityChange?: (hasActiveDownload: boolean) => void
-  onTabsChange?: (state: {
-    activeLabel: string | null
-    baseLabel: string
-    labels: string[]
-    hasActiveDownload: boolean
-  }) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
 
-// Kept for existing consumers while the tab container is introduced around this host.
 export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -998,7 +991,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onFaviconChange, onNativeLabelChange, onTitleChange])
+  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return

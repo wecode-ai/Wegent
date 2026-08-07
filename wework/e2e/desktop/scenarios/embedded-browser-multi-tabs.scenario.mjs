@@ -6,17 +6,16 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
-const RIGHT_BROWSER_OPTION_SELECTOR =
-  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="right-workspace-browser-option"]'
+const RIGHT_BROWSER_OPTION_SELECTOR = '[data-testid="right-workspace-browser-option"]'
+const RIGHT_CHAT_OPTION_SELECTOR = '[data-testid="right-workspace-chat-option"]'
+const RIGHT_TERMINAL_OPTION_SELECTOR = '[data-testid="right-workspace-terminal-option"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
-const BROWSER_TAB_STRIP_SELECTOR =
-  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="browser-tab-strip"]'
-const BROWSER_TAB_SELECTOR = BROWSER_TAB_STRIP_SELECTOR + ' [role="tab"]'
-const BROWSER_TAB_CLOSE_SELECTOR =
-  BROWSER_TAB_SELECTOR + ' [data-testid^="browser-tab-close-"]'
-const BROWSER_TAB_ADD_SELECTOR =
-  BROWSER_TAB_STRIP_SELECTOR + ' [data-testid="browser-tab-add"]'
+const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
+const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
+  FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
+const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
+const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
 const FIXTURE_B_PATH = '/embedded-browser-multi-tabs-b'
 const FIXTURE_A_TEXT = 'Embedded Browser Multi Tab A'
@@ -93,8 +92,7 @@ async function waitForSnapshot(control, predicate, message, timeoutMs, selector 
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
-    message +
-      (lastSnapshot ? '; last testIds=' + JSON.stringify(lastSnapshot.testIds) : '')
+    message + (lastSnapshot ? '; last testIds=' + JSON.stringify(lastSnapshot.testIds) : '')
   )
 }
 
@@ -136,20 +134,48 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.filter(testId => testId.startsWith('browser-tab-close-')).length === 1,
-        'The browser panel did not start with one tab',
+          snapshot.testIds.includes('right-workspace-browser-tab-1') &&
+          !snapshot.testIds.includes('right-workspace-browser-tab-2'),
+        'The right workspace did not start with one browser tab',
         uiTimeoutMs,
-        ACTIVE_WORKBENCH_SELECTOR
+        'body'
       )
 
-      await control.command('click', BROWSER_TAB_ADD_SELECTOR)
-      await waitForSnapshot(
+      await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
+      await control.command('click', RIGHT_CHAT_OPTION_SELECTOR)
+      await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
+      await control.command('click', RIGHT_TERMINAL_OPTION_SELECTOR)
+      await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
+      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
+      const mixedTabsSnapshot = await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.filter(testId => testId.startsWith('browser-tab-close-')).length === 2,
-        'Adding a browser tab did not create a second tab',
+          snapshot.testIds.includes('right-workspace-browser-tab-1') &&
+          snapshot.testIds.includes('right-workspace-browser-tab-2') &&
+          snapshot.testIds.includes('right-workspace-terminal-tab') &&
+          snapshot.testIds.some(testId => testId.startsWith('right-workspace-chat-tab-')),
+        'Adding mixed workspace tabs did not create all four top-level tabs',
         uiTimeoutMs,
-        ACTIVE_WORKBENCH_SELECTOR
+        RIGHT_WORKSPACE_TABBAR_SELECTOR
+      )
+      const mixedTabbarText = (
+        await control.command('getText', RIGHT_WORKSPACE_TABBAR_SELECTOR)
+      ).replace(/\s+/g, '')
+      const chatLabel = mixedTabbarText.includes('临时聊天') ? '临时聊天' : 'Temporarychat'
+      const terminalLabel = mixedTabbarText.includes('终端') ? '终端' : 'Terminal'
+      const newTabLabel = mixedTabbarText.endsWith('新选项卡') ? '新选项卡' : 'Newtab'
+      const chatIndex = mixedTabbarText.indexOf(chatLabel)
+      const terminalIndex = mixedTabbarText.indexOf(terminalLabel)
+      const secondBrowserIndex = mixedTabbarText.lastIndexOf(newTabLabel)
+      assert.ok(
+        chatIndex > 0 && terminalIndex > chatIndex && secondBrowserIndex > terminalIndex,
+        'Browser, chat, and terminal tabs were grouped instead of preserving insertion order: ' +
+          mixedTabbarText
+      )
+      assert.equal(
+        mixedTabsSnapshot.testIds.includes('browser-tab-strip'),
+        false,
+        'The browser rendered a nested tab strip instead of top-level workspace tabs'
       )
       await waitForValue(
         control,
@@ -177,7 +203,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'The second browser tab did not retain its own page state'
       )
 
-      await control.command('click', BROWSER_TAB_SELECTOR)
+      await control.command('click', FIRST_BROWSER_TAB_SELECTOR)
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,
@@ -195,15 +221,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'The first browser tab did not retain its own page state'
       )
 
-      await control.command('hover', BROWSER_TAB_SELECTOR)
-      await control.command('click', BROWSER_TAB_CLOSE_SELECTOR)
+      await control.command('hover', FIRST_BROWSER_TAB_SELECTOR)
+      await control.command('click', FIRST_BROWSER_TAB_CLOSE_SELECTOR)
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.filter(testId => testId.startsWith('browser-tab-close-')).length === 1,
-        'Closing the first browser tab did not leave the second tab in place',
+          !snapshot.testIds.includes('right-workspace-browser-tab-1') &&
+          snapshot.testIds.includes('right-workspace-browser-tab-2'),
+        'Closing the first browser tab did not leave the second top-level tab in place',
         uiTimeoutMs,
-        ACTIVE_WORKBENCH_SELECTOR
+        'body'
       )
       await waitForValue(
         control,
@@ -228,17 +255,18 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,
-        '',
+        fixtureBUrl,
         uiTimeoutMs,
-        'Reopening the browser panel did not start with a fresh tab'
+        'Reopening the right workspace did not preserve the remaining browser tab'
       )
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.filter(testId => testId.startsWith('browser-tab-close-')).length === 1,
-        'Reopening the browser panel did not restore a single fresh tab',
+          !snapshot.testIds.includes('right-workspace-browser-tab-1') &&
+          snapshot.testIds.includes('right-workspace-browser-tab-2'),
+        'Reopening the right workspace did not preserve a single top-level browser tab',
         uiTimeoutMs,
-        ACTIVE_WORKBENCH_SELECTOR
+        'body'
       )
 
       await callBridge(bridgeIdentity, { action: 'open', url: fixtureAUrl, timeoutMs: 8000 })

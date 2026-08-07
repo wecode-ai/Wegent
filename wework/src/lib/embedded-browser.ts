@@ -134,6 +134,9 @@ export function listenEmbeddedBrowserPopupRequests(
   if (!canUseEmbeddedBrowser()) return null
   return listen<EmbeddedBrowserPopupRequest>(EMBEDDED_BROWSER_POPUP_EVENT, event => {
     handler(event.payload)
+  }).catch(error => {
+    console.error('[Wework] Failed to listen for embedded browser popup requests', error)
+    return () => {}
   })
 }
 

@@ -13451,6 +13451,22 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'browser-multi-tabs') {
+      phase = 'browser-multi-tabs-scenario'
+      assert.ok(
+        desktopScenario,
+        'The browser-multi-tabs checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop browser-multi-tabs checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (CLOUD_ONLY) {
       phase = 'server-downlinked-socket-url'
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
@@ -15084,8 +15100,9 @@ last_updated = "2026-07-30T00:00:00Z"`
       const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
       const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
+      const rightBrowserTabSelector = '[data-testid="right-workspace-browser-tab-1"]'
       const rightBrowserTabCloseSelector =
-        '[data-testid="right-workspace-browser-tab-close-button"]'
+        '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
@@ -15284,7 +15301,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         join(workspacePath, GIT_SEED_NAME),
         'The linked absolute file path was lost after switching conversations'
       )
-      await control.command('click', '[data-testid="right-workspace-browser-tab"]')
+      await control.command('click', rightBrowserTabSelector)
       await control.command('waitFor', activeBrowserInputSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -15295,7 +15312,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       const restoredWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
-        restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
+        restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab-1'),
         'The browser tab was not restored after switching conversations'
       )
       assert.ok(
@@ -15405,6 +15422,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
       await control.command('click', bottomWorkspaceTabCloseSelector)
+      await control.command('hover', rightBrowserTabSelector)
       await control.command('click', rightBrowserTabCloseSelector)
       await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
       await control.command('click', '[data-testid="right-workspace-review-tab-close-button"]')
