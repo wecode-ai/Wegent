@@ -19,6 +19,7 @@ The project includes comprehensive unit testing support across all modules:
 ## Current Test Coverage
 
 ### Backend (`backend/`)
+
 - ✅ Core security: Authentication, JWT tokens, password hashing
 - ✅ Configuration management
 - ✅ Exception handling
@@ -27,21 +28,25 @@ The project includes comprehensive unit testing support across all modules:
 - ⏳ API endpoints (placeholder directory exists)
 
 ### Executor (`executor/`)
+
 - ✅ Agent factory
 - ✅ Base agent classes
 - ✅ Mocked AI client interactions (Anthropic, OpenAI)
 
 ### Executor Manager (`executor_manager/`)
+
 - ✅ Base executor classes
 - ✅ Task dispatcher
 - ✅ Docker executor and utilities
 - ✅ Docker constants and configuration
 
 ### Shared (`shared/`)
+
 - ✅ Cryptography utilities
 - ✅ Sensitive data masking (tokens, API keys, etc.)
 
 ### Frontend (`frontend/`)
+
 - ⏳ Component tests (basic setup in place)
 - ⏳ Hook tests
 - ⏳ Utility tests
@@ -195,8 +200,8 @@ shared/tests/
 
 - **Cryptography**: Encryption and decryption of sensitive data (Git tokens, API keys)
 - **Data Masking**: Automatic masking of sensitive information in logs and outputs
-  - GitHub tokens (github_pat_*)
-  - Anthropic API keys (sk-ant-api03-*)
+  - GitHub tokens (github*pat*\*)
+  - Anthropic API keys (sk-ant-api03-\*)
   - OpenAI API keys
   - Generic API keys and secrets
   - File path protection (no false positives)
@@ -265,6 +270,8 @@ runs may restore the default-branch cache, but they do not save another copy:
   dependency lockfiles, and CI pruning runs before save.
 - Playwright browsers, the Next.js build cache, the Claude Code CLI, and desktop
   Cargo targets use explicit restore/save steps; only `refs/heads/main` saves.
+  The Claude Code CLI uses a repository `package-lock.json` to pin the complete
+  dependency graph and package integrity.
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. Non-`main` jobs access the shared compiler cache
   in read-only mode.
@@ -527,14 +534,17 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 ### Common Issues
 
 **Import errors in tests:**
+
 - Ensure you're running pytest from the correct directory
 - Check that modules are installed: `uv sync`
 
 **Database errors:**
+
 - Tests use SQLite in-memory DB, no setup needed
 - Check that fixtures are imported correctly
 
 **Frontend test failures:**
+
 - Ensure Node.js 20+ is installed
 - Run `pnpm install --frozen-lockfile` from the repository root to install exact dependency versions
 - Clear Jest cache: `pnpm --dir frontend exec jest --clearCache`

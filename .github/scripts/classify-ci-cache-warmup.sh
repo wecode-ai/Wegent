@@ -47,7 +47,8 @@ classify_path() {
     .github/scripts/install-executor-rust-system-dependencies.sh)
       changed[executor_rust]=true
       ;;
-    .github/scripts/install-playwright-browser.sh | \
+    .github/claude-code-cli/* | \
+      .github/scripts/install-playwright-browser.sh | \
       frontend/src/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json)
       changed[node]=true

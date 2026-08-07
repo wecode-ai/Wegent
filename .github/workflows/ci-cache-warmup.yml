@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - ".github/actions/**"
+      - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
       - ".github/scripts/install-playwright-browser.sh"
@@ -85,8 +86,6 @@ jobs:
     if: needs.changes.outputs.node == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CLAUDE_CODE_CLI_VERSION: "2.1.142"
 
     steps:
       - name: Checkout code
@@ -125,28 +124,26 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
-      - name: Configure npm global cache path
+      - name: Add Claude Code CLI to PATH
         run: |
-          mkdir -p ~/.npm-global
-          npm config set prefix ~/.npm-global
-          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Restore shared Claude Code CLI
         id: claude-code-cli-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ~/.npm-global
-          key: ${{ runner.os }}-node-24-claude-code-cli-v2-${{ env.CLAUDE_CODE_CLI_VERSION }}
+          path: .github/claude-code-cli/node_modules
+          key: ${{ runner.os }}-node-24-claude-code-cli-v3-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
 
       - name: Install Claude Code CLI
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
-        run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_CLI_VERSION"
+        run: npm ci --prefix .github/claude-code-cli
 
       - name: Save shared Claude Code CLI
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ~/.npm-global
+          path: .github/claude-code-cli/node_modules
           key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
       - name: Restore shared Next.js build cache

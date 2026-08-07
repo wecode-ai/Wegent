@@ -19,6 +19,7 @@ sidebar_position: 4
 ## 当前测试覆盖率
 
 ### 后端 (`backend/`)
+
 - ✅ 核心安全：身份验证、JWT 令牌、password 哈希
 - ✅ 配置管理
 - ✅ 异常处理
@@ -27,21 +28,25 @@ sidebar_position: 4
 - ⏳ API 端点（占位符目录已存在）
 
 ### 执行器 (`executor/`)
+
 - ✅ Agent 工厂
 - ✅ 基础 agent 类
 - ✅ 模拟 AI 客户端交互（Anthropic、OpenAI）
 
 ### 执行器管理器 (`executor_manager/`)
+
 - ✅ 基础执行器类
 - ✅ 任务调度器
 - ✅ Docker 执行器和工具
 - ✅ Docker 常量和配置
 
 ### 共享模块 (`shared/`)
+
 - ✅ 加密工具
 - ✅ 敏感数据脱敏（令牌、API 密钥等）
 
 ### 前端 (`frontend/`)
+
 - ⏳ 组件测试（已建立基本设置）
 - ⏳ Hook 测试
 - ⏳ 工具函数测试
@@ -195,8 +200,8 @@ shared/tests/
 
 - **加密**：敏感数据的加密和解密（Git 令牌、API 密钥）
 - **数据脱敏**：日志和输出中敏感信息的自动脱敏
-  - GitHub 令牌（github_pat_*）
-  - Anthropic API 密钥（sk-ant-api03-*）
+  - GitHub 令牌（github*pat*\*）
+  - Anthropic API 密钥（sk-ant-api03-\*）
   - OpenAI API 密钥
   - 通用 API 密钥和 secrets
   - 文件路径保护（无误报）
@@ -258,7 +263,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 - uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
   按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
 - Playwright browser、Next.js build cache、Claude Code CLI 和桌面 Cargo target
-  采用显式 restore/save；只有 `refs/heads/main` 可以 save。
+  采用显式 restore/save；只有 `refs/heads/main` 可以 save。Claude Code CLI
+  通过仓库内的 `package-lock.json` 锁定完整依赖图和包完整性。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。非 `main` 任务以只读模式访问共享 sccache。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
@@ -511,14 +517,17 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 ### 常见问题
 
 **测试中的导入错误：**
+
 - 确保您从正确的目录运行 pytest
 - 检查模块是否已安装：`uv sync`
 
 **数据库错误：**
+
 - 测试使用 SQLite 内存数据库，无需设置
 - 检查 fixture 是否正确导入
 
 **前端测试失败：**
+
 - 确保已安装 Node.js 20+
 - 在仓库根目录运行 `pnpm install --frozen-lockfile` 以安装确切的依赖版本
 - 清除 Jest 缓存：`pnpm --filter wecode-ai-assistant exec jest --clearCache`

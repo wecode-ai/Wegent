@@ -11,6 +11,99 @@ fail() {
   exit 1
 }
 
+validate_yaml_steps() {
+  local mode="$1"
+  local file="$2"
+
+  awk -v mode="$mode" '
+    function indentation(line, trimmed) {
+      trimmed = line
+      sub(/^[[:space:]]*/, "", trimmed)
+      return length(line) - length(trimmed)
+    }
+    function validate_step() {
+      if (mode == "workflow-cache" && writes_cache && !main_only) {
+        exit 1
+      }
+      if (mode == "action-cache" && writes_cache && !input_guarded) {
+        exit 1
+      }
+      if (mode == "checkout" && checkout && !drops_credentials) {
+        exit 1
+      }
+      writes_cache = 0
+      main_only = 0
+      input_guarded = 0
+      checkout = 0
+      drops_credentials = 0
+    }
+    function inspect(line) {
+      if (line ~ /uses: actions\/cache\/save@/ ||
+          (mode == "action-cache" && line ~ /uses: actions\/cache@/)) {
+        writes_cache = 1
+      }
+      if (line ~ /if:.*github\.ref.*refs\/heads\/main/) {
+        main_only = 1
+      }
+      if (line ~ /if:.*inputs\.save-cache/) {
+        input_guarded = 1
+      }
+      if (line ~ /uses: actions\/checkout@/) {
+        checkout = 1
+      }
+      if (line ~ /persist-credentials:[[:space:]]*false/) {
+        drops_credentials = 1
+      }
+    }
+    /^[[:space:]]*steps:[[:space:]]*$/ {
+      if (in_steps) {
+        validate_step()
+      }
+      in_steps = 1
+      steps_indent = indentation($0)
+      step_indent = steps_indent + 2
+      next
+    }
+    {
+      current_indent = indentation($0)
+      if (in_steps && $0 !~ /^[[:space:]]*(#.*)?$/ &&
+          current_indent <= steps_indent) {
+        validate_step()
+        in_steps = 0
+      }
+      if (in_steps && current_indent == step_indent &&
+          $0 ~ /^[[:space:]]*-[[:space:]]+/) {
+        validate_step()
+      }
+      if (in_steps) {
+        inspect($0)
+      }
+    }
+    END {
+      if (in_steps) {
+        validate_step()
+      }
+    }
+  ' "$file"
+}
+
+assert_step_policy_rejects() {
+  local mode="$1"
+  local name="$2"
+  local fixture="$3"
+
+  if validate_yaml_steps "$mode" <(printf '%s\n' "$fixture"); then
+    fail "$name must reject guards inherited from another YAML step"
+  fi
+}
+
+assert_step_policy_rejects workflow-cache "Workflow cache policy" \
+  $'steps:\n  - if: github.ref == \'refs/heads/main\'\n    run: true\n  - uses: actions/cache/save@0123456789012345678901234567890123456789'
+assert_step_policy_rejects action-cache "Composite action cache policy" \
+  $'steps:\n  - if: inputs.save-cache == \'true\'\n    run: true\n  - uses: actions/cache@0123456789012345678901234567890123456789'
+assert_step_policy_rejects checkout "Checkout credential policy" \
+  $'steps:\n  - uses: actions/checkout@0123456789012345678901234567890123456789\n  - run: true\n    with:\n      persist-credentials: false'
+
 assert_warmup_case() {
   local name="$1"
   local expected="$2"
@@ -44,6 +137,8 @@ node_only="${warmup_all_false/node=false/node=true}"
 assert_warmup_case "pnpm lock" "$node_only" "pnpm-lock.yaml"
 assert_warmup_case "workspace manifest" "$node_only" "pnpm-workspace.yaml"
 assert_warmup_case "Wework manifest" "$node_only" "wework/package.json"
+assert_warmup_case "Claude CLI lock" "$node_only" \
+  ".github/claude-code-cli/package-lock.json"
 
 python_only="${warmup_all_false/python=false/python=true}"
 assert_warmup_case "uv lock" "$python_only" "backend/uv.lock"
@@ -81,53 +176,13 @@ for workflow in "${pr_workflows[@]}"; do
     fail "$workflow must use the shared read-only Python cache action"
   fi
 
-  if ! awk '
-    function validate_step() {
-      if (writes_cache && !main_only) {
-        exit 1
-      }
-      writes_cache = 0
-      main_only = 0
-    }
-    /^[[:space:]]*- name:/ {
-      validate_step()
-    }
-    /uses: actions\/cache\/save@/ {
-      writes_cache = 1
-    }
-    /if:.*github\.ref.*refs\/heads\/main/ {
-      main_only = 1
-    }
-    END {
-      validate_step()
-    }
-  ' "$workflow_path"; then
+  if ! validate_yaml_steps workflow-cache "$workflow_path"; then
     fail "$workflow may save explicit caches only from main"
   fi
 done
 
 for action_file in "$action_dir"/*/action.yml; do
-  if ! awk '
-    function validate_step() {
-      if (writes_cache && !input_guarded) {
-        exit 1
-      }
-      writes_cache = 0
-      input_guarded = 0
-    }
-    /^[[:space:]]*- name:/ {
-      validate_step()
-    }
-    /uses: actions\/cache@/ || /uses: actions\/cache\/save@/ {
-      writes_cache = 1
-    }
-    /if:.*inputs\.save-cache/ {
-      input_guarded = 1
-    }
-    END {
-      validate_step()
-    }
-  ' "$action_file"; then
+  if ! validate_yaml_steps action-cache "$action_file"; then
     fail "$action_file must gate cache writes on the save-cache input"
   fi
 done
@@ -198,20 +253,32 @@ if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
   fail "Node dependencies and generated fonts must share a read-only-by-default cache"
 fi
 
-checkout_count="$(grep -c 'uses: actions/checkout@' "$warmup_workflow")"
-credential_guard_count="$(
-  grep -c 'persist-credentials: false' "$warmup_workflow"
-)"
 # Shell source is matched literally in workflow source.
 # shellcheck disable=SC2016
-if [[ "$checkout_count" -ne "$credential_guard_count" ]] ||
+if ! validate_yaml_steps checkout "$warmup_workflow" ||
   ! grep -Fq 'git cat-file -e "$BEFORE_SHA^{commit}"' "$warmup_workflow"; then
   fail "Warmup checkouts must drop credentials and safely handle missing history"
 fi
 
-if grep -Eq 'uses: docker/(login|setup-buildx|build-push)-action@v' \
-  "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
-  fail "Docker actions introduced by cache workflows must be pinned by SHA"
+while IFS= read -r docker_action_ref; do
+  if [[ ! "$docker_action_ref" =~ ^[[:xdigit:]]{40}$ ]]; then
+    fail "Docker actions introduced by cache workflows must be pinned by SHA"
+  fi
+done < <(
+  sed -nE \
+    's/.*uses: docker\/(login|setup-buildx|build-push)-action@([^ #]+).*/\2/p' \
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"
+)
+
+claude_cli_lock=".github/claude-code-cli/package-lock.json"
+claude_cli_key="node-24-claude-code-cli-v3-\${{ hashFiles('$claude_cli_lock') }}"
+if [[ ! -f "$script_dir/../claude-code-cli/package.json" ]] ||
+  [[ ! -f "$script_dir/../claude-code-cli/package-lock.json" ]] ||
+  ! grep -Fq "$claude_cli_key" "$warmup_workflow" ||
+  ! grep -Fq "$claude_cli_key" "$workflow_dir/e2e-tests.yml" ||
+  grep -Eq 'npm install -g .*claude-code' \
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+  fail "Claude Code CLI caches must use the shared integrity-locked npm graph"
 fi
 
 for workflow in "${pr_workflows[@]}" ci-cache-warmup.yml; do
