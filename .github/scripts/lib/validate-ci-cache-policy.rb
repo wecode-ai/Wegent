@@ -32,6 +32,18 @@ def reject(path, message)
   exit 1
 end
 
+def positive_guard?(condition, left, right)
+  expression = condition.strip
+  expression = expression.sub(/\A\$\{\{\s*/, "").sub(/\s*\}\}\z/, "")
+  return false if expression.include?("||")
+
+  guard = Regexp.new(
+    "\\A#{Regexp.escape(left)}\\s*==\\s*(['\"])" \
+    "#{Regexp.escape(right)}\\1\\z"
+  )
+  expression.split("&&").any? { |clause| clause.strip.match?(guard) }
+end
+
 mode = ARGV.shift
 reject("<arguments>", "missing validation mode") unless mode
 reject("<arguments>", "missing YAML files") if ARGV.empty?
@@ -46,13 +58,12 @@ ARGV.each do |path|
     case mode
     when "workflow-cache"
       next unless uses.start_with?("actions/cache/save@")
-      next if condition.include?("github.ref") &&
-        condition.include?("refs/heads/main")
+      next if positive_guard?(condition, "github.ref", "refs/heads/main")
 
       reject(path, "#{uses} must be guarded by the main branch")
     when "action-cache"
       next unless uses.match?(%r{\Aactions/cache(?:/save)?@})
-      next if condition.include?("inputs.save-cache")
+      next if positive_guard?(condition, "inputs.save-cache", "true")
 
       reject(path, "#{uses} must be guarded by inputs.save-cache")
     when "checkout"

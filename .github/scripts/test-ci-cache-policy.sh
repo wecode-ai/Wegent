@@ -32,6 +32,10 @@ assert_step_policy_rejects workflow-cache "Workflow cache policy" \
   $'steps: # inline comments are valid YAML\n  - if: github.ref == \'refs/heads/main\'\n    run: true\n  - uses: actions/cache/save@0123456789012345678901234567890123456789'
 assert_step_policy_rejects action-cache "Composite action cache policy" \
   $'steps:\n  - if: inputs.save-cache == \'true\'\n    run: true\n  - uses: actions/cache@0123456789012345678901234567890123456789'
+assert_step_policy_rejects workflow-cache "Negated workflow cache guard" \
+  $'steps:\n  - uses: actions/cache/save@0123456789012345678901234567890123456789\n    if: github.ref != \'refs/heads/main\''
+assert_step_policy_rejects action-cache "Disjunctive action cache guard" \
+  $'steps:\n  - uses: actions/cache@0123456789012345678901234567890123456789\n    if: inputs.save-cache == \'true\' || github.ref != \'refs/heads/main\''
 assert_step_policy_rejects checkout "Checkout credential policy" \
   $'steps:\n  - uses: actions/checkout@0123456789012345678901234567890123456789\n  - run: true\n    with:\n      persist-credentials: false'
 assert_step_policy_rejects docker-sha "Docker action SHA policy" \
