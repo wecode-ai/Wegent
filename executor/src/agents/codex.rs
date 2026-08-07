@@ -2377,6 +2377,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 &mut launch_config,
                 &request.task_id,
                 upstream,
+                project_id.as_deref(),
                 model.clone(),
                 request_model_switched(request),
                 vision_sidecar_upstream(&request.model_config)?,
@@ -2397,6 +2398,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             &mut launch_config,
             &request.task_id,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            project_id.as_deref(),
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
@@ -2441,10 +2443,12 @@ fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
     task_id: &str,
     mut upstream: LocalModelProxyUpstream,
+    project_id: Option<&str>,
     routing_model_id: Option<String>,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
+    upstream.default_headers = merge_codex_tracking_headers(upstream.default_headers, project_id);
     upstream.routing_model_id = routing_model_id;
     let local_token =
         local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
@@ -2941,31 +2945,7 @@ fn header_overrides(
     default_headers: Option<&Value>,
     project_id: Option<&str>,
 ) -> Vec<String> {
-    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let headers = parse_header_map(default_headers);
-        return if headers.is_empty() {
-            Vec::new()
-        } else {
-            headers
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                        toml_value(&value)
-                    )
-                })
-                .collect()
-        };
-    };
-
-    let mut headers = parse_header_map(default_headers);
-    insert_missing_header(&mut headers, "wecode-action", "wegent");
-    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
-    insert_missing_header(&mut headers, "wecode-executor", "codex");
-    insert_header(&mut headers, "wecode-project", project_id);
-
-    headers
+    merge_codex_tracking_headers(parse_header_map(default_headers), project_id)
         .into_iter()
         .map(|(key, value)| {
             format!(
@@ -2975,6 +2955,21 @@ fn header_overrides(
             )
         })
         .collect()
+}
+
+fn merge_codex_tracking_headers(
+    mut headers: Vec<(String, String)>,
+    project_id: Option<&str>,
+) -> Vec<(String, String)> {
+    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return headers;
+    };
+
+    insert_missing_header(&mut headers, "wecode-action", "wegent");
+    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
+    insert_missing_header(&mut headers, "wecode-executor", "codex");
+    insert_header(&mut headers, "wecode-project", project_id);
+    headers
 }
 
 fn parse_header_map(value: Option<&Value>) -> Vec<(String, String)> {

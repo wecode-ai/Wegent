@@ -611,6 +611,54 @@ fn explicit_upstream_uses_configured_max_output_tokens() {
 }
 
 #[test]
+fn codex_router_forwards_project_tracking_headers_to_anthropic_upstream() {
+    let request = ExecutionRequest {
+        task_id: format!("codex-tracking-headers-{}", std::process::id()),
+        model_config: json!({
+            "model_id": "claude-sonnet",
+            "base_url": "https://example.com/v1",
+            "api_key": "secret",
+            "upstream_api_format": "anthropic-messages",
+            "default_headers": {
+                "WeCode-Action": "configured-action",
+                "x-custom": "custom-value"
+            }
+        }),
+        extra: serde_json::Map::from_iter([("project_id".to_owned(), json!(42))]),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config(&request);
+    let token = &launch_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("local proxy registration")
+        .0;
+    let upstream = local_model_proxy::registered_upstream(token).expect("registered upstream");
+    let header = |name: &str| {
+        upstream
+            .default_headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    };
+
+    assert_eq!(upstream.api_format, "anthropic-messages");
+    assert_eq!(header("wecode-source"), Some("wegent-local"));
+    assert_eq!(header("wecode-action"), Some("configured-action"));
+    assert_eq!(header("wecode-executor"), Some("codex"));
+    assert_eq!(header("wecode-project"), Some("42"));
+    assert_eq!(header("x-custom"), Some("custom-value"));
+}
+
+#[test]
+fn codex_router_preserves_configured_headers_without_a_project() {
+    let headers = vec![("x-custom".to_owned(), "custom-value".to_owned())];
+
+    assert_eq!(merge_codex_tracking_headers(headers.clone(), None), headers);
+}
+
+#[test]
 fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
     let request = ExecutionRequest {
         model_config: json!({
