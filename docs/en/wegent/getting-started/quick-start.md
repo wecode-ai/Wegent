@@ -35,7 +35,7 @@ Then open http://localhost:3000 in your browser.
 | chat-team | General AI assistant + Mermaid diagrams |
 | translator | Multi-language translation |
 | dev-team | Git workflow: branch → code → commit → PR |
-| wiki-team | Codebase Wiki documentation generation |
+| code-wiki-team | Codebase wiki documentation (frontend `RUNTIME_ENABLE_CODE_WIKI`) |
 
 ---
 
