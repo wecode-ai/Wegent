@@ -80,16 +80,22 @@ class RepositoryProvider(ABC):
         a short list rather than as an error. The status is worth separating out:
         401 means the token was refused, which is a different problem for the user
         than the host being unreachable.
+
+        **The exception is named, never rendered.** Gitee passes the token as a query
+        parameter, and ``HTTPError`` stringifies as "... for url: <the full URL>" --
+        so logging the exception would write a live credential into the log the
+        moment a Gitee domain answered 401. Status plus exception class carries what
+        this log is for: telling a refused token apart from an unreachable host.
         """
         response = getattr(error, "response", None)
         status = getattr(response, "status_code", None)
         logging.getLogger(type(self).__module__).warning(
-            "Could not %s from %s domain %s (status=%s): %s",
+            "Could not %s from %s domain %s (status=%s, error=%s)",
             action,
             getattr(self, "type", "git"),
             git_domain or "unknown",
             status if status is not None else "none",
-            error,
+            type(error).__name__,
         )
 
     @abstractmethod

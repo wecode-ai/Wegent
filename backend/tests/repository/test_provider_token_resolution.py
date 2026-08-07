@@ -111,3 +111,44 @@ def test_an_empty_token_stays_empty(provider_class, provider_type):
     (entry,) = provider._get_git_infos(user)
 
     assert entry["git_token"] == ""
+
+
+# --- what a failed domain is allowed to say ----------------------------------
+
+
+@pytest.mark.unit
+def test_a_failed_domain_is_reported_without_rendering_the_exception(caplog):
+    """The log must not carry the token, and Gitee is why.
+
+    Gitee passes the credential as a query parameter, so a `requests` exception for
+    one of its calls stringifies as "401 Client Error: ... for url:
+    https://gitee.com/api/v5/user/repos?access_token=<the live token>". This helper
+    is reached from exactly those calls, so rendering the exception would write a
+    working credential into the log the first time a Gitee domain answered 401.
+
+    The two things it exists to distinguish -- a refused token and an unreachable
+    host -- are carried by the status and the exception class, neither of which
+    quotes the request.
+    """
+    import logging
+
+    import requests
+
+    from app.repository.gitee_provider import GiteeProvider
+
+    response = requests.Response()
+    response.status_code = 401
+    response.url = "https://gitee.com/api/v5/user/repos?access_token=SUPERSECRET"
+    error = requests.exceptions.HTTPError(
+        f"401 Client Error: Unauthorized for url: {response.url}", response=response
+    )
+
+    with caplog.at_level(logging.WARNING):
+        GiteeProvider()._log_domain_failure("list repositories", "gitee.com", error)
+
+    logged = caplog.text
+    assert "SUPERSECRET" not in logged
+    assert "access_token" not in logged
+    # Still says enough to tell a refusal from an outage.
+    assert "401" in logged
+    assert "HTTPError" in logged
