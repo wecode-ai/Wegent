@@ -219,7 +219,7 @@ describe('DesktopSidebar', () => {
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
   })
 
-  test('keeps the shared right border on Windows', () => {
+  test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -232,6 +232,10 @@ describe('DesktopSidebar', () => {
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
     expect(sidebar).toHaveClass('border-r')
+    // Windows WebView2 cannot render a translucent window, so the sidebar opts
+    // out of the translucent background. The dark-theme CSS in globals.css must
+    // keep this opaque background dark instead of falling back to light.
+    expect(sidebar).toHaveAttribute('data-sidebar-translucent', 'false')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {
