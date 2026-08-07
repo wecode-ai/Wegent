@@ -2308,7 +2308,18 @@ describe('DesktopSidebar', () => {
 
   test('keeps an unavailable remote-only project visible with its IP and gray status', () => {
     renderSidebar({
-      devices: [localDevice()],
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
       runtimeWork: {
         projects: [
           {
@@ -2317,7 +2328,7 @@ describe('DesktopSidebar', () => {
               {
                 id: 91,
                 deviceId: 'remote-device',
-                deviceName: '10.201.3.200',
+                deviceName: 'Remote Host',
                 deviceStatus: 'offline',
                 available: false,
                 workspacePath: '/home/ubuntu/workspace/Wegent',
@@ -2350,7 +2361,7 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getByText('Remote Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-text-muted))]',
       'opacity-55'
@@ -2467,7 +2478,7 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveStyle({
       backgroundColor: '#1FD660',
     })
