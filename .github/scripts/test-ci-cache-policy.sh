@@ -17,7 +17,8 @@ assert_warmup_case() {
   shift 2
 
   local actual
-  actual="$("$script_dir/classify-ci-cache-warmup.sh" "$@")"
+  actual="$(GITHUB_OUTPUT=/dev/stdout \
+    "$script_dir/classify-ci-cache-warmup.sh" "$@")"
   if [[ "$actual" != "$expected" ]]; then
     printf 'Warmup classifier case failed: %s\nExpected:\n%s\nActual:\n%s\n' \
       "$name" "$expected" "$actual" >&2
