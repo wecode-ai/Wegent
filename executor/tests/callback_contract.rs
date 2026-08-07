@@ -46,6 +46,7 @@ async fn callback_sink_posts_event_envelope_as_json() {
     assert_eq!(events[0]["task_id"], 1);
     assert_eq!(events[0]["subtask_id"], 2);
     assert_eq!(events[0]["data"]["type"], "response.created");
+    assert_eq!(events[0]["validation_id"], "validation-1");
 }
 
 #[tokio::test]
@@ -155,6 +156,7 @@ fn sample_event() -> EventEnvelope {
         message_id: None,
         executor_name: None,
         executor_namespace: None,
+        validation_id: Some("validation-1".to_owned()),
     }
 }
 

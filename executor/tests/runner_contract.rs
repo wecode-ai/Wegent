@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use serde_json::json;
 use tokio::time::{timeout, Duration};
 use wegent_executor::{
     emitter::EventEnvelope,
@@ -82,6 +83,27 @@ async fn background_runner_emits_start_and_completed_events() {
         events[1].data["response"]["output"][0]["content"][0]["text"],
         "done"
     );
+}
+
+#[tokio::test]
+async fn background_runner_propagates_validation_id_to_all_callbacks() {
+    let sink = RecordingSink::default();
+    let runner = BackgroundTaskRunner::new(
+        FakeEngine {
+            outcome: ExecutionOutcome::Completed {
+                content: "done".to_owned(),
+            },
+        },
+        sink.clone(),
+    );
+    let mut request = task_request();
+    request.validation_params = json!({"validation_id": "validation-1"});
+
+    runner.submit(request).await;
+    let events = sink.wait_for_events(2).await;
+
+    assert_eq!(events[0].validation_id.as_deref(), Some("validation-1"));
+    assert_eq!(events[1].validation_id.as_deref(), Some("validation-1"));
 }
 
 #[tokio::test]

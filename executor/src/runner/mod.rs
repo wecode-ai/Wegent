@@ -159,9 +159,14 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| env_value("EXECUTOR_NAMESPACE"));
+    let validation_id = request
+        .validation_params
+        .get("validation_id")
+        .and_then(|value| value.as_str());
     ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(executor_name.as_deref(), executor_namespace.as_deref())
+        .with_validation_id(validation_id)
 }
 
 fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {

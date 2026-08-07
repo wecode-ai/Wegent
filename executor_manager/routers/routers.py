@@ -50,15 +50,6 @@ logger = setup_logger(__name__)
 
 WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
 
-# In-memory registry: validation task_id -> {validation_id, shell_type, image, created_at}
-# Used by callback_handler to update Redis validation status when validation completes.
-# Entries are cleaned up on terminal callback events or after TTL (5 min).
-_validation_task_registry: Dict[int, Dict[str, Any]] = {}
-
-# Maximum age for validation registry entries before cleanup (seconds)
-_VALIDATION_REGISTRY_MAX_AGE = 300
-
-
 # Create FastAPI app
 app = FastAPI(
     title="Executor Manager API",
@@ -264,6 +255,7 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
         task_id = event_data.get("task_id", 0)
         subtask_id = event_data.get("subtask_id", 0)
         event_type = event_data.get("event_type", "")
+        validation_id = event_data.get("validation_id", "")
 
         logger.info(
             f"[Callback] Received from {client_ip}: "
@@ -299,11 +291,9 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
         }
         if event_type in terminal_events:
-            # Bridge validation task callbacks to Redis validation status
-            validation_meta = _validation_task_registry.pop(task_id, None)
-            if validation_meta:
+            if validation_id:
                 await _update_validation_status_from_callback(
-                    validation_meta, event_type, event_data
+                    validation_id, event_type, event_data
                 )
 
             try:
@@ -721,7 +711,7 @@ class ValidateImageRequest(BaseModel):
     shell_type: str  # e.g., "ClaudeCode", "Agno"
     user_name: Optional[str] = None
     shell_name: Optional[str] = None  # Optional shell name for tracking
-    validation_id: Optional[str] = None  # UUID for tracking validation status
+    validation_id: str = Field(min_length=1)  # UUID for tracking validation status
 
 
 class ImageCheckResult(BaseModel):
@@ -739,19 +729,6 @@ class ValidateImageResponse(BaseModel):
     status: str  # 'submitted' for async validation
     message: str
     validation_task_id: Optional[int] = None
-
-
-def _cleanup_stale_validation_entries() -> None:
-    """Remove stale entries from the validation task registry (>5 min old)."""
-    now = time.time()
-    stale_keys = [
-        k
-        for k, v in _validation_task_registry.items()
-        if now - v.get("created_at", 0) > _VALIDATION_REGISTRY_MAX_AGE
-    ]
-    for k in stale_keys:
-        _validation_task_registry.pop(k, None)
-        logger.info(f"[Validation] Cleaned up stale validation entry: task_id={k}")
 
 
 def _extract_validation_result_from_event(event_data: dict) -> Optional[Dict[str, Any]]:
@@ -793,7 +770,7 @@ def _extract_validation_result_from_event(event_data: dict) -> Optional[Dict[str
 
 
 async def _update_validation_status_from_callback(
-    validation_meta: Dict[str, Any],
+    validation_id: str,
     event_type: str,
     event_data: dict,
 ) -> None:
@@ -804,15 +781,11 @@ async def _update_validation_status_from_callback(
     Redis entry gets updated and the frontend polling can see the completion.
 
     Args:
-        validation_meta: Validation metadata from _validation_task_registry
+        validation_id: Validation status identifier carried by the callback
         event_type: Terminal event type (response.completed, error, etc.)
         event_data: Full event data dict from the callback
     """
     from shared.models.responses_api import ResponsesAPIStreamEvents
-
-    validation_id = validation_meta.get("validation_id")
-    if not validation_id:
-        return
 
     task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
     update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
@@ -840,7 +813,9 @@ async def _update_validation_status_from_callback(
         if isinstance(error_obj, dict):
             error_message = error_obj.get("message", "Unknown error")
         else:
-            error_message = str(error_obj or "Validation failed")
+            error_message = str(
+                error_obj or error_data.get("message") or "Validation failed"
+            )
         update_payload = {
             "status": "completed",
             "stage": "Validation failed",
@@ -893,8 +868,6 @@ async def _run_validation_task_in_background(
             f"Validation task submitted: task_id={validation_task_id}, image={image}"
         )
     except Exception as e:
-        # Clean up registry entry if background submission fails.
-        _validation_task_registry.pop(validation_task_id, None)
         logger.error(f"Failed to submit validation task for {image}: {e}")
 
 
@@ -996,18 +969,6 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
             "callback_url": callback_url,  # Set callback_url for executor container
         },
         "executor_image": os.getenv("EXECUTOR_IMAGE", ""),
-    }
-
-    # Clean stale registry entries before registering new one
-    _cleanup_stale_validation_entries()
-
-    # Register for callback interception so we can update Redis
-    # validation status when the terminal callback event arrives
-    _validation_task_registry[validation_task_id] = {
-        "validation_id": validation_id,
-        "shell_type": shell_type,
-        "image": image,
-        "created_at": time.time(),
     }
 
     # Submit in background to keep this endpoint responsive.

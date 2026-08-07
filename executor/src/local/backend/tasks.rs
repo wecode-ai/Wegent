@@ -230,10 +230,15 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .get("model_id")
         .and_then(Value::as_str)
         .unwrap_or("");
+    let validation_id = request
+        .validation_params
+        .get("validation_id")
+        .and_then(Value::as_str);
     ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(
             request.executor_name.as_deref(),
             request.executor_namespace.as_deref(),
         )
+        .with_validation_id(validation_id)
 }
