@@ -15049,15 +15049,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       const conversationScrollerSelector = '[data-testid="desktop-workbench-content"]'
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
+        stableMs: COMPOSER_READY_STABILITY_MS,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      await control.command('scrollIntoViewAsUser', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        value: 'start',
+      })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       await control.command('markElementWithText', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
         value: 'file-panel-anchor',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('scrollIntoViewAsUser', filePanelAnchorSelector, { value: 'start' })
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const { element: filePanelAnchorBeforeOpen, scroller: filePanelScrollerBeforeOpen } =
         await waitForElementInsideScroller(
           control,
