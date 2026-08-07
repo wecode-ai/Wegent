@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { findBrowserTabByPopupParent } from './browserPopupRouting'
+import { findBrowserTabByPopupParent, isDuplicateBrowserPopupRequest } from './browserPopupRouting'
 
 describe('embedded browser popup routing', () => {
   test('matches a popup by its native parent label when logical labels differ', () => {
@@ -87,5 +87,19 @@ describe('embedded browser popup routing', () => {
         'embedded-browser-native-2'
       )
     ).toBe('browser:1')
+  })
+
+  test('deduplicates the same popup request when it arrives twice in a short window', () => {
+    const recentRequests = new Map<string, number>()
+
+    expect(
+      isDuplicateBrowserPopupRequest(recentRequests, 'browser:1', 'https://example.test/', 0)
+    ).toBe(false)
+    expect(
+      isDuplicateBrowserPopupRequest(recentRequests, 'browser:1', 'https://example.test/', 100)
+    ).toBe(true)
+    expect(
+      isDuplicateBrowserPopupRequest(recentRequests, 'browser:1', 'https://example.test/', 700)
+    ).toBe(false)
   })
 })

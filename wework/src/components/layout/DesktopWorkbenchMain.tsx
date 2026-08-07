@@ -106,7 +106,10 @@ import {
   setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
-import { findBrowserTabByPopupParent } from '@/features/browser-tabs/browserPopupRouting'
+import {
+  findBrowserTabByPopupParent,
+  isDuplicateBrowserPopupRequest,
+} from '@/features/browser-tabs/browserPopupRouting'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -1479,6 +1482,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   >(() => initialBrowserWorkspaceState.states)
   const browserStatesRef = useRef(browserStates)
+  const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
   useEffect(() => {
     browserStatesRef.current = browserStates
   }, [browserStates])
@@ -2217,6 +2221,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         request.parentNativeLabel
       )
       if (!parentTab) return
+      if (
+        isDuplicateBrowserPopupRequest(
+          recentBrowserPopupRequestsRef.current,
+          parentTab,
+          request.url
+        )
+      ) {
+        return
+      }
       routeEmbeddedBrowserOpenRequest({
         id: request.popupId,
         url: request.url,
