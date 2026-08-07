@@ -251,6 +251,9 @@ class GerritProvider(RepositoryProvider):
             git_domain = entry.get("git_domain") or ""
             user_name = entry.get("user_name") or ""
             auth_type = entry.get("auth_type") or "digest"
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             if not git_token or not user_name:
                 # Skip empty token/user_name entries
@@ -383,6 +386,9 @@ class GerritProvider(RepositoryProvider):
         git_token = git_info["git_token"]
         user_name = git_info["user_name"]
         auth_type = git_info.get("auth_type") or "digest"
+        
+        # Decrypt token if encrypted
+        git_token = self.decrypt_token(git_token)
 
         if not git_token or not user_name:
             raise HTTPException(
@@ -596,6 +602,9 @@ class GerritProvider(RepositoryProvider):
             git_domain = entry.get("git_domain") or ""
             user_name = entry.get("user_name") or ""
             auth_type = entry.get("auth_type") or "digest"
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             if not git_token or not user_name:
                 # Skip empty token/user_name entries
@@ -952,6 +961,9 @@ class GerritProvider(RepositoryProvider):
         git_token = git_info["git_token"]
         user_name = git_info["user_name"]
         auth_type = git_info.get("auth_type") or "digest"
+        
+        # Decrypt token if encrypted
+        git_token = self.decrypt_token(git_token)
 
         if not git_token or not user_name:
             raise HTTPException(
@@ -1004,3 +1016,5 @@ class GerritProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
+
+

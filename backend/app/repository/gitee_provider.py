@@ -127,6 +127,9 @@ class GiteeProvider(RepositoryProvider):
             if not git_token:
                 # skip empty token entries
                 continue
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             # Get API base URL based on git domain
             api_base_url = self._get_api_base_url(git_domain)
@@ -221,9 +224,12 @@ class GiteeProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         git_domain = git_info["git_domain"]
-
+        
         if not git_token:
             raise HTTPException(status_code=400, detail="Git token not configured")
+        
+        # Decrypt token if encrypted
+        git_token = self.decrypt_token(git_token)
 
         # Get API base URL based on git domain
         api_base_url = self._get_api_base_url(git_domain)
@@ -387,6 +393,9 @@ class GiteeProvider(RepositoryProvider):
             if not git_token:
                 # skip empty token entries
                 continue
+            
+            # Decrypt token if encrypted
+            git_token = self.decrypt_token(git_token)
 
             # 1) Try to get from full cache first (per domain)
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
@@ -764,3 +773,5 @@ class GiteeProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Gitee API error: {str(e)}")
+
+
