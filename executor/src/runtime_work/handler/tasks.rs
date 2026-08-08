@@ -262,6 +262,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        // Hidden-but-continuable runs (task comments) must keep the Wework-side
+        // link out of the sidebar while still creating a durable Codex thread
+        // (a rollout) so a follow-up can resume the same session after restart.
+        let continuable = bool_field(&payload, "continuable").unwrap_or(false);
         if let (Some(project_key), Some(project_name)) = (
             request.runtime_project_key.as_deref(),
             request.runtime_project_name.as_deref(),
@@ -276,10 +280,32 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
             }
         }
+        let payload_has_workspace_path = payload_workspace_path.is_some();
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
-            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+            .ok_or_else(|| {
+                log_executor_event(
+                    "runtime task create missing workspace path",
+                    &[
+                        ("task_id", local_task_id.clone()),
+                        (
+                            "payload_has_workspace_path",
+                            payload_has_workspace_path.to_string(),
+                        ),
+                        ("request_cwd", request.cwd().unwrap_or_default().to_owned()),
+                        (
+                            "standalone_chat_workspace",
+                            is_standalone_chat_workspace(&request).to_string(),
+                        ),
+                        (
+                            "request_extra_keys",
+                            format!("{:?}", request.extra.keys().collect::<Vec<_>>()),
+                        ),
+                    ],
+                );
+                AppIpcError::new("bad_request", "workspacePath is required")
+            })?;
         if request.project_workspace_path.is_none() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -290,7 +316,11 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
-        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        link.ephemeral =
+            request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
+        if continuable {
+            request.ephemeral = false;
+        }
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);

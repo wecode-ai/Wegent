@@ -14,7 +14,7 @@ wework_get_local_ip() {
   done
 
   local default_interface
-  default_interface="$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
+  default_interface="$(route get default 2>/dev/null | awk '/interface:/{print $2}')"
   if [ -n "$default_interface" ]; then
     ip="$(ipconfig getifaddr "$default_interface" 2>/dev/null || true)"
     if [ -n "$ip" ]; then

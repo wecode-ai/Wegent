@@ -14,6 +14,7 @@ interface CloudMyWorkCalendarProps {
 
 // Status colors mirror the group dot classes used across the my-work views.
 const GROUP_EVENT_COLORS: Record<MyWorkGroupKey, string> = {
+  approval: '#f59e0b',
   action: '#6366f1',
   running: '#f59e0b',
   review: '#8b5cf6',

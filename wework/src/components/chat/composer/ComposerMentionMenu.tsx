@@ -9,14 +9,18 @@ import {
   Package,
   Paperclip,
   Target,
+  Bot,
+  UserRound,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeWorkspaceSearchItem } from '@/types/api'
 import type { ComposerMentionCandidate } from './composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
 
 export type MentionMenuRow =
   | { kind: 'candidate'; candidate: ComposerMentionCandidate }
+  | { kind: 'external'; candidate: ComposerExternalMentionCandidate }
   | { kind: 'path'; item: RuntimeWorkspaceSearchItem }
   | { kind: 'files-action' }
   | { kind: 'goal-action' }
@@ -102,45 +106,55 @@ export function ComposerMentionMenu({
       ) : (
         rows.map((row, index) => {
           const candidate = row.kind === 'candidate' ? row.candidate : null
+          const externalCandidate = row.kind === 'external' ? row.candidate : null
           const pathItem = row.kind === 'path' ? row.item : null
-          const enabled = candidate
-            ? candidate.enabled
-            : row.kind !== 'files-action' || canBrowseFiles
-          const Icon = pathItem
-            ? pathItem.matchType === 'directory'
-              ? Folder
-              : File
-            : row.kind === 'files-action'
-              ? Paperclip
-              : row.kind === 'goal-action'
-                ? Target
-                : row.kind === 'plan-action'
-                  ? ClipboardList
-                  : row.kind === 'cloud-space-direct-action' ||
-                      row.kind === 'cloud-projects-action' ||
-                      candidate?.kind === 'cloud'
-                    ? Cloud
-                    : candidate?.kind === 'conversation'
-                      ? MessageCircle
-                      : row.kind === 'cloud-back-action'
-                        ? ArrowLeft
-                        : Package
-          const title = candidate
-            ? candidate.title
+          const enabled = externalCandidate
+            ? true
+            : candidate
+              ? candidate.enabled
+              : row.kind !== 'files-action' || canBrowseFiles
+          const Icon = externalCandidate
+            ? externalCandidate.type === 'agent'
+              ? Bot
+              : UserRound
             : pathItem
-              ? pathItem.fileName
+              ? pathItem.matchType === 'directory'
+                ? Folder
+                : File
               : row.kind === 'files-action'
-                ? t('workbench.mention_files_and_folders', '文件和文件夹')
+                ? Paperclip
                 : row.kind === 'goal-action'
-                  ? t('workbench.goal_chip', '目标')
-                  : row.kind === 'cloud-back-action'
-                    ? t('workbench.mention_cloud_back', '返回')
-                    : row.kind === 'cloud-space-direct-action'
-                      ? t('workbench.mention_cloud_project_space', '项目空间')
-                      : row.kind === 'cloud-projects-action'
-                        ? t('workbench.mention_cloud_project_space_list', '项目空间列表')
-                        : t('workbench.plan_mode', '计划模式')
+                  ? Target
+                  : row.kind === 'plan-action'
+                    ? ClipboardList
+                    : row.kind === 'cloud-space-direct-action' ||
+                        row.kind === 'cloud-projects-action' ||
+                        candidate?.kind === 'cloud'
+                      ? Cloud
+                      : candidate?.kind === 'conversation'
+                        ? MessageCircle
+                        : row.kind === 'cloud-back-action'
+                          ? ArrowLeft
+                          : Package
+          const title = externalCandidate
+            ? externalCandidate.title
+            : candidate
+              ? candidate.title
+              : pathItem
+                ? pathItem.fileName
+                : row.kind === 'files-action'
+                  ? t('workbench.mention_files_and_folders', '文件和文件夹')
+                  : row.kind === 'goal-action'
+                    ? t('workbench.goal_chip', '目标')
+                    : row.kind === 'cloud-back-action'
+                      ? t('workbench.mention_cloud_back', '返回')
+                      : row.kind === 'cloud-space-direct-action'
+                        ? t('workbench.mention_cloud_project_space', '项目空间')
+                        : row.kind === 'cloud-projects-action'
+                          ? t('workbench.mention_cloud_project_space_list', '项目空间列表')
+                          : t('workbench.plan_mode', '计划模式')
           const description =
+            externalCandidate?.metaLabel ??
             candidate?.description ??
             (row.kind === 'cloud-space-direct-action'
               ? t(
@@ -157,22 +171,29 @@ export function ComposerMentionMenu({
                   : undefined)
           return (
             <button
-              key={candidate?.key ?? `${row.kind}:${pathItem?.path ?? ''}`}
+              key={
+                externalCandidate
+                  ? `external:${externalCandidate.type}:${externalCandidate.id}`
+                  : (candidate?.key ?? `${row.kind}:${pathItem?.path ?? ''}`)
+              }
               type="button"
               data-testid={
-                candidate
-                  ? `${
-                      candidate.kind === 'app'
-                        ? 'local-app'
-                        : candidate.kind === 'cloud'
-                          ? 'cloud-reference'
-                          : candidate.kind === 'conversation'
-                            ? 'conversation-reference'
-                            : 'local-skill'
-                    }-option-${candidate.testId}`
-                  : pathItem
-                    ? `workspace-mention-option-${index}`
-                    : `mention-${row.kind}`
+                externalCandidate
+                  ? (externalCandidate.testId ??
+                    `external-mention-${externalCandidate.type}-${externalCandidate.id}`)
+                  : candidate
+                    ? `${
+                        candidate.kind === 'app'
+                          ? 'local-app'
+                          : candidate.kind === 'cloud'
+                            ? 'cloud-reference'
+                            : candidate.kind === 'conversation'
+                              ? 'conversation-reference'
+                              : 'local-skill'
+                      }-option-${candidate.testId}`
+                    : pathItem
+                      ? `workspace-mention-option-${index}`
+                      : `mention-${row.kind}`
               }
               aria-selected={index === selectedIndex}
               role="option"

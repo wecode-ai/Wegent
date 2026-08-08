@@ -15,25 +15,32 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
     project,
-    launchRequest,
     onClose,
   }: {
     project: { id: number; name: string }
-    launchRequest?: {
-      item: { id: string; description: string }
-      localProjectId: number | null
-    } | null
     onClose: () => void
   }) => (
-    <div
-      data-testid="project-space-chat-sidebar"
-      data-project-id={project.id}
-      data-item-id={launchRequest?.item.id}
-      data-description={launchRequest?.item.description}
-      data-local-project-id={launchRequest?.localProjectId ?? ''}
-    >
+    <div data-testid="project-space-chat-sidebar" data-project-id={project.id}>
       {project.name}
       <button type="button" data-testid="mock-project-space-chat-close" onClick={onClose}>
+        关闭
+      </button>
+    </div>
+  ),
+}))
+
+vi.mock('./AiChatModal', () => ({
+  AiChatModal: ({
+    task,
+    open,
+    onClose,
+  }: {
+    task?: { id: string }
+    open: boolean
+    onClose: () => void
+  }) => (
+    <div data-testid="ai-chat-modal" data-task-id={task?.id} data-open={open ? 'yes' : 'no'}>
+      <button type="button" data-testid="ai-chat-modal-close" onClick={onClose}>
         关闭
       </button>
     </div>
@@ -178,6 +185,7 @@ function services(): WorkbenchServices {
           role: 'Developer',
         },
       ]),
+      listLoopItemExecutions: vi.fn(async () => ({ items: [] })),
       searchCloudProjectUsers: vi.fn(async () => ({ users: [], total: 0 })),
       listCloudFiles: vi.fn(async () => ({ items: [] })),
       listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
@@ -197,6 +205,11 @@ function services(): WorkbenchServices {
         created_at: '2026-07-22T00:00:00Z',
         updated_at: '2026-07-22T00:00:00Z',
       })),
+    },
+    deviceApi: {
+      listDevices: vi.fn(async () => [
+        { device_id: 'local-device', device_type: 'local', status: 'online' },
+      ]),
     },
   } as unknown as WorkbenchServices
 }
@@ -263,45 +276,6 @@ describe('CloudTodoWorkspace', () => {
 
     await waitFor(() => expect(screen.queryByText('管理项目')).not.toBeInTheDocument())
     expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
-  })
-
-  it('opens a routed project task in the board detail drawer', async () => {
-    const user = { id: 1, user_name: 'local', email: 'local@example.com' } as User
-    const workbenchServices = services()
-    const controlledProject = { ...project, id: String(project.id) }
-    const controlledItem = {
-      ...item,
-      cloud_project_id: controlledProject.id,
-    }
-    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
-      items: [controlledProject],
-    })
-    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
-      items: [controlledItem],
-    })
-    const onFocusedItemHandled = vi.fn()
-    const onOpenRuntimeTask = vi.fn()
-
-    render(
-      <CloudTodoWorkspace
-        user={user}
-        localProjects={[]}
-        services={workbenchServices}
-        activeProjectId={controlledProject.id}
-        focusedItemId={controlledItem.id}
-        onFocusedItemHandled={onFocusedItemHandled}
-        onOpenRuntimeTask={onOpenRuntimeTask}
-      />
-    )
-
-    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(controlledItem.title)
-    expect(onFocusedItemHandled).toHaveBeenCalledOnce()
-    await userEvent.click(await screen.findByTestId('cloud-todo-execution-1'))
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      taskId: 'runtime-248868498',
-    })
   })
 
   it('renames and archives a project from the sidebar menu', async () => {
@@ -377,13 +351,41 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('与 AI 沟通')
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('私信 AI')
     await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
     expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
       'data-project-id',
       '11'
     )
     expect(screen.getByTestId('project-space-chat-sidebar')).toBeInTheDocument()
+  })
+
+  it('opens the AI chat modal from the task detail without closing the detail', async () => {
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    const aiChatButton = await screen.findByTestId('cloud-todo-open-ai-chat')
+    expect(aiChatButton).toHaveTextContent('私信 AI')
+    await userEvent.click(aiChatButton)
+
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', 'WEG-1')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
+    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'no')
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-open-ai-chat'))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
   it('hides task ids and configures the properties shown on board cards', async () => {
@@ -411,11 +413,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('WEG-1')).not.toBeInTheDocument()
     expect(screen.getByText('hongyu9')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('负责人')
-    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveTextContent('H')
-    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveClass(
-      'from-indigo-400',
-      'to-indigo-500'
-    )
+    expect(screen.getByTestId('cloud-todo-card-assignee-WEG-1')).toHaveTextContent('hongyu9')
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
 
@@ -437,7 +435,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
   })
 
-  it('does not render an avatar for an unassigned board card', async () => {
+  it('does not render an assignee for an unassigned board card', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -449,7 +447,143 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
-    expect(screen.queryByTestId('cloud-todo-card-assignee-avatar-WEG-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
+  })
+
+  it('renders a robot assignee on the board card instead of 未指定', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: '发布机器人',
+        },
+      ],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
+    expect(assignee).toHaveTextContent('发布机器人')
+    expect(assignee.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+  })
+
+  it('resolves a local robot assignee name from the project chat agents', async () => {
+    const cloudServices = services()
+    cloudServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [] }))
+    const localServices = services()
+    localServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [project] }))
+    localServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'LA-abc123',
+          assignee_agent_name: undefined,
+        },
+      ],
+    }))
+    cloudServices.projectSpaceApis = {
+      local: localServices.deliveryApi,
+      cloud: cloudServices.deliveryApi,
+      defaultLocation: 'cloud',
+    }
+    cloudServices.localProjectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'LA-abc123',
+          projectId: String(project.id),
+          name: '发布机器人',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          executionDeviceId: null,
+          createdByUserId: 1,
+          version: 1,
+          createdAt: '2026-07-22T00:00:00Z',
+          updatedAt: '2026-07-22T00:00:00Z',
+        },
+      ]),
+      create: vi.fn(),
+      update: vi.fn(),
+      archive: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={cloudServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
+    expect(assignee).toHaveTextContent('发布机器人')
+    expect(assignee.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(cloudServices.localProjectChatAgentApi!.list).toHaveBeenCalledWith(project.id)
+  })
+
+  it('keeps robot-assigned tasks out of the unassigned assignee group', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          assignee_user_id: null,
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: '发布机器人',
+        },
+        {
+          ...item,
+          id: 'WEG-2',
+          sequence_number: 2,
+          title: '无人负责的任务',
+          assignee_user_id: null,
+        },
+      ],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-assignee'))
+
+    expect(screen.getByTestId('cloud-todo-column-assignee-agent-agent-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).toHaveTextContent(
+      '无人负责的任务'
+    )
+    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).not.toHaveTextContent(
+      'Implement cloud MCP'
+    )
   })
 
   it('renders DingTalk records by live table fields without exposing provider record ids', async () => {
@@ -720,7 +854,6 @@ describe('CloudTodoWorkspace', () => {
         priority: item.priority,
         status: item.status,
         parent_id: 'WEG-2',
-        assignee_user_id: null,
         due_at: null,
         tags: [],
       })
@@ -768,7 +901,25 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getAllByText('Implement cloud MCP').length).toBeGreaterThan(0)
     expect(screen.getByText('Implement cloud delivery')).toBeInTheDocument()
     expect(screen.getAllByText('local').length).toBeGreaterThan(0)
-    expect(screen.getByText('自动加入')).toBeInTheDocument()
+    expect(screen.getByText('参与者')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeInTheDocument()
+  })
+
+  it('hides the board card activity shortcut and shows activity inside task detail', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-todo-card-activity-WEG-1')).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-task-thread-panel')).not.toBeInTheDocument()
   })
 
   it('copies the cloud project ID before or after opening the project', async () => {
@@ -1125,6 +1276,242 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
   })
 
+  it('stores a Wework runtime AI as a project chat agent', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({
+        id: 'agent-1',
+        projectId: project.id,
+        name: '新 AI',
+        runtime: 'codex',
+        model: null,
+        systemPrompt: '',
+        status: 'active',
+        version: 1,
+        createdAt: '',
+        updatedAt: '',
+      })),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    await screen.findByRole('option', { name: /local-device/ })
+    await userEvent.selectOptions(
+      screen.getByTestId('cloud-project-chat-agent-device'),
+      'local-device'
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
+    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalled())
+    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toBeInTheDocument()
+  })
+
+  it('limits project AI management to one active AI', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'agent-1',
+          projectId: project.id,
+          name: '项目 AI',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          createdByUserId: 1,
+          createdByUserName: 'local',
+          version: 1,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+      create: vi.fn(async () => ({
+        id: 'agent-2',
+        projectId: project.id,
+        name: '项目 AI',
+        runtime: 'codex',
+        model: null,
+        systemPrompt: '',
+        status: 'active',
+        visibility: 'creator_admin',
+        executionEnvironment: 'local',
+        executionMode: 'auto',
+        createdByUserId: 1,
+        createdByUserName: 'local',
+        version: 1,
+        createdAt: '',
+        updatedAt: '',
+      })),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    const addButton = await screen.findByTestId('cloud-project-chat-agent-add')
+
+    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toHaveTextContent(
+      '项目 AI'
+    )
+    expect(addButton).not.toBeDisabled()
+    await userEvent.click(addButton)
+    await screen.findByRole('option', { name: /local-device/ })
+    await userEvent.selectOptions(
+      screen.getByTestId('cloud-project-chat-agent-device'),
+      'local-device'
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-agent-2')).toBeInTheDocument()
+    )
+    expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders project AI and the execution queue inside the automation tab', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'agent-1',
+          projectId: project.id,
+          name: '项目 AI',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          createdByUserId: 1,
+          createdByUserName: 'local',
+          version: 1,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-project-queue-view')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-chat-agents')).toBeInTheDocument()
+    expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
+  })
+
+  it('keeps the automation queue loaded across unrelated workspace re-renders', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+    const listExecutions = workbenchServices.deliveryApi!.listLoopItemExecutions as ReturnType<
+      typeof vi.fn
+    >
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    await waitFor(() => expect(listExecutions).toHaveBeenCalledTimes(1))
+
+    // Opening and closing the global search re-renders the workspace. The
+    // queue must not restart its load (which previously flashed the spinner)
+    // just because the parent re-rendered.
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await waitFor(() => expect(screen.getByTestId('cloud-global-search')).toBeInTheDocument())
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('cloud-global-search')).not.toBeInTheDocument())
+
+    expect(listExecutions).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the automation tab for local project spaces', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, project_store: 'local' as const }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.getByTestId('cloud-project-automation-view')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
+  })
+
+  it('hides the automation tab for DingTalk AI Table project spaces', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, task_provider: 'dingtalk_aitable' as const }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
+    expect(screen.queryByText('自动化')).not.toBeInTheDocument()
+  })
+
   it('opens the global search with Command+K and opens a task result', async () => {
     render(
       <CloudTodoWorkspace
@@ -1381,62 +1768,11 @@ describe('CloudTodoWorkspace', () => {
         parent_id: null,
         priority: 'high',
         status: 'in_progress',
-        assignee_user_id: null,
         due_at: null,
         tags: [],
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
-  })
-
-  it('offers a conversation for a completed TODO', async () => {
-    const workbenchServices = services()
-    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
-      items: [{ ...item, status: 'completed' as const }],
-    }))
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-
-    expect(screen.getByTestId('cloud-todo-start-task')).toHaveTextContent('开始对话')
-    expect(screen.getByTestId('cloud-todo-detail-title')).toBeEnabled()
-  })
-
-  it('opens a task conversation in the project sidebar with an optional Wework project', async () => {
-    const workbenchServices = services()
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[{ id: 91, name: 'Wegent 本地项目', tasks: [] }]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-start-task'))
-
-    const sidebar = screen.getByTestId('project-space-chat-sidebar')
-    expect(sidebar).toHaveAttribute('data-project-id', '11')
-    expect(sidebar).toHaveAttribute('data-item-id', item.id)
-    expect(sidebar).toHaveAttribute('data-description', item.description)
-    expect(sidebar).toHaveAttribute('data-local-project-id', '')
-
-    await userEvent.click(screen.getByTestId('mock-project-space-chat-close'))
-    await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
-
-    const reopenedSidebar = screen.getByTestId('project-space-chat-sidebar')
-    expect(reopenedSidebar).not.toHaveAttribute('data-item-id')
-    expect(reopenedSidebar).not.toHaveAttribute('data-description')
-    expect(reopenedSidebar).toHaveAttribute('data-local-project-id', '')
   })
 
   it('offers every board status when editing a completed TODO', async () => {

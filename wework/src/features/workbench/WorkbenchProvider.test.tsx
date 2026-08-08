@@ -49,6 +49,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
   RuntimeGoal,
+  RuntimeGoalGetResponse,
   RuntimeGuidanceResponse,
   NormalizedRuntimeMessage,
   RuntimeTranscriptResponse,
@@ -3103,6 +3104,20 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(socketClient.dispose).toHaveBeenCalledTimes(1)
   })
 
+  test('disposes the project chat socket while unmounting', () => {
+    const projectChatClient = {
+      subscribe: vi.fn(),
+      send: vi.fn(),
+      dispose: vi.fn(),
+    }
+    const services = createWorkbenchServices({ projectChatClient } as Partial<WorkbenchServices>)
+
+    const { unmount } = renderWorkbench(<BootstrapProbe />, services)
+    unmount()
+
+    expect(projectChatClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
   test('restores project execution mode and worktree branch per project preference', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -4936,6 +4951,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deferred<
         Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
       >()
+    const getRuntimeGoal = deferred<RuntimeGoalGetResponse>()
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -4962,6 +4978,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(initialRuntimeWork),
       createRuntimeTask: vi.fn().mockReturnValue(createRuntimeTask.promise),
+      getRuntimeGoal: vi.fn().mockReturnValue(getRuntimeGoal.promise),
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-created',
         workspacePath: '/workspace/project-alpha',
@@ -5002,6 +5019,12 @@ describe('WorkbenchProvider runtime tasks', () => {
         `device-1:${request.taskId}:/workspace/project-alpha`
       )
     )
+    await waitFor(() => expect(runtimeWorkApi.getRuntimeGoal).toHaveBeenCalled())
+    await act(async () => {
+      getRuntimeGoal.resolve({ accepted: true, goal: null })
+      await getRuntimeGoal.promise
+    })
+
     expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
   })
 

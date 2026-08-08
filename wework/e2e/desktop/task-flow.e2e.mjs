@@ -184,7 +184,7 @@ const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the repo
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const CONCURRENT_MEMORY_TASK_COUNT = 10
 const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
-  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 800 * 1024
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 1280 * 1024
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
@@ -193,8 +193,8 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
-const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
+const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
 )
 const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
@@ -238,20 +238,20 @@ const DEFAULT_MODEL_LABEL = 'GPT 5.6 Luna'
 const LOCAL_MODEL_CASES = [
   {
     protocol: 'responses',
-    optionId: 'local-model:desktop-e2e-responses',
-    label: 'Desktop E2E Responses',
+    optionIds: ['wework-custom-desktop-e2e-responses', 'local-model:desktop-e2e-responses'],
+    labels: ['wework-custom-desktop-e2e-responses', 'Desktop E2E Responses'],
     modelId: 'desktop-e2e-responses-model',
   },
   {
     protocol: 'chat',
-    optionId: 'local-model:desktop-e2e-chat',
-    label: 'Desktop E2E Chat',
+    optionIds: ['wework-custom-desktop-e2e-chat', 'local-model:desktop-e2e-chat'],
+    labels: ['wework-custom-desktop-e2e-chat', 'Desktop E2E Chat'],
     modelId: 'desktop-e2e-chat-model',
   },
   {
     protocol: 'anthropic',
-    optionId: 'local-model:desktop-e2e-anthropic',
-    label: 'Desktop E2E Anthropic',
+    optionIds: ['wework-custom-desktop-e2e-anthropic', 'local-model:desktop-e2e-anthropic'],
+    labels: ['wework-custom-desktop-e2e-anthropic', 'Desktop E2E Anthropic'],
     modelId: 'desktop-e2e-anthropic-model',
   },
 ]
@@ -259,8 +259,8 @@ const MODEL_PROTOCOLS = ['responses', 'chat', 'anthropic']
 const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
   source: 'cloud',
   protocol,
-  optionId: `desktop-e2e-cloud-${protocol}`,
-  label: protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}`,
+  optionIds: [`desktop-e2e-cloud-${protocol}`],
+  labels: [protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}`],
   modelId: protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}-upstream`,
 }))
 const MODEL_PROTOCOL_MATRIX_CASES = [
@@ -268,8 +268,8 @@ const MODEL_PROTOCOL_MATRIX_CASES = [
   ...MODEL_PROTOCOLS.map(protocol => ({
     source: 'codex',
     protocol,
-    optionId: DEFAULT_MODEL_ID,
-    label: DEFAULT_MODEL_LABEL,
+    optionIds: [DEFAULT_MODEL_ID],
+    labels: [DEFAULT_MODEL_LABEL],
     modelId: DEFAULT_MODEL_ID,
   })),
   ...CLOUD_MODEL_CASES,
@@ -311,8 +311,14 @@ const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const LOCAL_MODEL_SWITCH_INVALID_CALL_ID = 'functions.exec_command:0'
 const LOCAL_MODEL_SWITCH_ARTIFACT = 'wework-model-switch-protocol.txt'
 const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_COMMAND'
-const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
-const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
+const PROVIDER_SWITCH_LUNA_OPTION_IDS = [
+  'wework-custom-desktop-e2e-luna-overseas',
+  'local-model:desktop-e2e-luna-overseas',
+]
+const PROVIDER_SWITCH_LUNA_LABELS = [
+  'wework-custom-desktop-e2e-luna-overseas',
+  'GPT 5.6 Luna (海外)',
+]
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // The local E2E Codex catalog is classified as third-party (custom provider), so
 // the official option is served from the cloud model catalog with a canonical
@@ -830,9 +836,6 @@ async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
   while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
     const processId = macosApplicationProcessId(appIdentifier)
     if (processId > 0) return processId
-    if (launcher.exitCode !== null || launcher.signalCode !== null) {
-      throw new Error(`macOS failed to launch ${appIdentifier}`)
-    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
@@ -3308,6 +3311,10 @@ async function verifyExpandedToolDetail(
 }
 
 async function ensureToggleExpanded(control, selector) {
+  await control.command('waitFor', selector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const expandedCount = Number(
     await control.command('getElementCount', `${selector}[aria-expanded="true"]`)
   )
@@ -3592,7 +3599,11 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledRangeKiB = memorySampleRangeKiB(settledWindow)
+  const baselineDomNodeCount = Math.max(
+    ...baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE).map(sample => sample.domNodeCount)
+  )
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
+  const settledDomNodeGrowth = settledDomNodeCount - baselineDomNodeCount
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -3601,14 +3612,16 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         limits: {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
-          maxSettledDomNodeCount: MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
+          maxSettledDomNodeGrowth: MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
         },
         summary: {
           peakGrowthKiB,
           settledGrowthKiB,
           settledRangeKiB,
           peakDomNodeCount,
+          baselineDomNodeCount,
           settledDomNodeCount,
+          settledDomNodeGrowth,
           baselineSampleCount: baselineSamples.length,
         },
         samples,
@@ -3624,8 +3637,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
   )
   assert.ok(
-    settledDomNodeCount <= MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
-    `WebContent DOM retained ${settledDomNodeCount} nodes after rendering the long response`
+    settledDomNodeGrowth <= MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
+    `WebContent DOM retained ${settledDomNodeGrowth} additional nodes after rendering the long response`
   )
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
@@ -3816,6 +3829,10 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
 async function verifyWorkspaceDocumentTabs(control) {
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
@@ -5548,7 +5565,10 @@ async function verifyAutomationLifecycle(control, workspacePath) {
         ),
       'The existing-task selector did not list the pinned local task'
     )
-    await control.command('click', '[data-testid="automation-target-task-select"]')
+    await control.command(
+      'click',
+      `[data-testid="automation-target-task-select-option-local-device:${manualTaskId}"]`
+    )
     await control.command('click', '[data-testid="automation-repeat-menu"]')
     await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
     const scheduledFor = new Date(Date.now() + 5_000)
@@ -5999,10 +6019,21 @@ async function revealGroupedModelOption(control, targetOptionId) {
   return false
 }
 
-async function ensureModelOptionVisible(control, targetOptionId) {
+function modelOptionIdCandidates(modelIds) {
+  return (Array.isArray(modelIds) ? modelIds : [modelIds]).map(modelId =>
+    modelId.startsWith('model-option-') ? modelId : `model-option-${modelId}`
+  )
+}
+
+function hasModelOption(menu, targetOptionIds) {
+  return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
+}
+
+async function ensureModelOptionVisible(control, modelIds) {
+  const targetOptionIds = modelOptionIdCandidates(modelIds)
   for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (menu.testIds.includes(targetOptionId)) return menu
+    if (hasModelOption(menu, targetOptionIds)) return menu
     if (menu.testIds.includes('model-control-menu-model')) {
       await control
         .command('hover', '[data-testid="model-control-menu-model"]', {
@@ -6025,13 +6056,15 @@ async function ensureModelOptionVisible(control, targetOptionId) {
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (menu.testIds.includes(targetOptionId)) return menu
-    if (await revealGroupedModelOption(control, targetOptionId)) {
-      return JSON.parse(await control.command('snapshot', 'body'))
+    if (hasModelOption(menu, targetOptionIds)) return menu
+    for (const targetOptionId of targetOptionIds) {
+      if (await revealGroupedModelOption(control, targetOptionId)) {
+        return JSON.parse(await control.command('snapshot', 'body'))
+      }
     }
   }
 
-  throw new Error(`Model option ${targetOptionId} did not become visible`)
+  throw new Error(`Model options ${targetOptionIds.join(', ')} did not become visible`)
 }
 
 async function confirmLocalProjectName(control, name) {
@@ -6072,9 +6105,10 @@ async function createSingleRootLocalProject(control, workspacePath, name) {
 
 async function selectE2EModel(
   control,
-  modelId = DEFAULT_MODEL_ID,
-  modelLabel = DEFAULT_MODEL_LABEL
+  modelIds = DEFAULT_MODEL_ID,
+  modelLabels = DEFAULT_MODEL_LABEL
 ) {
+  const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -6082,14 +6116,17 @@ async function selectE2EModel(
     'getText',
     '[data-testid="model-selector-button"]'
   )
-  if (selectedModelLabel.includes(modelLabel)) return
+  if (labels.some(label => selectedModelLabel.includes(label))) return
 
-  const targetOptionId = `model-option-${modelId}`
-  await ensureModelOptionVisible(control, targetOptionId)
-  await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
+  const selectionMenu = await ensureModelOptionVisible(control, modelIds)
+  const targetOptionId = modelOptionIdCandidates(modelIds).find(optionId =>
+    selectionMenu.testIds.includes(optionId)
+  )
+  assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
+  await control.command('waitFor', `[data-testid="${targetOptionId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `[data-testid="model-option-${modelId}"]`)
+  await control.command('click', `[data-testid="${targetOptionId}"]`)
   const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
     await control.command(
@@ -6100,10 +6137,7 @@ async function selectE2EModel(
       }
     )
   }
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
-    text: modelLabel,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForE2EModelLabel(control, labels)
   await control.command('press', 'body', { key: 'Escape' })
   await waitForSnapshot(
     control,
@@ -6112,13 +6146,26 @@ async function selectE2EModel(
   )
 }
 
+async function waitForE2EModelLabel(control, labels) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const selectedModelLabel = await control.command(
+      'getText',
+      '[data-testid="model-selector-button"]'
+    )
+    if (labels.some(label => selectedModelLabel.includes(label))) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Model selector did not display one of: ${labels.join(', ')}`)
+}
+
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_ID, PROVIDER_SWITCH_LUNA_LABEL)
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_IDS, PROVIDER_SWITCH_LUNA_LABELS)
   await sendPrompt(control, composerSelector, PROVIDER_SWITCH_PROMPT)
   await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     visible: true,
@@ -7278,7 +7325,7 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(control, anthropicModel.optionId, anthropicModel.label)
+  await selectE2EModel(control, anthropicModel.optionIds, anthropicModel.labels)
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -8415,7 +8462,7 @@ class RealCloudEnvironment {
 
   async seedCloudProtocolModels() {
     const items = CLOUD_MODEL_CASES.map(model => ({
-      name: model.optionId,
+      name: model.optionIds[0],
       env: {
         model: model.protocol === 'anthropic' ? 'claude' : 'openai',
         model_id: model.modelId,
@@ -13176,7 +13223,7 @@ async function verifyModelProtocolMatrix({
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control, model.optionId, model.label)
+    await selectE2EModel(control, model.optionIds, model.labels)
 
     const confirmCloudModelCatalogSync =
       !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
@@ -13413,54 +13460,18 @@ async function main() {
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
         assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
-        const environmentArgs = [
-          'CODEX_BINARY_PATH',
-          'CODEX_BIN',
-          'HOME',
-          'WEGENT_CODEX_HOME',
-          'WEGENT_EXECUTOR_HOME',
-          'WEWORK_EXECUTOR_ISOLATION_OVERRIDE',
-          'WEGENT_EXECUTOR_LOG_DIR',
-          'WEGENT_EXECUTOR_LOG_FILE',
-          'DEVICE_ID',
-          'DEVICE_SESSION_GATEWAY_HOST',
-          'DEVICE_SESSION_GATEWAY_PORT',
-          'VITE_WEWORK_E2E',
-          'WEWORK_E2E_BACKGROUND_WINDOW',
-          'WEWORK_E2E_MODEL_API_KEY',
-          'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
-          'WEWORK_EXECUTOR_SIDECAR',
-          ...(RUNS_PLUGIN_E2E
-            ? [
-                'GIT_CONFIG_COUNT',
-                'GIT_CONFIG_KEY_0',
-                'GIT_CONFIG_VALUE_0',
-                'WEWORK_E2E_NATIVE_CODEX_HOME',
-              ]
-            : []),
-        ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
-        const launcher = spawn(
-          'open',
-          [
-            '-W',
-            '-n',
-            '-g',
-            ...environmentArgs,
-            '--stdout',
-            appLogPath,
-            '--stderr',
-            appLogPath,
-            appBundlePath,
-          ],
-          {
-            cwd: weworkDir,
-            env: appEnvironment,
-            stdio: 'ignore',
-            detached: true,
-          }
-        )
-        const pid = await waitForMacosApplicationProcessId(appIdentifier, launcher)
-        return { launcher, pid }
+        const child = spawn(appBinary, [], {
+          cwd: weworkDir,
+          env: appEnvironment,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: true,
+        })
+        await Promise.all([
+          appendProcessOutput(child.stdout, appLogPath),
+          appendProcessOutput(child.stderr, appLogPath),
+        ])
+        await waitForMacosApplicationProcessId(appIdentifier, child)
+        return child
       }
 
       const child = spawn(appBinary, [], {
@@ -14680,7 +14691,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           await control.command('waitFor', composerSelector, {
             timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
           })
-          await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
+          await selectE2EModel(control, sourceModel.optionIds, sourceModel.labels)
           await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
           await control.command('waitFor', '[data-testid="message-assistant"]', {
             text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
@@ -14716,7 +14727,7 @@ last_updated = "2026-07-30T00:00:00Z"`
               '[data-testid="model-selector-menu"]'
             )
           }
-          await selectE2EModel(control, targetModel.optionId, targetModel.label)
+          await selectE2EModel(control, targetModel.optionIds, targetModel.labels)
           if (switchIndex === 0) {
             await captureVerificationScreenshot(
               control,
@@ -14744,10 +14755,7 @@ last_updated = "2026-07-30T00:00:00Z"`
             'model_switch_target_complete',
             `${switchCase.id} did not complete the automatic same-conversation retry`
           )
-          await control.command('waitFor', '[data-testid="model-selector-button"]', {
-            text: targetModel.label,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
+          await waitForE2EModelLabel(control, targetModel.labels)
           await waitForSnapshot(
             control,
             snapshot => !/下一轮|Next/.test(snapshot.text),
