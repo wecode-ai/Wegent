@@ -2266,7 +2266,7 @@ export function PluginsWorkspace({
 
     const deviceIdHint = cached?.deviceId || currentDeviceIdRef.current || undefined
     const localPromise = localPluginApi.readState({
-      query: debouncedQuery || undefined,
+      q: debouncedQuery || undefined,
       mergeAllMarketplaces: true,
       refresh: isExplicitRefresh,
     })
@@ -2290,7 +2290,7 @@ export function PluginsWorkspace({
       cloudItems: PluginMarketplaceItem[],
       cloudInstalled: InstalledPlugin[],
       localState: Awaited<ReturnType<typeof localPluginApi.readState>> | null,
-      capabilities: { canPublish: boolean; canSharePersonalPlugins: boolean },
+      capabilities: { canPublish: boolean; canSharePersonalPlugins?: boolean },
       options?: { preferExistingOnSameSignature?: boolean }
     ) => {
       const nextInstalled = mergeInstalledPlugins(
@@ -2935,7 +2935,7 @@ export function PluginsWorkspace({
       ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null)
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace,
+      ownedListing: ownedMarketplace ?? null,
       canPublish,
       canSharePersonalPlugins,
     })

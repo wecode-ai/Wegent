@@ -1101,7 +1101,8 @@ where
                 || spec.checksum.as_ref().is_some_and(|expected| {
                     previous_checksum
                         .as_ref()
-                        .is_none_or(|previous| previous != expected)
+                        .map(|previous| previous != expected)
+                        .unwrap_or(true)
                 }));
 
         if should_download {

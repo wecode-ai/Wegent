@@ -183,7 +183,7 @@ export function PluginManagementWorkspace({
       localState: Awaited<ReturnType<typeof localPluginApi.readState>> | null,
       cloudInstalled: InstalledPlugin[],
       marketplace: PluginMarketplaceItem[],
-      capabilities: { canPublish: boolean; canSharePersonalPlugins: boolean }
+      capabilities: { canPublish: boolean; canSharePersonalPlugins?: boolean }
     ) => {
       const deviceId = localState?.deviceId || deviceIdHint || ''
       if (localState?.deviceId) {
@@ -713,7 +713,7 @@ export function PluginManagementWorkspace({
       ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null)
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace,
+      ownedListing: ownedMarketplace ?? null,
       canPublish,
       canSharePersonalPlugins,
     })
@@ -888,7 +888,7 @@ export function PluginManagementWorkspace({
                 ]) ?? (plugin.origin === 'created' ? plugin : null)
               const ownerActions = resolvePluginOwnerActions({
                 isLocalCreated: Boolean(packableCreated),
-                ownedListing: ownedMarketplace,
+                ownedListing: ownedMarketplace ?? null,
                 canPublish,
                 canSharePersonalPlugins,
               })
