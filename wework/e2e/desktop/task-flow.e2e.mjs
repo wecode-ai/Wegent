@@ -7787,7 +7787,10 @@ function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
 
 function selectToolSearch(request, query) {
   const tools = Array.isArray(request.tools) ? request.tools : []
-  const searchTools = tools.filter(tool => tool?.type === 'tool_search')
+  const searchTools = tools.filter(
+    tool =>
+      tool?.type === 'tool_search' || (tool?.type === 'function' && tool.name === 'tool_search')
+  )
   assert.equal(searchTools.length, 1, 'Real Codex did not advertise exactly one tool_search tool')
   assert.equal(
     tools.some(tool => tool?.type === 'namespace'),
