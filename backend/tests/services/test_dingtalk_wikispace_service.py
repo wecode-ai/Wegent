@@ -39,6 +39,44 @@ def _make_mcp_result(data: object) -> MagicMock:
     return result
 
 
+class TestIsConfigured:
+    """Tests for DingTalkWikiSpaceService.is_configured readiness semantics."""
+
+    @patch("app.services.dingtalk_wikispace_service.UserMCPService")
+    def test_requires_both_mcp_urls(self, mock_mcp_svc: MagicMock) -> None:
+        """WikiSpace-only configuration is not sync-ready without Docs MCP."""
+        mock_mcp_svc.get_provider_service_config.return_value = {
+            "enabled": True,
+            "url": "https://ws.mcp.example.com",
+        }
+
+        with patch(
+            "app.services.dingtalk_wikispace_service.DingTalkDocService"
+            ".get_user_dingtalk_mcp_url",
+            return_value=None,
+        ):
+            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is False
+
+        with patch(
+            "app.services.dingtalk_wikispace_service.DingTalkDocService"
+            ".get_user_dingtalk_mcp_url",
+            return_value="https://docs.mcp.example.com",
+        ):
+            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is True
+
+    @patch("app.services.dingtalk_wikispace_service.UserMCPService")
+    def test_not_ready_without_wikispace_url(self, mock_mcp_svc: MagicMock) -> None:
+        """Docs MCP alone is not sync-ready without the WikiSpace MCP."""
+        mock_mcp_svc.get_provider_service_config.return_value = {"enabled": False}
+
+        with patch(
+            "app.services.dingtalk_wikispace_service.DingTalkDocService"
+            ".get_user_dingtalk_mcp_url",
+            return_value="https://docs.mcp.example.com",
+        ):
+            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is False
+
+
 class TestSanitizeUrlForTelemetry:
     """Tests for URL sanitization used in telemetry."""
 
@@ -340,50 +378,13 @@ class TestFetchAllWikispaceNodes:
         assert kb_root["name"] == "Test KB"
 
     @pytest.mark.asyncio
-    async def test_uses_wikispace_mcp_url_as_docs_fallback(self) -> None:
-        """Falls back to wikispace MCP URL when docs MCP URL is not configured."""
-        kb_nodes = [{"workspaceId": "WS1", "name": "KB 1"}]
-        captured_sessions: list = []
-
-        async def capture_session(
-            session: object, workspace_id: str, all_nodes: list
-        ) -> None:
-            captured_sessions.append(session)
-
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with (
-            patch.object(
-                DingTalkWikiSpaceService,
-                "_list_wiki_spaces",
-                new=AsyncMock(return_value=kb_nodes),
-            ),
-            patch.object(
-                DingTalkWikiSpaceService,
-                "_list_nodes_in_wikispace",
-                new=AsyncMock(side_effect=capture_session),
-            ),
-            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
-            patch("mcp.ClientSession") as mock_cls,
-        ):
-            mock_http.return_value.__aenter__ = AsyncMock(
-                return_value=(MagicMock(), MagicMock(), None)
-            )
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    async def test_requires_docs_mcp_for_document_listing(self) -> None:
+        """WikiSpace MCP cannot be used as the Docs MCP fallback."""
+        with pytest.raises(ValueError, match="Docs MCP URL is not configured"):
             await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
                 docs_mcp_url=None,
             )
-
-        assert len(captured_sessions) == 1
-        mock_http.assert_called_once()
-        call_args = mock_http.call_args
-        assert call_args is not None
-        assert call_args.kwargs.get("url") == "https://ws.mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_skips_kb_with_no_workspace_id(self) -> None:
@@ -425,6 +426,7 @@ class TestFetchAllWikispaceNodes:
 
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
+                docs_mcp_url="https://docs.mcp.example.com",
             )
 
         assert list_nodes_calls == ["WS2"]
@@ -474,12 +476,63 @@ class TestFetchAllWikispaceNodes:
 
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
+                docs_mcp_url="https://docs.mcp.example.com",
             )
 
         assert call_count == 2
         assert len(result) == 1
         assert result[0]["workspaceId"] == "WS_OK"
         assert all(node.get("workspaceId") != "WS_FAIL" for node in result)
+
+    @pytest.mark.asyncio
+    async def test_discards_partial_nodes_when_kb_fetch_fails(self) -> None:
+        """A KB whose listing fails mid-way contributes no partial nodes."""
+        kb_nodes = [
+            {"workspaceId": "WS_FAIL", "name": "Failing KB"},
+            {"workspaceId": "WS_OK", "name": "Good KB"},
+        ]
+
+        async def append_then_fail(
+            session: object, workspace_id: str, all_nodes: list
+        ) -> None:
+            if workspace_id == "WS_FAIL":
+                # Simulate a failure after the first page was appended.
+                all_nodes.append({"nodeId": "partial-doc", "workspaceId": "WS_FAIL"})
+                raise ConnectionError("MCP connection failed")
+            all_nodes.append({"nodeId": "good-doc", "workspaceId": "WS_OK"})
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+
+        with (
+            patch.object(
+                DingTalkWikiSpaceService,
+                "_list_wiki_spaces",
+                new=AsyncMock(return_value=kb_nodes),
+            ),
+            patch.object(
+                DingTalkWikiSpaceService,
+                "_list_nodes_in_wikispace",
+                new=AsyncMock(side_effect=append_then_fail),
+            ),
+            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
+            patch("mcp.ClientSession") as mock_cls,
+        ):
+            mock_http.return_value.__aenter__ = AsyncMock(
+                return_value=(MagicMock(), MagicMock(), None)
+            )
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
+                wikispace_mcp_url="https://ws.mcp.example.com",
+                docs_mcp_url="https://docs.mcp.example.com",
+            )
+
+        # The good KB contributes its document and root; the failing KB's
+        # partially appended document must be discarded with its root.
+        assert {node["nodeId"] for node in result} == {"good-doc", "WS_OK"}
 
 
 class TestDedupeNodesById:
@@ -513,6 +566,27 @@ class TestDedupeNodesById:
         assert len(result) == 1
         assert result[0]["name"] == "First"
         assert result[0]["workspaceId"] == "WS1"
+
+    def test_workspace_id_does_not_collapse_distinct_documents(self) -> None:
+        """Two documents in one KB keep separate identities via node-level ids."""
+        nodes = [
+            {"workspaceId": "WS1", "id": "N1", "name": "Doc One"},
+            {"workspaceId": "WS1", "id": "N2", "name": "Doc Two"},
+        ]
+
+        result = DingTalkWikiSpaceService._dedupe_nodes_by_id(nodes)
+
+        assert len(result) == 2
+        assert {node["name"] for node in result} == {"Doc One", "Doc Two"}
+
+    def test_workspace_id_remains_fallback_for_kb_roots(self) -> None:
+        """KB root entries without node-level ids still resolve via workspaceId."""
+        nodes = [{"workspaceId": "WS1", "name": "KB Root", "nodeType": "folder"}]
+
+        result = DingTalkWikiSpaceService._dedupe_nodes_by_id(nodes)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "KB Root"
 
 
 class TestReadHelpers:
