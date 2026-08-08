@@ -448,6 +448,8 @@ async function ensurePluginInWeworkPersonal(options: {
       console.warn('[Wework] Failed to install migrated personal plugin', error)
     }
   }
+  // Disk / App Server may have changed even when migrated=false (idempotent ensure).
+  clearLocalCodexPluginsReadStateCache()
   return ensured
 }
 
@@ -1106,13 +1108,18 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     remoteAppsEnabled: true,
   }
   return {
-    importExternalContent(source) {
+    async importExternalContent(source) {
       if (!isTauriRuntime()) {
-        return Promise.reject(new Error('External content import requires the Wework desktop app'))
+        throw new Error('External content import requires the Wework desktop app')
       }
-      return invoke<ExternalContentImportResult>('local_executor_import_external_content', {
-        options: { source },
-      })
+      const imported = await invoke<ExternalContentImportResult>(
+        'local_executor_import_external_content',
+        {
+          options: { source },
+        }
+      )
+      clearLocalCodexPluginsReadStateCache()
+      return imported
     },
     codexHomeMigrationStatus() {
       if (!isTauriRuntime()) {
@@ -1242,6 +1249,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           cause: error,
         })
       }
+      // Cloud link lives on disk; drop TTL cache so the next readState reloads links.
+      clearLocalCodexPluginsReadStateCache()
     },
     async importMarketplaceCopy(descriptor) {
       if (!isTauriRuntime()) {
@@ -1263,6 +1272,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           },
         }
       )
+      clearLocalCodexPluginsReadStateCache()
       try {
         await codexAppServerRequest('plugin/install', {
           marketplacePath: personalMarketplace.path,
@@ -1274,6 +1284,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           marketplacePath: personalMarketplace.path,
           pluginName: imported.pluginName,
         }).catch(() => undefined)
+        clearLocalCodexPluginsReadStateCache()
         throw new Error(
           `Plugin copy installation failed: ${
             error instanceof Error ? error.message : String(error)
@@ -1459,6 +1470,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         marketplaceName: id,
       })
       if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
+      clearLocalCodexPluginsReadStateCache()
       return readState({ refresh: true })
     },
     async reorderMarketplaces() {
@@ -1484,6 +1496,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         sparsePaths: null,
       })
       rememberSelectedMarketplaceId(response.marketplaceName)
+      clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
     async installAvailablePlugin(pluginId, marketplaceId) {
@@ -1509,6 +1522,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         remoteMarketplaceName: localMarketplace ? null : marketplace.id,
         pluginName: pluginInstallName(item, localMarketplace),
       })
+      clearLocalCodexPluginsReadStateCache()
       const state = await readState({
         marketplaceId: resolvedMarketplaceId,
         refresh: true,
@@ -1570,6 +1584,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           })
         )
       }
+      clearLocalCodexPluginsReadStateCache()
       const state = await readState({ refresh: true })
       const installed = state.installedPlugins.find(
         plugin => String(installedPluginId(plugin)) === String(id)
