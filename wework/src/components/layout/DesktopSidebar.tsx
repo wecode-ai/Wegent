@@ -3431,6 +3431,9 @@ export function DesktopSidebar({
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
+                  onPointerEnter={() => {
+                    void import('@/components/plugins/PluginsWorkspace')
+                  }}
                 />
               )}
               {experimentalFeaturesEnabled && (
