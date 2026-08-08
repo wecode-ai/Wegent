@@ -138,7 +138,8 @@ fn responses_to_chat_with_namespace_mode(
 ) -> Result<(Value, ToolContext), String> {
     let mut result = Map::new();
     copy_field(body, &mut result, "model", "model");
-    let context = build_tool_context(body, preserve_namespace);
+    let tools = effective_tools(body);
+    let context = build_tool_context(&tools, preserve_namespace);
     let mut messages = Vec::new();
 
     if let Some(instructions) = body.get("instructions") {
@@ -182,9 +183,9 @@ fn responses_to_chat_with_namespace_mode(
     }
     apply_reasoning_options(body, &mut result, kimi_k3_compat);
 
-    let tools = chat_tools(body, &context, kimi_k3_compat);
-    if !tools.is_empty() {
-        result.insert("tools".to_owned(), Value::Array(tools));
+    let converted_tools = chat_tools(&tools, &context, kimi_k3_compat);
+    if !converted_tools.is_empty() {
+        result.insert("tools".to_owned(), Value::Array(converted_tools));
         if let Some(choice) = body.get("tool_choice") {
             if choice != "auto" {
                 result.insert("tool_choice".to_owned(), chat_tool_choice(choice, &context));
@@ -200,12 +201,77 @@ fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, targe
     }
 }
 
-fn build_tool_context(body: &Value, preserve_namespace: bool) -> ToolContext {
-    let tools = body
+fn effective_tools(body: &Value) -> Vec<Value> {
+    let mut tools = body
         .get("tools")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
+        .cloned()
         .unwrap_or_default();
+    for searched_tool in body
+        .get("input")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("tool_search_output"))
+        .flat_map(|item| {
+            item.get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+    {
+        merge_effective_tool(&mut tools, searched_tool);
+    }
+    tools
+}
+
+fn merge_effective_tool(tools: &mut Vec<Value>, searched_tool: &Value) {
+    let searched_type = searched_tool.get("type").and_then(Value::as_str);
+    if searched_type != Some("namespace") {
+        if !matches!(searched_type, Some("function" | "custom" | "tool_search")) {
+            return;
+        }
+        let searched_name = searched_tool.get("name").and_then(Value::as_str);
+        if !tools.iter().any(|tool| {
+            tool.get("type") == searched_tool.get("type")
+                && tool.get("name").and_then(Value::as_str) == searched_name
+        }) {
+            tools.push(searched_tool.clone());
+        }
+        return;
+    }
+
+    let Some(namespace) = searched_tool.get("name").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(existing) = tools.iter_mut().find(|tool| {
+        tool.get("type").and_then(Value::as_str) == Some("namespace")
+            && tool.get("name").and_then(Value::as_str) == Some(namespace)
+    }) else {
+        tools.push(searched_tool.clone());
+        return;
+    };
+    let Some(existing_tools) = existing.get_mut("tools").and_then(Value::as_array_mut) else {
+        *existing = searched_tool.clone();
+        return;
+    };
+    for inner_tool in searched_tool
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let inner_name = inner_tool.get("name").and_then(Value::as_str);
+        if !existing_tools
+            .iter()
+            .any(|tool| tool.get("name").and_then(Value::as_str) == inner_name)
+        {
+            existing_tools.push(inner_tool.clone());
+        }
+    }
+}
+
+fn build_tool_context(tools: &[Value], preserve_namespace: bool) -> ToolContext {
     let name_counts = tool_name_counts(tools);
 
     let mut context = ToolContext::default();
@@ -390,14 +456,9 @@ fn unique_wire_name(context: &ToolContext, preferred: String) -> String {
     unreachable!("an unused tool name suffix must exist")
 }
 
-fn chat_tools(body: &Value, context: &ToolContext, kimi_k3_compat: bool) -> Vec<Value> {
+fn chat_tools(tools: &[Value], context: &ToolContext, kimi_k3_compat: bool) -> Vec<Value> {
     let mut converted = Vec::new();
-    for tool in body
-        .get("tools")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+    for tool in tools {
         if tool.get("type").and_then(Value::as_str) == Some("tool_search") {
             if let Some(converted_tool) = chat_tool_search(tool, context, kimi_k3_compat) {
                 converted.push(converted_tool);
@@ -742,12 +803,18 @@ pub(super) fn responses_to_responses(
     native_namespace_tools: bool,
 ) -> Result<(Value, ToolContext), String> {
     let mut result = body.clone();
-    let context = build_tool_context(&result, true);
+    let effective_tools = effective_tools(&result);
+    let context = build_tool_context(&effective_tools, true);
     let bridge_tool_search = !native_tool_search;
     let bridge_namespace_tools = !native_namespace_tools;
 
     if let Some(tools) = result.get("tools").and_then(Value::as_array) {
         if !tools.is_empty() {
+            let tools = if bridge_namespace_tools {
+                effective_tools.as_slice()
+            } else {
+                tools.as_slice()
+            };
             result["tools"] = Value::Array(responses_tools(
                 tools,
                 &context,
@@ -2774,7 +2841,19 @@ mod tests {
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
-                    "tools": [{"namespace": "github", "name": "create_issue"}]
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create an issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}}
+                            }
+                        }]
+                    }]
                 }
             ],
             "tools": [{
@@ -2793,6 +2872,10 @@ mod tests {
 
         assert_eq!(converted["tools"][0]["type"], "function");
         assert_eq!(converted["tools"][0]["function"]["name"], "tool_search");
+        assert_eq!(
+            converted["tools"][1]["function"]["name"],
+            "github__create_issue"
+        );
         assert_eq!(
             converted["messages"][1]["tool_calls"][0]["function"]["name"],
             "tool_search"
@@ -3736,7 +3819,19 @@ mod tests {
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
-                    "tools": [{"namespace": "github", "name": "create_issue"}]
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create an issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}}
+                            }
+                        }]
+                    }]
                 },
                 {
                     "type": "function_call",
@@ -3756,17 +3851,6 @@ mod tests {
                         "properties": {"query": {"type": "string"}},
                         "required": ["query"]
                     }
-                },
-                {
-                    "type": "namespace",
-                    "name": "github",
-                    "description": "GitHub App",
-                    "tools": [{
-                        "type": "function",
-                        "name": "create_issue",
-                        "description": "Create an issue",
-                        "parameters": {"type": "object", "properties": {"title": {"type": "string"}}}
-                    }]
                 }
             ]
         });

@@ -3770,9 +3770,10 @@ mod tests {
                                             == Some("app_1")
                                 })
                             });
-                            let loaded_app = body["tools"].as_array().is_some_and(|tools| {
-                                tools.iter().any(|tool| {
-                                    tool.get("type").and_then(Value::as_str) == Some("namespace")
+                            let loaded_app = body["input"].as_array().is_some_and(|items| {
+                                items.iter().any(|item| {
+                                    item.get("type").and_then(Value::as_str)
+                                        == Some("tool_search_output")
                                 })
                             });
                             request_tx.send(body).expect("request receiver");
@@ -3874,11 +3875,10 @@ mod tests {
             second_upstream["tools"]
                 .as_array()
                 .expect("second tools")
-                .iter()
-                .filter(|tool| tool.get("type").and_then(Value::as_str) == Some("namespace"))
-                .count(),
+                .len(),
             1
         );
+        assert_eq!(second_upstream["tools"][0]["type"], "tool_search");
         let second_response = String::from_utf8_lossy(&second_response);
         assert!(second_response.contains("\"namespace\":\"github\""));
         assert!(second_response.contains("\"name\":\"create_issue\""));
@@ -4283,7 +4283,7 @@ mod tests {
     }
 
     fn app_tool_search_request(include_loaded_app: bool) -> Value {
-        let mut tools = vec![json!({
+        let tools = vec![json!({
             "type": "tool_search",
             "execution": "client",
             "description": "Search available Apps",
@@ -4311,24 +4311,23 @@ mod tests {
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
-                    "tools": [{"namespace": "github", "name": "create_issue"}]
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "description": "GitHub App",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create a GitHub issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}},
+                                "required": ["title"]
+                            }
+                        }]
+                    }]
                 }),
             ]);
-            tools.push(json!({
-                "type": "namespace",
-                "name": "github",
-                "description": "GitHub App",
-                "tools": [{
-                    "type": "function",
-                    "name": "create_issue",
-                    "description": "Create a GitHub issue",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"title": {"type": "string"}},
-                        "required": ["title"]
-                    }
-                }]
-            }));
         }
         json!({
             "model": "third-party-chat",

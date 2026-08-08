@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import {
   ArrowLeftRight,
   ChevronRight,
@@ -95,6 +96,7 @@ import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
+  browserDiagnosticUrl,
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
@@ -160,7 +162,7 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
 const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
-  'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
+  'transition-opacity duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
@@ -317,6 +319,22 @@ interface PendingBlankBrowserMigration {
 }
 
 let latestBlankBrowserMigration: PendingBlankBrowserMigration | null = null
+
+function logEmbeddedBrowserOpenRoute(stage: string, detail: Record<string, unknown>) {
+  const sanitizedDetail = {
+    ...detail,
+    ...(typeof detail.url === 'string' ? { url: browserDiagnosticUrl(detail.url) } : {}),
+  }
+  const message = `[Wework] Embedded browser open route ${JSON.stringify({
+    stage,
+    ...sanitizedDetail,
+  })}`
+  console.info(message)
+  if (!isTauriRuntime()) return
+  void writeInfoLog(message).catch(() => {
+    // Diagnostics must not affect browser routing.
+  })
+}
 
 function findSelectedAssistantPlanContent(
   messages: WorkbenchMessage[],
@@ -1340,6 +1358,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () =>
       initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
   )
+  const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1378,8 +1397,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
   ])
-  const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
-    () => initialBlankBrowserMigration?.browserLabel ?? null
+  const [migratedEmbeddedBrowser, setMigratedEmbeddedBrowser] = useState<{
+    label: string
+    paneKey: string
+  } | null>(() =>
+    initialBlankBrowserMigration
+      ? {
+          label: initialBlankBrowserMigration.browserLabel,
+          paneKey,
+        }
+      : null
   )
   const temporaryChatTabSequence = useRef(0)
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
@@ -1452,6 +1479,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
     defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
+  const rightPanelTransitionDisabled = rightSplitResizing || rightPanelImmediateLayout
   const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
   const environmentInfoDocked =
@@ -1485,14 +1513,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
 
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
+  const rightPanelWidth = Math.max(0, workbenchContentWidth - rightSplitChatWidth)
   const rightPanelShellWidth = rightPanelOpen
     ? rightPanelExpanded
       ? '100%'
-      : `calc(100% - ${rightSplitChatWidth}px)`
+      : `${rightPanelWidth}px`
     : '0px'
   const rightPanelTabBarRightOffset = '0px'
   const rightPanelTabBarWidth = rightPanelOpen
-    ? `calc(${rightPanelExpanded ? '100%' : `100% - ${rightSplitChatWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    ? `calc(${rightPanelExpanded ? '100%' : `${rightPanelWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
@@ -1518,6 +1547,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
     : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
+  const migratedEmbeddedBrowserLabel =
+    migratedEmbeddedBrowser?.paneKey === paneKey ? migratedEmbeddedBrowser.label : null
   const embeddedBrowserLabel = migratedEmbeddedBrowserLabel ?? defaultEmbeddedBrowserLabel
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
@@ -1667,7 +1698,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
       .then(() => {
         if (!disposed) {
-          setMigratedEmbeddedBrowserLabel(null)
+          setMigratedEmbeddedBrowser(null)
         }
       })
       .catch(error => {
@@ -1881,13 +1912,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [paneSession]
   )
   const openRightPanelTab = useCallback(
-    (tab: RightWorkspacePanelTab) => {
+    (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
+      if (options?.immediateLayout) setRightPanelImmediateLayout(true)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  useEffect(() => {
+    if (!rightPanelImmediateLayout || !rightPanelOpen) return
+
+    let secondFrame = 0
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        setRightPanelImmediateLayout(false)
+      })
+    })
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      if (secondFrame) cancelAnimationFrame(secondFrame)
+    }
+  }, [rightPanelImmediateLayout, rightPanelOpen])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
@@ -1931,32 +1977,99 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const embeddedBrowserListenerStateRef = useRef({
     embeddedBrowserLabel,
     openRightPanelTab,
+    paneActive,
+    paneKey,
+    rightPanelOpen,
+    rightPanelTabs,
+    rightPanelView,
+    workbenchVisible,
   })
   useEffect(() => {
     embeddedBrowserListenerStateRef.current = {
       embeddedBrowserLabel,
       openRightPanelTab,
+      paneActive,
+      paneKey,
+      rightPanelOpen,
+      rightPanelTabs,
+      rightPanelView,
+      workbenchVisible,
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [
+    embeddedBrowserLabel,
+    openRightPanelTab,
+    paneActive,
+    paneKey,
+    rightPanelOpen,
+    rightPanelTabs,
+    rightPanelView,
+    workbenchVisible,
+  ])
   useEffect(() => {
-    if (!paneActive) return
     const listener = listenEmbeddedBrowserOpenRequests(request => {
       const current = embeddedBrowserListenerStateRef.current
-      if (request.label && request.label !== current.embeddedBrowserLabel) {
-        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
-        setMigratedEmbeddedBrowserLabel(request.label)
+      const routeDetail = {
+        requestId: request.requestId,
+        requestLabel: request.label,
+        currentLabel: current.embeddedBrowserLabel,
+        url: request.url,
+        paneActive: current.paneActive,
+        paneKey: current.paneKey,
+        rightPanelOpen: current.rightPanelOpen,
+        rightPanelTabs: current.rightPanelTabs,
+        rightPanelView: current.rightPanelView,
+        workbenchVisible: current.workbenchVisible,
       }
-      setEmbeddedBrowserOpenRequest(previous => ({
+      if (request.label && request.label !== current.embeddedBrowserLabel) {
+        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) {
+          logEmbeddedBrowserOpenRoute('request_ignored_label_mismatch', routeDetail)
+          return
+        }
+        if (!current.paneActive) {
+          logEmbeddedBrowserOpenRoute('request_ignored_inactive_default_label', routeDetail)
+          return
+        }
+        logEmbeddedBrowserOpenRoute('default_label_migrated', routeDetail)
+        setMigratedEmbeddedBrowser({
+          label: request.label,
+          paneKey: current.paneKey,
+        })
+      }
+      logEmbeddedBrowserOpenRoute('request_routed', routeDetail)
+      setEmbeddedBrowserOpenRequest({
         ...request,
-        id: (previous?.id ?? 0) + 1,
-      }))
-      current.openRightPanelTab('browser')
+        id: request.requestId,
+      })
+      current.openRightPanelTab('browser', { immediateLayout: true })
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [paneActive])
+  }, [])
+  useEffect(() => {
+    if (!embeddedBrowserOpenRequest) return
+    logEmbeddedBrowserOpenRoute('request_state_committed', {
+      requestId: embeddedBrowserOpenRequest.requestId,
+      requestLabel: embeddedBrowserOpenRequest.label,
+      currentLabel: embeddedBrowserLabel,
+      paneActive,
+      paneKey,
+      rightPanelOpen,
+      rightPanelTabs,
+      rightPanelView,
+      workbenchVisible,
+    })
+  }, [
+    embeddedBrowserLabel,
+    embeddedBrowserOpenRequest,
+    paneActive,
+    paneKey,
+    rightPanelOpen,
+    rightPanelTabs,
+    rightPanelView,
+    workbenchVisible,
+  ])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -2456,7 +2569,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'pointer-events-none absolute left-0 top-0 z-chrome flex h-11 min-w-0 truncate items-center pr-7 text-sm font-medium leading-none text-text-primary',
           sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{ width: paneTitleWidth }}
       >
@@ -2562,7 +2675,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="workbench-pane-task-title"
           className={cn(
             'pointer-events-none relative z-0 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-sm font-medium leading-none text-text-primary',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
         >
           <span className="block min-w-0 truncate">{runtimeTaskTitle}</span>
@@ -2583,7 +2696,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         aria-hidden="true"
         className={cn(
           'shrink-0',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           width: `calc(${rightPanelTabBarWidth} + ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`,
@@ -2595,7 +2708,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           'pointer-events-none absolute top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
           background.imagePath && background.inTopBar ? 'bg-transparent' : 'bg-background/95',
           rightPanelOpen && !rightPanelExpanded ? 'border-l border-border/60' : undefined,
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           right: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
@@ -2613,7 +2726,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="titlebar-actions"
         className={cn(
           'pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           right: '0px',
@@ -2653,6 +2766,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   return (
     <main
       ref={workbenchMainRef}
+      data-embedded-browser-label={embeddedBrowserLabel}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
         hasMainBackground ? 'bg-background/20' : 'bg-background',
@@ -2685,7 +2799,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
               background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
-              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+              rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
@@ -2712,7 +2826,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             hasConversation
               ? 'overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
               : 'overflow-hidden',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
           style={{ width: chatColumnWidth }}
@@ -3115,7 +3229,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             aria-controls="right-workspace-panel-shell"
             className={cn(
               'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
-              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
+              rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
             )}
             style={{ left: rightSplitChatWidth }}
             onPointerDown={handleRightSplitResizeStart}
@@ -3132,7 +3246,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               : hasMainBackground
                 ? 'bg-background/20'
                 : 'bg-background',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
               ? cn(
                   'pointer-events-auto opacity-100',

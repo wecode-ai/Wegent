@@ -4883,6 +4883,7 @@ pub fn run() {
             embedded_browser::embedded_browser_go_forward,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_pending_open_requests,
             embedded_browser::embedded_browser_pause_download,
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
