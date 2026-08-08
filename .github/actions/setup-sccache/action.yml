@@ -1,0 +1,45 @@
+name: Set up sccache
+description: Install sccache and configure Cargo to reuse compiler outputs.
+
+inputs:
+  version:
+    description: The sccache release to install.
+    required: false
+    default: v0.16.0
+
+runs:
+  using: composite
+  steps:
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      with:
+        version: ${{ inputs.version }}
+
+    - name: Export GitHub Actions cache credentials
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          const resultsUrl = process.env.ACTIONS_RESULTS_URL
+          const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN
+          if (!resultsUrl || !runtimeToken) {
+            throw new Error(
+              'GitHub Actions cache credentials are unavailable for sccache'
+            )
+          }
+          core.exportVariable('ACTIONS_RESULTS_URL', resultsUrl)
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', runtimeToken)
+
+    - name: Configure Rust compiler cache
+      shell: bash
+      run: |
+        {
+          echo "CARGO_INCREMENTAL=0"
+          echo "RUSTC_WRAPPER=sccache"
+          echo "SCCACHE_BASEDIRS=$GITHUB_WORKSPACE"
+          echo "SCCACHE_GHA_ENABLED=true"
+          echo "SCCACHE_GHA_VERSION=wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
+        } >> "$GITHUB_ENV"
+
+        if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
+        fi

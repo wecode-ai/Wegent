@@ -122,9 +122,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       workspaceFileApi,
       cloudMentionCandidates = [],
       conversationMentionCandidates = [],
+      externalMentionCandidates = [],
       cloudProjectCandidates = [],
       cloudSpaceEnabled = false,
       onSelectCloudProject,
+      onSelectExternalMention,
       onListLocalSkills,
       onListLocalApps,
       models = [],
@@ -221,6 +223,17 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         ),
       [filteredMentionCandidates]
     )
+
+    const filteredExternalMentionCandidates = useMemo(() => {
+      if (activeMenu?.kind !== 'mention') return []
+      const query = activeMenu.trigger.query.trim().toLocaleLowerCase()
+      if (!query) return externalMentionCandidates
+      return externalMentionCandidates.filter(candidate =>
+        [candidate.title, ...(candidate.searchAliases ?? [])].some(value =>
+          value.toLocaleLowerCase().includes(query)
+        )
+      )
+    }, [activeMenu, externalMentionCandidates])
 
     const workspaceSearch = useWorkspaceMentionSearch(
       activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -412,6 +425,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
         return [
           { kind: 'files-action' },
+          ...filteredExternalMentionCandidates.map(
+            candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+          ),
           ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
           ...(!planModeActive && onSetPlanMode
             ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
@@ -436,6 +452,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         ]
       }
       return [
+        ...filteredExternalMentionCandidates.map(
+          candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+        ),
         ...filteredMentionCandidates.map(
           candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
         ),
@@ -448,6 +467,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       cloudProjectsOpen,
       cloudSpaceEnabled,
       filteredCloudProjectCandidates,
+      filteredExternalMentionCandidates,
       filteredMentionCandidates,
       filteredSkillCandidates,
       onSetGoal,
@@ -925,6 +945,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             onSelectCloudProject?.(row.candidate.project)
           }
           return selected
+        }
+        if (row.kind === 'external') {
+          onSelectExternalMention?.(row.candidate)
+          closeAutocompleteMenu()
+          return true
         }
         if (row.kind === 'cloud-projects-action') {
           setCloudProjectsOpen(true)

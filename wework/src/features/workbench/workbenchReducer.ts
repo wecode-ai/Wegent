@@ -101,6 +101,7 @@ export type WorkbenchAction =
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_removed'; projectId: number }
+  | { type: 'user_updated'; user: User }
   | {
       type: 'project_cleared'
       standaloneDeviceId?: string | null
@@ -1142,6 +1143,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ...state,
         currentProject: state.currentProject?.id === action.projectId ? null : state.currentProject,
         projects: state.projects.filter(project => project.id !== action.projectId),
+      }
+    case 'user_updated':
+      return {
+        ...state,
+        user: action.user,
       }
     case 'project_cleared':
       return {

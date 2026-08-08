@@ -1,10 +1,19 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Archive, CalendarDays, ChevronRight, Ellipsis, Flag, ListTodo, Plus } from 'lucide-react'
+import {
+  Archive,
+  Bot,
+  CalendarDays,
+  ChevronRight,
+  Ellipsis,
+  Flag,
+  ListTodo,
+  Plus,
+} from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
-import { memberAvatarClasses, priorityBadgeClasses } from './todoShared'
+import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -24,11 +33,19 @@ const priorityLabels: Record<CloudLoopItem['priority'], string> = {
 interface CloudTodoCardContentProps {
   item: CloudLoopItem
   display: BoardCardDisplaySettings
+  /** Active robot names for the current project, used when the item only
+   * carries `assignee_agent_id` (local projects do not resolve the name). */
+  agentNames?: Record<string, string>
 }
 
-export function CloudTodoCardContent({ item, display }: CloudTodoCardContentProps) {
+export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCardContentProps) {
   const tags = item.tags ?? []
   const showFooter = display.showPriority || display.showDate || display.showAssignee
+  const assigneeName =
+    item.assignee_name ||
+    (item.assignee_agent_id
+      ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
+      : null)
 
   return (
     <>
@@ -82,20 +99,15 @@ export function CloudTodoCardContent({ item, display }: CloudTodoCardContentProp
             </span>
           ) : null}
           {display.showAssignee ? (
-            item.assignee_name ? (
-              <span className="ml-auto inline-flex min-w-0 items-center gap-1.5">
+            assigneeName ? (
+              <span
+                data-testid={`cloud-todo-card-assignee-${item.id}`}
+                title={assigneeName}
+                className="ml-auto inline-flex min-w-0 items-center gap-1.5"
+              >
                 <span className="sr-only">负责人</span>
-                <span className="sr-only">{item.assignee_name}</span>
-                <span
-                  data-testid={`cloud-todo-card-assignee-avatar-${item.id}`}
-                  title={item.assignee_name}
-                  className={cn(
-                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-semibold text-background',
-                    memberAvatarClasses[0]
-                  )}
-                >
-                  {item.assignee_name.slice(0, 1).toUpperCase()}
-                </span>
+                {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                <span className="truncate">{assigneeName}</span>
               </span>
             ) : (
               <span className="ml-auto">未指定</span>
@@ -114,7 +126,9 @@ interface CloudTodoBoardCardProps {
   onAddChild: () => void
   onOpenChildren: () => void
   onArchive: () => void
+  onOpenActivity?: () => void
   display: BoardCardDisplaySettings
+  agentNames?: Record<string, string>
   dragDisabled?: boolean
   archiveDisabled?: boolean
 }
@@ -127,6 +141,7 @@ export function CloudTodoBoardCard({
   onOpenChildren,
   onArchive,
   display,
+  agentNames,
   dragDisabled = false,
   archiveDisabled = false,
 }: CloudTodoBoardCardProps) {
@@ -203,7 +218,7 @@ export function CloudTodoBoardCard({
         {...listeners}
         {...attributes}
       >
-        <CloudTodoCardContent item={item} display={display} />
+        <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
       <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">

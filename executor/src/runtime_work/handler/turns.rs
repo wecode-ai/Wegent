@@ -44,6 +44,7 @@ fn hook_user_id(value: &Value) -> Option<String> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
         self.apply_project_workspace_roots(&mut turn.request);
+        self.apply_backend_connection(&mut turn.request);
         crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
@@ -314,6 +315,16 @@ impl RuntimeWorkRpcHandler {
             },
             Err(error) => Some((AutomationRunStatus::Failed, Some(error.clone()))),
         };
+        let queue_result_content = match &result {
+            Ok(turn) => match &turn.outcome {
+                ExecutionOutcome::Completed { content } => Some(content.clone()),
+                ExecutionOutcome::WaitingForUserInput { .. } => Some(String::new()),
+                ExecutionOutcome::Cancelled { .. }
+                | ExecutionOutcome::Failed { .. }
+                | ExecutionOutcome::Running => None,
+            },
+            Err(_) => None,
+        };
         match result {
             Ok(turn) => {
                 let status = match &turn.outcome {
@@ -419,7 +430,8 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error);
+            self.finish_automation_run(local_task_id, status, error.clone());
+            self.finish_queue_run(local_task_id, status, error, queue_result_content);
         }
     }
 

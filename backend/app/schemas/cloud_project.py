@@ -133,6 +133,11 @@ class CloudProjectBoardConfig(BaseModel):
         return self
 
 
+class CloudProjectAiAutomation(BaseModel):
+    auto_retry_on_failure: bool = False
+    max_retry_count: int = Field(default=1, ge=1, le=10)
+
+
 class CloudProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
@@ -141,6 +146,7 @@ class CloudProjectUpdate(BaseModel):
     visibility: ProjectVisibility | None = None
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
+    ai_automation: CloudProjectAiAutomation | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -183,6 +189,9 @@ class CloudProjectResponse(BaseModel):
     board_config: CloudProjectBoardConfig = Field(
         default_factory=CloudProjectBoardConfig
     )
+    ai_automation: CloudProjectAiAutomation = Field(
+        default_factory=CloudProjectAiAutomation
+    )
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -210,6 +219,7 @@ class CloudProjectResponse(BaseModel):
                 ),
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
+                "ai_automation": metadata.get("ai_automation", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),

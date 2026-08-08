@@ -14,7 +14,7 @@ use std::{
 use std::{fs, os::unix::fs::PermissionsExt};
 
 use serde_json::{json, Value};
-use tokio::time::timeout;
+use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
     config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
@@ -24,6 +24,7 @@ use wegent_executor::{
         LocalBackendTransport,
     },
     runner::EventSink,
+    runtime_work::RuntimeWorkRpcHandler,
 };
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -489,6 +490,43 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
 
     assert_eq!(ack["success"], true, "{ack}");
     assert!(ack["workspaces"].is_array(), "{ack}");
+}
+
+#[tokio::test]
+async fn local_backend_relays_events_from_shared_app_runtime_handler() {
+    let transport = RecordingTransport::default();
+    let (event_tx, _) = broadcast::channel(8);
+    let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        "/bin/false",
+        event_tx.clone(),
+    ));
+    let _runner = LocalBackendRunner::new(local_backend_config(), transport.clone())
+        .with_shared_runtime_work_handler(handler, event_tx.subscribe());
+
+    event_tx
+        .send(json!({
+            "type": "event",
+            "event": "runtime.task.completed",
+            "payload": {"task_id": "runtime-1"}
+        }))
+        .unwrap();
+
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if !transport.calls().is_empty() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let calls = transport.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].event, "runtime:event");
+    assert_eq!(calls[0].payload["event"], "runtime.task.completed");
 }
 
 #[test]

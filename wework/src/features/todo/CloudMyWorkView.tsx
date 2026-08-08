@@ -11,12 +11,18 @@ export type MyWorkView = 'group' | 'list' | 'calendar' | 'timeline'
 interface CloudMyWorkViewProps {
   items: CloudMyWorkItem[]
   onSelectItem: (item: CloudMyWorkItem) => void
+  onApproveItem?: (item: CloudMyWorkItem) => void | Promise<void>
 }
 
-const GROUP_ORDER: MyWorkGroupKey[] = ['action', 'running', 'review', 'done']
+const GROUP_ORDER: MyWorkGroupKey[] = ['approval', 'action', 'running', 'review', 'done']
 
 const GROUP_META: Record<MyWorkGroupKey, { dotClass: string; labelKey: string; fallback: string }> =
   {
+    approval: {
+      dotClass: 'bg-amber-500',
+      labelKey: 'workbench.my_work_pending_approval',
+      fallback: '待我批准',
+    },
     action: {
       dotClass: 'bg-indigo-500',
       labelKey: 'todo.needs_my_action',
@@ -43,7 +49,11 @@ const GROUP_META: Record<MyWorkGroupKey, { dotClass: string; labelKey: string; f
 // item may appear in more than one group (e.g. in-review without an active
 // task shows under both "需要我处理" and "等待确认").
 const GROUP_FILTERS: Record<MyWorkGroupKey, (item: CloudMyWorkItem) => boolean> = {
-  action: item => !item.has_active_task && item.status !== 'completed',
+  approval: item => item.execution_state === 'pending_approval' && item.can_approve === true,
+  action: item =>
+    !item.has_active_task &&
+    item.status !== 'completed' &&
+    !(item.execution_state === 'pending_approval' && item.can_approve === true),
   running: item => item.has_active_task && item.status === 'in_progress',
   review: item => item.status === 'in_review',
   done: item => item.status === 'completed',
@@ -95,9 +105,10 @@ interface GroupSectionProps {
   groupKey: MyWorkGroupKey
   items: CloudMyWorkItem[]
   onSelectItem: (item: CloudMyWorkItem) => void
+  onApproveItem?: (item: CloudMyWorkItem) => void | Promise<void>
 }
 
-function GroupSection({ groupKey, items, onSelectItem }: GroupSectionProps) {
+function GroupSection({ groupKey, items, onSelectItem, onApproveItem }: GroupSectionProps) {
   const { t } = useTranslation('common')
   const meta = GROUP_META[groupKey]
   return (
@@ -109,17 +120,31 @@ function GroupSection({ groupKey, items, onSelectItem }: GroupSectionProps) {
       </header>
       <div className="divide-y divide-border">
         {items.map(item => (
-          <button
+          <div
             key={item.id}
-            type="button"
             data-testid={`my-work-group-${groupKey}-${item.id}`}
             onClick={() => onSelectItem(item)}
-            className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/60"
+            className="group relative flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/60"
           >
             <span className="shrink-0 font-mono text-xs text-text-muted">{item.id}</span>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
-            <span className="shrink-0 text-xs text-text-muted">{item.project_name}</span>
-          </button>
+            <span className="shrink-0 text-xs text-text-muted transition-opacity group-hover:opacity-0">
+              {item.project_name}
+            </span>
+            {groupKey === 'approval' && onApproveItem ? (
+              <button
+                type="button"
+                data-testid={`my-work-approve-${item.id}`}
+                onClick={event => {
+                  event.stopPropagation()
+                  void onApproveItem(item)
+                }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-lg bg-text-primary px-2.5 py-1 text-xs font-medium text-background opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-90 focus-visible:opacity-100"
+              >
+                {t('workbench.my_work_approve', '批准')}
+              </button>
+            ) : null}
+          </div>
         ))}
       </div>
     </section>
@@ -314,7 +339,7 @@ const VIEW_TABS: Array<{
   { key: 'timeline', icon: Clock, labelKey: 'todo.my_work_view_timeline', fallback: '时间线' },
 ]
 
-export function CloudMyWorkView({ items, onSelectItem }: CloudMyWorkViewProps) {
+export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyWorkViewProps) {
   const { t } = useTranslation('common')
   const [view, setView] = useState<MyWorkView>('group')
 
@@ -335,6 +360,7 @@ export function CloudMyWorkView({ items, onSelectItem }: CloudMyWorkViewProps) {
                     groupKey={groupKey}
                     items={items.filter(GROUP_FILTERS[groupKey])}
                     onSelectItem={onSelectItem}
+                    onApproveItem={onApproveItem}
                   />
                 ))}
               </div>

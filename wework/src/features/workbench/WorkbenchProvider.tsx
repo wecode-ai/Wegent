@@ -31,6 +31,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
+import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
 import {
   getComposerApps,
   publishComposerApps,
@@ -233,11 +234,27 @@ export function WorkbenchProvider({
   const executorClient = useMemo(() => {
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
+  useEffect(() => {
+    if (!resolvedServices.localLoopItemExecutionApi) return
+    return startLocalRobotQueueDispatcher(resolvedServices)
+  }, [resolvedServices])
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+  // The cloud connection context falls back to a synthetic "backend" user when
+  // no real cloud provider is mounted; never let that placeholder override the
+  // authenticated user. With a real connection, the cloud identity is the one
+  // used for cloud API calls, so it must drive workbench ownership checks.
+  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  useEffect(() => {
+    if (!workbenchIdentity) return
+    if (state.user?.id !== workbenchIdentity.id) {
+      dispatch({ type: 'user_updated', user: workbenchIdentity })
+    }
+  }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -568,6 +585,10 @@ export function WorkbenchProvider({
       socketClient.dispose()
     }
   }, [resolvedServices.socketClient])
+  useEffect(() => {
+    const projectChatClient = resolvedServices.projectChatClient
+    return () => projectChatClient?.dispose()
+  }, [resolvedServices.projectChatClient])
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
@@ -1605,6 +1626,10 @@ export function WorkbenchProvider({
   }, [stableRefreshWorkLists])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
+  const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
+    await executorClient.runtime.cancelRuntimeTask(address)
+    void refreshWorkLists()
+  })
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -2036,6 +2061,7 @@ export function WorkbenchProvider({
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
+    cancelRuntimeTask: stableCancelRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2123,6 +2149,7 @@ export function WorkbenchProvider({
       startStandaloneChat: stableStartStandaloneChat,
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,
+      cancelRuntimeTask: stableCancelRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2200,6 +2227,7 @@ export function WorkbenchProvider({
       stableArchiveProjectsConversations,
       stableArchiveRuntimeTask,
       stableBindRuntimeTaskToImSessions,
+      stableCancelRuntimeTask,
       stableCancelRuntimePaneTask,
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,

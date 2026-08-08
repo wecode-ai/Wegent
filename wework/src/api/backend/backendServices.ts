@@ -18,6 +18,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { createProjectChatClient } from '@/api/backend/projectChatSocket'
+import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -59,6 +61,11 @@ export function createBackendWorkbenchServices(
     auth: { client_origin: WEWORK_CLIENT_ORIGIN },
     logger: console,
   })
+  const projectChatClient = createProjectChatClient({
+    socketBaseUrl,
+    socketPath,
+    getToken: resolveToken,
+  })
 
   return {
     teamApi: createTeamApi(client),
@@ -86,6 +93,8 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    projectChatClient,
+    projectChatAgentApi: createProjectChatAgentApi(client),
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,
       startProjectCodeServer: projectApi.startCodeServerSession,
