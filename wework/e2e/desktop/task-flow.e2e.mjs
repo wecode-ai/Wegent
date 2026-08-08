@@ -4749,11 +4749,11 @@ async function verifyPluginLifecycle({ control, fixture }) {
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('official_plugin', 4, WORKBENCH_READY_TIMEOUT_MS)
+  await control.awaitScenarioRequestCount('official_plugin', 5, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(
     control.scenarioRequests.get('official_plugin')?.length,
-    4,
-    'The official plugin flow did not execute the expected skill-read and direct MCP-call turns'
+    5,
+    'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
