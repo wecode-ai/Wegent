@@ -312,14 +312,22 @@ pub struct GlobalCapabilityStore {
 impl GlobalCapabilityStore {
     pub fn new(manifest_path: impl Into<PathBuf>, skills_dir: impl Into<PathBuf>) -> Self {
         let skills_dir = skills_dir.into();
+        let manifest_path = manifest_path.into();
         let base = infer_home_from_runtime_dir(&skills_dir, "skills");
+        // Keep managed skill/plugin packages under the same capabilities/store as the
+        // manifest (typically ~/.wework after desktop migration). Do not hardcode the
+        // legacy ~/.wegent-executor path from the Claude skills home.
+        let store_dir = manifest_path
+            .parent()
+            .map(|capabilities_dir| capabilities_dir.join("store"))
+            .unwrap_or_else(|| PathBuf::from("store"));
         Self {
             manifest: ManagedCapabilityManifest::new(manifest_path),
             skills_dir: skills_dir.clone(),
             codex_skills_dir: base.join(".codex/skills"),
             plugins_dir: base.join(".claude/plugins"),
             codex_plugins_dir: base.join(".codex/plugins"),
-            store_dir: base.join(".wegent-executor/capabilities/store"),
+            store_dir,
         }
     }
 
@@ -749,11 +757,7 @@ impl GlobalCapabilityStore {
     }
 
     fn plugin_store_dir(&self) -> PathBuf {
-        self.manifest
-            .path
-            .parent()
-            .map(|capabilities_dir| capabilities_dir.join("store"))
-            .unwrap_or_else(|| PathBuf::from("store"))
+        self.store_dir.clone()
     }
 
     fn plugin_runtime_link(&self, spec: &PluginSyncSpec) -> PathBuf {

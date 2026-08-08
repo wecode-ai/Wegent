@@ -26,6 +26,37 @@ use wegent_executor::{
 };
 
 #[test]
+fn skill_store_defaults_to_manifest_home_not_legacy_executor() {
+    let temp = TempRoot::new("skill-store-manifest-home");
+    let executor_home = temp.path().join(".wework");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 1,
+            "skills": {},
+            "plugins": {},
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let store =
+        GlobalCapabilityStore::new(manifest_path, temp.path().join(".claude/skills"));
+
+    assert_eq!(
+        store.store_dir,
+        executor_home.join("capabilities/store")
+    );
+    assert!(!store
+        .store_dir
+        .starts_with(temp.path().join(".wegent-executor")));
+}
+
+#[test]
 fn plugin_store_uses_manifest_home_without_changing_skill_store() {
     let temp = TempRoot::new("plugin-store-home");
     let executor_home = temp.path().join(".wework");
@@ -61,7 +92,7 @@ fn plugin_store_uses_manifest_home_without_changing_skill_store() {
     let store =
         GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
 
-    assert_eq!(store.store_dir, legacy_store);
+    assert_eq!(store.store_dir, canonical_store);
     store.reconcile_managed_claude_plugins().unwrap();
 
     let migrated_manifest = read_json(&manifest_path);
