@@ -342,6 +342,7 @@ class PluginMarketplaceService:
                     user_id=user_id,
                     device_id=device_id,
                     installed=installed,
+                    installed_preloaded=True,
                     owner=(
                         owners_by_id.get(plugin.owner_user_id)
                         if plugin.owner_user_id
@@ -1638,12 +1639,13 @@ class PluginMarketplaceService:
         user_id: int | None,
         device_id: str | None = None,
         installed: Kind | None = None,
+        installed_preloaded: bool = False,
         owner: User | None = None,
         grants: list[ResourceMember] | None = None,
         device_row: PluginDeviceInstallation | None = None,
         resolve_package_assets: bool = True,
     ):
-        if installed is None and user_id is not None:
+        if installed is None and not installed_preloaded and user_id is not None:
             installed = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
         installed_spec = installed.json.get("spec", {}) if installed else {}
         if device_row is None and installed and device_id:

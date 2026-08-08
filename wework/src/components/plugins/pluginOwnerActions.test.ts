@@ -85,6 +85,22 @@ describe('resolvePluginOwnerActions', () => {
     })
   })
 
+  test('workspace owner with only personal-share capability cannot republish', () => {
+    expect(
+      resolvePluginOwnerActions({
+        isLocalCreated: false,
+        ownedListing: { accessRole: 'owner', visibility: 'workspace' },
+        canPublish: false,
+        canSharePersonalPlugins: true,
+      })
+    ).toEqual({
+      headerAction: null,
+      showPublishNewVersionInMenu: false,
+      canManageAccess: false,
+      canOpenPublishDialog: false,
+    })
+  })
+
   test('public owner shows publish new version in the header', () => {
     expect(
       resolvePluginOwnerActions({

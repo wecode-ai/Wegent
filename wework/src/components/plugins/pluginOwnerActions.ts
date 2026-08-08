@@ -51,12 +51,12 @@ export function resolvePluginOwnerActions(input: PluginOwnerActionsInput): Plugi
     }
   }
 
+  // Workspace/public republish requires org publish capability; personal-share alone is not enough.
   return {
-    // Same as personal: ownership + capability is enough to show republish immediately.
-    headerAction: hasPublishCapability ? 'publishNewVersion' : null,
+    headerAction: input.canPublish ? 'publishNewVersion' : null,
     showPublishNewVersionInMenu: false,
     canManageAccess: false,
-    canOpenPublishDialog: hasPublishCapability,
+    canOpenPublishDialog: input.canPublish,
   }
 }
 

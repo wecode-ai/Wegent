@@ -171,7 +171,8 @@ export function PluginManagementWorkspace({
     const localPromise = localPluginApi.readState({ refresh: true })
     const cloudInstalledPromise = cloudPluginApi
       .listInstalledPlugins(deviceIdHint)
-      .catch(() => ({ items: [] as InstalledPlugin[] }))
+      .then(value => ({ ok: true as const, value }))
+      .catch(() => ({ ok: false as const, value: { items: [] as InstalledPlugin[] } }))
     const marketplacePromise = cloudPluginApi
       .listMarketplacePlugins({ deviceId: deviceIdHint })
       .catch(() => ({ items: [] as PluginMarketplaceItem[] }))
@@ -229,8 +230,11 @@ export function PluginManagementWorkspace({
       setIsLoadingPlugins(false)
 
       const localState = localResult.status === 'fulfilled' ? localResult.value : null
-      const cloudInstalled =
-        cloudInstalledResult.status === 'fulfilled' ? cloudInstalledResult.value.items : []
+      const cloudInstalledResultValue =
+        cloudInstalledResult.status === 'fulfilled'
+          ? cloudInstalledResult.value
+          : { ok: false as const, value: { items: [] as InstalledPlugin[] } }
+      const cloudInstalled = cloudInstalledResultValue.value.items
       const marketplace =
         marketplaceResult.status === 'fulfilled' ? marketplaceResult.value.items : []
       const capabilities =
@@ -238,7 +242,7 @@ export function PluginManagementWorkspace({
           ? capabilitiesResult.value
           : { canPublish: false, canSharePersonalPlugins: true }
 
-      if (localResult.status === 'rejected' && cloudInstalledResult.status === 'rejected') {
+      if (localResult.status === 'rejected' && !cloudInstalledResultValue.ok) {
         if (!hasCachedList) {
           setInstalledPlugins([])
           setMarketplaceItems([])
@@ -257,10 +261,12 @@ export function PluginManagementWorkspace({
           cloudPluginApi
             .listMarketplacePlugins({ deviceId: resolvedDeviceId })
             .catch(() => ({ items: [] as PluginMarketplaceItem[] })),
-        ]).then(([deviceInstalled, deviceMarketplace]) => {
-          if (!current) return
-          applySnapshot(localState, deviceInstalled.items, deviceMarketplace.items, capabilities)
-        })
+        ])
+          .then(([deviceInstalled, deviceMarketplace]) => {
+            if (!current) return
+            applySnapshot(localState, deviceInstalled.items, deviceMarketplace.items, capabilities)
+          })
+          .catch(() => undefined)
       }
     })
 

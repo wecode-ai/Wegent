@@ -73,6 +73,14 @@ describe('pluginMarketplaceCache', () => {
     expect(marketplaceItemsSignature(left)).not.toBe(marketplaceItemsSignature(right))
   })
 
+  test('detects installedPluginId and display name changes via signature', () => {
+    const left = [item({ id: 1, name: 'a', installed: true, installedPluginId: 10 })]
+    const rightId = [item({ id: 1, name: 'a', installed: true, installedPluginId: 11 })]
+    const rightName = [item({ id: 1, name: 'b', installed: true, installedPluginId: 10 })]
+    expect(sameMarketplaceItems(left, rightId)).toBe(false)
+    expect(sameMarketplaceItems(left, rightName)).toBe(false)
+  })
+
   test('detects device installation state changes via signature', () => {
     const base = item({ id: 1, name: 'a', installed: false })
     const failed = item({

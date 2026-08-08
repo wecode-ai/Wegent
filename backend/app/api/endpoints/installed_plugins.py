@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
+from app.db.session import get_db_session
 from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse
@@ -84,6 +85,8 @@ async def sync_installed_plugins_to_device(
         raise HTTPException(status_code=400, detail="device_id is required")
 
     # Repair stale catalog refs before building desired state / pushing packages.
+    # Close the request session before awaiting the device round-trip so the
+    # connection is not held for the Socket.IO acknowledgement timeout.
     plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
         db, user_id=current_user.id
     )
@@ -97,16 +100,18 @@ async def sync_installed_plugins_to_device(
         db,
         user_id=current_user.id,
     )
+    db.close()
     result = await device_capability_sync_service.sync_device_payload(
         user_id=current_user.id,
         device_id=normalized_device_id,
         payload=payload,
     )
-    plugin_device_installation_service.record_device_sync_result(
-        db,
-        user_id=current_user.id,
-        result=result,
-    )
+    with get_db_session() as record_db:
+        plugin_device_installation_service.record_device_sync_result(
+            record_db,
+            user_id=current_user.id,
+            result=result,
+        )
     mode = str(payload.get("mode") or "replace")
     errors = list(result.errors or [])
     if result.error:

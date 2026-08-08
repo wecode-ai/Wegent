@@ -307,6 +307,7 @@ pub struct GlobalCapabilityStore {
     pub plugins_dir: PathBuf,
     pub codex_plugins_dir: PathBuf,
     pub store_dir: PathBuf,
+    plugin_store_dir_override: Option<PathBuf>,
 }
 
 impl GlobalCapabilityStore {
@@ -322,6 +323,7 @@ impl GlobalCapabilityStore {
             // Skills stay on the legacy store root. Plugin packages use plugin_store_dir()
             // (manifest-adjacent) so marketplace installs follow WEGENT_EXECUTOR_HOME.
             store_dir: base.join(".wegent-executor/capabilities/store"),
+            plugin_store_dir_override: None,
         }
     }
 
@@ -346,7 +348,10 @@ impl GlobalCapabilityStore {
     }
 
     pub fn with_store_dir(mut self, store_dir: impl Into<PathBuf>) -> Self {
-        self.store_dir = store_dir.into();
+        let store_dir = store_dir.into();
+        self.store_dir = store_dir.clone();
+        // Tests isolate both skill and plugin packages under one temp store.
+        self.plugin_store_dir_override = Some(store_dir);
         self
     }
 
@@ -751,6 +756,9 @@ impl GlobalCapabilityStore {
     }
 
     fn plugin_store_dir(&self) -> PathBuf {
+        if let Some(store_dir) = &self.plugin_store_dir_override {
+            return store_dir.clone();
+        }
         self.manifest
             .path
             .parent()

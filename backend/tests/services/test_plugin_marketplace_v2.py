@@ -1308,6 +1308,37 @@ def test_device_sync_omitted_plugin_result_stays_pending(test_db, test_user):
     assert row.error_message == ""
 
 
+def test_device_sync_omitted_result_keeps_confirmed_install(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    service = PluginDeviceInstallationService()
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=release.id,
+            actual_release_id=release.id,
+            state="installed",
+        )
+    )
+    test_db.commit()
+
+    service.record_device_sync_result(
+        test_db,
+        user_id=test_user.id,
+        result=DeviceCapabilitySyncResult(
+            device_id="current-device",
+            success=True,
+            plugins=[],
+        ),
+    )
+
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "installed"
+    assert row.actual_release_id == release.id
+    assert row.desired_release_id == release.id
+
+
 def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user):
     installed, release = _device_install(test_db, test_user.id)
     service = PluginDeviceInstallationService()
@@ -1372,6 +1403,8 @@ def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
 async def test_sync_installed_plugins_to_device_materializes_account_install(
     test_db, test_user, monkeypatch
 ):
+    from contextlib import contextmanager
+
     installed, release = _device_install(test_db, test_user.id)
     reconcile_calls: list[int] = []
 
@@ -1388,6 +1421,10 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
             plugins=[DeviceCapabilityItemResult(id=str(installed.id), status="synced")],
         )
 
+    @contextmanager
+    def reuse_test_db():
+        yield test_db
+
     monkeypatch.setattr(
         plugin_marketplace_service,
         "reconcile_stale_installed_catalog_refs",
@@ -1397,6 +1434,12 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
         device_capability_sync_service,
         "sync_device_payload",
         sync_device_payload,
+    )
+    # Nested test transactions are connection-bound; reuse the fixture session.
+    monkeypatch.setattr(test_db, "close", lambda: None)
+    monkeypatch.setattr(
+        "app.api.endpoints.installed_plugins.get_db_session",
+        reuse_test_db,
     )
 
     response = await sync_installed_plugins_to_device(

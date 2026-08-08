@@ -1052,7 +1052,7 @@ async function readState(
   const cloudLinks = personalMarketplace?.path
     ? await invoke<LocalPluginCloudLink[]>('local_executor_read_plugin_cloud_links', {
         marketplacePath: personalMarketplace.path,
-      })
+      }).catch(() => [] as LocalPluginCloudLink[])
     : []
   const availableMarketplaceItems = filterPluginItems(
     selectedMarketplaces.flatMap(marketplace =>
@@ -1617,15 +1617,21 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         try {
           await codexAppServerRequest('plugin/uninstall', { pluginId })
         } catch (error) {
+          if (pluginId === String(id)) {
+            throw error
+          }
           if (
-            pluginId !== String(id) &&
             /not found|not installed|unknown plugin/i.test(
               getErrorMessage(error, 'Plugin uninstall failed')
             )
           ) {
             continue
           }
-          throw error
+          // Primary uninstall already succeeded; alias cleanup must not look like a hard fail.
+          throw new LocalPluginUninstallCleanupError(
+            getErrorMessage(error, 'Failed to uninstall plugin alias'),
+            { cause: error }
+          )
         }
       }
       clearLocalCodexPluginsReadStateCache()

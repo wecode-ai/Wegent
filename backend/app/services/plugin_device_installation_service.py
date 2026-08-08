@@ -200,6 +200,15 @@ class PluginDeviceInstallationService:
             return
         state, error_message = self._device_install_state(result, item_result)
         row = self._device_row(db, installed.id, result.device_id)
+        if (
+            item_result is None
+            and result.success
+            and row
+            and row.state == "installed"
+            and row.actual_release_id == release_id
+        ):
+            # Device omitted an already-materialized plugin; keep the confirmed state.
+            return
         if not row:
             row = PluginDeviceInstallation(
                 installed_kind_id=installed.id,

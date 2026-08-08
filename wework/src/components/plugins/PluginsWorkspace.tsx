@@ -998,11 +998,7 @@ export function PluginsWorkspace({
     () => pluginMarketplaceCacheKey(cloudApiBaseUrl, cloudToken),
     [cloudApiBaseUrl, cloudToken]
   )
-  const initialMarketplaceCacheRef = useRef(getPluginMarketplaceCache(marketplaceCacheKeyValue))
-  if (initialMarketplaceCacheRef.current?.cacheKey !== marketplaceCacheKeyValue) {
-    initialMarketplaceCacheRef.current = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-  }
-  const initialMarketplaceCache = initialMarketplaceCacheRef.current
+  const initialMarketplaceCache = getPluginMarketplaceCache(marketplaceCacheKeyValue)
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>(
@@ -1053,6 +1049,28 @@ export function PluginsWorkspace({
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
+  // Account/session identity is encoded in the cache key; reset mounted state on switch.
+  useEffect(() => {
+    const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+    setMarketplaces(cached?.marketplaces ?? [])
+    setSelectedMarketplaceKey(cached?.selectedMarketplaceKey || rememberedMarketplaceKey())
+    setInstalledPlugins(cached?.installedPlugins ?? [])
+    setCurrentDeviceId(cached?.deviceId ?? '')
+    setCanPublish(cached?.canPublish ?? false)
+    setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
+    setPluginMarketplaceState({
+      items: cached?.marketplaceItems ?? [],
+      isLoading: !cached,
+      error: null,
+    })
+    setSelectedPluginId(null)
+    setSelectedMarketplacePluginId(null)
+    setPluginShareState(null)
+    setPluginPublishTarget(null)
+    setPluginPublishError(null)
+    setPluginPublishShareRecovery(false)
+    initialMarketplaceLoadKeyRef.current = null
+  }, [marketplaceCacheKeyValue])
   const lastMarketplaceRefreshTickRef = useRef(0)
   useEffect(() => {
     const installedById = new Map(installedPlugins.map(plugin => [String(plugin.id), plugin]))
@@ -1275,7 +1293,11 @@ export function PluginsWorkspace({
       if (completed.plugin) {
         const cloudPluginId = Number(completed.plugin.id)
         const cloudReleaseId = completed.plugin.latestReleaseId ?? null
-        await localPluginApi.linkPersonalPluginRelease(plugin.raw, cloudPluginId, cloudReleaseId)
+        try {
+          await localPluginApi.linkPersonalPluginRelease(plugin.raw, cloudPluginId, cloudReleaseId)
+        } catch {
+          // Cloud submit already succeeded; keep publish successful if local link lags.
+        }
         applyPublishedIdentityToInstalledPlugin(plugin.id, cloudPluginId, cloudReleaseId)
       }
       if (completed.plugin?.latestReleaseId) {
@@ -2396,19 +2418,29 @@ export function PluginsWorkspace({
       const resolvedDeviceId = localState?.deviceId || ''
       if (cloudMarketplaceAvailable && resolvedDeviceId && resolvedDeviceId !== deviceIdHint) {
         void Promise.all([
-          pluginApi.listMarketplacePlugins({
-            q: debouncedQuery || undefined,
-            deviceId: resolvedDeviceId,
-          }),
+          pluginApi
+            .listMarketplacePlugins({
+              q: debouncedQuery || undefined,
+              deviceId: resolvedDeviceId,
+            })
+            .catch(() => ({ items: [] as PluginMarketplaceItem[] })),
           pluginApi
             .listInstalledPlugins(resolvedDeviceId)
             .catch(() => ({ items: [] as InstalledPlugin[] })),
-        ]).then(([deviceCloud, deviceInstalled]) => {
-          if (!isCurrent) return
-          applyCatalogSnapshot(deviceCloud.items, deviceInstalled.items, localState, capabilities, {
-            preferExistingOnSameSignature: true,
+        ])
+          .then(([deviceCloud, deviceInstalled]) => {
+            if (!isCurrent) return
+            applyCatalogSnapshot(
+              deviceCloud.items,
+              deviceInstalled.items,
+              localState,
+              capabilities,
+              {
+                preferExistingOnSameSignature: true,
+              }
+            )
           })
-        })
+          .catch(() => undefined)
       }
     })
 
