@@ -1355,6 +1355,54 @@ export function WorkspaceBrowserPanel({
     nativeBrowserOpeningRef.current = true
 
     setStatus('loading')
+    const revealHiddenBrowser = async (visible: boolean) => {
+      if (visible || !active) return
+      const visibleBounds = await waitForVisibleBrowserHost(
+        () => browserHostRef.current,
+        isAbandoned,
+        () => activeRef.current,
+        detail =>
+          logBrowserOpenDiagnostic('host_waiting', {
+            ...detail,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
+      )
+      if (visibleBounds) {
+        await setEmbeddedBrowserBounds(visibleBounds, true, openingLabel)
+        logBrowserOpenDiagnostic('host_visible', {
+          bounds: visibleBounds,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+        })
+        return
+      }
+      await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, openingLabel, true)
+    }
+    const recoverBrowserFromPageState = async () => {
+      const recoveryDelays = [0, 120, 300, 600]
+      for (const delay of recoveryDelays) {
+        if (delay > 0) {
+          await new Promise<void>(resolve => window.setTimeout(resolve, delay))
+        }
+        try {
+          const pageState = await readEmbeddedBrowserPageState(openingLabel)
+          if (isAbandoned()) return true
+          adoptNativeLabel(pageState.nativeLabel, openingLabel)
+          setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+          nativeBrowserOpenRef.current = true
+          updatePageUrl(pageState.url || openingUrl)
+          schedulePostOpenBoundsSync(activeRef.current)
+          setStatus('ready')
+          return true
+        } catch {
+          // No existing browser state to recover yet.
+        }
+      }
+      return false
+    }
     const openWhenHostIsReady = async () => {
       try {
         const host = browserHostRef.current
@@ -1399,36 +1447,7 @@ export function WorkspaceBrowserPanel({
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || openingUrl)
-        if (!visible && active) {
-          const visibleBounds = await waitForVisibleBrowserHost(
-            () => browserHostRef.current,
-            isAbandoned,
-            () => activeRef.current,
-            detail =>
-              logBrowserOpenDiagnostic('host_waiting', {
-                ...detail,
-                label: openingLabel,
-                requestId,
-                url: openingUrl,
-              })
-          )
-          if (visibleBounds) {
-            await setEmbeddedBrowserBounds(visibleBounds, true, openingLabel)
-            logBrowserOpenDiagnostic('host_visible', {
-              bounds: visibleBounds,
-              label: openingLabel,
-              requestId,
-              url: openingUrl,
-            })
-          } else {
-            await setEmbeddedBrowserBounds(
-              { x: 0, y: 0, width: 1, height: 1 },
-              false,
-              openingLabel,
-              true
-            )
-          }
-        }
+        await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
@@ -1463,25 +1482,7 @@ export function WorkspaceBrowserPanel({
         })
         if (!abandoned) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
-          const recoveryDelays = [0, 120, 300, 600]
-          for (const delay of recoveryDelays) {
-            if (delay > 0) {
-              await new Promise<void>(resolve => window.setTimeout(resolve, delay))
-            }
-            try {
-              const pageState = await readEmbeddedBrowserPageState(openingLabel)
-              if (isAbandoned()) return
-              adoptNativeLabel(pageState.nativeLabel, openingLabel)
-              setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
-              nativeBrowserOpenRef.current = true
-              updatePageUrl(pageState.url || openingUrl)
-              schedulePostOpenBoundsSync(activeRef.current)
-              setStatus('ready')
-              return
-            } catch {
-              // No existing browser state to recover yet.
-            }
-          }
+          if (await recoverBrowserFromPageState()) return
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
         }

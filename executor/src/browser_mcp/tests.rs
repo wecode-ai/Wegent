@@ -52,6 +52,30 @@ async fn exposes_expected_browser_tools() {
 }
 
 #[tokio::test]
+async fn browser_open_schema_only_advertises_supported_arguments() {
+    let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let response = handle_request(&reqwest::Client::new(), &request, 1, Instant::now())
+        .await
+        .unwrap();
+    let browser_open = response["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "browser_open")
+        .expect("browser_open tool");
+    let properties = browser_open["inputSchema"]["properties"]
+        .as_object()
+        .expect("browser_open properties");
+
+    assert_eq!(properties.keys().collect::<Vec<_>>(), vec!["url"]);
+    assert_eq!(browser_open["inputSchema"]["required"], json!(["url"]));
+    assert_eq!(
+        browser_open["inputSchema"]["additionalProperties"],
+        json!(false)
+    );
+}
+
+#[tokio::test]
 async fn action_tool_schema_guides_index_ref_followup_actions() {
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
     let response = handle_request(&reqwest::Client::new(), &request, 1, Instant::now())

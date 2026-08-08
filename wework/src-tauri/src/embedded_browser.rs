@@ -540,11 +540,10 @@ fn should_replay_browser_open_request(
     attempt: u64,
     readiness: Option<EmbeddedBrowserReadiness>,
 ) -> bool {
-    attempt > 0
-        && readiness.is_none()
-        && attempt
-            .checked_mul(BRIDGE_OPEN_WAIT_INTERVAL_MS)
-            .is_some_and(|elapsed_ms| elapsed_ms % BRIDGE_OPEN_REQUEST_REPLAY_INTERVAL_MS == 0)
+    let replay_stride = BRIDGE_OPEN_REQUEST_REPLAY_INTERVAL_MS
+        .div_ceil(BRIDGE_OPEN_WAIT_INTERVAL_MS)
+        .max(1);
+    attempt > 0 && readiness.is_none() && attempt % replay_stride == 0
 }
 
 fn relabel_logical_entry<T>(
@@ -1391,16 +1390,16 @@ pub async fn embedded_browser_open(
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
         match webviews.get(&label) {
-            Some(entry) if entry.readiness() == EmbeddedBrowserReadiness::Ready => {
-                Some(entry.clone())
+            Some(entry) if matches!(&entry.phase, EmbeddedBrowserPhase::Opening) => {
+                return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
             }
-            Some(_) => return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string()),
+            Some(entry) => Some(entry.clone()),
             None => None,
         }
     };
 
     if let Some(entry) = existing {
-        let webview = entry.ready_webview()?;
+        let webview = entry.available_webview()?;
         apply_webview_bounds(&webview, normalized_bounds)?;
         log_embedded_browser_diagnostic(
             &state,
@@ -1451,6 +1450,11 @@ pub async fn embedded_browser_open(
         update_entry_for_native_label(&state, &entry.native_label, |entry| {
             entry.url = Some(url.clone());
             entry.title = initial_title_for_entry;
+            entry.phase = if bridge_ready {
+                EmbeddedBrowserPhase::Ready(webview.clone())
+            } else {
+                EmbeddedBrowserPhase::Hidden(webview.clone())
+            };
         })?;
         log_embedded_browser_diagnostic(
             &state,

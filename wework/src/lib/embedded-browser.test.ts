@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   EMBEDDED_BROWSER_AGENT_STATE_EVENT,
   EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+  browserDiagnosticUrl,
   clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
@@ -41,6 +42,16 @@ describe('embedded-browser', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     eventMocks.listen.mockClear()
+  })
+
+  test('removes query strings and fragments from diagnostic URLs', () => {
+    expect(browserDiagnosticUrl('https://example.test/path?token=secret#details')).toBe(
+      'https://example.test/path'
+    )
+    expect(browserDiagnosticUrl('file:///Users/me/report.html?token=secret#details')).toBe(
+      'file:///Users/me/report.html'
+    )
+    expect(browserDiagnosticUrl('not a URL')).toBe('<invalid-url>')
   })
 
   test('unwraps successful eval result values', async () => {
@@ -173,6 +184,7 @@ describe('embedded-browser', () => {
       label: 'workspace-browser',
       url: 'http://localhost:3000/',
     })
+    expect(handler.mock.calls[0]?.[0].requestId).toBeLessThan(0)
     expect(requestEmbeddedBrowserOpen('asset://localhost/Users/me/workspace/trend.html')).toBe(true)
     expect(handler).toHaveBeenCalledWith({
       requestId: expect.any(Number),

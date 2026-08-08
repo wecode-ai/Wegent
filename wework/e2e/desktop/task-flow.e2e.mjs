@@ -7886,7 +7886,7 @@ function selectToolSearch(request, query) {
     'Real Codex eagerly advertised namespace tools before tool_search'
   )
   assert.equal(
-    toolNames.some(name => name.startsWith('browser_')),
+    toolNames.some(name => /(^|__)browser_/.test(name)),
     false,
     `Real Codex eagerly advertised Wework browser tools before tool_search: ${toolNames.join(', ')}`
   )
@@ -11794,11 +11794,7 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
-      const browserArguments = {
-        timeoutMs: 5000,
-        url: this.url,
-        waitUntil: 'domcontentloaded',
-      }
+      const browserArguments = { url: this.url }
       selectMcpTool(body, 'wework_browser', 'browser_open', browserArguments)
       const browserTool = selectConvertedTool(body, 'browser_open', browserArguments)
       this.assertLocalNamespaceTools(model, body)

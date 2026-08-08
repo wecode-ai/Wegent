@@ -6,7 +6,8 @@ import { isTauriRuntime } from './runtime-environment'
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
-let embeddedBrowserFrontendOpenRequestSequence = 1
+const EMBEDDED_BROWSER_FRONTEND_REQUEST_ID_START = -1
+let embeddedBrowserFrontendOpenRequestSequence = EMBEDDED_BROWSER_FRONTEND_REQUEST_ID_START
 let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
 let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
@@ -22,6 +23,15 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+
+export function browserDiagnosticUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.protocol}//${url.host}${url.pathname}`
+  } catch {
+    return '<invalid-url>'
+  }
+}
 
 export interface EmbeddedBrowserOcclusionChange {
   id: string
@@ -359,7 +369,7 @@ export function requestEmbeddedBrowserOpen(
   if (!normalizedUrl) return false
 
   const request = {
-    requestId: embeddedBrowserFrontendOpenRequestSequence++,
+    requestId: embeddedBrowserFrontendOpenRequestSequence--,
     url: normalizedUrl,
     label,
   }

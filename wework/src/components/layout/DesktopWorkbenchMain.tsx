@@ -96,6 +96,7 @@ import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
+  browserDiagnosticUrl,
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
@@ -320,7 +321,14 @@ interface PendingBlankBrowserMigration {
 let latestBlankBrowserMigration: PendingBlankBrowserMigration | null = null
 
 function logEmbeddedBrowserOpenRoute(stage: string, detail: Record<string, unknown>) {
-  const message = `[Wework] Embedded browser open route ${JSON.stringify({ stage, ...detail })}`
+  const sanitizedDetail = {
+    ...detail,
+    ...(typeof detail.url === 'string' ? { url: browserDiagnosticUrl(detail.url) } : {}),
+  }
+  const message = `[Wework] Embedded browser open route ${JSON.stringify({
+    stage,
+    ...sanitizedDetail,
+  })}`
   console.info(message)
   if (!isTauriRuntime()) return
   void writeInfoLog(message).catch(() => {
@@ -2005,6 +2013,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (request.label && request.label !== current.embeddedBrowserLabel) {
         if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) {
           logEmbeddedBrowserOpenRoute('request_ignored_label_mismatch', routeDetail)
+          return
+        }
+        if (!current.paneActive) {
+          logEmbeddedBrowserOpenRoute('request_ignored_inactive_default_label', routeDetail)
           return
         }
         logEmbeddedBrowserOpenRoute('default_label_migrated', routeDetail)

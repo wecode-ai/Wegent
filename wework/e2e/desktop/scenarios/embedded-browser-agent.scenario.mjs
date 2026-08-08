@@ -175,20 +175,20 @@ async function writeStaleBridgeRuntime(identity) {
   )
 }
 
-async function callBridge(identity, payload) {
-  const body = await callBridgeResponse(identity, payload)
+async function callBridge(identity, payload, label = BROWSER_LABEL) {
+  const body = await callBridgeResponse(identity, payload, label)
   assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
   return body.data
 }
 
-async function callBridgeResponse(identity, payload) {
+async function callBridgeResponse(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${identity.token}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ label: BROWSER_LABEL, ...payload }),
+    body: JSON.stringify({ label, ...payload }),
   })
   const body = await response.json()
   assert.equal(response.ok, true, `Bridge HTTP failed: ${JSON.stringify(body)}`)
@@ -878,9 +878,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         assert.ok(screenshotResult.path.endsWith('.png'))
       } else {
         assert.equal(capabilities.screenshot.viewport, false)
-        const screenshotResponse = await callBridgeResponse(bridgeIdentity, {
-          action: 'screenshot',
-        })
+        const screenshotResponse = await callBridgeResponse(
+          bridgeIdentity,
+          {
+            action: 'screenshot',
+          },
+          browserLabel
+        )
         assert.equal(screenshotResponse.ok, false)
         assert.equal(
           screenshotResponse.error,
