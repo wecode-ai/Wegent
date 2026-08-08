@@ -137,16 +137,19 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('clears all browsing data from the browser actions submenu and reports completion', async () => {
+  test('clears cache and storage from the browser actions submenu and reports completion', async () => {
     render(<WorkspaceBrowserPanel active />)
 
     fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
     fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
-    fireEvent.click(screen.getByTestId('workspace-browser-clear-all-item'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
 
     expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
     await waitFor(() => {
-      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(undefined)
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
     })
 
     await waitFor(() => {
@@ -163,7 +166,10 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
 
     await waitFor(() => {
-      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cache'])
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
     })
     await waitFor(() => {
       expect(screen.getByTestId('transient-notice')).toHaveTextContent('清除失败，请重试')

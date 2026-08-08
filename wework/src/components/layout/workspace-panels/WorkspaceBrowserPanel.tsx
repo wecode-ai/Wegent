@@ -768,9 +768,7 @@ export function WorkspaceBrowserPanel({
     message: string
     tone: 'success' | 'error'
   } | null>(null)
-  const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | 'all' | null>(
-    null
-  )
+  const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
@@ -1830,9 +1828,9 @@ export function WorkspaceBrowserPanel({
   }
 
   const clearBrowserData = useCallback(
-    async (kind: EmbeddedBrowserDataKind | 'all') => {
+    async (kinds: EmbeddedBrowserDataKind[]) => {
       if (clearingDataKind) return
-      setClearingDataKind(kind)
+      setClearingDataKind(kinds[0] ?? null)
       setClearDataNotice({
         id: Date.now(),
         message: t('workbench.browser_clear_started'),
@@ -1842,7 +1840,7 @@ export function WorkspaceBrowserPanel({
         window.setTimeout(resolve, BROWSER_CLEAR_STARTED_NOTICE_MIN_MS)
       )
       try {
-        await clearEmbeddedBrowserData(kind === 'all' ? undefined : [kind])
+        await clearEmbeddedBrowserData(kinds)
         setClearDataNotice({
           id: Date.now(),
           message: t('workbench.browser_clear_completed'),
@@ -2080,22 +2078,16 @@ export function WorkspaceBrowserPanel({
                   disabled: Boolean(clearingDataKind),
                   children: [
                     {
-                      label: t('workbench.browser_clear_all'),
-                      testId: 'workspace-browser-clear-all-item',
-                      disabled: Boolean(clearingDataKind),
-                      onSelect: () => clearBrowserData('all'),
-                    },
-                    {
                       label: t('workbench.browser_clear_cookies'),
                       testId: 'workspace-browser-clear-cookies-item',
                       disabled: Boolean(clearingDataKind),
-                      onSelect: () => clearBrowserData('cookies'),
+                      onSelect: () => clearBrowserData(['cookies']),
                     },
                     {
                       label: t('workbench.browser_clear_cache'),
                       testId: 'workspace-browser-clear-cache-item',
                       disabled: Boolean(clearingDataKind),
-                      onSelect: () => clearBrowserData('cache'),
+                      onSelect: () => clearBrowserData(['cache', 'storage']),
                     },
                   ],
                 },
