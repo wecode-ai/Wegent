@@ -992,6 +992,7 @@ async fn prepare_request_with_history(
 
 #[allow(clippy::type_complexity)]
 #[cfg(test)]
+// Test helper for native Codex Responses models, which support both App tool primitives.
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,

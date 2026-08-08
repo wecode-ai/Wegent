@@ -615,16 +615,23 @@ fn responses_tools(
                 let Some(name) = context.wire_name(None, TOOL_SEARCH_NAME) else {
                     continue;
                 };
-                converted.push(json!({
-                    "type": "function",
-                    "name": name,
-                    "description": tool.get("description").cloned().unwrap_or(Value::Null),
-                    "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": false
-                    }))
-                }));
+                let mut function = Map::new();
+                function.insert("type".to_owned(), Value::String("function".to_owned()));
+                function.insert("name".to_owned(), Value::String(name.to_owned()));
+                if let Some(description) = tool.get("description") {
+                    function.insert("description".to_owned(), description.clone());
+                }
+                function.insert(
+                    "parameters".to_owned(),
+                    tool.get("parameters").cloned().unwrap_or_else(|| {
+                        json!({
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": false
+                        })
+                    }),
+                );
+                converted.push(Value::Object(function));
                 continue;
             }
             Some("namespace") => {
@@ -1456,10 +1463,23 @@ fn restore_responses_tool_item(item: &mut Value, identity: &ToolIdentity, argume
         ToolKind::ToolSearch => {
             item["type"] = Value::String("tool_search_call".to_owned());
             item["execution"] = Value::String("client".to_owned());
-            let arguments = arguments
-                .or_else(|| item.get("arguments").and_then(Value::as_str))
-                .and_then(|value| serde_json::from_str::<Value>(value).ok())
-                .unwrap_or_else(|| json!({}));
+            let raw_arguments = arguments.map(str::to_owned).or_else(|| {
+                item.get("arguments")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+            let parsed_arguments = raw_arguments
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<Value>(value).ok());
+            if parsed_arguments.is_none() {
+                if let Some(raw_arguments) = raw_arguments.as_deref() {
+                    log_executor_event(
+                        "local model proxy invalid tool search arguments",
+                        &[("arguments_bytes", raw_arguments.len().to_string())],
+                    );
+                }
+            }
+            let arguments = parsed_arguments.unwrap_or_else(|| json!({}));
             item["arguments"] = arguments;
             if let Some(object) = item.as_object_mut() {
                 object.remove("name");
@@ -3779,6 +3799,24 @@ mod tests {
                 kind: ToolKind::Function,
             })
         );
+    }
+
+    #[test]
+    fn responses_bridge_omits_missing_tool_search_description() {
+        let input = json!({
+            "model": "third-party-responses-model",
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let (converted, _) =
+            responses_to_responses(&input, false, false, false).expect("request should convert");
+
+        assert_eq!(converted["tools"][0]["type"], "function");
+        assert!(converted["tools"][0].get("description").is_none());
     }
 
     #[test]
