@@ -7807,8 +7807,16 @@ function requestToolSearchResults(request) {
       value.forEach(visit)
       return
     }
+    if (typeof value === 'string') {
+      try {
+        visit(JSON.parse(value))
+      } catch {
+        // Non-JSON strings cannot contain tool search results.
+      }
+      return
+    }
     if (!value || typeof value !== 'object') return
-    if (value.type === 'tool_search_output' && Array.isArray(value.tools)) {
+    if (Array.isArray(value.tools)) {
       outputs.push(...value.tools)
     }
     Object.values(value).forEach(visit)
