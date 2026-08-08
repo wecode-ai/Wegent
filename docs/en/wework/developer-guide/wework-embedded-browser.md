@@ -60,6 +60,10 @@ Browser instances are bound by pane/task label:
 
 This binding keeps the browser the user sees and the browser the agent controls as the same object.
 
+A programmatic first open must treat "the panel was requested" and "the native WebView is ready for navigation" as separate phases. The bridge stores pending navigation with a request ID and executes it only after the browser host for that task has nonzero visible bounds and reaches the ready state. If the frontend listener registers after the request, it recovers the event from the pending-request snapshot. The tool may report success only after the native WebView has navigated to the requested URL, not merely because the right panel or a blank WebView was created.
+
+Close requests triggered by task switching or component unmounting must include the expected native label. A stale pane may close only the WebView it created; it must not close an instance that was relabeled or adopted by a replacement pane. An inactive task may prepare a hidden ready browser, but it cannot display that browser over the active task.
+
 ## Main-interface overlays and address synchronization
 
 The embedded browser is a separate native WebView, so the main React WebView cannot cover it with `z-index`. When a dialog, menu, listbox, or system-level overlay intersects the browser bounds, the browser panel must make the native WebView invisible and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
@@ -108,6 +112,8 @@ cargo test --manifest-path executor/Cargo.toml browser_mcp
 cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
+
+`e2e:desktop:embedded-browser` must issue the first bridge `open` from a newly created local task and verify that it completes before the tool timeout, creates exactly one visible native host, and preserves the requested URL. A test that covers only a second open or manually exposes the browser panel first does not exercise the first-open race.
 
 When the browser change touches Tauri commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Tauri session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
 

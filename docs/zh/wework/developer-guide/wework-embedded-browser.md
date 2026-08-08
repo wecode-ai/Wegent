@@ -60,6 +60,10 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 WebKit API
 
 这种绑定保证“用户看到的浏览器”和“agent 控制的浏览器”是同一个对象。
 
+程序化首次打开必须把“面板已请求打开”和“原生 WebView 已可导航”视为两个不同阶段。bridge 应保存带 request ID 的待处理导航，等任务对应的浏览器宿主获得非零可见尺寸并进入 ready 状态后再执行；监听器晚于请求注册时，前端必须通过待处理请求快照恢复事件。只有原生 WebView 已导航到请求地址后才能向工具返回成功，不能仅因右侧面板或空白 WebView 已创建就报告成功。
+
+任务切换或组件卸载时，关闭请求必须携带预期的原生 label。过期 pane 只能关闭自己创建的 WebView，不能关闭已经迁移或由新 pane 接管的实例。非活跃任务可以提前创建隐藏且 ready 的浏览器，但不能显示在当前任务上方。
+
 ## 主界面浮层与地址栏同步
 
 嵌入式浏览器是独立的原生 WebView，不能通过主 React WebView 的 `z-index` 覆盖。当主界面的 dialog、menu、listbox 或系统级浮层与浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见；浮层移除或不再相交后再恢复显示。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
@@ -108,6 +112,8 @@ cargo test --manifest-path executor/Cargo.toml browser_mcp
 cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
+
+`e2e:desktop:embedded-browser` 必须从新建本地任务执行第一次 bridge `open`，验证它在工具超时前完成、只产生一个可见原生宿主，并保留请求 URL。仅验证第二次打开或手工先展开浏览器面板不能覆盖首次打开竞态。
 
 浏览器涉及 Tauri 命令、原生 WebView、IPC 或 Agent 操作链路时，还应使用 `pnpm --filter wework ai:verify start` 启动隔离真实 Tauri 会话，并记录打开页面、inspect、动作和截图的验证证据。完整 E2E 太慢时，合并前至少要说明未运行的原因，并确保 CI 中的 `e2e:desktop:embedded-browser` 会覆盖该场景。
 
