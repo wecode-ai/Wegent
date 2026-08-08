@@ -169,7 +169,11 @@ class WikiService:
                     content_item.type = section.type
                     content_item.title = section.title
                     content_item.content = section.content
-                    content_item.ext = section.ext or None
+                    # Same reason as the insert below, and the likelier of the two to
+                    # be reached: this branch rewrites a row that already exists, so
+                    # a path-less update of legacy content meets the NOT NULL that
+                    # was there all along.
+                    content_item.ext = section.ext or {}
                     if path:
                         set_page_path(content_item, path)
                     content_item.updated_at = now
