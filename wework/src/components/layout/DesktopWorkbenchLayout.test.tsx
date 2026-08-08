@@ -18,6 +18,7 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import { openExternalUrl } from '@/lib/external-links'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   closeLocalTerminal,
   getLocalPathKind,
@@ -8049,6 +8050,48 @@ describe('DesktopWorkbenchLayout', () => {
       'src',
       'https://example.com/'
     )
+  })
+
+  test('does not reuse a migrated default browser label after switching panes', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {
+        transformCallback: vi.fn(() => 1),
+        unregisterCallback: vi.fn(),
+        invoke: vi.fn(async (command: string) => {
+          if (command === 'embedded_browser_pending_open_requests') return []
+          if (command === 'embedded_browser_open') {
+            return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
+          }
+          return null
+        }),
+      },
+    })
+    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+      configurable: true,
+      value: { unregisterListener: vi.fn() },
+    })
+    const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    const browserHost = () =>
+      screen.getByTestId('desktop-workbench-main').querySelector('[data-embedded-browser-label]')
+
+    await waitFor(() => {
+      expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(browserHost()).toHaveAttribute('data-embedded-browser-label', 'workspace-browser')
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(browserHost()).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser-runtime-b'
+    )
+
+    unmount()
+    await new Promise(resolve => setTimeout(resolve, 1_100))
   })
 
   test('preserves the open file when switching runtime tasks', async () => {

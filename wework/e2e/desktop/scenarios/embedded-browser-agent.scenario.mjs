@@ -510,21 +510,42 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           rightPanelShellWidth,
         })}`
       )
-      const openResult = await bridgeCall({
-        action: 'open',
-        url: fixtureUrl,
-        timeoutMs: 8_000,
-      })
-      assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
-      await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        fixtureUrl,
-        uiTimeoutMs,
-        'Bridge open did not show the fixture URL in the browser panel'
-      )
-      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
+      for (let reopenAttempt = 1; reopenAttempt <= 2; reopenAttempt += 1) {
+        const closeResult = await bridgeCall({ action: 'close', timeoutMs: 8_000 })
+        assert.equal(
+          closeResult.ok,
+          true,
+          `Bridge close before reopen ${reopenAttempt} failed: ${JSON.stringify(closeResult)}`
+        )
+        const reopenStartedAt = Date.now()
+        const reopenResult = await bridgeCall({
+          action: 'open',
+          url: fixtureUrl,
+          timeoutMs: 8_000,
+        })
+        assert.equal(
+          reopenResult.ok,
+          true,
+          `Bridge reopen ${reopenAttempt} failed: ${JSON.stringify(reopenResult)}`
+        )
+        assert.ok(
+          Date.now() - reopenStartedAt < 8_000,
+          `Bridge reopen ${reopenAttempt} only completed after its tool timeout`
+        )
+        await waitForVisibleSingleElement(
+          control,
+          BROWSER_NATIVE_VIEW_SELECTOR,
+          8_000,
+          `Bridge reopen ${reopenAttempt} did not make exactly one active host visible`
+        )
+        await waitForControlValue(
+          control,
+          BROWSER_INPUT_SELECTOR,
+          fixtureUrl,
+          uiTimeoutMs,
+          `Bridge reopen ${reopenAttempt} did not preserve its URL in the browser panel`
+        )
+      }
       const readyWait = await bridgeCall({
         action: 'waitFor',
         options: { condition: { textVisible: READY_TEXT } },

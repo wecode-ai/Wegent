@@ -1397,8 +1397,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
   ])
-  const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
-    () => initialBlankBrowserMigration?.browserLabel ?? null
+  const [migratedEmbeddedBrowser, setMigratedEmbeddedBrowser] = useState<{
+    label: string
+    paneKey: string
+  } | null>(() =>
+    initialBlankBrowserMigration
+      ? {
+          label: initialBlankBrowserMigration.browserLabel,
+          paneKey,
+        }
+      : null
   )
   const temporaryChatTabSequence = useRef(0)
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
@@ -1539,6 +1547,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
     : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
+  const migratedEmbeddedBrowserLabel =
+    migratedEmbeddedBrowser?.paneKey === paneKey ? migratedEmbeddedBrowser.label : null
   const embeddedBrowserLabel = migratedEmbeddedBrowserLabel ?? defaultEmbeddedBrowserLabel
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
@@ -1688,7 +1698,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
       .then(() => {
         if (!disposed) {
-          setMigratedEmbeddedBrowserLabel(null)
+          setMigratedEmbeddedBrowser(null)
         }
       })
       .catch(error => {
@@ -2020,7 +2030,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           return
         }
         logEmbeddedBrowserOpenRoute('default_label_migrated', routeDetail)
-        setMigratedEmbeddedBrowserLabel(request.label)
+        setMigratedEmbeddedBrowser({
+          label: request.label,
+          paneKey: current.paneKey,
+        })
       }
       logEmbeddedBrowserOpenRoute('request_routed', routeDetail)
       setEmbeddedBrowserOpenRequest({
