@@ -944,6 +944,9 @@ export function createHybridWorkbenchServices(
     ...cloudServices,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
+    localProjectChatAgentApi: localServices.localProjectChatAgentApi,
+    localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
+    localProjectChatClient: localServices.localProjectChatClient,
     projectSpaceApis: {
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,
@@ -1008,6 +1011,7 @@ function filterRuntimeChatStreamHandlers(
     onBlockCreated: route(handlers.onBlockCreated),
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
+    onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),

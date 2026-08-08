@@ -55,9 +55,6 @@ const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const WEWORK_HOME_DIR: &str = ".wework";
-const LEGACY_EXECUTOR_HOME_DIR: &str = ".wegent-executor";
-const LEGACY_WECODE_HOME_DIR: &str = ".wecode";
-const LEGACY_MIGRATION_CONFLICTS_DIR: &str = ".legacy-migration-conflicts";
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
     if cfg!(windows) {
         180
@@ -640,7 +637,6 @@ pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    migrate_legacy_executor_homes(&home)?;
     Ok(default_local_executor_home_path(
         &home,
         LOCAL_EXECUTOR_NAMESPACE,
@@ -5322,32 +5318,29 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn migrates_legacy_executor_directory_symlink_into_wework_home() {
-        let home = import_test_root("linked-legacy-executor-home");
-        let linked_target = import_test_root("linked-legacy-executor-target");
-        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
-        fs::create_dir_all(&home).unwrap();
-        fs::create_dir_all(linked_target.join("workspace/chats")).unwrap();
-        fs::write(linked_target.join("workspace/chats/current.md"), "current").unwrap();
-        std::os::unix::fs::symlink(&linked_target, &legacy_home).unwrap();
+    fn default_executor_home_does_not_migrate_legacy_directory() {
+        let _guard = env_lock();
+        let home = import_test_root("legacy-executor-home-is-untouched");
+        let legacy_home = home.join(".wegent-executor");
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        fs::create_dir_all(&legacy_home).unwrap();
+        fs::write(legacy_home.join("device-config.json"), "legacy").unwrap();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
 
-        migrate_legacy_executor_homes(&home).unwrap();
+        let executor_home = local_executor_home_path().unwrap();
 
-        let destination = home.join(WEWORK_HOME_DIR);
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+
+        assert_eq!(executor_home, home.join(WEWORK_HOME_DIR));
         assert_eq!(
-            fs::read_to_string(destination.join("workspace/chats/current.md")).unwrap(),
-            "current"
+            fs::read_to_string(legacy_home.join("device-config.json")).unwrap(),
+            "legacy"
         );
-        assert!(fs::symlink_metadata(&destination).unwrap().is_dir());
-        assert!(!fs::symlink_metadata(&destination)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert!(fs::symlink_metadata(&legacy_home).is_err());
-        assert!(linked_target.is_dir());
-        assert!(fs::read_dir(&linked_target).unwrap().next().is_none());
+        assert!(!executor_home.exists());
         let _ = fs::remove_dir_all(home);
-        let _ = fs::remove_dir_all(linked_target);
     }
 
     #[cfg(unix)]

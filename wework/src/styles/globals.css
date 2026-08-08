@@ -15,9 +15,8 @@
   --color-primary-contrast: 255 255 255;
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
-  --color-titlebar: 229 231 234;
-  --color-sidebar: 243 243 243 / 0.92;
-  --color-sidebar-unfocused: 246 246 246 / 0.88;
+  --color-titlebar: 247 247 248;
+  --color-sidebar: 246 246 246 / 0.88;
   --color-sidebar-active: 26 28 31 / 0.07;
   --color-sidebar-hover: 26 28 31 / 0.05;
   --color-sidebar-marked: 255 244 214;
@@ -83,27 +82,199 @@
   display: none;
 }
 
-.task-description-editor .tiptap p.is-editor-empty:first-child::before {
+.task-description-editor .bn-editor a:not([href^='wegent://attachments/']) {
+  color: rgb(35 121 232);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.task-description-editor .bn-editor a[href^='wegent://attachments/'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: rgb(var(--color-muted));
+  color: rgb(var(--color-text-secondary));
+  text-decoration: none;
+}
+
+/* The description editor always sits in the main content area; the side menu
+   floats in the surrounding margin instead of reserving an inner gutter. */
+.task-description-editor .bn-editor {
+  padding-inline: 0;
+}
+
+/* Notion-like heading hierarchy shared by the detail and create dialogs. */
+.task-description-editor .bn-block-content[data-content-type='heading'] {
+  --level: 1.875em;
+}
+
+.task-description-editor .bn-block-content[data-content-type='heading'][data-level='2'] {
+  --level: 1.5em;
+}
+
+.task-description-editor .bn-block-content[data-content-type='heading'][data-level='3'] {
+  --level: 1.25em;
+}
+
+.task-description-editor .bn-block-content[data-content-type='heading'][data-level='4'] {
+  --level: 1em;
+}
+
+.task-description-editor .bn-block-content[data-content-type='heading'][data-level='5'] {
+  --level: 0.875em;
+}
+
+.task-description-editor .bn-block-content[data-content-type='heading'][data-level='6'] {
+  --level: 0.8125em;
+}
+
+/* Match the side menu height to the scaled heading blocks so the plus and
+   drag buttons stay centered on the heading text. */
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='1'] {
+  height: 78px;
+}
+
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='2'] {
+  height: 70px;
+}
+
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='3'] {
+  height: 64px;
+}
+
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='4'] {
+  height: 59px;
+}
+
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='5'] {
+  height: 56px;
+}
+
+.task-description-editor .bn-side-menu[data-block-type='heading'][data-level='6'] {
+  height: 54px;
+}
+
+.task-description-attachment-preview {
+  z-index: 50;
+  max-width: 320px;
+  background: rgb(var(--color-background));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.task-description-attachment-preview-figure {
+  position: relative;
+}
+
+.task-description-attachment-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 4px;
+}
+
+.task-description-attachment-preview-image {
+  cursor: zoom-in;
+}
+
+.task-description-attachment-preview-view {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 0;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+
+.task-description-attachment-preview-view:hover {
+  background: rgb(0 0 0 / 0.78);
+}
+
+.task-description-attachment-preview-label {
+  display: block;
+  padding: 8px;
+  font-size: var(--text-xs);
   color: rgb(var(--color-text-muted));
-  content: attr(data-placeholder);
-  float: left;
-  height: 0;
-  pointer-events: none;
 }
 
-.task-description-editor .tiptap ul[data-type='taskList'] {
-  list-style: none;
-  padding-left: 0;
-}
-
-.task-description-editor .tiptap ul[data-type='taskList'] li {
-  align-items: flex-start;
+.task-description-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.72);
 }
 
-.task-description-editor .tiptap ul[data-type='taskList'] li > div {
-  flex: 1;
+.task-description-image-lightbox-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow: auto;
+}
+
+.task-description-image-lightbox-stage img {
+  display: block;
+  max-width: 92vw;
+  max-height: 86vh;
+  transform-origin: center center;
+  transition: transform 0.15s ease;
+  user-select: none;
+}
+
+.task-description-image-lightbox-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  color: #222;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+.task-description-image-lightbox-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.task-description-image-lightbox-toolbar button:hover {
+  background: rgb(0 0 0 / 0.08);
+}
+
+.task-description-image-lightbox-toolbar span {
+  min-width: 44px;
+  font-size: var(--text-xs);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes suffix-roll-out-up {
@@ -127,6 +298,59 @@
 @keyframes suffix-roll-in-down {
   from {
     transform: translateY(-110%);
+  }
+}
+
+@keyframes runtime-task-title-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-125%);
+  }
+
+  14%,
+  82% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(215%);
+  }
+}
+
+.runtime-task-title {
+  display: block;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.runtime-task-title-shimmer {
+  animation: runtime-task-title-sheen 760ms ease-out both;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgb(var(--color-focus) / 0.12),
+    rgb(var(--color-focus) / 0.42),
+    rgb(255 255 255 / 0.34),
+    rgb(var(--color-focus) / 0.12),
+    transparent
+  );
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 54%;
+  z-index: 1;
+}
+
+.runtime-task-title > [data-sidebar-drag-activator] {
+  position: relative;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-task-title-shimmer {
+    animation: none;
+    opacity: 0;
   }
 }
 
@@ -168,9 +392,8 @@
   --color-primary-contrast: 11 18 20;
   --color-border: 55 61 70;
   --color-muted: 38 42 48;
-  --color-titlebar: 20 22 25;
-  --color-sidebar: 33 33 33 / 0.96;
-  --color-sidebar-unfocused: 40 40 40 / 0.92;
+  --color-titlebar: 28 31 36;
+  --color-sidebar: 40 40 40 / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
   --color-sidebar-hover: 255 255 255 / 0.06;
   --color-sidebar-marked: 82 64 24;
@@ -190,13 +413,12 @@
 }
 
 [data-sidebar-translucent='false'] {
-  --color-sidebar: 243 243 243;
-  --color-sidebar-unfocused: 246 246 246;
+  --color-sidebar: 246 246 246;
 }
 
-[data-theme='dark'][data-sidebar-translucent='false'] {
-  --color-sidebar: 33 33 33;
-  --color-sidebar-unfocused: 40 40 40;
+[data-theme='dark'][data-sidebar-translucent='false'],
+[data-theme='dark'] [data-sidebar-translucent='false'] {
+  --color-sidebar: 40 40 40;
 }
 
 * {
@@ -225,12 +447,6 @@ body {
 html[data-system-drag-panel='true'],
 html[data-system-drag-panel='true'] body,
 html[data-system-drag-panel='true'] #root {
-  background: transparent;
-}
-
-html[data-desktop-vibrancy='true'],
-html[data-desktop-vibrancy='true'] body,
-html[data-desktop-vibrancy='true'] #root {
   background: transparent;
 }
 

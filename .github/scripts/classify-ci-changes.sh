@@ -10,6 +10,7 @@ declare -A changed=(
   [knowledge_engine]=false
   [frontend]=false
   [wework]=false
+  [wework_rust]=false
   [wegent_cli]=false
   [platform_e2e]=false
   [wework_e2e]=false
@@ -28,7 +29,16 @@ classify_path() {
   case "$path" in
     .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
+      .github/workflows/ci-cache-warmup.yml | \
+      .github/workflows/publish-image.yml | \
+      .github/workflows/snapshot-image.yml | \
+      .github/workflows/wework-app.yml | \
+      .github/actions/* | \
+      .github/scripts/classify-ci-cache-warmup.sh | \
       .github/scripts/classify-ci-changes.sh | \
+      .github/scripts/lib/apt-packages.sh | \
+      .github/scripts/lib/validate-ci-cache-policy.rb | \
+      .github/scripts/test-ci-cache-policy.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       mark_all
       return
@@ -36,14 +46,20 @@ classify_path() {
     .github/workflows/e2e-tests.yml | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
+      .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/start-frontend-e2e-server.sh)
       changed[platform_e2e]=true
       ;;
+    .github/scripts/install-executor-rust-system-dependencies.sh)
+      changed[executor]=true
+      changed[platform_e2e]=true
+      ;;
     .github/workflows/wework-e2e.yml | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/install-wework-tauri-system-dependencies.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;
@@ -88,6 +104,11 @@ classify_path() {
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;
+    wework/src-tauri/*)
+      changed[wework]=true
+      changed[wework_rust]=true
+      changed[wework_e2e]=true
+      ;;
     wework/*)
       changed[wework]=true
       changed[wework_e2e]=true
@@ -114,6 +135,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
+for key in backend executor executor_manager shared knowledge_engine frontend wework wework_rust wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

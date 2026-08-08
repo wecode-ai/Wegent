@@ -36,6 +36,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
 import {
   buildConversationMentionCandidates,
   type ConversationMentionCandidate,
@@ -160,8 +161,10 @@ export interface ChatInputProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
@@ -540,8 +543,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    externalMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
+    onSelectExternalMention,
     onSelectCloudProject,
     selectedCloudProjectId,
     isStreaming = false,
@@ -722,9 +727,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    externalMentionCandidates,
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
+    onSelectExternalMention,
     onSelectCloudProject,
     selectedCloudProjectId,
   }

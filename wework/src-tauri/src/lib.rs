@@ -614,6 +614,10 @@ struct AppPreferences {
     popout_window_shortcut: Option<String>,
     #[serde(default)]
     popout_window_projectless_default_enabled: bool,
+    #[serde(default)]
+    friendly_task_titles_enabled: bool,
+    #[serde(default)]
+    friendly_task_title_model: Option<serde_json::Value>,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
 }
@@ -718,6 +722,8 @@ impl Default for AppPreferences {
             appshots_play_sound: true,
             popout_window_shortcut: default_popout_window_shortcut(),
             popout_window_projectless_default_enabled: false,
+            friendly_task_titles_enabled: false,
+            friendly_task_title_model: None,
             quick_phrases: default_quick_phrases(),
         }
     }
@@ -773,6 +779,9 @@ struct AppPreferencesPatch {
     #[serde(default)]
     popout_window_shortcut: PatchField<String>,
     popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    #[serde(default)]
+    friendly_task_title_model: PatchField<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
@@ -1391,6 +1400,12 @@ fn update_app_preferences(
     if let Some(value) = patch.popout_window_projectless_default_enabled {
         preferences.popout_window_projectless_default_enabled = value;
     }
+    if let Some(value) = patch.friendly_task_titles_enabled {
+        preferences.friendly_task_titles_enabled = value;
+    }
+    if let PatchField::Value(value) = patch.friendly_task_title_model {
+        preferences.friendly_task_title_model = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
@@ -1430,6 +1445,10 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
     appshots_play_sound: bool,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: bool,
+    friendly_task_titles_enabled: bool,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Vec<QuickPhrase>,
 }
 
@@ -1459,6 +1478,10 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
@@ -1488,6 +1511,10 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_download_directory: None,
         browser_ask_before_download: false,
         appshots_play_sound: true,
+        popout_window_shortcut: Some(default_popout_window_shortcut()),
+        popout_window_projectless_default_enabled: false,
+        friendly_task_titles_enabled: false,
+        friendly_task_title_model: None,
         quick_phrases: default_quick_phrases(),
     })
 }
@@ -1536,6 +1563,15 @@ fn update_app_preferences(
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
         appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
+        popout_window_shortcut: patch
+            .popout_window_shortcut
+            .and_then(normalized_non_empty)
+            .or_else(|| Some(default_popout_window_shortcut())),
+        popout_window_projectless_default_enabled: patch
+            .popout_window_projectless_default_enabled
+            .unwrap_or(false),
+        friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
+        friendly_task_title_model: patch.friendly_task_title_model,
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
     })
 }
@@ -2582,7 +2618,6 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to locate home directory: {error}"))?;
-    local_executor::migrate_legacy_executor_homes(&home)?;
     Ok(home.join(".wework"))
 }
 
@@ -2671,10 +2706,6 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         candidates.push(executor_home.join("device_id"));
     }
     if let Some(home) = dirs::home_dir() {
-        if let Err(error) = local_executor::migrate_legacy_executor_homes(&home) {
-            log::warn!("Failed to migrate legacy Wework home: {error}");
-            return None;
-        }
         if let Some(device_id) = read_device_config(home.join(".wework").join("device-config.json"))
         {
             return Some(device_id);

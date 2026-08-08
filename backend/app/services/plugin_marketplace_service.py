@@ -62,6 +62,7 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
+from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
@@ -1813,7 +1814,7 @@ class PluginMarketplaceService:
                     "providerKey": "wegent-market",
                     "pluginKey": plugin.name,
                     "catalogItemId": str(plugin.id),
-                    "marketplace": "wegent",
+                    "marketplace": marketplace_name_for_visibility(plugin.visibility),
                 },
                 "origin": "market",
                 "pluginId": plugin.id,
@@ -2453,11 +2454,13 @@ class PluginMarketplaceService:
                 target_release = release
             if not target_release:
                 return False
+            expected_marketplace = marketplace_name_for_visibility(matched.visibility)
             if (
                 not needs_repair
                 and plugin_id == matched.id
                 and release_id == target_release.id
                 and str(source.get("catalogItemId") or "") == str(matched.id)
+                and str(source.get("marketplace") or "") == expected_marketplace
             ):
                 return False
             self._apply_catalog_ref_to_installed_kind(
@@ -2486,7 +2489,7 @@ class PluginMarketplaceService:
                 "providerKey": "wegent-market",
                 "pluginKey": plugin.name,
                 "catalogItemId": str(plugin.id),
-                "marketplace": "wegent",
+                "marketplace": marketplace_name_for_visibility(plugin.visibility),
             }
         )
         package_ref = {

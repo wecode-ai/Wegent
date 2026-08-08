@@ -209,6 +209,9 @@ def unbind_runtime_task_cloud_context(
 )
 def list_loop_items(
     project_id: int,
+    assignee_type: str | None = Query(default=None),
+    assignee_id: str | None = Query(default=None),
+    execution_state: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemListResponse:
@@ -218,11 +221,22 @@ def list_loop_items(
             items=[
                 LoopItemResponse.model_validate(item)
                 for item in external_loop_item_provider.list(
-                    db, project_id, current_user.id
+                    db,
+                    project_id,
+                    current_user.id,
+                    assignee_type=assignee_type,
+                    assignee_id=assignee_id,
                 )
             ]
         )
-    items = loop_item_service.list(db, project_id, current_user.id)
+    items = loop_item_service.list(
+        db,
+        project_id,
+        current_user.id,
+        assignee_type=assignee_type,
+        assignee_id=assignee_id,
+        execution_state=execution_state,
+    )
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemListResponse(
         items=[

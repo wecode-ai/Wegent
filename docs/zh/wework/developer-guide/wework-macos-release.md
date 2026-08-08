@@ -89,6 +89,17 @@ scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verifi
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
+## 窗口表面
+
+Wework 主窗口和独立工作区窗口必须使用不透明的 Tauri 窗口，并由 WebView
+中的主题表面色完整覆盖。不要为这些窗口启用 `transparent`、`windowEffects`
+或原生 vibrancy 材质；不同 macOS 版本和图形环境对透明窗口边缘的合成结果不一致，
+可能显示为透出桌面、半透明描边或灰色边框。
+
+系统拖拽面板和 Popout Window 是独立的轻量浮层，不受该约束。修改普通窗口的背景、
+标题栏或创建参数时，需要同时验证主窗口和独立工作区窗口，并保留自动化断言，确保
+两者不会重新启用原生透明效果。
+
 ## Tauri 依赖升级
 
 升级 Tauri 时需要同时维护 Rust 核心依赖和前端工具链，避免开发、测试与发布使用不同版本：

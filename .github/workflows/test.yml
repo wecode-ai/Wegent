@@ -34,6 +34,7 @@ jobs:
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
+      wework_rust: ${{ steps.classify.outputs.wework_rust }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
 
     steps:
@@ -67,33 +68,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.11'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('backend/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
-
       - name: Install dependencies
         working-directory: ./backend
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source "$HOME/.cargo/env"
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run backend tests
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          source "$HOME/.cargo/env"
-          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
+        run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -125,18 +113,22 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install executor Rust system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Install executor Rust system dependencies
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
+
+      - name: Restore shared executor Cargo sources
+        id: executor-cargo-sources-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-executor-v2-${{ hashFiles('executor/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-executor-v2-
+            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
 
       - name: Run executor Rust format check
         working-directory: ./executor
@@ -160,25 +152,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.11'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-executor-manager-${{ hashFiles('executor_manager/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-executor-manager-
-
       - name: Install dependencies
         working-directory: ./executor_manager
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source "$HOME/.cargo/env"
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run executor manager tests
         working-directory: ./executor_manager
@@ -187,9 +168,7 @@ jobs:
           COVERAGE_CORE: sysmon
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
-        run: |
-          source "$HOME/.cargo/env"
-          uv run pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v -s
+        run: uv run pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v -s
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -208,25 +187,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.10 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.10'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-shared-${{ hashFiles('shared/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-shared-
-
       - name: Install dependencies
         working-directory: ./shared
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source "$HOME/.cargo/env"
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run shared tests
         working-directory: ./shared
@@ -235,7 +203,6 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
-          source "$HOME/.cargo/env"
           # Run pytest and capture exit code, ignoring thread cleanup errors
           set +e
           uv run pytest tests/ --cov=utils --cov-config=.coveragerc --cov-report=xml --cov-report=term-missing -v -p no:cacheprovider 2>&1
@@ -268,25 +235,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.12'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-knowledge-engine-${{ hashFiles('knowledge_engine/pyproject.toml', 'shared/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-knowledge-engine-
-
       - name: Install dependencies
         working-directory: ./knowledge_engine
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source "$HOME/.cargo/env"
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run knowledge engine tests
         working-directory: ./knowledge_engine
@@ -294,9 +250,7 @@ jobs:
           COVERAGE_CORE: sysmon
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
-        run: |
-          source "$HOME/.cargo/env"
-          uv run pytest tests/ --cov=knowledge_engine --cov-report=xml --cov-report=term-missing -v
+        run: uv run pytest tests/ --cov=knowledge_engine --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -315,28 +269,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Cache Next.js build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run chat core tests
         run: pnpm --filter @wegent/chat-core test
@@ -363,18 +297,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run wework tests
         env:
@@ -387,6 +311,40 @@ jobs:
           files: ./wework/coverage/coverage-final.json
           flags: wework
           name: wework-coverage
+
+  check-wework-windows-rust:
+    name: Check Wework Windows Rust
+    needs: changes
+    if: needs.changes.outputs.wework_rust == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore shared Wework Cargo sources
+        id: wework-cargo-sources-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-${{ hashFiles('wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-
+
+      - name: Check Wework Rust for Windows
+        working-directory: ./wework/src-tauri
+        run: cargo check --locked --target x86_64-pc-windows-msvc
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -403,13 +361,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache Python dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore shared Python dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-wegent-cli-${{ hashFiles('wegent-cli/requirements.txt') }}
+          key: ${{ runner.os }}-pip-wegent-cli-v2-${{ hashFiles('wegent-cli/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-wegent-cli-
+            ${{ runner.os }}-pip-wegent-cli-v2-
 
       - name: Install dependencies
         working-directory: ./wegent-cli
@@ -473,17 +431,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.10 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.10'
 
       - name: Install backend dependencies
         working-directory: ./backend
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source "$HOME/.cargo/env"
-          uv sync
+        run: uv sync
 
       - name: Install shared module
         run: |
@@ -530,7 +485,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [changes, test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, test-wegent-cli, test-wegent-cli-integration]
+    needs: [changes, test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, check-wework-windows-rust, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -555,5 +510,6 @@ jobs:
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
+          assert_result "${{ needs.changes.outputs.wework_rust }}" "${{ needs.check-wework-windows-rust.result }}" "Wework Windows Rust check"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"

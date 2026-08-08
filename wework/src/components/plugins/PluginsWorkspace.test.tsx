@@ -1668,7 +1668,7 @@ describe('PluginsWorkspace', () => {
     expect(window.location.pathname).toBe('/')
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
-        input: '[$Documents](plugin://documents@default) Draft a document outline from this chat',
+        input: '[$Documents](plugin://documents@wework) Draft a document outline from this chat',
         pluginName: 'Documents',
         openInNewChat: true,
       }
@@ -2482,6 +2482,48 @@ describe('PluginsWorkspace', () => {
     expectCodexAppServerRequest('plugin/install', {
       marketplacePath: '/Users/test/.codex/plugins/marketplaces/openai',
       pluginName: 'documents',
+    })
+  })
+
+  test('installs from the item marketplace after another marketplace was selected', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'target-marketplace',
+          displayName: 'Target',
+          path: '/Users/test/.codex/plugins/marketplaces/target',
+          plugins: [
+            {
+              ...defaultCodexPlugin,
+              id: 'target-plugin',
+              name: 'target-plugin',
+            },
+          ],
+        },
+        {
+          name: 'other-marketplace',
+          displayName: 'Other',
+          path: '/Users/test/.codex/plugins/marketplaces/other',
+        },
+      ],
+    })
+    const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+    const localPluginApi = createLocalCodexPluginApi()
+
+    await localPluginApi.selectMarketplace('other-marketplace')
+    await localPluginApi.installAvailablePlugin(
+      'target-marketplace:target-plugin',
+      'target-marketplace'
+    )
+
+    expectCodexAppServerRequest('plugin/install', {
+      marketplacePath: '/Users/test/.codex/plugins/marketplaces/target',
+      pluginName: 'target-plugin',
     })
   })
 

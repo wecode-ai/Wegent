@@ -205,21 +205,19 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
-  test('switches sidebar focus tokens with browser focus events', () => {
+  test('keeps the sidebar color stable across browser focus changes', () => {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
 
     act(() => window.dispatchEvent(new Event('focus')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'true')
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
 
     act(() => window.dispatchEvent(new Event('blur')))
-    expect(sidebar).toHaveAttribute('data-window-focused', 'false')
-    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
   })
 
-  test('keeps the shared right border on Windows', () => {
+  test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -232,6 +230,10 @@ describe('DesktopSidebar', () => {
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
     expect(sidebar).toHaveClass('border-r')
+    // Windows WebView2 cannot render a translucent window, so the sidebar opts
+    // out of the translucent background. The dark-theme CSS in globals.css must
+    // keep this opaque background dark instead of falling back to light.
+    expect(sidebar).toHaveAttribute('data-sidebar-translucent', 'false')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {
@@ -1781,6 +1783,68 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('sweeps a runtime task title after it is updated', async () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-06/title-update'
+    const runtimeWork = (title: string) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'friendly-title-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title,
+              runtime: 'codex' as const,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('friendly-title-sheen-test')
+    const initialProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('原始标题'),
+    })
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const { rerender } = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(screen.getByTestId('runtime-local-task-title-friendly-title-task')).not.toHaveClass(
+      'is-updated'
+    )
+
+    const updatedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('AI 优化后的标题'),
+    })
+    lifecycleStore.syncRuntimeWork(updatedProps.runtimeWork)
+    rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...updatedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-local-task-title-friendly-title-task')).toHaveClass(
+        'is-updated'
+      )
+    })
+    expect(
+      screen.getByTestId('runtime-local-task-title-shimmer-friendly-title-task')
+    ).toBeInTheDocument()
+  })
+
   test('removes pinned chat tasks from the task section without highlighted styling', () => {
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pinned'
     renderSidebar({
@@ -2246,7 +2310,18 @@ describe('DesktopSidebar', () => {
 
   test('keeps an unavailable remote-only project visible with its IP and gray status', () => {
     renderSidebar({
-      devices: [localDevice()],
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
       runtimeWork: {
         projects: [
           {
@@ -2255,7 +2330,7 @@ describe('DesktopSidebar', () => {
               {
                 id: 91,
                 deviceId: 'remote-device',
-                deviceName: '10.201.3.200',
+                deviceName: 'Remote Host',
                 deviceStatus: 'offline',
                 available: false,
                 workspacePath: '/home/ubuntu/workspace/Wegent',
@@ -2288,7 +2363,7 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getByText('Remote Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-text-muted))]',
       'opacity-55'
@@ -2405,7 +2480,7 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('Remote Host')
     expect(screen.getByTestId('project-device-status-7-dot')).toHaveStyle({
       backgroundColor: '#1FD660',
     })
@@ -4399,5 +4474,42 @@ describe('DesktopSidebar', () => {
     const button = screen.getByTestId('project-item-button')
     expect(button).toHaveTextContent('hello 20')
     expect(button).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  test('does not render a standalone task workspace as a project', () => {
+    const workspacePath = '/Users/alice/.wework/workspace/chats/standalone-task'
+
+    renderSidebar({
+      projects: [],
+      devices: [localDevice({ device_id: 'device-1', name: 'Local Mac' })],
+      standaloneDeviceId: 'device-1',
+      standaloneWorkspacePath: workspacePath,
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'standalone-task',
+                workspacePath,
+                workspaceKind: 'chat',
+                title: '只显示在任务中',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(screen.queryByTestId('project-item-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-standalone-task')).toBeInTheDocument()
   })
 })

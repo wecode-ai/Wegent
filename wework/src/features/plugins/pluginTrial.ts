@@ -4,6 +4,7 @@ import {
   resolvePluginLogoUrl,
 } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
+import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
@@ -54,6 +55,7 @@ interface PluginReferenceTrial {
 interface PluginTrialOptions {
   prompt?: string
   openInNewChat?: boolean
+  reference?: PluginReferenceTrial
 }
 
 function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
@@ -82,9 +84,9 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
     plugin.spec.source?.pluginKey
   const marketplaceName =
     (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
+    managedMarketplaceName(plugin) ||
     plugin.spec.source?.marketplace ||
-    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
-    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
@@ -202,12 +204,18 @@ export function pluginTrialInput(
   const skill = firstPluginSkill(plugin)
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const referenceOverride = options.reference
   const reference =
-    pluginPath && pluginName
-      ? `[$${pluginName}](${pluginPath})`
-      : skill
-        ? `[$${skill.name}](${skillFilePath(skill.path)})`
-        : null
+    referenceOverride &&
+    referenceOverride.pluginName.trim() &&
+    referenceOverride.marketplaceName.trim() &&
+    referenceOverride.displayName.trim()
+      ? `[$${referenceOverride.displayName.trim()}](plugin://${referenceOverride.pluginName.trim()}@${referenceOverride.marketplaceName.trim()})`
+      : pluginPath && pluginName
+        ? `[$${pluginName}](${pluginPath})`
+        : skill
+          ? `[$${skill.name}](${skillFilePath(skill.path)})`
+          : null
   if (!reference) return null
   registerPluginMentionIcon(plugin, reference)
   const promptOverride = options.prompt?.trim()

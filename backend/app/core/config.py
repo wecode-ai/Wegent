@@ -249,6 +249,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
+    # Public base URL of this backend, reachable from executor devices. The
+    # cloud-model LLM proxy URL is derived from it
+    # (`{WEGENT_BACKEND_PUBLIC_URL}/api/runtime-work/llm-responses-proxy`).
+    WEGENT_BACKEND_PUBLIC_URL: str = "http://localhost:8000"
+
     # Rate limiting configuration for OpenAPI endpoints
     # Format: "requests/period" where period can be second, minute, hour, day
     RATE_LIMIT_ENABLED: bool = True
@@ -396,6 +401,12 @@ class Settings(BaseSettings):
         3  # RUNNING executions older than this will be marked FAILED
     )
 
+    # Project robot queue scheduler
+    ROBOT_QUEUE_SCHEDULER_ENABLED: bool = True
+    ROBOT_QUEUE_SCAN_INTERVAL_SECONDS: int = 5
+    ROBOT_CLOUD_DEVICE_SLOTS: int = 2
+    ROBOT_LOCAL_DEVICE_SLOTS: int = 2
+
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
@@ -537,6 +548,13 @@ class Settings(BaseSettings):
     DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
+
+    # How long a repository read may take before it is given up on. These run inside
+    # a user-facing request -- resolving a repository, checking access, reading HEAD
+    # -- and `requests` has no default timeout, so without one an unresponsive
+    # provider holds the worker until the OS gives up on the socket. Configurable
+    # because the right number depends on how far away the git host is.
+    REPOSITORY_READ_TIMEOUT_SECONDS: int = 15
 
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_STORAGE_BUCKET: str = "plugins"

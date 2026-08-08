@@ -473,3 +473,31 @@ def test_list_workspaces_by_refs_uses_named_lookup_and_filters_inactive(
     )
 
     assert [workspace.id for workspace in workspaces] == [active_workspace.id]
+
+
+def test_a_system_namespace_task_is_hidden_from_lists_but_reachable_by_id(
+    test_db: Session,
+) -> None:
+    """Both halves, because a feature depends on them differing.
+
+    A code wiki's generation runs are filed here so they do not bury the
+    conversations the user actually started. That is only acceptable because the task
+    stays openable: the wiki's run history links to it by id, and if lookup filtered
+    the namespace too, hiding a run would make it unreachable rather than unlisted.
+    """
+    store = SqlAlchemyTaskStore()
+    listed = _task(task_id=41, user_id=77)
+    hidden = _task(task_id=42, user_id=77, namespace="system")
+    test_db.add_all([listed, hidden])
+    test_db.commit()
+
+    ids, _total = store.list_accessible_task_ids(
+        test_db, user_id=77, skip=0, limit=50, extra_limit=0
+    )
+    owned, _owned_total = store.list_owned_task_ids(
+        test_db, user_id=77, skip=0, limit=50, extra_limit=0
+    )
+
+    assert hidden.id not in ids and listed.id in ids
+    assert hidden.id not in owned and listed.id in owned
+    assert store.get_active_non_deleted_task(test_db, task_id=hidden.id) == hidden

@@ -44,6 +44,7 @@ from app.schemas.knowledge import (
     BatchOperationResult,
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
+    KnowledgeBaseType,
     KnowledgeBaseUpdate,
     KnowledgeBaseWithGroupInfo,
     KnowledgeDocumentCreate,
@@ -59,6 +60,7 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
+from app.services.knowledge.content_scope import wiki_pages
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base as evaluate_direct_knowledge_base_access,
@@ -292,11 +294,25 @@ class KnowledgeService:
             "name": data.name,
             "description": data.description or "",
             "directAccessRequirement": data.direct_access_requirement,
-            "kbType": data.kb_type
-            or "notebook",  # Default to 'notebook' if not provided
+            # A code wiki is fixed here; there is deliberately no code path that turns
+            # an existing knowledge base into one, or out of one.
+            "kbType": KnowledgeBaseType(
+                data.kb_type or KnowledgeBaseType.NOTEBOOK
+            ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
+        # A code wiki records the repository it is generated from, and the language
+        # its pages are written in. Both are omitted entirely when absent rather than
+        # stored empty: absent means "fall back to the deployment default", which is
+        # also what every wiki created before these fields existed does.
+        if data.source:
+            spec_kwargs["source"] = data.source
+        if data.language:
+            spec_kwargs["language"] = data.language
+        if data.show_generation_task:
+            spec_kwargs["showGenerationTask"] = True
+
         # Add summaryModelRef if provided
         if data.summary_model_ref:
             spec_kwargs["summaryModelRef"] = data.summary_model_ref
@@ -879,6 +895,12 @@ class KnowledgeService:
         if "guided_questions" in data.model_fields_set:
             spec["guidedQuestions"] = data.guided_questions
 
+        # Only meaningful for a code wiki; harmless on anything else, and refusing
+        # it by type here would put a second copy of "what is a code wiki" in the
+        # update path.
+        if data.show_generation_task is not None:
+            spec["showGenerationTask"] = data.show_generation_task
+
         # Update call limit configuration if provided
         if data.max_calls_per_conversation is not None:
             spec["maxCallsPerConversation"] = data.max_calls_per_conversation
@@ -992,6 +1014,14 @@ class KnowledgeService:
             KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id
         ).delete(synchronize_session=False)
 
+        # A code wiki's registry row, for the same reason as the folders above: its
+        # kind_id is a plain column, so deleting the knowledge base leaves it behind
+        # and the cascade that would have taken every version and page of content
+        # never fires. Harmless for any other kind, which has no such row.
+        from app.services.knowledge.code_wiki.registry import forget_repository
+
+        forget_repository(db, knowledge_base_id)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1040,7 +1070,15 @@ class KnowledgeService:
         # Get current default view
         kb_json = kb.json
         spec = kb_json.get("spec", {})
-        current_type = spec.get("kbType", "notebook")
+
+        current_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
+
+        # A code wiki is a repository binding, not a view preference, so the toggle does
+        # not apply. Rejecting it here also keeps this endpoint from being used to
+        # reinterpret a code wiki as an ordinary knowledge base, which would orphan its
+        # repository and version history.
+        if current_type == KnowledgeBaseType.CODE_WIKI.value:
+            raise ValueError("Cannot change the opening view of a code wiki")
 
         # If same type, return current kb
         if current_type == new_type:
@@ -1472,8 +1510,12 @@ class KnowledgeService:
         if not kb or not has_access:
             return []
 
-        query = db.query(KnowledgeDocument).filter(
-            KnowledgeDocument.kind_id == knowledge_base_id,
+        # Scoped to browsable pages: code targets are retrieval artifacts and must
+        # never surface in a listing. See content_scope.
+        query = wiki_pages(
+            db.query(KnowledgeDocument).filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+            )
         )
 
         if folder_id is not None:
@@ -1502,8 +1544,11 @@ class KnowledgeService:
         if not kb or not has_access:
             return [], 0
 
-        query = db.query(KnowledgeDocument).filter(
-            KnowledgeDocument.kind_id == knowledge_base_id,
+        # Scoped to browsable pages; see list_documents.
+        query = wiki_pages(
+            db.query(KnowledgeDocument).filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+            )
         )
 
         if folder_id is not None:

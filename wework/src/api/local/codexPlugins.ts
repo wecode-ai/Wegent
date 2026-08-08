@@ -147,7 +147,10 @@ export interface LocalCodexPluginApi {
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
-  installAvailablePlugin(pluginId: string | number): Promise<InstalledPlugin>
+  installAvailablePlugin(
+    pluginId: string | number,
+    marketplaceId?: string
+  ): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
     data: InstalledPluginUpdateRequest
@@ -1483,14 +1486,23 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       rememberSelectedMarketplaceId(response.marketplaceName)
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
-    async installAvailablePlugin(pluginId) {
-      const currentState = cachedState ?? (await readState())
-      const item = currentState.marketplaceItems.find(item => String(item.id) === String(pluginId))
-      if (!item) throw new Error('Codex plugin not found in current marketplace')
-      const marketplace = currentState.marketplaces.find(
-        marketplace => marketplace.id === currentState.selectedMarketplaceId
+    async installAvailablePlugin(pluginId, marketplaceId) {
+      const currentState = await readState({ mergeAllMarketplaces: true })
+      const requestedMarketplaceId = marketplaceId?.trim()
+      const item = currentState.marketplaceItems.find(
+        item =>
+          String(item.id) === String(pluginId) &&
+          (!requestedMarketplaceId || item.manifest?.marketplaceId === requestedMarketplaceId)
       )
-      if (!marketplace) throw new Error('Codex marketplace not selected')
+      if (!item) throw new Error('Codex plugin not found in current marketplace')
+      const itemMarketplaceId =
+        typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId.trim() : ''
+      const resolvedMarketplaceId = requestedMarketplaceId || itemMarketplaceId
+      if (!resolvedMarketplaceId) throw new Error('Codex plugin marketplace is missing')
+      const marketplace = currentState.marketplaces.find(
+        marketplace => marketplace.id === resolvedMarketplaceId
+      )
+      if (!marketplace) throw new Error('Codex plugin marketplace not found')
       const localMarketplace = isLocalMarketplacePath(marketplace.path)
       await codexAppServerRequest('plugin/install', {
         marketplacePath: localMarketplace ? marketplace.path : null,
@@ -1498,7 +1510,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         pluginName: pluginInstallName(item, localMarketplace),
       })
       const state = await readState({
-        marketplaceId: currentState.selectedMarketplaceId,
+        marketplaceId: resolvedMarketplaceId,
         refresh: true,
       })
       const installed = state.installedPlugins.find(plugin => {

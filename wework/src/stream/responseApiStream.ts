@@ -4,6 +4,7 @@ import type {
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
   RuntimeSupervisorState,
+  RuntimeTaskTitleUpdatedPayload,
   RuntimeTokenUsageBreakdown,
 } from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
@@ -46,6 +47,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.block.updated',
   'response.subagent.activity',
   'response.guidance.applied',
+  'runtime.task.title.updated',
   'runtime.goal.updated',
   'runtime.goal.cleared',
   'runtime.goal.continuation',
@@ -759,6 +761,16 @@ export function emitResponseApiEvent(
         optionalNumberField(data, 'applied_at_ms') ??
         Date.now(),
     })
+    return
+  }
+
+  if (eventName === 'runtime.task.title.updated') {
+    const title = stringField(data, 'title')
+    if (!title) return
+    handlers.onRuntimeTaskTitleUpdated?.({
+      ...base,
+      title,
+    } as RuntimeTaskTitleUpdatedPayload)
     return
   }
 

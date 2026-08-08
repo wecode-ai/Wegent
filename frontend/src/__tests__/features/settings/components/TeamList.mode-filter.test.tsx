@@ -451,6 +451,54 @@ describe('TeamList mode filter', () => {
     expect(within(card as HTMLElement).queryByText('Unbind')).not.toBeInTheDocument()
   })
 
+  it('hides team removal for a Reporter using a market Agent', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(15, 'reporter-market-agent', ['chat']),
+        namespace: 'default',
+        share_status: 2,
+        access_source: 'namespace_authorization',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        groupName="platform"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Reporter']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-15')
+    expect(within(card).queryByTestId('team-unbind-from-group-15')).not.toBeInTheDocument()
+  })
+
+  it('shows team removal for a Developer managing a market Agent', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(16, 'developer-market-agent', ['chat']),
+        namespace: 'default',
+        share_status: 2,
+        access_source: 'namespace_authorization',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        groupName="platform"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Developer']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-16')
+    expect(within(card).getByTestId('team-unbind-from-group-16')).toBeInTheDocument()
+  })
+
   it('merges and deduplicates agents resolved through multiple selected groups', async () => {
     const sharedAgent = {
       ...makeTeam(7, 'shared-authorized-agent', ['chat']),

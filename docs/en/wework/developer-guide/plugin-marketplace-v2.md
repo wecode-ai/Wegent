@@ -32,6 +32,8 @@ Installation upserts account intent, creates pending device rows, sends a short-
 
 Wework sends the local Executor's stable `device_id` to catalog and mutation APIs. A catalog item is installed only when that device reports `state=installed` with `actual_release_id` equal to the desired Release. A mutation returns `502` only when the requesting device fails; failures on other devices remain visible for reconnect reconciliation. WebSocket reconnect sync writes per-plugin results back and clears completed uninstall or stale failure rows.
 
+Normal uninstall removes the confirmed device installation record and materialized runtime entry, but it does not directly clear Codex or Claude `plugins/cache`. Those caches are owned by the runtime for reuse and should only be purged by a separate garbage-collection flow that removes versions no longer referenced by any installation record.
+
 Publishing uses a unified scope picker: people (`visibility=personal`, auto-approved after scan as `purpose=restricted_share`), organization (`workspace`), or everyone (`public`). Organization and public scopes still require human review (`purpose=marketplace_publish`). Personal publish may include `targets` and `allowCopy`; the server validates recipients at submission init and applies `resource_members` after a successful scan.
 
 Create flows must target the managed `wework-personal` marketplace. If Plugin Creator still lands in the Codex default `personal` marketplace (`~/plugins` + `~/.agents`), list refresh and publish packaging atomically migrate the plugin into `wework-personal`, keep marketplace manifests in sync, and prefer that marketplace to avoid duplicates.
@@ -55,6 +57,8 @@ Submission clients call `POST /plugins/submissions/{id}/cancel` when the presign
 Use `uv run python scripts/migrate_plugin_marketplace_v2.py` for a restartable legacy migration. After validating counts, checksums, downloads, and install references, rerun it with `--retire-legacy` to deactivate legacy marketplace Kinds and remove copied marketplace blobs.
 
 The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and Chrome DevTools, followed by high-value Chinese collaboration plugins. Every candidate requires a product-value, license, ownership, authentication, and security review; the Codex marketplace is never mirrored wholesale.
+
+Runtime plugin identity uses `plugin://<plugin-name>@<marketplace-name>`. Managed marketplace names are derived from visibility through one shared mapping: `personal -> wework-personal`, `workspace -> wegent`, and `public -> wework`. The frontend must reuse the same mapping when generating trial mentions, Composer app metadata, and application-create plugin matching, and should only apply that fallback to managed install rows whose `providerKey` is `wegent-market` or `wegent-marketplace`. Ordinary `public` plugins remain valid. Only built-in application plugin rows owned by the system `user_id=0` and still stored with legacy `public` visibility are normalized to the current registry identity, `workspace / wegent`, during the built-in installation path.
 
 ## Publishing WeWork official plugins
 

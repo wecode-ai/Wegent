@@ -954,6 +954,15 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
         { stableMs: 750, timeoutMs: uiTimeoutMs }
       )
+      const completedProcessingToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+      await control.command('waitFor', completedProcessingToggle, { timeoutMs: uiTimeoutMs })
+      assert.equal(
+        await control.command('getAttribute', completedProcessingToggle, {
+          value: 'aria-expanded',
+        }),
+        'false',
+        'The completed stream left its process timeline expanded instead of collapsing it'
+      )
       const toolRegressionSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

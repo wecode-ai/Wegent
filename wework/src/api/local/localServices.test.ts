@@ -90,6 +90,9 @@ describe('createLocalAppServices', () => {
     })
     const models = await services.modelApi.listModels()
 
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
+      includeHidden: true,
+    })
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
@@ -114,10 +117,18 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
-    expect(modelIds).not.toContain('gpt-5.5')
-    expect(modelIds).not.toContain('Sol')
-    expect(modelIds).not.toContain('Terra')
-    expect(modelIds).not.toContain('Luna')
+    expect(modelIds).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex-spark',
+      ])
+    )
+    expect(modelIds).not.toContain('gpt-5.2')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -1094,7 +1105,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('uses local model settings for create and continue execution requests', async () => {
-    saveLocalModelConfig({
+    const ollama = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
@@ -1102,7 +1113,7 @@ describe('createLocalAppServices', () => {
       contextWindow: 128000,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const lmstudio = saveLocalModelConfig({
       id: 'lmstudio',
       displayName: 'LM Studio',
       modelId: 'qwen3-coder',
@@ -1112,7 +1123,7 @@ describe('createLocalAppServices', () => {
       imageGenerationEnabled: true,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const custom = saveLocalModelConfig({
       id: 'custom',
       displayName: 'Custom Gateway',
       modelId: 'custom-model',
@@ -1135,7 +1146,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1144,7 +1155,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1153,7 +1164,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'secure continue',
-      modelId: 'local-model:lmstudio',
+      modelId: lmstudio.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1162,7 +1173,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'custom continue',
-      modelId: 'local-model:custom',
+      modelId: custom.codexCatalogModelId,
     })
 
     const createPayload = request.mock.calls.find(
@@ -1178,9 +1189,9 @@ describe('createLocalAppServices', () => {
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(sendPayloads.map(payload => payload.modelSelection)).toEqual([
-      { modelName: 'local-model:ollama', modelType: null, options: {} },
-      { modelName: 'local-model:lmstudio', modelType: null, options: {} },
-      { modelName: 'local-model:custom', modelType: null, options: {} },
+      { modelName: ollama.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: lmstudio.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: custom.codexCatalogModelId, modelType: null, options: {} },
     ])
     expect(createModelConfig).toEqual(
       expect.objectContaining({
