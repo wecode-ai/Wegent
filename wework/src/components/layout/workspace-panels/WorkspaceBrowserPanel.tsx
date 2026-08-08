@@ -78,8 +78,8 @@ import { track } from '@/telemetry/client'
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
-const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
-const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
+const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
+const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
 const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 350
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
@@ -104,6 +104,15 @@ interface WorkspaceBrowserPanelProps {
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
 type BrowserAgentState = EmbeddedBrowserAgentStateEvent
+type BrowserOpenDiagnosticStage =
+  | 'request_consumed'
+  | 'host_ready'
+  | 'host_waiting'
+  | 'host_visible'
+  | 'native_open_started'
+  | 'native_open_succeeded'
+  | 'native_open_failed'
+  | 'lifecycle_cancelled'
 type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
 type BrowserAnnotationTarget = {
   inspectId?: string
@@ -188,44 +197,58 @@ function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
   }
 }
 
-function waitForElementBounds(
+async function waitForVisibleBrowserHost(
   getElement: () => HTMLElement | null,
-  isDisposed: () => boolean
-): Promise<EmbeddedBrowserBounds> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now()
-    let timer: number | null = null
-    const finish = (callback: () => void) => {
-      if (timer !== null) {
-        window.clearTimeout(timer)
-        timer = null
-      }
-      callback()
+  isAbandoned: () => boolean,
+  isActive: () => boolean,
+  onPending: (detail: Record<string, unknown>) => void
+): Promise<EmbeddedBrowserBounds | null> {
+  const startedAt = Date.now()
+  let lastDiagnosticAt = 0
+  while (!isAbandoned()) {
+    if (!isActive()) return null
+    const element = getElement()
+    const bounds = element ? getElementBounds(element) : null
+    if (bounds) return bounds
+    const now = Date.now()
+    if (now - lastDiagnosticAt >= 1_000) {
+      const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
+      const rect = element?.getBoundingClientRect()
+      onPending({
+        elapsedMs: now - startedAt,
+        hostConnected: element?.isConnected ?? false,
+        hostExists: Boolean(element),
+        hostRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+        paneActive: pane?.dataset.activeWorkbenchPane ?? null,
+        paneHidden: pane?.hidden ?? null,
+      })
+      lastDiagnosticAt = now
     }
-
-    const check = () => {
-      if (isDisposed()) {
-        finish(() => reject(new Error('Embedded browser open was cancelled')))
-        return
-      }
-
-      const element = getElement()
-      const bounds = element ? getElementBounds(element) : null
-      if (bounds) {
-        finish(() => resolve(bounds))
-        return
-      }
-
-      if (Date.now() - startedAt >= EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS) {
-        finish(() => reject(new Error('Timed out waiting for embedded browser host bounds')))
-        return
-      }
-
-      timer = window.setTimeout(check, EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS)
+    if (now - startedAt >= EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS) {
+      throw new Error('Timed out waiting to show the embedded browser')
     }
+    await new Promise<void>(resolve =>
+      window.setTimeout(resolve, EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS)
+    )
+  }
+  throw new Error('Embedded browser open was cancelled')
+}
 
-    timer = window.setTimeout(check, 0)
-  })
+function browserOpenErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function logBrowserOpenDiagnostic(
+  stage: BrowserOpenDiagnosticStage,
+  detail: Record<string, unknown>
+) {
+  console.info('[Wework] Embedded browser open diagnostic', JSON.stringify({ stage, ...detail }))
 }
 
 function observeElementIfPresent(observer: ResizeObserver, element: Element | null) {
@@ -727,6 +750,7 @@ export function WorkspaceBrowserPanel({
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
+  const nativeBrowserOpeningRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
   const addressEditingRef = useRef(false)
@@ -743,6 +767,7 @@ export function WorkspaceBrowserPanel({
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
   const handledOpenRequestIdRef = useRef<number | null>(null)
+  const activeOpenRequestIdRef = useRef<number | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
@@ -813,15 +838,18 @@ export function WorkspaceBrowserPanel({
 
   useLayoutEffect(() => {
     mountedRef.current = true
-    currentLabelRef.current = label
-    activeRef.current = active
-    pageStateRequestGenerationRef.current += 1
-    annotationRequestGenerationRef.current += 1
     return () => {
       mountedRef.current = false
       pageStateRequestGenerationRef.current += 1
       annotationRequestGenerationRef.current += 1
     }
+  }, [])
+
+  useLayoutEffect(() => {
+    currentLabelRef.current = label
+    activeRef.current = active
+    pageStateRequestGenerationRef.current += 1
+    annotationRequestGenerationRef.current += 1
   }, [active, label])
 
   useEffect(() => {
@@ -920,6 +948,21 @@ export function WorkspaceBrowserPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (!activeRef.current || event.label !== currentLabelRef.current) return
+      if (nativeLabelRef.current && event.nativeLabel !== nativeLabelRef.current) {
+        console.info(
+          '[Wework] Embedded browser close ignored',
+          JSON.stringify({
+            currentNativeLabel: nativeLabelRef.current,
+            eventNativeLabel: event.nativeLabel,
+            label: event.label,
+          })
+        )
+        return
+      }
+      console.info(
+        '[Wework] Embedded browser close consumed',
+        JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
+      )
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
@@ -1297,45 +1340,128 @@ export function WorkspaceBrowserPanel({
   }, [currentUrl])
 
   useEffect(() => {
-    if (!active || !embeddedBrowserAvailable || !currentUrl) return
+    if (!embeddedBrowserAvailable || !currentUrl) return
     if (nativeBrowserOpenRef.current) {
       schedulePostOpenBoundsSync(active)
       return
     }
+    if (nativeBrowserOpeningRef.current) return
 
-    let disposed = false
     let readyTimer: number | null = null
+    const requestId = activeOpenRequestIdRef.current
+    const openingLabel = label
+    const openingUrl = currentUrl
+    const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
+    nativeBrowserOpeningRef.current = true
 
     setStatus('loading')
     const openWhenHostIsReady = async () => {
       try {
-        const bounds = await waitForElementBounds(
-          () => browserHostRef.current,
-          () => disposed
-        )
-        if (disposed) return
+        const host = browserHostRef.current
+        const measuredBounds = active && host ? getElementBounds(host) : null
+        const visible = measuredBounds !== null
+        const bounds = measuredBounds ?? { x: 0, y: 0, width: 1, height: 1 }
+        if (isAbandoned()) return
 
+        logBrowserOpenDiagnostic('host_ready', {
+          active,
+          bounds,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+          visible,
+        })
         readyTimer = window.setTimeout(() => {
-          if (!disposed) setStatus('ready')
+          if (!isAbandoned()) setStatus('ready')
         }, EMBEDDED_BROWSER_READY_TIMEOUT_MS)
 
-        const pageState = await openEmbeddedBrowser(currentUrl, bounds, label)
-        if (disposed) {
-          if (!mountedRef.current || !activeRef.current || currentLabelRef.current !== label) {
-            await closeEmbeddedBrowser(label).catch(() => undefined)
-          }
+        logBrowserOpenDiagnostic('native_open_started', {
+          active,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+          visible,
+        })
+        const pageState = visible
+          ? await openEmbeddedBrowser(openingUrl, bounds, openingLabel)
+          : await openEmbeddedBrowser(openingUrl, bounds, openingLabel, false, !active)
+        if (isAbandoned()) {
+          await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
+          logBrowserOpenDiagnostic('lifecycle_cancelled', {
+            active,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
           return
         }
-        adoptNativeLabel(pageState.nativeLabel, label)
+        adoptNativeLabel(pageState.nativeLabel, openingLabel)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
-        updatePageUrl(pageState.url || currentUrl)
-        schedulePostOpenBoundsSync(active)
+        updatePageUrl(pageState.url || openingUrl)
+        if (!visible && active) {
+          const visibleBounds = await waitForVisibleBrowserHost(
+            () => browserHostRef.current,
+            isAbandoned,
+            () => activeRef.current,
+            detail =>
+              logBrowserOpenDiagnostic('host_waiting', {
+                ...detail,
+                label: openingLabel,
+                requestId,
+                url: openingUrl,
+              })
+          )
+          if (visibleBounds) {
+            await setEmbeddedBrowserBounds(visibleBounds, true, openingLabel)
+            logBrowserOpenDiagnostic('host_visible', {
+              bounds: visibleBounds,
+              label: openingLabel,
+              requestId,
+              url: openingUrl,
+            })
+          } else {
+            await setEmbeddedBrowserBounds(
+              { x: 0, y: 0, width: 1, height: 1 },
+              false,
+              openingLabel,
+              true
+            )
+          }
+        }
+        schedulePostOpenBoundsSync(activeRef.current)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
+        logBrowserOpenDiagnostic('native_open_succeeded', {
+          active,
+          label: openingLabel,
+          nativeLabel: pageState.nativeLabel,
+          requestId,
+          url: pageState.url || openingUrl,
+        })
       } catch (error) {
-        console.error('Failed to open embedded browser:', error)
-        if (!disposed) {
+        const message = browserOpenErrorMessage(error)
+        const abandoned = isAbandoned()
+        console.error(
+          '[Wework] Embedded browser open failed',
+          JSON.stringify({
+            active,
+            disposed: abandoned,
+            error: message,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
+        )
+        logBrowserOpenDiagnostic('native_open_failed', {
+          active,
+          disposed: abandoned,
+          error: message,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+        })
+        if (!abandoned) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
           const recoveryDelays = [0, 120, 300, 600]
           for (const delay of recoveryDelays) {
@@ -1343,13 +1469,13 @@ export function WorkspaceBrowserPanel({
               await new Promise<void>(resolve => window.setTimeout(resolve, delay))
             }
             try {
-              const pageState = await readEmbeddedBrowserPageState(label)
-              if (disposed) return
-              adoptNativeLabel(pageState.nativeLabel, label)
+              const pageState = await readEmbeddedBrowserPageState(openingLabel)
+              if (isAbandoned()) return
+              adoptNativeLabel(pageState.nativeLabel, openingLabel)
               setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
               nativeBrowserOpenRef.current = true
-              updatePageUrl(pageState.url || currentUrl)
-              schedulePostOpenBoundsSync(active)
+              updatePageUrl(pageState.url || openingUrl)
+              schedulePostOpenBoundsSync(activeRef.current)
               setStatus('ready')
               return
             } catch {
@@ -1359,15 +1485,13 @@ export function WorkspaceBrowserPanel({
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
         }
+      } finally {
+        if (readyTimer !== null) window.clearTimeout(readyTimer)
+        nativeBrowserOpeningRef.current = false
       }
     }
 
     void openWhenHostIsReady()
-
-    return () => {
-      disposed = true
-      if (readyTimer !== null) window.clearTimeout(readyTimer)
-    }
   }, [
     active,
     adoptNativeLabel,
@@ -1600,9 +1724,21 @@ export function WorkspaceBrowserPanel({
     return () => {
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
+      const nativeLabel = nativeLabelRef.current
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
-      void closeEmbeddedBrowser(label).catch(() => undefined)
+      if (!nativeLabel) {
+        console.info(
+          '[Wework] Embedded browser cleanup skipped',
+          JSON.stringify({ label, reason: 'no_native_identity' })
+        )
+        return
+      }
+      console.info(
+        '[Wework] Embedded browser cleanup requested',
+        JSON.stringify({ label, nativeLabel })
+      )
+      void closeEmbeddedBrowser(label, nativeLabel).catch(() => undefined)
     }
   }, [label])
 
@@ -1806,8 +1942,16 @@ export function WorkspaceBrowserPanel({
     if (openRequest.label && openRequest.label !== label) return
     if (handledOpenRequestIdRef.current === openRequest.id) return
     handledOpenRequestIdRef.current = openRequest.id
+    activeOpenRequestIdRef.current = openRequest.id
+    logBrowserOpenDiagnostic('request_consumed', {
+      active,
+      label,
+      requestId: openRequest.id,
+      requestLabel: openRequest.label,
+      url: openRequest.url,
+    })
     openBrowserUrl(openRequest.url)
-  }, [label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
+  }, [active, label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

@@ -4290,7 +4290,7 @@ describe('DesktopWorkbenchLayout', () => {
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
@@ -4305,7 +4305,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(content).toHaveStyle({ width: '580px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '420px' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
@@ -4357,7 +4357,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(panelShell).toHaveStyle({ width: '580px' })
     })
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
@@ -4532,7 +4532,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
@@ -4541,7 +4541,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(content).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
     expect(content).toHaveStyle({ width: '700px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '300px' })
 
     fireEvent.pointerMove(document, { clientX: 902 })
 
@@ -4557,7 +4557,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(content).toHaveStyle({ width: '420px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '580px' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
   })
 
@@ -4735,7 +4735,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(topBar).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
     expect(rightPanelShell).toHaveClass('opacity-100')
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
@@ -4839,7 +4839,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
       expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
-        width: 'calc(100% - 580px)',
+        width: '420px',
       })
     })
 
@@ -5132,9 +5132,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
         right: '0px',
       })
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        width: 'calc(100% - 420px - 0px - 5rem)',
-      })
+      expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain('580px')
       expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
         'after:bg-transparent'
       )

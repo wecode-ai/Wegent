@@ -6,9 +6,11 @@ import { isTauriRuntime } from './runtime-environment'
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
+let embeddedBrowserFrontendOpenRequestSequence = 1
 let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
 let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
+let embeddedBrowserOpenRequestHandlerSequence = 1
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
 export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
@@ -41,12 +43,25 @@ export interface EmbeddedBrowserPageState {
 }
 
 export interface EmbeddedBrowserOpenRequest {
+  requestId: number
   url: string
   label: string
 }
 
+function logEmbeddedBrowserOpenTransport(stage: string, detail: Record<string, unknown> = {}) {
+  console.info(
+    '[Wework] Embedded browser open transport',
+    JSON.stringify({
+      stage,
+      handlerCount: embeddedBrowserOpenRequestHandlers.size,
+      ...detail,
+    })
+  )
+}
+
 export interface EmbeddedBrowserCloseRequest {
   label: string
+  nativeLabel: string
 }
 
 export type EmbeddedBrowserDataKind = 'cookies' | 'cache'
@@ -215,24 +230,30 @@ export function consumeEmbeddedBrowserLabelTransfer(
 export async function openEmbeddedBrowser(
   url: string,
   bounds: EmbeddedBrowserBounds,
-  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL,
+  visible = true,
+  readyWhenHidden = true
 ): Promise<EmbeddedBrowserPageState> {
   return invoke<EmbeddedBrowserPageState>('embedded_browser_open', {
     ...browserArgs(label),
     url,
     bounds,
+    visible,
+    readyWhenHidden,
   })
 }
 
 export async function setEmbeddedBrowserBounds(
   bounds: EmbeddedBrowserBounds,
   visible: boolean,
-  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL,
+  readyWhenHidden = false
 ): Promise<void> {
   await invoke('embedded_browser_set_bounds', {
     ...browserArgs(label),
     bounds,
     visible,
+    readyWhenHidden,
   })
 }
 
@@ -312,8 +333,14 @@ export async function relabelEmbeddedBrowser(
   })
 }
 
-export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
-  await invoke('embedded_browser_close', browserArgs(label))
+export async function closeEmbeddedBrowser(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL,
+  expectedNativeLabel?: string
+): Promise<void> {
+  await invoke('embedded_browser_close', {
+    ...browserArgs(label),
+    expectedNativeLabel: expectedNativeLabel ?? null,
+  })
 }
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
@@ -331,7 +358,11 @@ export function requestEmbeddedBrowserOpen(
   const normalizedUrl = normalizeBrowserUrl(url, window.location.href)
   if (!normalizedUrl) return false
 
-  const request = { url: normalizedUrl, label }
+  const request = {
+    requestId: embeddedBrowserFrontendOpenRequestSequence++,
+    url: normalizedUrl,
+    label,
+  }
   embeddedBrowserOpenRequestHandlers.forEach(handler => handler(request))
   return true
 }
@@ -346,19 +377,29 @@ export function listenEmbeddedBrowserOpenRequests(
   if (embeddedBrowserOpenRequestReleaseTimer !== null) {
     clearTimeout(embeddedBrowserOpenRequestReleaseTimer)
     embeddedBrowserOpenRequestReleaseTimer = null
+    logEmbeddedBrowserOpenTransport('native_listener_release_cancelled')
   }
 
+  const handlerId = embeddedBrowserOpenRequestHandlerSequence++
   embeddedBrowserOpenRequestHandlers.add(handler)
+  logEmbeddedBrowserOpenTransport('handler_registered', { handlerId })
 
   if (!embeddedBrowserOpenRequestUnlistenPromise) {
+    logEmbeddedBrowserOpenTransport('native_listener_registering', { handlerId })
     embeddedBrowserOpenRequestUnlistenPromise = listen<EmbeddedBrowserOpenRequest>(
       EMBEDDED_BROWSER_OPEN_REQUEST_EVENT,
       event => {
+        logEmbeddedBrowserOpenTransport('native_event_received', {
+          requestId: event.payload.requestId,
+          label: event.payload.label,
+          url: event.payload.url,
+        })
         embeddedBrowserOpenRequestHandlers.forEach(currentHandler => currentHandler(event.payload))
       }
     )
       .then(unlisten => {
         embeddedBrowserOpenRequestUnlisten = unlisten
+        logEmbeddedBrowserOpenTransport('native_listener_registered', { handlerId })
         if (
           embeddedBrowserOpenRequestHandlers.size === 0 &&
           embeddedBrowserOpenRequestReleaseTimer === null
@@ -366,6 +407,9 @@ export function listenEmbeddedBrowserOpenRequests(
           embeddedBrowserOpenRequestUnlisten?.()
           embeddedBrowserOpenRequestUnlisten = null
           embeddedBrowserOpenRequestUnlistenPromise = null
+          logEmbeddedBrowserOpenTransport('native_listener_released_after_registration', {
+            handlerId,
+          })
         }
         return unlisten
       })
@@ -376,14 +420,42 @@ export function listenEmbeddedBrowserOpenRequests(
       })
   }
 
+  void embeddedBrowserOpenRequestUnlistenPromise
+    .then(() => invoke<EmbeddedBrowserOpenRequest[]>('embedded_browser_pending_open_requests'))
+    .then(requests => {
+      logEmbeddedBrowserOpenTransport('pending_snapshot_received', {
+        handlerId,
+        requests: requests.map(request => ({
+          requestId: request.requestId,
+          label: request.label,
+        })),
+      })
+      requests.forEach(request => {
+        logEmbeddedBrowserOpenTransport('pending_request_dispatched', {
+          handlerId,
+          requestId: request.requestId,
+          label: request.label,
+        })
+        handler(request)
+      })
+    })
+    .catch(error => {
+      console.error('[Wework] Failed to recover embedded browser open requests', error)
+    })
+
   return Promise.resolve(() => {
     embeddedBrowserOpenRequestHandlers.delete(handler)
+    logEmbeddedBrowserOpenTransport('handler_unregistered', { handlerId })
     if (embeddedBrowserOpenRequestHandlers.size > 0) return
     if (embeddedBrowserOpenRequestReleaseTimer !== null) return
 
+    logEmbeddedBrowserOpenTransport('native_listener_release_scheduled', { handlerId })
     embeddedBrowserOpenRequestReleaseTimer = setTimeout(() => {
       embeddedBrowserOpenRequestReleaseTimer = null
-      if (embeddedBrowserOpenRequestHandlers.size > 0) return
+      if (embeddedBrowserOpenRequestHandlers.size > 0) {
+        logEmbeddedBrowserOpenTransport('native_listener_release_skipped', { handlerId })
+        return
+      }
 
       const currentUnlisten = embeddedBrowserOpenRequestUnlisten
       const pendingUnlisten = embeddedBrowserOpenRequestUnlistenPromise
@@ -391,10 +463,14 @@ export function listenEmbeddedBrowserOpenRequests(
       embeddedBrowserOpenRequestUnlistenPromise = null
       if (currentUnlisten) {
         currentUnlisten()
+        logEmbeddedBrowserOpenTransport('native_listener_released', { handlerId })
         return
       }
       if (pendingUnlisten) {
-        void pendingUnlisten.then(unlisten => unlisten())
+        void pendingUnlisten.then(unlisten => {
+          unlisten()
+          logEmbeddedBrowserOpenTransport('pending_native_listener_released', { handlerId })
+        })
       }
     }, 1000)
   })

@@ -3170,11 +3170,6 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
         format!(
             "{}={}",
-            toml_key_path(&["features", "code_mode", "direct_only_tool_namespaces",]),
-            toml_json_value(&json!([WEWORK_BROWSER_MCP_SERVER_NAME]))
-        ),
-        format!(
-            "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
             toml_value(&command.display().to_string())
         ),

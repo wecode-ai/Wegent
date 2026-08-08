@@ -6,9 +6,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-const RIGHT_PANEL_TOGGLE_SELECTOR =
-  '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
-const RIGHT_BROWSER_OPTION_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
@@ -25,6 +22,9 @@ const CLICKED_TEXT = 'clicked: Alpha Beta'
 const DIRECT_FILLED_TEXT = 'filled: Gamma Delta'
 const DIRECT_CLICKED_TEXT = 'clicked: Gamma Delta'
 const DIRECT_DELETED_TEXT = 'deleted: Gamma Delta'
+const EMBEDDED_BROWSER_SETUP_PROMPT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
+const EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
 const HOVER_TEXT = 'hovered'
 const SELECT_TEXT = 'selected: finance'
 const CHECKED_TEXT = 'checked: true'
@@ -41,7 +41,7 @@ const BROWSER_MORE_BUTTON_SELECTOR = '[data-testid="workspace-browser-more-butto
 const BROWSER_CLEAR_DATA_SELECTOR = '[data-testid="workspace-browser-clear-data-item"]'
 const BROWSER_CLEAR_COOKIES_SELECTOR = '[data-testid="workspace-browser-clear-cookies-item"]'
 const BROWSER_CLEAR_CACHE_SELECTOR = '[data-testid="workspace-browser-clear-cache-item"]'
-const BROWSER_NATIVE_VIEW_SELECTOR = '[data-testid="workspace-browser-native-view"]'
+const BROWSER_NATIVE_VIEW_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`
 const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
 const BROWSER_CLEAR_COMPLETED_TEXT = '浏览数据已清除'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -214,7 +214,59 @@ async function waitForControlValue(control, selector, expected, timeoutMs, messa
   throw new Error(message)
 }
 
-async function withBrowserMcp(identity, callback) {
+async function waitForVisibleSingleElement(control, selector, timeoutMs, message) {
+  const startedAt = Date.now()
+  let metrics = []
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = JSON.parse(await control.command('getElementMetrics', selector))
+    if (metrics.length === 1 && metrics[0].width > 1 && metrics[0].height > 1) {
+      return metrics[0]
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  const diagnostics = {
+    activeWorkbench: JSON.parse(
+      await control.command('getElementMetrics', ACTIVE_WORKBENCH_SELECTOR)
+    ),
+    browserHost: metrics,
+    browserPanel: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+      )
+    ),
+    rightPanelShell: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
+      )
+    ),
+    rightPanelShellAriaHidden: await control.command(
+      'getAttribute',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+      { value: 'aria-hidden' }
+    ),
+    rightPanelShellWidth: await control.command(
+      'getInlineStyle',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+      { value: 'width' }
+    ),
+  }
+  throw new Error(`${message}: ${JSON.stringify(diagnostics)}`)
+}
+
+async function waitForRuntimeTaskId(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+    if (taskId) return taskId
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for the embedded-browser setup to create a local task')
+}
+
+async function withBrowserMcp(identity, label, callback) {
   const executorPath =
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
@@ -231,7 +283,7 @@ async function withBrowserMcp(identity, callback) {
       WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
-      WEWORK_EMBEDDED_BROWSER_LABEL: BROWSER_LABEL,
+      WEWORK_EMBEDDED_BROWSER_LABEL: label,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -366,10 +418,70 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
     async verify(control) {
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
-      await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
-      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
+      control.setScenario('embedded_browser_setup')
+      await control.command(
+        'waitFor',
+        '[data-testid="chat-message-input"][contenteditable="true"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('fill', '[data-testid="chat-message-input"][contenteditable="true"]', {
+        value: EMBEDDED_BROWSER_SETUP_PROMPT,
+      })
+      await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
+        key: 'Enter',
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
+      const browserLabel = await control.command(
+        'getAttribute',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.equal(
+        browserLabel,
+        `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        'The fresh local task did not expose its task-scoped embedded browser label'
+      )
+      const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      const bridgeCall = payload => callBridge(bridgeIdentity, { label: browserLabel, ...payload })
+      const firstOpenStartedAt = Date.now()
+      const firstOpenPromise = bridgeCall({
+        action: 'open',
+        url: fixtureUrl,
+        timeoutMs: 8_000,
+      })
+      const [firstOpenResult] = await Promise.all([
+        firstOpenPromise,
+        waitForVisibleSingleElement(
+          control,
+          BROWSER_NATIVE_VIEW_SELECTOR,
+          8_000,
+          'The first bridge open did not make exactly one active host visible'
+        ),
+      ])
+      assert.equal(
+        firstOpenResult.ok,
+        true,
+        `The first bridge open from a fresh task failed: ${JSON.stringify(firstOpenResult)}`
+      )
+      assert.ok(
+        Date.now() - firstOpenStartedAt < 8_000,
+        'The first bridge open only completed after its tool timeout'
+      )
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The first bridge open did not preserve its URL in the browser panel'
+      )
+      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('finishAnimations', 'body')
       const browserPanelMetrics = JSON.parse(
         await control.command(
@@ -398,21 +510,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           rightPanelShellWidth,
         })}`
       )
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        fixtureUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive fixture URL before submit'
-      )
-      await control.command('submit', BROWSER_INPUT_SELECTOR)
-      const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
-      const bridgeCall = payload => callBridge(bridgeIdentity, payload)
-      // A bridge open adopts the pane-derived label created by the UI submit
-      // (the frontend relabels the existing webview to the fixed bridge
-      // label), so later bridge calls and agent-state events resolve to the
-      // same logical browser.
       const openResult = await bridgeCall({
         action: 'open',
         url: fixtureUrl,
@@ -532,7 +629,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.equal(cacheResourceRequests, 2, 'Cache clear did not force a resource request')
 
       await writeStaleBridgeRuntime(bridgeIdentity)
-      const mcpResult = await withBrowserMcp(bridgeIdentity, async callTool => {
+      const mcpResult = await withBrowserMcp(bridgeIdentity, browserLabel, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,
           inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },

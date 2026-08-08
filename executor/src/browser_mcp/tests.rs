@@ -114,6 +114,24 @@ async fn action_tool_schema_guides_index_ref_followup_actions() {
         .and_then(Value::as_str)
         .unwrap()
         .contains("browser_inspect"));
+    assert!(fill.pointer("/inputSchema/properties/url").is_none());
+    assert!(click.pointer("/inputSchema/properties/text").is_none());
+}
+
+#[tokio::test]
+async fn browser_tool_schemas_stay_compact() {
+    let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let response = handle_request(&reqwest::Client::new(), &request, 1, Instant::now())
+        .await
+        .unwrap();
+    let tools = response["result"]["tools"].as_array().unwrap();
+    let encoded = serde_json::to_vec(tools).unwrap();
+
+    assert!(
+        encoded.len() < 16 * 1024,
+        "browser tool schemas must remain compact, got {} bytes",
+        encoded.len()
+    );
 }
 
 #[test]

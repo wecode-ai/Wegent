@@ -678,7 +678,19 @@ mod tests {
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
-                    "tools": [{"namespace": "github", "name": "create_issue"}]
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create an issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}}
+                            }
+                        }]
+                    }]
                 }
             ],
             "tools": [{
@@ -696,6 +708,7 @@ mod tests {
         let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
 
         assert_eq!(converted["tools"][0]["name"], "tool_search");
+        assert_eq!(converted["tools"][1]["name"], "create_issue");
         assert_eq!(
             converted["tools"][0]["input_schema"]["required"],
             json!(["query"])

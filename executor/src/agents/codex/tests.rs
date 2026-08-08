@@ -2207,10 +2207,7 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         ])
     );
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
-    assert_eq!(
-        config["features.code_mode.direct_only_tool_namespaces"],
-        json!([WEWORK_BROWSER_MCP_SERVER_NAME])
-    );
+    assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.command"],
         env::current_exe().unwrap().display().to_string()
