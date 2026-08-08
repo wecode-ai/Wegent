@@ -55,6 +55,9 @@ const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const WEWORK_HOME_DIR: &str = ".wework";
+const LEGACY_EXECUTOR_HOME_DIR: &str = ".wegent-executor";
+const LEGACY_WECODE_HOME_DIR: &str = ".wecode";
+const LEGACY_MIGRATION_CONFLICTS_DIR: &str = ".legacy-migration-conflicts";
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
     if cfg!(windows) {
         180
@@ -637,6 +640,7 @@ pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    migrate_legacy_executor_homes(&home)?;
     Ok(default_local_executor_home_path(
         &home,
         LOCAL_EXECUTOR_NAMESPACE,
@@ -5318,10 +5322,10 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn default_executor_home_does_not_migrate_legacy_directory() {
+    fn default_executor_home_migrates_legacy_directory() {
         let _guard = env_lock();
-        let home = import_test_root("legacy-executor-home-is-untouched");
-        let legacy_home = home.join(".wegent-executor");
+        let home = import_test_root("legacy-executor-home-is-migrated");
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
         fs::create_dir_all(&legacy_home).unwrap();
@@ -5336,10 +5340,10 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
         assert_eq!(executor_home, home.join(WEWORK_HOME_DIR));
         assert_eq!(
-            fs::read_to_string(legacy_home.join("device-config.json")).unwrap(),
+            fs::read_to_string(executor_home.join("device-config.json")).unwrap(),
             "legacy"
         );
-        assert!(!executor_home.exists());
+        assert!(!legacy_home.exists());
         let _ = fs::remove_dir_all(home);
     }
 
