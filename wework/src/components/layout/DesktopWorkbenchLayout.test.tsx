@@ -4711,10 +4711,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
       'opacity-0',
-      'transition-[width,opacity]',
+      'transition-opacity',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
+    expect(rightPanelShell).not.toHaveClass('transition-[width,opacity]')
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(

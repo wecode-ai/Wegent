@@ -7176,18 +7176,11 @@ async function verifySideChatAttachmentIsolation({
   await control.command('click', '[data-testid="right-workspace-chat-option"]')
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
-  const workbenchWidth = Number.parseFloat(
-    await control.command('getStyle', ACTIVE_WORKBENCH_SELECTOR, { value: 'width' })
-  )
-  const panelWidthStyle = await control.command('getInlineStyle', rightPanelShellSelector, {
-    value: 'width',
-  })
-  const chatWidthMatch = panelWidthStyle.match(/^calc\(100% - ([\d.]+)px\)$/)
-  assert.ok(chatWidthMatch, `Unexpected right-panel width style: ${panelWidthStyle}`)
-  const panelWidth = workbenchWidth - Number.parseFloat(chatWidthMatch[1])
-  assert.ok(
-    panelWidth >= 400 && panelWidth <= 440,
-    `The temporary-chat-only right panel was ${panelWidth}px wide instead of about 420px`
+  await waitForElementWidth(
+    control,
+    rightPanelShellSelector,
+    width => width >= 400 && width <= 440,
+    'The temporary-chat-only right panel'
   )
   await captureVerificationScreenshot(control, '01-side-chat-compact-width.png')
 
