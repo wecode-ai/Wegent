@@ -587,6 +587,53 @@ mod tests {
     }
 
     #[test]
+    fn preserves_structured_app_tool_results_for_anthropic_messages() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "wegent_apps",
+                    "name": "wegent-sites__get_site",
+                    "arguments": "{\"project_id\":\"prj_1\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": {
+                        "_meta": null,
+                        "content": [{
+                            "type": "text",
+                            "text": "Wegent Sites tool completed successfully."
+                        }],
+                        "structuredContent": {
+                            "id": "prj_1",
+                            "title": "Palette"
+                        }
+                    }
+                }
+            ],
+            "tools": [{
+                "type": "namespace",
+                "name": "wegent_apps",
+                "tools": [{
+                    "type": "function",
+                    "name": "wegent-sites__get_site",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(
+            converted["messages"][1]["content"][0]["content"],
+            "{\"id\":\"prj_1\",\"title\":\"Palette\"}"
+        );
+    }
+
+    #[test]
     fn flattens_namespace_tools_for_anthropic_messages() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -612,6 +659,65 @@ mod tests {
             converted["tools"][0]["input_schema"],
             json!({"type": "object", "properties": {}})
         );
+    }
+
+    #[test]
+    fn bridges_tool_search_and_history_for_anthropic_messages() {
+        let input = json!({
+            "model": "third-party-anthropic-model",
+            "input": [
+                {"role": "user", "content": "Find the GitHub App"},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "GitHub"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "status": "completed",
+                    "tools": [{"namespace": "github", "name": "create_issue"}]
+                }
+            ],
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "description": "Search available Apps",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(converted["tools"][0]["name"], "tool_search");
+        assert_eq!(
+            converted["tools"][0]["input_schema"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(converted["messages"][1]["role"], "assistant");
+        assert_eq!(converted["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(
+            converted["messages"][1]["content"][0]["name"],
+            "tool_search"
+        );
+        assert_eq!(
+            converted["messages"][1]["content"][0]["input"],
+            json!({"query": "GitHub"})
+        );
+        assert_eq!(converted["messages"][2]["role"], "user");
+        assert_eq!(
+            converted["messages"][2]["content"][0]["type"],
+            "tool_result"
+        );
+        assert!(converted["messages"][2]["content"][0]["content"]
+            .as_str()
+            .is_some_and(|value| value.contains("\"tools\"")));
     }
 
     #[test]

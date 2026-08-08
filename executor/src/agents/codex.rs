@@ -2546,6 +2546,12 @@ fn explicit_codex_upstream(
         convert_custom_tools: non_empty_config(model_config, "tool_profile")
             .or_else(|| non_empty_config(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+        native_tool_search: bool_value(model_config.get("native_tool_search"))
+            .or_else(|| bool_value(model_config.get("nativeToolSearch")))
+            .unwrap_or(false),
+        native_namespace_tools: bool_value(model_config.get("native_namespace_tools"))
+            .or_else(|| bool_value(model_config.get("nativeNamespaceTools")))
+            .unwrap_or(false),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
@@ -2706,6 +2712,16 @@ fn configured_codex_provider(
             .or_else(|| provider_config.get("toolProfile"))
             .and_then(|value| value.as_str())
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let native_tool_search = provider_config
+        .get("native_tool_search")
+        .or_else(|| provider_config.get("nativeToolSearch"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let native_namespace_tools = provider_config
+        .get("native_namespace_tools")
+        .or_else(|| provider_config.get("nativeNamespaceTools"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let request_path = match api_format.as_str() {
         "openai-chat-completions" => "/chat/completions",
         "anthropic-messages" => "/messages",
@@ -2718,6 +2734,8 @@ fn configured_codex_provider(
         base_url,
         api_format,
         convert_custom_tools,
+        native_tool_search,
+        native_namespace_tools,
         api_key,
         default_headers,
         proxy_url: proxy_url.map(str::to_owned),

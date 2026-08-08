@@ -2952,6 +2952,40 @@ mod tests {
     }
 
     #[test]
+    fn completed_mcp_tool_updates_preserve_structured_content() {
+        let params = json!({
+            "item": {
+                "id": "call-app",
+                "type": "mcpToolCall",
+                "server": "wegent_apps",
+                "tool": "wegent-sites__get_site",
+                "arguments": {"project_id": "prj_1"},
+                "status": "completed",
+                "error": null,
+                "result": {
+                    "_meta": null,
+                    "content": [{
+                        "type": "text",
+                        "text": "Wegent Sites tool completed successfully."
+                    }],
+                    "structuredContent": {
+                        "id": "prj_1",
+                        "title": "Palette"
+                    }
+                }
+            }
+        });
+
+        let (_, updates) =
+            tool_update_from_notification(&params).expect("completed MCP tool update");
+
+        assert_eq!(
+            updates["tool_output"]["structuredContent"],
+            json!({"id": "prj_1", "title": "Palette"})
+        );
+    }
+
+    #[test]
     fn transcript_marks_image_view_without_status_as_done() {
         let thread = json!({
             "id": "thread-1",
@@ -3295,6 +3329,10 @@ mod tests {
         assert_eq!(block["type"], "tool");
         assert_eq!(block["tool_name"], "ask");
         assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(
+            block["tool_output"]["structuredContent"]["answers"][0]["user_input"],
+            "done"
+        );
         assert_eq!(block["status"], "done");
     }
 
