@@ -183,8 +183,14 @@ const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const CONCURRENT_MEMORY_TASK_COUNT = 10
-const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
-  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 1280 * 1024
+const CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
+)
+const CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+)
+const CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB ?? 64 * 1024
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
@@ -3453,6 +3459,9 @@ async function waitForBlankConversation(control, composerSelector) {
 async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
   control.setScenario('concurrent_memory')
+  const baselineSamples = await captureStableTotalMemorySamples(control, 'baseline')
+  const baseline = medianMemorySample(baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE))
+  assert.ok(baseline, 'The concurrent memory E2E did not capture a baseline')
   const taskRows = []
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const knownTaskRows = new Set(
@@ -3502,6 +3511,12 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
+  const settledWindow = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const settled = medianMemorySample(settledWindow)
+  assert.ok(settled, 'The concurrent memory E2E did not capture a settled sample window')
+  const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledSampleRangeKiB = memorySampleRangeKiB(settledWindow)
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
@@ -3529,8 +3544,20 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     `${JSON.stringify(
       {
         taskCount: CONCURRENT_MEMORY_TASK_COUNT,
-        limitPhysicalFootprintKiB: CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
-        peak,
+        limits: {
+          maxPeakGrowthKiB: CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
+          maxSettledGrowthKiB: CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+          maxSettledSampleRangeKiB: CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
+        },
+        summary: {
+          baseline,
+          peak,
+          settled,
+          peakGrowthKiB,
+          settledGrowthKiB,
+          settledSampleRangeKiB,
+        },
+        baselineSamples,
         samples,
       },
       null,
@@ -3539,8 +3566,16 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     'utf8'
   )
   assert.ok(
-    peak.physicalFootprintKiB < CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
-    `Wework physical footprint reached ${peak.physicalFootprintKiB} KiB with ten concurrent tasks`
+    peakGrowthKiB <= CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
+    `Wework physical footprint grew by ${peakGrowthKiB} KiB with ten concurrent tasks`
+  )
+  assert.ok(
+    settledGrowthKiB <= CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+    `Wework physical footprint settled ${settledGrowthKiB} KiB above baseline with ten concurrent tasks`
+  )
+  assert.ok(
+    settledSampleRangeKiB <= CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
+    `Wework concurrent memory sample range reached ${settledSampleRangeKiB} KiB`
   )
   control.releaseConcurrentMemoryResponses()
 }
@@ -3661,6 +3696,20 @@ async function captureStableMemorySamples(control, phase, minimumSamples, maximu
     }
     samples.push(await captureMemorySample(control, phase))
     if (samples.length < minimumSamples) continue
+    const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
+  }
+  return samples
+}
+
+async function captureStableTotalMemorySamples(control, phase) {
+  const samples = []
+  while (samples.length < MEMORY_MAX_BASELINE_SAMPLES) {
+    if (samples.length > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+    samples.push(await captureTotalMemorySample(control, phase))
+    if (samples.length < MEMORY_MIN_BASELINE_SAMPLES) continue
     const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
     if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
   }
@@ -13972,6 +14021,24 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (MEMORY_ONLY) {
+      phase = 'memory-project'
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
+      const composerSelector = ACTIVE_COMPOSER_SELECTOR
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      phase = 'memory-growth'
+      await selectE2EModel(control)
+      await verifyMemoryGrowth({ composerSelector, control })
+      phase = 'concurrent-memory'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+      await verifyConcurrentTaskMemory({ composerSelector, control })
+      console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
@@ -14349,18 +14416,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'background-task-plan'
       await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
       console.log(`Wework background task-plan E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (MEMORY_ONLY) {
-      phase = 'memory-growth'
-      await selectE2EModel(control)
-      await verifyMemoryGrowth({ composerSelector, control })
-      phase = 'concurrent-memory'
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-      await verifyConcurrentTaskMemory({ composerSelector, control })
-      console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
       return
     }
 

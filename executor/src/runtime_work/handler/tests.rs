@@ -333,6 +333,65 @@ fn linked_failed_codex_turn_does_not_create_cached_transcript() {
 }
 
 #[test]
+fn retry_supersedes_the_previous_transcript_turn() {
+    let index_path = temp_runtime_work_index_path("retry-supersedes-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    handler.record_superseded_runtime_transcript_turn("task-1", "failed-turn");
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    let mut messages = vec![
+        json!({
+            "id": "failed-user",
+            "role": "user",
+            "turnId": "failed-turn",
+            "content": "Retry me",
+        }),
+        json!({
+            "id": "failed-assistant",
+            "role": "assistant",
+            "turnId": "failed-turn",
+            "status": "failed",
+            "content": "",
+        }),
+        json!({
+            "id": "retry-user",
+            "role": "user",
+            "turnId": "retry-turn",
+            "content": "Retry me",
+        }),
+        json!({
+            "id": "retry-assistant",
+            "role": "assistant",
+            "turnId": "retry-turn",
+            "status": "done",
+            "content": "Completed",
+        }),
+    ];
+
+    remove_superseded_transcript_turns(&mut messages, &task.runtime_handle);
+
+    assert_eq!(messages.len(), 2);
+    assert!(messages
+        .iter()
+        .all(|message| message["turnId"] == "retry-turn"));
+    assert_eq!(
+        task.runtime_handle["supersededTranscriptTurnIds"],
+        json!(["failed-turn"])
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn syncing_an_active_goal_does_not_start_an_idle_task() {
     let index_path = temp_runtime_work_index_path("sync-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
