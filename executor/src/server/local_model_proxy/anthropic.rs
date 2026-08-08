@@ -587,6 +587,53 @@ mod tests {
     }
 
     #[test]
+    fn preserves_structured_app_tool_results_for_anthropic_messages() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "wegent_apps",
+                    "name": "wegent-sites__get_site",
+                    "arguments": "{\"project_id\":\"prj_1\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": {
+                        "_meta": null,
+                        "content": [{
+                            "type": "text",
+                            "text": "Wegent Sites tool completed successfully."
+                        }],
+                        "structuredContent": {
+                            "id": "prj_1",
+                            "title": "Palette"
+                        }
+                    }
+                }
+            ],
+            "tools": [{
+                "type": "namespace",
+                "name": "wegent_apps",
+                "tools": [{
+                    "type": "function",
+                    "name": "wegent-sites__get_site",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(
+            converted["messages"][1]["content"][0]["content"],
+            "{\"id\":\"prj_1\",\"title\":\"Palette\"}"
+        );
+    }
+
+    #[test]
     fn flattens_namespace_tools_for_anthropic_messages() {
         let input = json!({
             "model": "kimi-for-coding",

@@ -1019,7 +1019,7 @@ fn append_input(
                         }))
                         .unwrap_or_else(|_| "{\"tools\":[]}".to_owned())
                     } else {
-                        item.get("output").map(text_value).unwrap_or_default()
+                        item.get("output").map(tool_output_text).unwrap_or_default()
                     };
                 let output = if call_names.get(call_id).map(String::as_str) == Some("apply_patch") {
                     friendly_apply_patch_output(&output)
@@ -1278,6 +1278,17 @@ fn text_value(value: &Value) -> String {
         Value::Null => String::new(),
         _ => value.to_string(),
     }
+}
+
+fn tool_output_text(value: &Value) -> String {
+    let structured_content = value
+        .get("structuredContent")
+        .or_else(|| value.get("structured_content"))
+        .filter(|value| !value.is_null());
+    if let Some(structured_content) = structured_content {
+        return json_string(Some(structured_content));
+    }
+    text_value(value)
 }
 
 fn json_string(value: Option<&Value>) -> String {
@@ -2774,6 +2785,53 @@ mod tests {
         assert!(converted["messages"][2]["content"]
             .as_str()
             .is_some_and(|value| value.contains("\"tools\"")));
+    }
+
+    #[test]
+    fn preserves_structured_app_tool_results_for_chat_completions() {
+        let input = json!({
+            "model": "third-party-chat-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "wegent_apps",
+                    "name": "wegent-sites__get_site",
+                    "arguments": "{\"project_id\":\"prj_1\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": {
+                        "_meta": null,
+                        "content": [{
+                            "type": "text",
+                            "text": "Wegent Sites tool completed successfully."
+                        }],
+                        "structuredContent": {
+                            "id": "prj_1",
+                            "title": "Palette"
+                        }
+                    }
+                }
+            ],
+            "tools": [{
+                "type": "namespace",
+                "name": "wegent_apps",
+                "tools": [{
+                    "type": "function",
+                    "name": "wegent-sites__get_site",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(
+            converted["messages"][1]["content"],
+            "{\"id\":\"prj_1\",\"title\":\"Palette\"}"
+        );
     }
 
     #[test]
