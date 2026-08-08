@@ -47,6 +47,19 @@ function pluginIdentity(item: InstalledPlugin): string {
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
 }
 
+export function linkedCloudPluginId(item: InstalledPlugin): number | null {
+  const value = item.spec.sourcePayload?.cloudPluginId
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export function linkedCloudInstalledPluginId(item: InstalledPlugin): string | number | null {
+  const value = item.spec.sourcePayload?.cloudInstalledPluginId
+  return typeof value === 'string' || typeof value === 'number' ? value : null
+}
+
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],
@@ -54,6 +67,20 @@ export function mergeInstalledPlugins(
 ): InstalledPlugin[] {
   const merged = new Map<string, InstalledPlugin>()
   const cloudPluginIdentities = new Set<string>()
+  const cloudInstallsByPluginId = new Map(
+    cloudItems.flatMap(item => {
+      const installedPluginId = localPluginId(item)
+      return typeof item.spec.pluginId === 'number' && installedPluginId !== null
+        ? [[String(item.spec.pluginId), installedPluginId] as const]
+        : []
+    })
+  )
+  const locallyPublishedPluginIds = new Set(
+    localItems
+      .map(linkedCloudPluginId)
+      .filter((pluginId): pluginId is number => pluginId !== null)
+      .map(String)
+  )
 
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
@@ -64,6 +91,9 @@ export function mergeInstalledPlugins(
       ) {
         continue
       }
+      if (locallyPublishedPluginIds.has(String(item.spec.pluginId))) {
+        continue
+      }
       merged.set(`market:${item.spec.pluginId}:${item.spec.releaseId}`, item)
       const identity = pluginIdentity(item)
       if (identity) cloudPluginIdentities.add(identity)
@@ -72,12 +102,28 @@ export function mergeInstalledPlugins(
 
   for (const item of localItems) {
     if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
-      const id = localPluginId(item)
-      const identity = pluginIdentity(item)
+      const cloudPluginId = linkedCloudPluginId(item)
+      const cloudInstalledPluginId =
+        cloudPluginId === null ? null : cloudInstallsByPluginId.get(String(cloudPluginId))
+      const mergedItem =
+        cloudInstalledPluginId === null || cloudInstalledPluginId === undefined
+          ? item
+          : {
+              ...item,
+              spec: {
+                ...item.spec,
+                sourcePayload: {
+                  ...(item.spec.sourcePayload ?? {}),
+                  cloudInstalledPluginId,
+                },
+              },
+            }
+      const id = localPluginId(mergedItem)
+      const identity = pluginIdentity(mergedItem)
       // Prefer stable local ids; fall back to plugin@marketplace so installs without
       // labels.id (common for local Codex marketplace plugins) are not dropped.
-      if (id) merged.set(`created:${id}`, item)
-      else if (identity) merged.set(`created:${identity}`, item)
+      if (id) merged.set(`created:${id}`, mergedItem)
+      else if (identity) merged.set(`created:${identity}`, mergedItem)
       continue
     }
 

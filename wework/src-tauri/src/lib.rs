@@ -1053,7 +1053,8 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
-    preferences.context_compaction_threshold = preferences.context_compaction_threshold.clamp(1, 100);
+    preferences.context_compaction_threshold =
+        preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -4771,8 +4772,9 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let preferences = read_app_preferences_impl(app.handle());
-                app.state::<NativeTelemetryState>()
-                    .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+                app.state::<NativeTelemetryState>().configure(
+                    preferences.telemetry_consent_asked && preferences.telemetry_enabled,
+                );
             }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
@@ -4878,8 +4880,10 @@ pub fn run() {
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
             local_executor::local_executor_link_plugin_release,
+            local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
+            local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

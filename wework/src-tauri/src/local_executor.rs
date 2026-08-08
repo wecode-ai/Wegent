@@ -128,6 +128,14 @@ pub struct LocalPluginCopyImportResult {
 struct LocalPluginCopyRegistry {
     #[serde(default)]
     copies: Vec<LocalPluginCopyRecord>,
+    // Kept for one-time migration from builds that stored cloud links with copy provenance.
+    #[serde(default)]
+    cloud_links: Vec<LocalPluginCloudLink>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LocalPluginCloudLinkRegistry {
     #[serde(default)]
     cloud_links: Vec<LocalPluginCloudLink>,
 }
@@ -141,12 +149,12 @@ struct LocalPluginCopyRecord {
     source_plugin_name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LocalPluginCloudLink {
+pub struct LocalPluginCloudLink {
     local_plugin_name: String,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 }
 
 pub struct LocalExecutorState {
@@ -771,10 +779,12 @@ fn merge_legacy_executor_directory(
     destination: &Path,
     conflict_destination: &Path,
 ) -> Result<(), String> {
-    for entry in fs::read_dir(source)
+    let mut entries = fs::read_dir(source)
         .map_err(|error| format!("Failed to read {}: {error}", source.display()))?
-    {
-        let entry = entry.map_err(|error| error.to_string())?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy() != "manifest.json");
+    for entry in entries {
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
         match fs::symlink_metadata(&destination_path) {
@@ -796,6 +806,16 @@ fn merge_legacy_executor_directory(
                     .is_dir()
                     && destination_metadata.is_dir() =>
             {
+                if destination_manifest_references_legacy_plugin_package(
+                    &source_path,
+                    &destination_path,
+                ) {
+                    log::info!(
+                        "Deferred active plugin package migration from {} to the executor",
+                        source_path.display()
+                    );
+                    continue;
+                }
                 merge_legacy_executor_directory(
                     &source_path,
                     &destination_path,
@@ -842,6 +862,54 @@ fn merge_legacy_executor_directory(
         }
     }
     Ok(())
+}
+
+fn destination_manifest_references_legacy_plugin_package(
+    source_package: &Path,
+    destination_package: &Path,
+) -> bool {
+    let Some(package_type) = source_package
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    if package_type != "plugins"
+        || source_package
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some("store")
+    {
+        return false;
+    }
+    let Some(capabilities_dir) = destination_package
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    else {
+        return false;
+    };
+    if capabilities_dir.file_name().and_then(|name| name.to_str()) != Some("capabilities") {
+        return false;
+    }
+    let Ok(raw_manifest) = fs::read_to_string(capabilities_dir.join("manifest.json")) else {
+        return false;
+    };
+    let Ok(manifest) = serde_json::from_str::<Value>(&raw_manifest) else {
+        return false;
+    };
+    manifest
+        .get("plugins")
+        .and_then(Value::as_object)
+        .is_some_and(|entries| {
+            entries.values().any(|entry| {
+                entry.get("managed").and_then(Value::as_bool) == Some(true)
+                    && entry.get("store_path").and_then(Value::as_str) == source_package.to_str()
+            })
+        })
 }
 
 fn local_executor_log_path() -> Result<PathBuf, String> {
@@ -3437,6 +3505,106 @@ fn copy_registry_path(marketplace_root: &Path) -> PathBuf {
     marketplace_root.join(".wegent/plugin-copy-sources.json")
 }
 
+fn plugin_cloud_link_registry_path(marketplace_root: &Path) -> PathBuf {
+    let bundled_marketplaces = marketplace_root.parent();
+    let capabilities = bundled_marketplaces.and_then(Path::parent);
+    if bundled_marketplaces
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("bundled-marketplaces")
+        && capabilities
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("capabilities")
+    {
+        let marketplace_name = marketplace_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(WEWORK_PERSONAL_MARKETPLACE_ID);
+        return capabilities
+            .unwrap_or(marketplace_root)
+            .join("plugin-state")
+            .join(format!("{marketplace_name}-cloud-links.json"));
+    }
+    marketplace_root.join(".wegent/plugin-cloud-links.json")
+}
+
+fn read_cloud_link_registry(path: &Path) -> Result<LocalPluginCloudLinkRegistry, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("Failed to read plugin cloud link registry: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Plugin cloud link registry is invalid: {error}"))
+}
+
+fn load_plugin_cloud_links(marketplace_root: &Path) -> Vec<LocalPluginCloudLink> {
+    let registry_path = plugin_cloud_link_registry_path(marketplace_root);
+    if registry_path.is_file() {
+        return match read_cloud_link_registry(&registry_path) {
+            Ok(registry) => registry.cloud_links,
+            Err(error) => {
+                log::warn!(
+                    "Ignoring invalid plugin cloud link registry {}: {error}",
+                    registry_path.display()
+                );
+                Vec::new()
+            }
+        };
+    }
+
+    let legacy_path = copy_registry_path(marketplace_root);
+    let legacy_registry = match fs::read(&legacy_path) {
+        Ok(bytes) => match serde_json::from_slice::<LocalPluginCopyRegistry>(&bytes) {
+            Ok(registry) => registry,
+            Err(error) => {
+                log::warn!(
+                    "Ignoring invalid legacy plugin copy registry {} while migrating cloud links: {error}",
+                    legacy_path.display()
+                );
+                return Vec::new();
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            log::warn!(
+                "Failed to read legacy plugin copy registry {} while migrating cloud links: {error}",
+                legacy_path.display()
+            );
+            return Vec::new();
+        }
+    };
+    if legacy_registry.cloud_links.is_empty() {
+        return Vec::new();
+    }
+    let links = legacy_registry.cloud_links;
+    let registry = LocalPluginCloudLinkRegistry {
+        cloud_links: links.clone(),
+    };
+    match serde_json::to_vec_pretty(&registry) {
+        Ok(bytes) => {
+            if let Err(error) = write_atomic_file(&registry_path, &bytes) {
+                log::warn!(
+                    "Failed to migrate plugin cloud links to {}: {error}",
+                    registry_path.display()
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!("Failed to serialize migrated plugin cloud links: {error}");
+        }
+    }
+    links
+}
+
+fn write_plugin_cloud_links(
+    marketplace_root: &Path,
+    cloud_links: Vec<LocalPluginCloudLink>,
+) -> Result<(), String> {
+    let registry = LocalPluginCloudLinkRegistry { cloud_links };
+    let bytes = serde_json::to_vec_pretty(&registry)
+        .map_err(|error| format!("Failed to serialize plugin registry: {error}"))?;
+    write_atomic_file(&plugin_cloud_link_registry_path(marketplace_root), &bytes)
+}
+
 fn acquire_plugin_mutation_lock(marketplace_root: &Path) -> Result<fs::File, String> {
     let lock_directory = marketplace_root.join(".wegent");
     fs::create_dir_all(&lock_directory).map_err(|error| {
@@ -3521,9 +3689,10 @@ fn import_plugin_copy_package(
             marketplace_path.display()
         )
     })?;
-    let marketplace_root = marketplace_path
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     fs::create_dir_all(&plugins_root)
@@ -3641,9 +3810,10 @@ pub async fn local_executor_import_plugin_copy(
 }
 
 fn rollback_plugin_copy(marketplace_path: &Path, plugin_name: &str) -> Result<(), String> {
-    let marketplace_root = marketplace_path
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     let plugin_path = plugins_root.join(plugin_name);
@@ -3696,31 +3866,20 @@ fn link_local_plugin_release(
     marketplace_path: &Path,
     local_plugin_name: &str,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 ) -> Result<(), String> {
-    if local_plugin_name.trim().is_empty()
-        || local_plugin_name.contains('/')
-        || local_plugin_name.contains('\\')
-    {
-        return Err("Local plugin name is invalid".to_string());
-    }
-    let marketplace_root = marketplace_path
+    let local_plugin_name = validate_plugin_name(local_plugin_name)?;
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugin_root = marketplace_root.join("plugins").join(local_plugin_name);
     if !plugin_root.join(".codex-plugin/plugin.json").is_file() {
         return Err("Local plugin manifest is unavailable".to_string());
     }
-    let registry_path = copy_registry_path(&marketplace_root);
-    let mut registry = if registry_path.is_file() {
-        serde_json::from_slice::<LocalPluginCopyRegistry>(
-            &fs::read(&registry_path)
-                .map_err(|error| format!("Failed to read plugin registry: {error}"))?,
-        )
-        .map_err(|error| format!("Plugin registry is invalid: {error}"))?
-    } else {
-        LocalPluginCopyRegistry::default()
+    let mut registry = LocalPluginCloudLinkRegistry {
+        cloud_links: load_plugin_cloud_links(&marketplace_root),
     };
     registry
         .cloud_links
@@ -3730,9 +3889,32 @@ fn link_local_plugin_release(
         cloud_plugin_id,
         cloud_release_id,
     });
-    let bytes = serde_json::to_vec_pretty(&registry)
-        .map_err(|error| format!("Failed to serialize plugin registry: {error}"))?;
-    write_atomic_file(&registry_path, &bytes)
+    write_plugin_cloud_links(&marketplace_root, registry.cloud_links)
+}
+
+fn unlink_local_plugin_release(
+    marketplace_path: &Path,
+    local_plugin_name: &str,
+) -> Result<(), String> {
+    let local_plugin_name = validate_plugin_name(local_plugin_name)?;
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let mut cloud_links = load_plugin_cloud_links(&marketplace_root);
+    cloud_links.retain(|link| link.local_plugin_name != local_plugin_name);
+    write_plugin_cloud_links(&marketplace_root, cloud_links)
+}
+
+fn read_local_plugin_cloud_links(
+    marketplace_path: &Path,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    Ok(load_plugin_cloud_links(&marketplace_root))
 }
 
 #[tauri::command]
@@ -3740,7 +3922,7 @@ pub async fn local_executor_link_plugin_release(
     marketplace_path: String,
     local_plugin_name: String,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         link_local_plugin_release(
@@ -3752,6 +3934,29 @@ pub async fn local_executor_link_plugin_release(
     })
     .await
     .map_err(|error| format!("Failed to join plugin release linking task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_unlink_plugin_release(
+    marketplace_path: String,
+    local_plugin_name: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        unlink_local_plugin_release(Path::new(&marketplace_path), &local_plugin_name)
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin release unlinking task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_read_plugin_cloud_links(
+    marketplace_path: String,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_local_plugin_cloud_links(Path::new(&marketplace_path))
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin cloud link read task: {error}"))?
 }
 
 #[tauri::command]
@@ -4167,13 +4372,90 @@ mod tests {
         .unwrap();
         assert_eq!(registry.copies.len(), 1);
         assert_eq!(registry.copies[0].source_plugin_id, 41);
-        link_local_plugin_release(&root, &imported.plugin_name, 71, 82).unwrap();
-        let linked: LocalPluginCopyRegistry = serde_json::from_slice(
-            &fs::read(root.join(".wegent/plugin-copy-sources.json")).unwrap(),
-        )
-        .unwrap();
+        link_local_plugin_release(&root, &imported.plugin_name, 71, Some(82)).unwrap();
+        let linked = read_cloud_link_registry(&plugin_cloud_link_registry_path(&root)).unwrap();
         assert_eq!(linked.cloud_links.len(), 1);
         assert_eq!(linked.cloud_links[0].cloud_plugin_id, 71);
+        let cloud_links = read_local_plugin_cloud_links(&root).unwrap();
+        assert_eq!(cloud_links.len(), 1);
+        assert_eq!(cloud_links[0].local_plugin_name, "source-plugin-copy");
+        assert_eq!(cloud_links[0].cloud_release_id, Some(82));
+        unlink_local_plugin_release(&root, &imported.plugin_name).unwrap();
+        unlink_local_plugin_release(&root, &imported.plugin_name).unwrap();
+        assert!(read_local_plugin_cloud_links(&root).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_cloud_links_survive_marketplace_recreation_and_ignore_corrupt_state() {
+        let root = import_test_root("plugin-cloud-links");
+        let marketplace = root.join("capabilities/bundled-marketplaces/wework-personal");
+        let plugin_manifest = marketplace.join("plugins/dev-tools/.codex-plugin/plugin.json");
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+
+        link_local_plugin_release(&marketplace, "dev-tools", 71, None).unwrap();
+        let registry_path = plugin_cloud_link_registry_path(&marketplace);
+        assert_eq!(
+            registry_path,
+            root.join("capabilities/plugin-state/wework-personal-cloud-links.json")
+        );
+
+        fs::remove_dir_all(&marketplace).unwrap();
+        let marketplace_manifest = marketplace.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"name":"wework-personal","plugins":[]}"#,
+        )
+        .unwrap();
+        let links = read_local_plugin_cloud_links(&marketplace_manifest).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].cloud_plugin_id, 71);
+        assert_eq!(links[0].cloud_release_id, None);
+
+        fs::write(&registry_path, b"{invalid").unwrap();
+        assert!(read_local_plugin_cloud_links(&marketplace_manifest)
+            .unwrap()
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrates_plugin_cloud_links_from_copy_registry() {
+        let root = import_test_root("legacy-plugin-cloud-links");
+        let plugin_manifest = root.join("plugins/dev-tools/.codex-plugin/plugin.json");
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let legacy_registry = LocalPluginCopyRegistry {
+            copies: Vec::new(),
+            cloud_links: vec![LocalPluginCloudLink {
+                local_plugin_name: "dev-tools".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(82),
+            }],
+        };
+        let legacy_path = copy_registry_path(&root);
+        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy_path,
+            serde_json::to_vec_pretty(&legacy_registry).unwrap(),
+        )
+        .unwrap();
+
+        let links = read_local_plugin_cloud_links(&root).unwrap();
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].cloud_plugin_id, 71);
+        assert!(plugin_cloud_link_registry_path(&root).is_file());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -4220,7 +4502,7 @@ mod tests {
                     &root,
                     &plugin_name,
                     100 + index as i64,
-                    200 + index as i64,
+                    Some(200 + index as i64),
                 )
                 .unwrap();
             }));
@@ -4229,12 +4511,14 @@ mod tests {
             link.join().unwrap();
         }
 
-        let registry: LocalPluginCopyRegistry = serde_json::from_slice(
+        let copy_registry: LocalPluginCopyRegistry = serde_json::from_slice(
             &fs::read(root.join(".wegent/plugin-copy-sources.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(registry.copies.len(), 4);
-        assert_eq!(registry.cloud_links.len(), 4);
+        let link_registry =
+            read_cloud_link_registry(&plugin_cloud_link_registry_path(&root)).unwrap();
+        assert_eq!(copy_registry.copies.len(), 4);
+        assert_eq!(link_registry.cloud_links.len(), 4);
         assert_eq!(
             fs::read_dir(root.join("plugins"))
                 .unwrap()
@@ -4826,6 +5110,169 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         );
         assert!(!current_legacy_home.exists());
         assert!(!wecode_legacy_home.exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn defers_active_legacy_store_conflicts_to_executor_migration() {
+        let home = import_test_root("legacy-capability-store-conflict");
+        let destination = home.join(WEWORK_HOME_DIR);
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
+        let package_name = "9-default-dev-tools";
+        let legacy_package = legacy_home
+            .join("capabilities/store/plugins")
+            .join(package_name);
+        let canonical_package = destination
+            .join("capabilities/store/plugins")
+            .join(package_name);
+        fs::create_dir_all(&legacy_package).unwrap();
+        fs::create_dir_all(&canonical_package).unwrap();
+        fs::write(legacy_package.join("plugin.json"), "legacy-active").unwrap();
+        fs::write(canonical_package.join("plugin.json"), "stale-canonical").unwrap();
+        fs::write(
+            destination.join("capabilities/manifest.json"),
+            json!({
+                "version": 1,
+                "revision": 3,
+                "skills": {},
+                "plugins": {
+                    "dev-tools@wegent": {
+                        "managed": true,
+                        "store_path": legacy_package.display().to_string(),
+                    },
+                },
+                "mcps": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        migrate_legacy_executor_homes(&home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(legacy_package.join("plugin.json")).unwrap(),
+            "legacy-active"
+        );
+        assert_eq!(
+            fs::read_to_string(canonical_package.join("plugin.json")).unwrap(),
+            "stale-canonical"
+        );
+        assert!(!destination
+            .join(LEGACY_MIGRATION_CONFLICTS_DIR)
+            .join(LEGACY_EXECUTOR_HOME_DIR)
+            .join("capabilities/store/plugins")
+            .join(package_name)
+            .exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migrates_manifest_before_evaluating_legacy_plugin_store_conflicts() {
+        let home = import_test_root("legacy-capability-manifest-order");
+        let destination = home.join(WEWORK_HOME_DIR);
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
+        let package_name = "9-default-dev-tools";
+        let legacy_package = legacy_home
+            .join("capabilities/store/plugins")
+            .join(package_name);
+        let canonical_package = destination
+            .join("capabilities/store/plugins")
+            .join(package_name);
+        fs::create_dir_all(&legacy_package).unwrap();
+        fs::create_dir_all(&canonical_package).unwrap();
+        fs::write(legacy_package.join("plugin.json"), "legacy-active").unwrap();
+        fs::write(canonical_package.join("plugin.json"), "stale-canonical").unwrap();
+        fs::write(
+            legacy_home.join("capabilities/manifest.json"),
+            json!({
+                "version": 1,
+                "revision": 3,
+                "skills": {},
+                "plugins": {
+                    "dev-tools@wegent": {
+                        "managed": true,
+                        "store_path": legacy_package.display().to_string(),
+                    },
+                },
+                "mcps": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        migrate_legacy_executor_homes(&home).unwrap();
+
+        assert!(destination.join("capabilities/manifest.json").is_file());
+        assert_eq!(
+            fs::read_to_string(legacy_package.join("plugin.json")).unwrap(),
+            "legacy-active"
+        );
+        assert_eq!(
+            fs::read_to_string(canonical_package.join("plugin.json")).unwrap(),
+            "stale-canonical"
+        );
+        assert!(!destination
+            .join(LEGACY_MIGRATION_CONFLICTS_DIR)
+            .join(LEGACY_EXECUTOR_HOME_DIR)
+            .join("capabilities/store/plugins")
+            .join(package_name)
+            .exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn skill_store_conflicts_keep_existing_desktop_migration_behavior() {
+        let home = import_test_root("legacy-skill-store-conflict");
+        let destination = home.join(WEWORK_HOME_DIR);
+        let legacy_home = home.join(LEGACY_EXECUTOR_HOME_DIR);
+        let package_name = "42-default-image-gen";
+        let legacy_package = legacy_home
+            .join("capabilities/store/skills")
+            .join(package_name);
+        let canonical_package = destination
+            .join("capabilities/store/skills")
+            .join(package_name);
+        fs::create_dir_all(&legacy_package).unwrap();
+        fs::create_dir_all(&canonical_package).unwrap();
+        fs::write(legacy_package.join("SKILL.md"), "legacy").unwrap();
+        fs::write(canonical_package.join("SKILL.md"), "current").unwrap();
+        fs::write(
+            destination.join("capabilities/manifest.json"),
+            json!({
+                "version": 1,
+                "revision": 3,
+                "skills": {
+                    "image-gen": {
+                        "managed": true,
+                        "store_path": legacy_package.display().to_string(),
+                    },
+                },
+                "plugins": {},
+                "mcps": {},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        migrate_legacy_executor_homes(&home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(canonical_package.join("SKILL.md")).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            fs::read_to_string(
+                destination
+                    .join(LEGACY_MIGRATION_CONFLICTS_DIR)
+                    .join(LEGACY_EXECUTOR_HOME_DIR)
+                    .join("capabilities/store/skills")
+                    .join(package_name)
+                    .join("SKILL.md")
+            )
+            .unwrap(),
+            "legacy"
+        );
+        assert!(!legacy_package.exists());
         let _ = fs::remove_dir_all(home);
     }
 

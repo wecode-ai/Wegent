@@ -150,6 +150,32 @@ describe('InstalledPluginRow', () => {
     expect(screen.queryByTestId('installed-plugin-toggle-59')).not.toBeInTheDocument()
     expect(screen.queryByTestId('installed-plugin-actions-59')).not.toBeInTheDocument()
   })
+
+  test('lists share before publish and uses custom labels', () => {
+    const onPublish = vi.fn()
+    const onShare = vi.fn()
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin()}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        onPublish={onPublish}
+        publishLabel="发布新版本"
+        onShare={onShare}
+        shareLabel="管理权限"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('installed-plugin-actions-59'))
+    const share = screen.getByTestId('installed-plugin-share-59')
+    const publish = screen.getByTestId('installed-plugin-publish-59')
+    expect(share).toHaveTextContent('管理权限')
+    expect(publish).toHaveTextContent('发布新版本')
+    expect(share.compareDocumentPosition(publish) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(share)
+    expect(onShare).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('buildInstalledPluginSubtitle', () => {

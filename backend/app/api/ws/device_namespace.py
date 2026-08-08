@@ -86,6 +86,7 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
+from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -1188,6 +1189,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """Best-effort desired-state sync when a device comes online."""
         try:
             with _db_session() as db:
+                plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+                    db, user_id=user_id
+                )
+                plugin_device_installation_service.ensure_pending_for_device(
+                    db,
+                    user_id=user_id,
+                    device_id=device_id,
+                    reset_failed=True,
+                )
                 payload = device_capability_sync_service.build_desired_capabilities(
                     db,
                     user_id=user_id,

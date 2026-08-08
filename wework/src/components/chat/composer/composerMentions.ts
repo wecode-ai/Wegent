@@ -1,5 +1,8 @@
 import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import {
+  currentPluginLogoAppearanceMode,
+  resolvePluginLogoUrl,
+} from '@/components/plugins/plugin-assets'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
@@ -43,14 +46,18 @@ export function resolveComposerMentionBrandIconUrl(href: string): string | null 
   const registered = getComposerMentionIconUrl(href)?.trim()
   if (registered) return registered
 
+  const appearanceMode = currentPluginLogoAppearanceMode()
   const pluginReference = parsePluginUri(href)
   if (pluginReference) {
-    return resolvePluginLogoUrl({ pluginKey: pluginReference.pluginName })
+    return resolvePluginLogoUrl({
+      pluginKey: pluginReference.pluginName,
+      appearanceMode,
+    })
   }
 
   if (href.startsWith('app://')) {
     const appId = href.slice('app://'.length).trim()
-    return appId ? resolvePluginLogoUrl({ pluginKey: appId }) : null
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId, appearanceMode }) : null
   }
 
   return null

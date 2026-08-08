@@ -313,6 +313,14 @@ class PluginMarketplaceInstallResponse(BaseModel):
     sync: Optional[DeviceCapabilitySyncResponse] = None
 
 
+class PluginDeviceSyncResponse(BaseModel):
+    """Result of syncing account-installed plugins onto one device."""
+
+    deviceId: str
+    pendingCount: int = 0
+    sync: DeviceCapabilitySyncResponse
+
+
 class PluginMarketplaceCapabilities(BaseModel):
     """User-specific marketplace operations enabled by server policy."""
 

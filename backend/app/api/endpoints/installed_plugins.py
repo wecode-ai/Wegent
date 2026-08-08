@@ -24,6 +24,7 @@ from app.schemas.installed_plugin import (
     PluginAccessResponse,
     PluginAccessUpdateRequest,
     PluginCopyResponse,
+    PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
     PluginMarketplaceItem,
@@ -59,11 +60,8 @@ def list_installed_plugins(
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPluginListResponse:
     """List Claude Code plugins installed by the current user."""
-    # Catalog reimports can leave InstalledPlugin rows pointing at stale
-    # pluginId/releaseId values; repair before listing/syncing.
-    plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
-        db, user_id=current_user.id
-    )
+    # Keep list read-only. Catalog repair runs on install/sync paths instead of
+    # every marketplace open.
     return plugin_marketplace_service.enrich_installed_list(
         db,
         installed_plugin_service.list_installed_plugins(
@@ -71,6 +69,72 @@ def list_installed_plugins(
             user_id=current_user.id,
         ),
         device_id=device_id,
+    )
+
+
+@router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
+async def sync_installed_plugins_to_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeviceSyncResponse:
+    """Push account desired plugins to one device and refresh device rows."""
+    normalized_device_id = device_id.strip()
+    if not normalized_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    # Repair stale catalog refs before building desired state / pushing packages.
+    plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+        db, user_id=current_user.id
+    )
+    pending_count = plugin_device_installation_service.ensure_pending_for_device(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        reset_failed=True,
+    )
+    payload = device_capability_sync_service.build_desired_capabilities(
+        db,
+        user_id=current_user.id,
+    )
+    result = await device_capability_sync_service.sync_device_payload(
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        payload=payload,
+    )
+    plugin_device_installation_service.record_device_sync_result(
+        db,
+        user_id=current_user.id,
+        result=result,
+    )
+    mode = str(payload.get("mode") or "replace")
+    errors = list(result.errors or [])
+    if result.error:
+        errors.append({"device_id": result.device_id, "error": result.error})
+    sync = DeviceCapabilitySyncResponse(
+        success=bool(result.success),
+        device_id=result.device_id,
+        mode=mode if mode in {"merge", "replace"} else "replace",
+        skills=result.skills,
+        plugins=result.plugins,
+        mcps=result.mcps,
+        errors=errors,
+        synced=1 if result.success else 0,
+        failed=0 if result.success else 1,
+        skipped=0,
+        results=[result],
+    )
+    logger.info(
+        "Device plugin sync completed: user_id=%s device_id=%s pending=%s success=%s",
+        current_user.id,
+        normalized_device_id,
+        pending_count,
+        result.success,
+    )
+    return PluginDeviceSyncResponse(
+        deviceId=normalized_device_id,
+        pendingCount=pending_count,
+        sync=sync,
     )
 
 

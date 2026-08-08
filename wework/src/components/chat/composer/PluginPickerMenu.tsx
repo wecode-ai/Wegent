@@ -10,6 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
 import {
   getComposerApps,
   publishComposerApps,
@@ -47,6 +48,7 @@ export function PluginPickerMenu({
   onListLocalApps,
 }: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -193,6 +195,8 @@ export function PluginPickerMenu({
                 const logo = resolvePluginLogoUrl({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
+                  logoDark: app.logoUrlDark,
+                  appearanceMode,
                 })
                 return (
                   <span
@@ -244,6 +248,8 @@ export function PluginPickerMenu({
                 const logo = resolvePluginLogoUrl({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
+                  logoDark: app.logoUrlDark,
+                  appearanceMode,
                 })
                 return (
                   <button

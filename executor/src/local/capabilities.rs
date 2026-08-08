@@ -372,7 +372,7 @@ impl GlobalCapabilityStore {
     }
 
     pub fn reconcile_managed_plugins(&self) -> Result<Vec<String>, CapabilitySyncError> {
-        let mut manifest = self.manifest.load()?;
+        let mut manifest = self.load_manifest_with_plugin_store_migration()?;
         let mut restored = Vec::new();
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
         for (key, plugin) in plugins {
@@ -418,7 +418,7 @@ impl GlobalCapabilityStore {
     }
 
     pub fn reconcile_managed_claude_plugins(&self) -> Result<Vec<String>, CapabilitySyncError> {
-        let manifest = self.manifest.load()?;
+        let manifest = self.load_manifest_with_plugin_store_migration()?;
         let mut restored = Vec::new();
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
         for (key, plugin) in plugins {
@@ -464,6 +464,31 @@ impl GlobalCapabilityStore {
             set_plugin_enabled(&self.plugins_dir, &key, spec.enabled)?;
         }
         Ok(restored)
+    }
+
+    fn load_manifest_with_plugin_store_migration(&self) -> Result<Value, CapabilitySyncError> {
+        let mut manifest = self.manifest.load()?;
+        let plugin_store_dir = self.plugin_store_dir();
+        let (changed, legacy_paths) =
+            rewrite_managed_plugin_store_paths(&mut manifest, &plugin_store_dir)?;
+        if !changed {
+            return Ok(manifest);
+        }
+
+        let revision = manifest
+            .get("revision")
+            .and_then(Value::as_i64)
+            .unwrap_or_default()
+            + 1;
+        manifest["revision"] = json!(revision);
+        write_plugin_manifest_atomic(&self.manifest.path, &manifest)?;
+
+        for legacy_path in legacy_paths {
+            remove_existing_path(&legacy_path)?;
+            remove_empty_legacy_store_parents(&legacy_path, &plugin_store_dir)?;
+        }
+        write_plugin_store_layout_marker(&plugin_store_dir)?;
+        Ok(manifest)
     }
 
     fn install_plugin_runtime_metadata(
@@ -720,7 +745,15 @@ impl GlobalCapabilityStore {
 
     fn plugin_store_path(&self, spec: &PluginSyncSpec) -> Option<PathBuf> {
         spec.store_dir_name()
-            .map(|name| self.store_dir.join("plugins").join(name))
+            .map(|name| self.plugin_store_dir().join("plugins").join(name))
+    }
+
+    fn plugin_store_dir(&self) -> PathBuf {
+        self.manifest
+            .path
+            .parent()
+            .map(|capabilities_dir| capabilities_dir.join("store"))
+            .unwrap_or_else(|| PathBuf::from("store"))
     }
 
     fn plugin_runtime_link(&self, spec: &PluginSyncSpec) -> PathBuf {
@@ -738,6 +771,105 @@ impl GlobalCapabilityStore {
             .join(&spec.name)
             .join(&spec.version)
     }
+}
+
+fn rewrite_managed_plugin_store_paths(
+    manifest: &mut Value,
+    canonical_store: &Path,
+) -> Result<(bool, Vec<PathBuf>), CapabilitySyncError> {
+    let mut changed = false;
+    let mut migrated_paths = BTreeSet::new();
+    let entries = ensure_object_field(manifest, "plugins");
+    for entry in entries.values_mut() {
+        if entry.get("managed").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(legacy_path) = value_string(entry.get("store_path")).map(PathBuf::from) else {
+            continue;
+        };
+        if legacy_path.starts_with(canonical_store)
+            || legacy_plugin_store_root(&legacy_path).is_none()
+        {
+            continue;
+        }
+        let Some(package_name) = legacy_path.file_name() else {
+            continue;
+        };
+        let canonical_path = canonical_store.join("plugins").join(package_name);
+        if legacy_path.is_dir() {
+            copy_dir_atomic(&legacy_path, &canonical_path)?;
+            migrated_paths.insert(legacy_path.clone());
+        } else if !has_plugin_manifest(&canonical_path) {
+            // Missing legacy packages must not permanently bind to an unverified
+            // canonical leftover; leave the path for a later sync to recover.
+            continue;
+        } else if let Some(object) = entry.as_object_mut() {
+            // Package was already relocated (for example by desktop home merge).
+            // Drop the cached checksum so the next sync can revalidate content.
+            object.remove("checksum");
+        }
+        entry["store_path"] = json!(canonical_path.display().to_string());
+        changed = true;
+    }
+    Ok((changed, migrated_paths.into_iter().collect()))
+}
+
+fn legacy_plugin_store_root(path: &Path) -> Option<&Path> {
+    let plugins_dir = path.parent()?;
+    if plugins_dir.file_name()?.to_str()? != "plugins" {
+        return None;
+    }
+    let store_dir = plugins_dir.parent()?;
+    if store_dir.file_name()?.to_str()? != "store" {
+        return None;
+    }
+    let capabilities_dir = store_dir.parent()?;
+    (capabilities_dir.file_name()?.to_str()? == "capabilities").then_some(store_dir)
+}
+
+fn remove_empty_legacy_store_parents(
+    legacy_path: &Path,
+    canonical_store: &Path,
+) -> Result<(), CapabilitySyncError> {
+    let Some(store_dir) = legacy_path.parent().and_then(Path::parent) else {
+        return Ok(());
+    };
+    if store_dir == canonical_store {
+        return Ok(());
+    }
+    for directory in [legacy_path.parent(), Some(store_dir)]
+        .into_iter()
+        .flatten()
+    {
+        if directory.is_dir() && fs::read_dir(directory)?.next().is_none() {
+            fs::remove_dir(directory)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_plugin_store_layout_marker(store_dir: &Path) -> Result<(), CapabilitySyncError> {
+    write_json(
+        &store_dir.join(".plugin-store-layout.json"),
+        &json!({
+            "version": 1,
+            "authority": "manifest_executor_home",
+        }),
+    )
+}
+
+fn write_plugin_manifest_atomic(path: &Path, manifest: &Value) -> Result<(), CapabilitySyncError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    serde_json::to_writer_pretty(&mut temporary, manifest)?;
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions())?;
+    }
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 pub struct CapabilitySyncHandler<P = NoopPackageProvider>
@@ -793,7 +925,6 @@ where
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let _sync_guard = self.sync_lock.lock().await;
-        let mut manifest = self.store.manifest.load()?;
         let mode = payload
             .get("mode")
             .and_then(Value::as_str)
@@ -806,6 +937,11 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut manifest = if plugin_specs.is_empty() {
+            self.store.manifest.load()?
+        } else {
+            self.store.load_manifest_with_plugin_store_migration()?
+        };
 
         if mode == "replace" {
             let desired_skills = skill_specs
@@ -962,11 +1098,11 @@ where
             });
         let should_download = spec.download_path.is_some()
             && (!has_plugin_manifest(&store_path)
-                || spec
-                    .checksum
-                    .as_ref()
-                    .zip(previous_checksum.as_ref())
-                    .is_some_and(|(expected, previous)| expected != previous));
+                || spec.checksum.as_ref().is_some_and(|expected| {
+                    previous_checksum
+                        .as_ref()
+                        .is_none_or(|previous| previous != expected)
+                }));
 
         if should_download {
             let download_path = spec.download_path.as_deref().unwrap_or_default();

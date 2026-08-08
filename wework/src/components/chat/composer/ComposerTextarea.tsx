@@ -31,6 +31,7 @@ import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -139,6 +140,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     ref
   ) {
     const { t } = useTranslation('common')
+    const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
     const menuRef = useRef<HTMLDivElement>(null)
     const modelMenuRef = useRef<HTMLDivElement>(null)
     const skillsLoadedRef = useRef(false)
@@ -352,6 +354,8 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         iconUrl: resolvePluginLogoUrl({
           pluginKey: composerAppPluginKey(candidate.app),
           logo: candidate.app.logoUrl,
+          logoDark: candidate.app.logoUrlDark,
+          appearanceMode,
         }),
         trailingIcon: CornerDownLeft,
         enabled: candidate.enabled,
@@ -372,7 +376,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       })
 
       return commands
-    }, [appCandidates, t])
+    }, [appCandidates, appearanceMode, t])
 
     const slashCommands = useMemo(
       () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
@@ -837,6 +841,8 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             resolvePluginLogoUrl({
               pluginKey: composerAppPluginKey(candidate.app),
               logo: candidate.app.logoUrl,
+              logoDark: candidate.app.logoUrlDark,
+              appearanceMode,
             })
           )
         }
@@ -856,7 +862,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         editor.focus()
         return true
       },
-      [closeAutocompleteMenu, commitEditorValue, textareaRef]
+      [appearanceMode, closeAutocompleteMenu, commitEditorValue, textareaRef]
     )
 
     const selectSkill = useCallback(

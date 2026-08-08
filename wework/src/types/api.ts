@@ -1328,6 +1328,7 @@ export interface LocalDeviceApp {
   name: string
   description?: string | null
   logoUrl?: string | null
+  logoUrlDark?: string | null
   installUrl?: string | null
   isAccessible?: boolean
   isEnabled?: boolean
@@ -2072,6 +2073,7 @@ export interface PluginMarketplaceItem {
   featured: boolean
   installed: boolean
   installedPluginId?: string | number | null
+  installedLocally?: boolean
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
@@ -2144,6 +2146,12 @@ export interface DeviceCapabilitySyncResponse {
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
   sync?: DeviceCapabilitySyncResponse | null
+}
+
+export interface PluginDeviceSyncResponse {
+  deviceId: string
+  pendingCount: number
+  sync: DeviceCapabilitySyncResponse
 }
 
 export interface PluginMarketplaceCapabilities {

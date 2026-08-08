@@ -4960,6 +4960,28 @@ async function verifyMarketplacePluginLifecycle({
     /Start chat|立即对话/,
     'The installed plugin did not expose its chat action'
   )
+  const manageSelector = `[data-testid="plugin-marketplace-manage-${pluginId}"]`
+  await control.command('waitFor', manageSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', manageSelector)
+  await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const manageOpenedDetail = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    manageOpenedDetail.testIds.includes('plugin-management-page-content'),
+    false,
+    'Marketplace manage opened the management list instead of the plugin detail'
+  )
+  await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', actionsSelector)
+  await control.command('waitFor', trySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'marketplace-plugins-03-installed.png')
 
   await control.command('click', actionsSelector)
