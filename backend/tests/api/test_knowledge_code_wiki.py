@@ -1367,6 +1367,32 @@ def test_a_code_wiki_and_its_registry_row_are_created_together(
     assert rows[0].source_url == source.source_url
 
 
+def test_the_registry_row_leaves_no_column_null_that_production_forbids(
+    test_db: Session, test_user: User, kind_services_use_test_db
+):
+    """The row this writes has to satisfy `wiki_tables.sql`, not just the ORM.
+
+    `source_id` is declared NOT NULL with an empty default there, and every
+    deployment is built from it -- but the schema these tests run against is created
+    from the model, where it was nullable. Omitting the column sends an explicit NULL,
+    which overrides the default, so the insert passed here and failed on the first
+    real database with "Column 'source_id' cannot be null".
+
+    Asserted as "not None" rather than by inspecting the schema: what production
+    refuses is the value, and pinning the value is what stops it coming back.
+    """
+    from app.models.wiki import WikiProject
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    result = knowledge_orchestrator.create_code_wiki(
+        db=test_db, user=test_user, name="repo wiki", source=_source()
+    )
+
+    (row,) = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
+    for column in ("source_id", "source_domain", "description", "ext", "project_name"):
+        assert getattr(row, column) is not None, column
+
+
 def test_a_failed_registration_leaves_no_knowledge_base_behind(
     test_db: Session, test_user: User, kind_services_use_test_db
 ):

@@ -183,7 +183,11 @@ class WikiService:
                         parent_id=(
                             section.parent_id if section.parent_id is not None else 0
                         ),
-                        ext=section.ext or None,
+                        # ``{}`` rather than ``None``: `wiki_tables.sql` declares
+                        # this NOT NULL, and every page with a path is rescued by
+                        # ``set_page_path`` below -- which left a path-less write as
+                        # the one shape that reached production as a NULL.
+                        ext=section.ext or {},
                         created_at=now,
                         updated_at=now,
                     )
