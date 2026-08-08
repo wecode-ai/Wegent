@@ -127,7 +127,13 @@ import { localModelSupportsImageInput } from '@/features/model-settings/localMod
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
-import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
+import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -2936,6 +2942,14 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   )
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
+  // Local project-space identity is the local session user, not the connected
+  // cloud account. The approval/creator checks compare against LOCAL_USER, so
+  // robots created with the cloud user id would never be approvable locally.
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
+  const localProjectChatClient = createLocalProjectChatClient(request, {
+    currentUser: LOCAL_USER,
+  })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
 
@@ -2992,6 +3006,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deviceApi,
     deliveryApi,
     externalIssueApi,
+    localProjectChatAgentApi,
+    localLoopItemExecutionApi,
+    localProjectChatClient,
     aitableApi,
     dwsApi,
     projectSpaceApis: {

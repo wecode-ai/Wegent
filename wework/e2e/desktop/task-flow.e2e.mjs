@@ -836,9 +836,6 @@ async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
   while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
     const processId = macosApplicationProcessId(appIdentifier)
     if (processId > 0) return processId
-    if (launcher.exitCode !== null || launcher.signalCode !== null) {
-      throw new Error(`macOS failed to launch ${appIdentifier}`)
-    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
@@ -13454,54 +13451,18 @@ async function main() {
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
         assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
-        const environmentArgs = [
-          'CODEX_BINARY_PATH',
-          'CODEX_BIN',
-          'HOME',
-          'WEGENT_CODEX_HOME',
-          'WEGENT_EXECUTOR_HOME',
-          'WEWORK_EXECUTOR_ISOLATION_OVERRIDE',
-          'WEGENT_EXECUTOR_LOG_DIR',
-          'WEGENT_EXECUTOR_LOG_FILE',
-          'DEVICE_ID',
-          'DEVICE_SESSION_GATEWAY_HOST',
-          'DEVICE_SESSION_GATEWAY_PORT',
-          'VITE_WEWORK_E2E',
-          'WEWORK_E2E_BACKGROUND_WINDOW',
-          'WEWORK_E2E_MODEL_API_KEY',
-          'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
-          'WEWORK_EXECUTOR_SIDECAR',
-          ...(RUNS_PLUGIN_E2E
-            ? [
-                'GIT_CONFIG_COUNT',
-                'GIT_CONFIG_KEY_0',
-                'GIT_CONFIG_VALUE_0',
-                'WEWORK_E2E_NATIVE_CODEX_HOME',
-              ]
-            : []),
-        ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
-        const launcher = spawn(
-          'open',
-          [
-            '-W',
-            '-n',
-            '-g',
-            ...environmentArgs,
-            '--stdout',
-            appLogPath,
-            '--stderr',
-            appLogPath,
-            appBundlePath,
-          ],
-          {
-            cwd: weworkDir,
-            env: appEnvironment,
-            stdio: 'ignore',
-            detached: true,
-          }
-        )
-        const pid = await waitForMacosApplicationProcessId(appIdentifier, launcher)
-        return { launcher, pid }
+        const child = spawn(appBinary, [], {
+          cwd: weworkDir,
+          env: appEnvironment,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: true,
+        })
+        await Promise.all([
+          appendProcessOutput(child.stdout, appLogPath),
+          appendProcessOutput(child.stderr, appLogPath),
+        ])
+        await waitForMacosApplicationProcessId(appIdentifier, child)
+        return child
       }
 
       const child = spawn(appBinary, [], {

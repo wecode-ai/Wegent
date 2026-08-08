@@ -249,6 +249,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
+    # Public base URL of this backend, reachable from executor devices. The
+    # cloud-model LLM proxy URL is derived from it
+    # (`{WEGENT_BACKEND_PUBLIC_URL}/api/runtime-work/llm-responses-proxy`).
+    WEGENT_BACKEND_PUBLIC_URL: str = "http://localhost:8000"
+
     # Rate limiting configuration for OpenAPI endpoints
     # Format: "requests/period" where period can be second, minute, hour, day
     RATE_LIMIT_ENABLED: bool = True
@@ -395,6 +400,12 @@ class Settings(BaseSettings):
     FLOW_STALE_RUNNING_HOURS: int = (
         3  # RUNNING executions older than this will be marked FAILED
     )
+
+    # Project robot queue scheduler
+    ROBOT_QUEUE_SCHEDULER_ENABLED: bool = True
+    ROBOT_QUEUE_SCAN_INTERVAL_SECONDS: int = 5
+    ROBOT_CLOUD_DEVICE_SLOTS: int = 2
+    ROBOT_LOCAL_DEVICE_SLOTS: int = 2
 
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120

@@ -27,6 +27,7 @@ import {
 import type {
   Attachment,
   ChatSendPayload,
+  ModelType,
   ModelSelectionConfig,
   ModelOptions,
   ProjectWithTasks,
@@ -442,7 +443,8 @@ export function useWorkbenchRuntimeMessaging({
       sourceAttachments?: Attachment[],
       projectOverride?: ProjectWithTasks | null,
       includeSelectedSkills = !isOptionsLocked,
-      selectedSkillsOverride?: SkillRef[]
+      selectedSkillsOverride?: SkillRef[],
+      deviceOverride?: string | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
@@ -452,7 +454,8 @@ export function useWorkbenchRuntimeMessaging({
         state.selectedDeviceWorkspaceId
       )
       const activeDeviceId =
-        activeProject && selectedProjectWorkspace
+        deviceOverride ||
+        (activeProject && selectedProjectWorkspace
           ? selectedProjectWorkspace.deviceId
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
@@ -460,7 +463,7 @@ export function useWorkbenchRuntimeMessaging({
                 state.devices,
                 state.standaloneDeviceId
               ),
-            })
+            }))
 
       const payload: ChatSendPayload = {
         team_id: state.defaultTeam.id,
@@ -567,21 +570,34 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId?: string
         cloudProjectId?: string
         ephemeral?: boolean
+        continuable?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        modelSelection?: {
+          modelName: string
+          modelType: ModelType | null
+          options: ModelOptions
+        } | null
         preserveAttachments?: boolean
         launchStartedAt?: number
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
-      const selectedModel =
-        modelSelection.getSelectedModel?.() ??
-        modelSelection.selectedModel ??
-        resolveAutomaticModel(modelSelection.models)
-      const selectedModelOptions =
-        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+      const overrideSelection = options?.modelSelection
+      const selectedModel = overrideSelection
+        ? (modelSelection.models.find(
+            model =>
+              model.name === overrideSelection.modelName &&
+              (!overrideSelection.modelType || model.type === overrideSelection.modelType)
+          ) ?? null)
+        : (modelSelection.getSelectedModel?.() ??
+          modelSelection.selectedModel ??
+          resolveAutomaticModel(modelSelection.models))
+      const selectedModelOptions = overrideSelection
+        ? (overrideSelection.options ?? {})
+        : (modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions)
       const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
       const friendlyTitle = friendlyTitleForTask(
         preferences,
@@ -722,13 +738,15 @@ export function useWorkbenchRuntimeMessaging({
             ? { collaborationMode: options.collaborationMode }
             : {}),
         },
-        modelSelection: selectedModel
-          ? {
-              modelName: selectedModel.name,
-              modelType: selectedModel.type,
-              options: selectedModelOptions,
-            }
-          : null,
+        modelSelection:
+          options?.modelSelection ??
+          (selectedModel
+            ? {
+                modelName: selectedModel.name,
+                modelType: selectedModel.type,
+                options: selectedModelOptions,
+              }
+            : null),
         ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
@@ -742,6 +760,7 @@ export function useWorkbenchRuntimeMessaging({
             }
           : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
+        ...(options?.continuable ? { continuable: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
         ...(options?.initialSupervisor ? { initialSupervisor: options.initialSupervisor } : {}),
@@ -807,7 +826,7 @@ export function useWorkbenchRuntimeMessaging({
         clientUserMessageId: options?.clientUserMessageId ?? null,
         deviceId: optimisticAddress.deviceId,
       })
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
       }
@@ -1280,7 +1299,14 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      const prepared = buildSendPayload(message, options.attachments, options.project)
+      const prepared = buildSendPayload(
+        message,
+        options.attachments,
+        options.project,
+        undefined,
+        undefined,
+        options.deviceId
+      )
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',
@@ -1308,13 +1334,21 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+      const payload = options.executionModel
+        ? applyExecutionModelOverride(prepared.payload, options.executionModel)
+        : options.modelId
+          ? { ...prepared.payload, force_override_bot_model: options.modelId }
+          : prepared.payload
+      return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
         initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
+        modelSelection: options.modelSelection,
         additionalContext: options.additionalContext,
+        ephemeral: options.hiddenFromSidebar,
+        continuable: options.continuable,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
@@ -1558,6 +1592,30 @@ function modelSelectionFromCreateRequest(
     modelType: request.modelType ?? null,
     options: request.modelOptions ?? {},
   }
+}
+
+export function applyExecutionModelOverride(
+  payload: ChatSendPayload,
+  executionModel: {
+    modelId?: string | null
+    modelType?: string | null
+    modelOptions?: ModelOptions
+  }
+): ChatSendPayload {
+  const next: ChatSendPayload = { ...payload }
+  delete next.force_override_bot_model
+  delete next.force_override_bot_model_type
+  delete next.model_options
+  if (executionModel.modelId) {
+    next.force_override_bot_model = executionModel.modelId
+  }
+  if (executionModel.modelType) {
+    next.force_override_bot_model_type = executionModel.modelType as ModelType
+  }
+  if (executionModel.modelOptions && Object.keys(executionModel.modelOptions).length > 0) {
+    next.model_options = executionModel.modelOptions
+  }
+  return next
 }
 
 function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {

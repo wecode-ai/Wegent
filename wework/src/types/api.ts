@@ -37,6 +37,7 @@ export interface ProjectWorkPreference {
 export interface Team {
   id: number
   name: string
+  namespace?: string | null
   displayName?: string | null
   is_active: boolean
   default_for_modes?: string[]
@@ -1182,6 +1183,7 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
+  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string

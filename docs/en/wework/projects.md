@@ -24,6 +24,25 @@ New conversations started in that local project inherit the selected project spa
 
 The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
 
+## Project space automation
+
+Project space boards include an **Automation** tab that manages robot members and the execution queue together.
+
+### Robot members
+
+Members with project permissions can add robots (AI members) and configure each robot's name, model, system prompt, visibility, execution environment (local or cloud), and execution mode. Tasks assigned to a robot are executed automatically by that robot.
+
+### Execution queue
+
+The execution queue shows waiting and running tasks in columns:
+
+- **My tasks**: tasks assigned to the current user that are not finished yet.
+- **One column per robot**: tasks assigned to that robot.
+
+The queue can be filtered by execution state (pending approval, queued, claimed, running, failed) and searched by title; running tasks show a spinning status icon. Robots configured for manual approval put their tasks into the pending approval state until a member approves them.
+
+The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
+
 ## Create a project from the composer
 
 Open the project selector above a new-conversation composer to create a blank project or add an existing folder. After creation, the project appears in both the sidebar and the composer and immediately becomes the workspace for the current new conversation.

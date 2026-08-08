@@ -53,6 +53,7 @@ const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
 ];
 const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
 const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
+const LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -1149,7 +1150,25 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    proxy_client_builder(proxy_url)?
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return reqwest::Client::builder()
+            .timeout(Duration::from_secs(
+                LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+            ))
+            .build()
+            .map_err(|error| HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Failed to configure local model proxy client: {error}"),
+            });
+    };
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(
+            LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+        ))
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Invalid local model proxy URL: {error}"),
+        })?)
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,

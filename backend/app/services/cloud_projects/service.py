@@ -151,6 +151,7 @@ class CloudProjectService:
             or "provider_config" in values.model_fields_set
             or "card_display" in values.model_fields_set
             or "board_config" in values.model_fields_set
+            or "ai_automation" in values.model_fields_set
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
@@ -194,6 +195,12 @@ class CloudProjectService:
                     )
                 metadata["board_config"] = values.board_config.model_dump()
                 updates.pop("board_config", None)
+            if (
+                "ai_automation" in values.model_fields_set
+                and values.ai_automation is not None
+            ):
+                metadata["ai_automation"] = values.ai_automation.model_dump()
+                updates.pop("ai_automation", None)
             if (
                 "provider_config" in values.model_fields_set
                 and values.provider_config is not None

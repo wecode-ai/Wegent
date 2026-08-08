@@ -28,6 +28,12 @@ pub struct SocketIoTransport {
 impl LocalBackendTransport for SocketIoTransport {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
         Box::pin(async move {
+            // The backend socket must never travel through the user's HTTP
+            // proxy: macOS system proxies (for example Clash on 127.0.0.1)
+            // intercept `localhost` and break the Engine.IO connection.
+            // NO_PROXY only affects loopback hosts; model gateway and other
+            // external requests still use the configured proxy.
+            std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
             let handlers = self.handlers.lock().expect("handler lock").clone();
             let mut builder = ClientBuilder::new(config.socket_url.clone())
                 .namespace(NAMESPACE)
