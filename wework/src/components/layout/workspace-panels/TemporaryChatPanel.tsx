@@ -535,6 +535,7 @@ export function TemporaryChatPanel({
             onChange={setInput}
             onSubmit={send}
             disabled={false}
+            pluginPickerIconOnly
             error={error}
             placeholder={placeholder}
             variant="desktop"

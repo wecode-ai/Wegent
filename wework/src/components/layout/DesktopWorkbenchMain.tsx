@@ -1791,7 +1791,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuOpenSignal, setProjectMenuOpenSignal] = useState(0)
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
-  const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
@@ -2862,6 +2862,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     onChange={paneSession.setInput}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled}
+                                    pluginPickerIconOnly={hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
                                     disabledReason={inlineComposerDisabledReason}

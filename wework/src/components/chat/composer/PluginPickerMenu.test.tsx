@@ -119,6 +119,20 @@ describe('PluginPickerMenu', () => {
     window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
   })
 
+  test('renders a single icon trigger when iconOnly is set', async () => {
+    const onListLocalApps = vi.fn().mockResolvedValue([githubApp, superpowersApp, echoIdApp])
+
+    render(<PluginPickerMenu iconOnly onListLocalApps={onListLocalApps} />)
+
+    const trigger = screen.getByTestId('composer-plugin-picker-button')
+    expect(trigger).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(trigger).not.toHaveTextContent('插件')
+    expect(screen.queryByTestId(/composer-plugin-preview-icon-/)).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+  })
+
   test('orders available plugins by usage count then recent selection', async () => {
     recordPluginUsage('EchoID')
     recordPluginUsage('EchoID')
