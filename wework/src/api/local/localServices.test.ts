@@ -1707,6 +1707,8 @@ describe('createLocalAppServices', () => {
           reasoning: { effort: 'high' },
         })
       )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
     }
   )
 

@@ -492,7 +492,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn native_responses_upstream_preserves_custom_tools_by_default() {
+fn explicit_third_party_responses_upstream_bridges_app_tools_by_default() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -503,6 +503,25 @@ fn native_responses_upstream_preserves_custom_tools_by_default() {
     );
 
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+}
+
+#[test]
+fn explicit_upstream_reads_native_app_tool_capabilities() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "native-responses-model",
+            "upstream_api_format": "openai-responses",
+            "native_tool_search": true,
+            "native_namespace_tools": true
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
 }
 
 #[test]
@@ -773,7 +792,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_provider_preserves_native_responses_tools() {
+fn user_configured_third_party_responses_provider_bridges_app_tools() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -797,6 +816,31 @@ fn user_configured_provider_preserves_native_responses_tools() {
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_honors_native_app_tool_capabilities() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-openai-native-app-tools");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"native-responses\"\n[model_providers.native-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = true\nnative_namespace_tools = true\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream =
+        configured_codex_provider("native-responses", None).expect("configured provider");
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
