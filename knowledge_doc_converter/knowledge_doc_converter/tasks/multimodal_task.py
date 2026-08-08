@@ -49,6 +49,7 @@ from knowledge_doc_converter.core.multimodal_metrics import (
     MULTIMODAL_CONVERSIONS_TOTAL,
     MULTIMODAL_DURATION_SECONDS,
     MULTIMODAL_GEMINI_BLOCKED_TOTAL,
+    MULTIMODAL_GEMINI_CALLS_TOTAL,
     MULTIMODAL_GEMINI_ERRORS_TOTAL,
     MULTIMODAL_INPUT_BYTES,
     MULTIMODAL_OUTPUT_BYTES,
@@ -447,7 +448,13 @@ def convert_multimodal_task(
             MULTIMODAL_GEMINI_ERRORS_TOTAL.labels(
                 error_type=exc.error_class, media_type=media_type
             ).inc()
+            MULTIMODAL_GEMINI_CALLS_TOTAL.labels(
+                result="failure", media_type=media_type
+            ).inc()
             raise
+        MULTIMODAL_GEMINI_CALLS_TOTAL.labels(
+            result="success", media_type=media_type
+        ).inc()
         tokens_out = analyzer.last_tokens_out
         add_span_event(
             "multimodal.gemini.done",
@@ -510,6 +517,13 @@ def convert_multimodal_task(
         return {"status": "converted", "document_id": document_id}
 
     except TransientError as exc:
+        # Record staging-upload failures explicitly (e.g. proxy 502) so the
+        # staging success/failure ratio is observable in Prometheus. The success
+        # counter is incremented at the staging-upload success site above.
+        if "staging" in (exc.error_class or "").lower():
+            MULTIMODAL_STAGING_OPERATIONS_TOTAL.labels(
+                op="upload", result="failure", media_type=media_type
+            ).inc()
         if _image_deadline_exceeded():
             _safe_notify_failed(
                 callback_status_path,
