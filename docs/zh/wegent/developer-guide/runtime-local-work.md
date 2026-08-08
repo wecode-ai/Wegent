@@ -253,6 +253,7 @@ Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体
 - Codex app-server 输入支持 `input_text`、`input_image` 和 `localImage` prompt block 映射。Backend 附件 id 下载与沙箱路径重写仍和 local-first 附件分离：本地 App 模式通过 executor IPC 发送同设备附件记录，云端/Backend 路径继续使用上传后的附件 ID。
 - Codex 回复完成时如果 Responses `response.completed` 中带有 `file_changes` 或 `fileChanges`，executor 会把它保存到当前 assistant message 的 `fileChanges` 字段，后续 transcript 刷新继续展示同一张文件变更卡片。
 - Codex app-server 的 `imageGeneration` item 不能作为普通文本工具输出处理。executor 将完整图片结果保存到 tool block 的 `render_payload`，同时保留提示词和生成文件路径；Wework 使用该载荷直接展示图片。图片数据不能经过普通工具输出的截断窗口，否则实时消息或 transcript 恢复后会得到损坏的 base64。
+- `view_image` 只表示模型查看了工作区中的现有图片。Wework 在可展开的工具详情中展示该图片，但不能把它加入 assistant 消息末尾的生成图片画廊；只有 `imageGeneration` 结果属于最终图片产物。
 
 Project 场景使用运行时 workspace 引用：
 

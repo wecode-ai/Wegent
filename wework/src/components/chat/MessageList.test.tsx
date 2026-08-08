@@ -304,6 +304,42 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
+  test('does not render viewed images as final message artifacts', () => {
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-view-image',
+            role: 'assistant',
+            content: 'The screenshot is visible in the tool details.',
+            status: 'done',
+            createdAt: '2026-08-08T10:00:01Z',
+            blocks: [
+              {
+                id: 'view-image-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'view_image',
+                toolInput: { path: '/tmp/screenshot.png' },
+                toolOutput: { image_url: imageUrl },
+                renderPayload: {
+                  dataUrl: imageUrl,
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('generated-image-gallery')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('generated-image')).not.toBeInTheDocument()
+  })
+
   test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
