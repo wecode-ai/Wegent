@@ -255,6 +255,7 @@ The runtime owns persistence for newly created tasks:
 - Codex app-server input supports `input_text`, `input_image`, and `localImage` prompt blocks. Backend attachment-id download and sandbox-path rewriting remain separate from local-first attachments: local App mode sends same-device attachment records through executor IPC, while cloud/Backend paths continue to use uploaded attachment ids.
 - If Codex response completion includes `file_changes` or `fileChanges`, the executor stores it on the current assistant message's `fileChanges` field, and later transcript refreshes continue to show the same file changes card.
 - Codex app-server `imageGeneration` items must not be treated as ordinary text tool output. The executor stores the complete image result in the tool block `render_payload`, together with the revised prompt and generated-file path, and Wework renders the image directly from that payload. Image data must bypass the regular tool-output truncation window or the base64 will be corrupted during live display or transcript restoration.
+- `view_image` only indicates that the model inspected an existing workspace image. Wework shows that image inside the expandable tool details but must not add it to the generated-image gallery at the end of the assistant message; only `imageGeneration` results are final image artifacts.
 
 Project-backed creation uses a runtime workspace reference:
 

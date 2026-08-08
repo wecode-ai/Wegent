@@ -2571,6 +2571,14 @@ async function waitForProcessingBlock(
 async function verifyViewImageProcessingBlock(control) {
   const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
   await waitForProcessingBlock(control, viewImageBlockSelector, 'The view_image processing block')
+  const generatedImageGalleryCount = Number(
+    await control.command('getElementCount', '[data-testid="generated-image-gallery"]')
+  )
+  assert.equal(
+    generatedImageGalleryCount,
+    0,
+    'The view_image result incorrectly rendered as a final generated-image artifact'
+  )
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
   await control.command(
     'waitFor',
