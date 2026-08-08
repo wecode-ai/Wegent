@@ -380,7 +380,9 @@ const TOOL_BLOCK_ORDER_PROMPT =
   'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER: run the four requested tools in order.'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
 const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
+const NODE_REPL_TOOL_SEARCH_ID = 'wework-e2e-search-node-repl'
 const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
+const GENERIC_MCP_TOOL_SEARCH_ID = 'wework-e2e-search-generic-mcp'
 const GENERIC_MCP_TOOL_BLOCK_ID = 'wework-e2e-tool-generic-mcp'
 const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
@@ -457,6 +459,8 @@ const OFFICIAL_PLUGIN_SKILL_NAME = 'openai-platform-api-key'
 const OFFICIAL_PLUGIN_SKILL_MARKER = '# OpenAI API Key'
 const OFFICIAL_PLUGIN_MCP_NAMESPACE = 'openai_api_key_local_confirmation'
 const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
+const OFFICIAL_PLUGIN_TOOL_SEARCH_ID = 'wework-e2e-official-plugin-search'
+const OFFICIAL_PLUGIN_MCP_TOOL_ID = 'wework-e2e-official-plugin-mcp'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
@@ -4746,11 +4750,11 @@ async function verifyPluginLifecycle({ control, fixture }) {
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('official_plugin', 4, WORKBENCH_READY_TIMEOUT_MS)
+  await control.awaitScenarioRequestCount('official_plugin', 5, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(
     control.scenarioRequests.get('official_plugin')?.length,
-    4,
-    'The official plugin flow did not execute the expected skill-read and direct MCP-call turns'
+    5,
+    'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
@@ -7452,6 +7456,25 @@ function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
   }))
 }
 
+function toolSearchCall(callId, argumentsValue) {
+  const item = {
+    type: 'tool_search_call',
+    call_id: callId,
+    execution: 'client',
+    arguments: argumentsValue,
+  }
+  return [
+    {
+      type: 'response.output_item.added',
+      item: { ...item, status: 'in_progress' },
+    },
+    {
+      type: 'response.output_item.done',
+      item: { ...item, status: 'completed' },
+    },
+  ]
+}
+
 function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
@@ -7699,7 +7722,10 @@ function requestContainsToolOutput(request, callId) {
     if (!value || typeof value !== 'object') return false
 
     const type = value.type
-    const isToolOutput = type === 'function_call_output' || type === 'custom_tool_call_output'
+    const isToolOutput =
+      type === 'function_call_output' ||
+      type === 'custom_tool_call_output' ||
+      type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true
 
     return Object.values(value).some(containsOutput)
@@ -7728,8 +7754,8 @@ function selectTool(request, name, argumentsValue) {
 function selectOfficialPluginMcpTool(request, argumentsValue) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   assert.ok(
-    !tools.some(tool => tool?.type === 'tool_search'),
-    'Real Codex still advertised the removed tool_search surface'
+    tools.some(tool => tool?.type === 'tool_search'),
+    'Real Codex did not retain tool_search after loading the official plugin MCP tool'
   )
   const namespaces = tools.filter(
     candidate => candidate?.type === 'namespace' && candidate.name === OFFICIAL_PLUGIN_MCP_NAMESPACE
@@ -7761,6 +7787,21 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
     'The direct MCP tool did not require both workspace confinement inputs'
   )
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
+}
+
+function assertMcpNamespaceDeferred(request, namespaceName) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    !tools.some(tool => tool?.type === 'namespace' && tool.name === namespaceName),
+    `Real Codex advertised MCP namespace ${namespaceName} before tool discovery`
+  )
+}
+
+function selectToolSearch(request, query) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const searchTools = tools.filter(tool => tool?.type === 'tool_search')
+  assert.equal(searchTools.length, 1, 'Real Codex did not advertise exactly one tool_search')
+  return { query, limit: 5 }
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
@@ -10016,6 +10057,22 @@ class DesktopE2EServer {
           true,
           'The earlier command output did not return through the real Codex tool loop'
         )
+        assertMcpNamespaceDeferred(body, 'node_repl')
+        const search = selectToolSearch(body, 'Run JavaScript in the persistent Node REPL')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchCall(NODE_REPL_TOOL_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
+        assert.equal(
+          requestContainsToolOutput(body, NODE_REPL_TOOL_SEARCH_ID),
+          true,
+          'The Node REPL tool search output did not return through the real Codex tool loop'
+        )
         const tool = selectMcpTool(body, 'node_repl', 'js', {
           code: "nodeRepl.write({ status: 'ready', value: 42 })",
         })
@@ -10032,7 +10089,7 @@ class DesktopE2EServer {
         return
       }
 
-      if (requestNumber === 3) {
+      if (requestNumber === 4) {
         assert.equal(
           requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
           true,
@@ -10044,6 +10101,22 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
+        assertMcpNamespaceDeferred(body, 'github__issues')
+        const search = selectToolSearch(body, 'Get deterministic GitHub issue details')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchCall(GENERIC_MCP_TOOL_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 5) {
+        assert.equal(
+          requestContainsToolOutput(body, GENERIC_MCP_TOOL_SEARCH_ID),
+          true,
+          'The generic MCP tool search output did not return through the real Codex tool loop'
+        )
         const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
           owner: 'wecode-ai',
           repo: 'Wegent',
@@ -10062,7 +10135,7 @@ class DesktopE2EServer {
         return
       }
 
-      if (requestNumber === 4) {
+      if (requestNumber === 6) {
         assert.equal(
           requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
           true,
@@ -10083,7 +10156,7 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(requestNumber, 5, `Unexpected tool-block-order request ${requestNumber}`)
+      assert.equal(requestNumber, 7, `Unexpected tool-block-order request ${requestNumber}`)
       assert.equal(
         requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
         true,
@@ -10787,6 +10860,22 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
+        assertMcpNamespaceDeferred(body, OFFICIAL_PLUGIN_MCP_NAMESPACE)
+        const search = selectToolSearch(body, OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchCall(OFFICIAL_PLUGIN_TOOL_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
+        assert.equal(
+          requestContainsToolOutput(body, OFFICIAL_PLUGIN_TOOL_SEARCH_ID),
+          true,
+          'The official plugin MCP tool search output did not return through the real Codex tool loop'
+        )
         const mcpTool = selectOfficialPluginMcpTool(body, {
           workspacePath: this.workspacePath,
           targetPath: '../outside.env',
@@ -10795,7 +10884,7 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           ...namespacedFunctionCall(
-            'wework-e2e-official-plugin-mcp',
+            OFFICIAL_PLUGIN_MCP_TOOL_ID,
             mcpTool.namespace,
             mcpTool.name,
             mcpTool.arguments
@@ -10805,7 +10894,7 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(requestNumber, 4, `Unexpected official plugin request ${requestNumber}`)
+      assert.equal(requestNumber, 5, `Unexpected official plugin request ${requestNumber}`)
       assert.ok(
         requestText.includes('The env file must be inside the selected workspace.'),
         'The official plugin MCP server did not execute and return its validation result'

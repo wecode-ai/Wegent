@@ -642,6 +642,35 @@ mod tests {
     }
 
     #[test]
+    fn catalog_enables_gpt_56_tool_search_without_changing_kimi_profiles() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+
+        for slug in [
+            GPT_56_SOL_MODEL,
+            GPT_56_TERRA_MODEL,
+            GPT_56_LUNA_MODEL,
+            WEWORK_GPT_56_SOL_MODEL,
+            WEWORK_GPT_56_TERRA_MODEL,
+            WEWORK_GPT_56_LUNA_MODEL,
+        ] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing GPT 5.6 model {slug}"));
+            assert_eq!(model["supports_search_tool"], true);
+        }
+
+        for slug in [KIMI_K3_MODEL, KIMI_K27_MODEL] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing model {slug}"));
+            assert_eq!(model["supports_search_tool"], false);
+        }
+    }
+
+    #[test]
     fn validates_complete_custom_catalog_entries_without_accepting_official_slugs() {
         let mut entry = model_entry(
             "wework-custom-registration-test",
