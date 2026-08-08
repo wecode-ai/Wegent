@@ -268,7 +268,14 @@ class KnowledgeService:
         )
 
         if existing_by_name:
-            raise ValueError(f"Knowledge base with name '{data.name}' already exists")
+            # Named for the check that fired. The two below say the same sentence
+            # otherwise, so an "already exists" gave no way to tell which of them
+            # matched -- or, when neither had, that the message came from somewhere
+            # else entirely.
+            raise ValueError(
+                f"Knowledge base with name '{data.name}' already exists "
+                f"(kind {kb_name})"
+            )
 
         # Also check by display name in spec to prevent duplicates
         existing_by_display = (
@@ -286,7 +293,8 @@ class KnowledgeService:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == data.name:
                 raise ValueError(
-                    f"Knowledge base with name '{data.name}' already exists"
+                    f"Knowledge base with name '{data.name}' already exists "
+                    f"(knowledge base {kb.id})"
                 )
 
         # Build CRD structure
