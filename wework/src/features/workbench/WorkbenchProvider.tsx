@@ -37,7 +37,6 @@ import {
   publishComposerApps,
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
-import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
@@ -1762,21 +1761,17 @@ export function WorkbenchProvider({
               })),
             })
             const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
-            // Sync every connected connector to MCP; only surface non-system ones in
-            // the composer plugin picker (Sites / Mini Program enter via Applications).
-            const connectorApps: LocalDeviceApp[] = connectedApps
-              .filter(app => !isSystemApplicationConnectorSlug(app.slug))
-              .map(app => ({
-                id: `wegent:${app.slug}`,
-                name: app.runtime_name ?? app.slug,
-                description: app.description ?? '',
-                logoUrl: app.icon_url ?? null,
-                isAccessible: true,
-                isEnabled: true,
-                pluginDisplayNames: ['Wegent Cloud'],
-                source: 'wegent-connector',
-                skillPath: skillPathBySlug.get(app.slug) ?? null,
-              }))
+            const connectorApps: LocalDeviceApp[] = connectedApps.map(app => ({
+              id: `wegent:${app.slug}`,
+              name: app.runtime_name ?? app.slug,
+              description: app.description ?? '',
+              logoUrl: app.icon_url ?? null,
+              isAccessible: true,
+              isEnabled: true,
+              pluginDisplayNames: ['Wegent Cloud'],
+              source: 'wegent-connector',
+              skillPath: skillPathBySlug.get(app.slug) ?? null,
+            }))
             const existingIds = new Set(apps.map(app => app.id))
             apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
           } catch (error) {
