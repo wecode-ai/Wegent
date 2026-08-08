@@ -44,13 +44,9 @@ fn skill_store_defaults_to_manifest_home_not_legacy_executor() {
     )
     .unwrap();
 
-    let store =
-        GlobalCapabilityStore::new(manifest_path, temp.path().join(".claude/skills"));
+    let store = GlobalCapabilityStore::new(manifest_path, temp.path().join(".claude/skills"));
 
-    assert_eq!(
-        store.store_dir,
-        executor_home.join("capabilities/store")
-    );
+    assert_eq!(store.store_dir, executor_home.join("capabilities/store"));
     assert!(!store
         .store_dir
         .starts_with(temp.path().join(".wegent-executor")));
