@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import i18n from '@/i18n'
 import { getErrorMessage } from '@/lib/error-message'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
 import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
@@ -83,6 +84,12 @@ export interface LocalPluginCopyImportResult {
   pluginPath: string
 }
 
+export interface LocalPluginCloudLink {
+  localPluginName: string
+  cloudPluginId: number
+  cloudReleaseId: number | null
+}
+
 export interface PluginIdentityReference {
   marketplaceName: string
   pluginName: string
@@ -117,7 +124,7 @@ export interface LocalCodexPluginApi {
   linkPersonalPluginRelease(
     plugin: InstalledPlugin,
     cloudPluginId: number,
-    cloudReleaseId: number
+    cloudReleaseId: number | null
   ): Promise<void>
   importMarketplaceCopy(descriptor: PluginCopyResponse): Promise<InstalledPlugin>
   readState(params?: {
@@ -285,9 +292,32 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
+const READ_STATE_TTL_MS = 15_000
 let cachedState: LocalCodexPluginsState | null = null
 let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
+let cachedStateAt = 0
+let cachedStateParamsKey = ''
+
+/** Clears the short-lived readState cache. Intended for tests and explicit invalidation. */
+export function clearLocalCodexPluginsReadStateCache(): void {
+  cachedState = null
+  cachedStateGeneration = 0
+  cachedStateAt = 0
+  cachedStateParamsKey = ''
+}
+
+function readStateParamsKey(params: {
+  query?: string
+  marketplaceId?: string
+  mergeAllMarketplaces?: boolean
+}): string {
+  return [
+    params.query?.trim() || '',
+    params.marketplaceId?.trim() || '',
+    params.mergeAllMarketplaces ? 'all' : 'selected',
+  ].join('|')
+}
 
 async function codexAppServerRequest<T>(
   method: string,
@@ -418,6 +448,8 @@ async function ensurePluginInWeworkPersonal(options: {
       console.warn('[Wework] Failed to install migrated personal plugin', error)
     }
   }
+  // Disk / App Server may have changed even when migrated=false (idempotent ensure).
+  clearLocalCodexPluginsReadStateCache()
   return ensured
 }
 
@@ -887,6 +919,83 @@ function filterPluginItems(
   )
 }
 
+export function applyPluginCloudLinks(
+  installedPlugins: InstalledPlugin[],
+  cloudLinks: LocalPluginCloudLink[]
+): InstalledPlugin[] {
+  if (cloudLinks.length === 0) return installedPlugins
+  const linksByPluginName = new Map(cloudLinks.map(link => [link.localPluginName, link]))
+  return installedPlugins.map(plugin => {
+    const sourcePayload = plugin.spec.sourcePayload ?? {}
+    const marketplaceName =
+      plugin.spec.source.marketplace ||
+      (typeof sourcePayload.marketplaceName === 'string' ? sourcePayload.marketplaceName : '') ||
+      plugin.spec.source.providerKey
+    if (!isPersonalMarketplaceId(marketplaceName)) return plugin
+    const pluginName =
+      (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
+      plugin.spec.source.pluginKey
+    const link = linksByPluginName.get(pluginName)
+    if (!link) return plugin
+    return {
+      ...plugin,
+      spec: {
+        ...plugin.spec,
+        sourcePayload: {
+          ...sourcePayload,
+          cloudPluginId: link.cloudPluginId,
+          cloudReleaseId: link.cloudReleaseId,
+        },
+      },
+    }
+  })
+}
+
+function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string): string {
+  const plugin = pluginName.trim().toLowerCase()
+  const marketplace = isPersonalMarketplaceId(marketplaceName)
+    ? WEWORK_PERSONAL_MARKETPLACE_ID
+    : marketplaceName.trim().toLowerCase()
+  return plugin && marketplace ? `${plugin}@${marketplace}` : ''
+}
+
+export function applyInstalledPluginsToMarketplaceItems(
+  items: PluginMarketplaceItem[],
+  installedPlugins: InstalledPlugin[]
+): PluginMarketplaceItem[] {
+  const installedByIdentity = new Map<string, InstalledPlugin>()
+  for (const plugin of installedPlugins) {
+    const marketplace =
+      plugin.spec.source.marketplace ||
+      plugin.spec.source.providerKey ||
+      (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+        ? plugin.spec.sourcePayload.marketplaceName
+        : plugin.metadata.namespace)
+    const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
+    const identity = pluginMarketplaceIdentity(
+      String(plugin.spec.source.pluginKey),
+      marketplaceName
+    )
+    if (identity) installedByIdentity.set(identity, plugin)
+  }
+
+  return items.map(item => {
+    const marketplaceName =
+      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
+    const installed = installedByIdentity.get(pluginMarketplaceIdentity(item.name, marketplaceName))
+    if (!installed) return item
+    const id = installedPluginId(installed)
+    return {
+      ...item,
+      installed: true,
+      installedPluginId:
+        typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
+      installedLocally: true,
+      enabled: installed.spec.enabled,
+    }
+  })
+}
+
 async function readState(
   params: {
     query?: string
@@ -897,6 +1006,15 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
+  const paramsKey = readStateParamsKey(params)
+  if (
+    !params.refresh &&
+    cachedState &&
+    cachedStateParamsKey === paramsKey &&
+    Date.now() - cachedStateAt < READ_STATE_TTL_MS
+  ) {
+    return cachedState
+  }
   const generation = nextReadStateGeneration++
   const executorStatus = await ensureLocalExecutorStarted()
   await ensureBundledPluginMarketplaceRegistered()
@@ -925,7 +1043,18 @@ async function readState(
   const selectedMarketplaces = params.mergeAllMarketplaces
     ? availableMarketplaces
     : filteredMarketplaces(availableMarketplaces, selectedId)
-  const marketplaceItems = filterPluginItems(
+  const personalMarketplace = availableMarketplaces.find(
+    marketplace =>
+      marketplace.name === WEWORK_PERSONAL_MARKETPLACE_ID &&
+      marketplace.path &&
+      isLocalMarketplacePath(marketplace.path)
+  )
+  const cloudLinks = personalMarketplace?.path
+    ? await invoke<LocalPluginCloudLink[]>('local_executor_read_plugin_cloud_links', {
+        marketplacePath: personalMarketplace.path,
+      }).catch(() => [] as LocalPluginCloudLink[])
+    : []
+  const availableMarketplaceItems = filterPluginItems(
     selectedMarketplaces.flatMap(marketplace =>
       marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
     ),
@@ -934,8 +1063,15 @@ async function readState(
   // plugin/installed is authoritative for membership; summaries sometimes omit
   // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
   // briefly empty installed response cannot hide a just-installed plugin.
-  const installedPlugins = preferWeworkPersonalInstalled(
-    mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
+  const installedPlugins = applyPluginCloudLinks(
+    preferWeworkPersonalInstalled(
+      mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
+    ),
+    cloudLinks
+  )
+  const marketplaceItems = applyInstalledPluginsToMarketplaceItems(
+    availableMarketplaceItems,
+    installedPlugins
   )
   const marketplaces = availableMarketplaces.map(marketplaceInfo)
   const state: LocalCodexPluginsState = {
@@ -952,6 +1088,8 @@ async function readState(
   if (generation >= cachedStateGeneration) {
     cachedState = state
     cachedStateGeneration = generation
+    cachedStateAt = Date.now()
+    cachedStateParamsKey = paramsKey
     rememberSelectedMarketplaceId(selectedId)
   }
   if (!params.skipPersonalReconcile) {
@@ -970,13 +1108,18 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     remoteAppsEnabled: true,
   }
   return {
-    importExternalContent(source) {
+    async importExternalContent(source) {
       if (!isTauriRuntime()) {
-        return Promise.reject(new Error('External content import requires the Wework desktop app'))
+        throw new Error('External content import requires the Wework desktop app')
       }
-      return invoke<ExternalContentImportResult>('local_executor_import_external_content', {
-        options: { source },
-      })
+      const imported = await invoke<ExternalContentImportResult>(
+        'local_executor_import_external_content',
+        {
+          options: { source },
+        }
+      )
+      clearLocalCodexPluginsReadStateCache()
+      return imported
     },
     codexHomeMigrationStatus() {
       if (!isTauriRuntime()) {
@@ -1106,6 +1249,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           cause: error,
         })
       }
+      // Cloud link lives on disk; drop TTL cache so the next readState reloads links.
+      clearLocalCodexPluginsReadStateCache()
     },
     async importMarketplaceCopy(descriptor) {
       if (!isTauriRuntime()) {
@@ -1127,6 +1272,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           },
         }
       )
+      clearLocalCodexPluginsReadStateCache()
       try {
         await codexAppServerRequest('plugin/install', {
           marketplacePath: personalMarketplace.path,
@@ -1138,6 +1284,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           marketplacePath: personalMarketplace.path,
           pluginName: imported.pluginName,
         }).catch(() => undefined)
+        clearLocalCodexPluginsReadStateCache()
         throw new Error(
           `Plugin copy installation failed: ${
             error instanceof Error ? error.message : String(error)
@@ -1323,6 +1470,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         marketplaceName: id,
       })
       if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
+      clearLocalCodexPluginsReadStateCache()
       return readState({ refresh: true })
     },
     async reorderMarketplaces() {
@@ -1348,6 +1496,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         sparsePaths: null,
       })
       rememberSelectedMarketplaceId(response.marketplaceName)
+      clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
     async installAvailablePlugin(pluginId, marketplaceId) {
@@ -1373,6 +1522,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         remoteMarketplaceName: localMarketplace ? null : marketplace.id,
         pluginName: pluginInstallName(item, localMarketplace),
       })
+      clearLocalCodexPluginsReadStateCache()
       const state = await readState({
         marketplaceId: resolvedMarketplaceId,
         refresh: true,
@@ -1385,9 +1535,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             : typeof plugin.metadata.namespace === 'string'
               ? plugin.metadata.namespace
               : plugin.spec.source.marketplace || plugin.spec.source.providerKey
+        const expectedMarketplaceName =
+          typeof item.manifest?.marketplaceId === 'string'
+            ? item.manifest.marketplaceId
+            : marketplace.id
         return (
           plugin.spec.source.pluginKey === item.name &&
-          marketplaceName === (item.manifest?.marketplaceId || marketplace.id)
+          (marketplaceName === expectedMarketplaceName ||
+            (isPersonalMarketplaceId(marketplaceName) &&
+              isPersonalMarketplaceId(expectedMarketplaceName)))
         )
       })
       if (!installed) throw new Error('Codex plugin installed but not returned by app-server')
@@ -1428,6 +1584,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           })
         )
       }
+      clearLocalCodexPluginsReadStateCache()
       const state = await readState({ refresh: true })
       const installed = state.installedPlugins.find(
         plugin => String(installedPluginId(plugin)) === String(id)
@@ -1436,9 +1593,69 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async uninstallInstalledPlugin(id) {
-      await codexAppServerRequest('plugin/uninstall', { pluginId: String(id) })
-      cachedState = null
-      cachedStateGeneration = 0
+      const currentState = cachedState ?? (await readState())
+      const installed = currentState.installedPlugins.find(
+        plugin => String(installedPluginId(plugin)) === String(id)
+      )
+      const marketplace =
+        installed?.spec.source.marketplace ||
+        installed?.spec.source.providerKey ||
+        installed?.metadata.namespace ||
+        ''
+      const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
+      const pluginName = installed?.spec.source.pluginKey ?? String(id).split('@')[0]
+      const pluginIds = isPersonalMarketplaceId(marketplaceName)
+        ? Array.from(
+            new Set([
+              String(id),
+              `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
+              `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
+            ])
+          )
+        : [String(id)]
+      for (const pluginId of pluginIds) {
+        try {
+          await codexAppServerRequest('plugin/uninstall', { pluginId })
+        } catch (error) {
+          if (pluginId === String(id)) {
+            throw error
+          }
+          if (
+            /not found|not installed|unknown plugin/i.test(
+              getErrorMessage(error, 'Plugin uninstall failed')
+            )
+          ) {
+            continue
+          }
+          // Primary uninstall already succeeded; alias cleanup must not look like a hard fail.
+          throw new LocalPluginUninstallCleanupError(
+            getErrorMessage(error, 'Failed to uninstall plugin alias'),
+            { cause: error }
+          )
+        }
+      }
+      clearLocalCodexPluginsReadStateCache()
+      if (isPersonalMarketplaceId(marketplaceName)) {
+        const personalMarketplace = currentState.marketplaces.find(
+          marketplace =>
+            marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID &&
+            marketplace.path &&
+            isLocalMarketplacePath(marketplace.path)
+        )
+        if (personalMarketplace?.path) {
+          try {
+            await invoke('local_executor_unlink_plugin_release', {
+              marketplacePath: personalMarketplace.path,
+              localPluginName: String(pluginName),
+            })
+          } catch (error) {
+            throw new LocalPluginUninstallCleanupError(
+              getErrorMessage(error, 'Failed to unlink local plugin release'),
+              { cause: error }
+            )
+          }
+        }
+      }
     },
   }
 }

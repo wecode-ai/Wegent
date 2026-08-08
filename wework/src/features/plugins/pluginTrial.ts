@@ -1,5 +1,8 @@
 import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import {
+  currentPluginLogoAppearanceMode,
+  resolvePluginLogoUrl,
+} from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
@@ -98,7 +101,9 @@ function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): 
     resolvePluginLogoUrl({
       pluginKey,
       logo: plugin.spec.interface?.logo,
+      logoDark: plugin.spec.interface?.logoDark,
       composerIcon: plugin.spec.interface?.composerIcon,
+      appearanceMode: currentPluginLogoAppearanceMode(),
     })
   )
 }
