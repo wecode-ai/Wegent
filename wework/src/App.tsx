@@ -706,10 +706,11 @@ function AppShell() {
           />
         ) : null}
         <div
+          data-testid="app-route-host"
           className={cn(
             'relative min-h-0',
             isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-            titlebarOverlaysContent ? 'h-full' : 'flex-1'
+            titlebarOverlaysContent ? 'h-full' : 'h-0 flex-1'
           )}
         >
           <AppRoutes
