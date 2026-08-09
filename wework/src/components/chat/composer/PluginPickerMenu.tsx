@@ -30,6 +30,39 @@ interface PluginPickerMenuProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
+function pluginNameInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '?'
+}
+
+function PluginPreviewIcon({ app }: { app: LocalDeviceApp }) {
+  const logo = resolvePluginLogoUrl({
+    pluginKey: composerAppPluginKey(app),
+    logo: app.logoUrl,
+  })
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
+  const showInitial = !logo || failedLogoUrl === logo
+
+  return (
+    <span
+      data-testid={`composer-plugin-preview-icon-${app.id}`}
+      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
+    >
+      {showInitial ? (
+        <span className="scale-75 text-xs font-medium leading-none text-text-secondary">
+          {pluginNameInitial(app.name)}
+        </span>
+      ) : (
+        <img
+          src={logo}
+          alt=""
+          className="h-full w-full object-contain p-px"
+          onError={() => setFailedLogoUrl(logo)}
+        />
+      )}
+    </span>
+  )
+}
+
 function enabledComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   return sortComposerPluginsByUsage(
     items.filter(app => app.isEnabled !== false && app.isAccessible !== false),
@@ -168,10 +201,10 @@ export function PluginPickerMenu({
         aria-expanded={open}
         aria-label={t('workbench.composer_plugins', '插件')}
         className={[
-          'flex items-center text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
+          'flex items-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
           iconOnly
             ? 'h-7 w-7 justify-center rounded-lg px-0'
-            : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
+            : 'h-7 gap-2 rounded-lg bg-muted/70 px-3 text-sm',
         ].join(' ')}
         onClick={() => {
           if (disabled) return
@@ -199,27 +232,10 @@ export function PluginPickerMenu({
               data-testid="composer-plugin-preview-icons"
               aria-hidden="true"
             >
-              {apps.slice(0, 3).map(app => {
-                const logo = resolvePluginLogoUrl({
-                  pluginKey: composerAppPluginKey(app),
-                  logo: app.logoUrl,
-                })
-                return (
-                  <span
-                    key={app.id}
-                    data-testid={`composer-plugin-preview-icon-${app.id}`}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
-                  >
-                    {logo ? (
-                      <img src={logo} alt="" className="h-full w-full object-contain" />
-                    ) : (
-                      <Boxes className="h-4 w-4" />
-                    )}
-                  </span>
-                )
-              })}
+              {apps.slice(0, 3).map(app => (
+                <PluginPreviewIcon key={app.id} app={app} />
+              ))}
             </span>
-            {apps.length > 3 && <span className="text-xs text-text-muted">+{apps.length - 3}</span>}
           </>
         )}
       </button>

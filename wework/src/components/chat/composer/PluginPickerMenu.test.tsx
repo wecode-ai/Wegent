@@ -87,15 +87,21 @@ describe('PluginPickerMenu', () => {
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     )
-    expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
+    expect(trigger).toHaveClass('h-7', 'gap-2', 'rounded-lg', 'bg-muted/70', 'px-3', 'text-sm')
     expect(screen.getByTestId('composer-plugin-preview-icons')).toHaveClass('-space-x-1')
     expect(screen.getByTestId('composer-plugin-preview-icon-github')).toHaveClass(
-      'h-6',
-      'w-6',
-      'rounded-full',
-      'border-border/30'
+      'h-[18px]',
+      'w-[18px]',
+      'rounded-[5px]',
+      'border-border/35'
     )
-    expect(trigger).toHaveTextContent('+2')
+    expect(trigger).not.toHaveTextContent('+2')
+
+    const githubPreview = screen.getByTestId('composer-plugin-preview-icon-github')
+    const githubLogo = githubPreview.querySelector('img')
+    expect(githubLogo).not.toBeNull()
+    act(() => githubLogo?.dispatchEvent(new Event('error')))
+    expect(githubPreview).toHaveTextContent('G')
 
     await userEvent.click(trigger)
     const picker = await screen.findByTestId('composer-plugin-picker')
