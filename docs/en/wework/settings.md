@@ -4,7 +4,7 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
 ## View app information
 
@@ -25,6 +25,31 @@ Common macOS shortcuts include:
 | Back / Forward         | `Command+[` / `Command+]` |
 | Select model           | `Control+Shift+M`         |
 | Appshot                | `Command+Shift+2`         |
+
+## Local harnesses
+
+The desktop app can launch an installed OpenCode or Claude Code executable as a local coding
+harness. Under **Settings → Connections → Harnesses**, you can:
+
+- Enable or hide each harness. Only enabled harnesses that are detected successfully appear in
+  the new-conversation runtime selector.
+- Leave the executable field empty to search the desktop process `PATH` and the tool's common
+  install locations, or provide an absolute path.
+- Enter default arguments one per line. Wework passes them without shell parsing and appends the
+  current prompt according to the selected harness protocol.
+- Enter launch environment variables as one `NAME=VALUE` per line. These settings remain on the
+  current device.
+- Choose Claude Code's default, plan, or bypass permission mode. Bypass mode passes
+  `--dangerously-skip-permissions` and should be used only in a controlled environment where its
+  risks are understood.
+
+After entering a task in a local project or development worktree, open the runtime selector in
+the composer to launch a harness. OpenCode receives the complete prompt through `--prompt`, while
+Claude Code receives it as a positional argument. The process runs in the current workspace
+through a local PTY, with its interactive terminal shown in the center of the workbench. Active
+sessions also appear in the left task section. Reloading the main WebView can reattach to a
+running session and restore its bounded terminal scrollback. Closing the session terminates the
+local process, and processes that have ended are not restored after Wework exits.
 
 ## Model availability
 
