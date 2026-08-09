@@ -69,7 +69,10 @@ use super::{
     },
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
-    codex_transcript_page::{load_codex_transcript, CodexTranscriptPage, CodexTranscriptRequest},
+    codex_transcript_page::{
+        load_codex_transcript, CodexTranscriptDirection, CodexTranscriptPage,
+        CodexTranscriptRequest,
+    },
     connectors::ConnectorRuntime,
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},

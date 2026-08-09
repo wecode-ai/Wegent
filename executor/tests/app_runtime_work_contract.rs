@@ -230,7 +230,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
                 "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1
+                "limit": 1000
             }
         }))
         .await
@@ -300,7 +300,15 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
         call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
     }));
     assert!(calls.iter().any(|call| {
-        call["method"] == "thread/turns/list" && call["params"]["cursor"] == "newer-from-old"
+        call["method"] == "thread/turns/list"
+            && call["params"]["cursor"] == "newer-from-old"
+            && call["params"]["sortDirection"] == "asc"
+    }));
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/turns/list"
+            && call["params"]["cursor"].is_null()
+            && call["params"]["limit"] == 40
+            && call["params"]["sortDirection"] == "desc"
     }));
 }
 

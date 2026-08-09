@@ -50,12 +50,9 @@ impl RuntimeWorkRpcHandler {
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
             return;
         };
-        let transcript = active_items
-            .entry(local_task_id.to_owned())
-            .or_insert_with(|| ActiveCodexTranscriptItems {
-                turn_id: turn_id.to_owned(),
-                items: Vec::new(),
-            });
+        let Some(transcript) = active_items.get_mut(local_task_id) else {
+            return;
+        };
         if transcript.turn_id != turn_id {
             transcript.turn_id = turn_id.to_owned();
             transcript.items.clear();

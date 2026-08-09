@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use futures_util::{stream, StreamExt};
+use futures_util::{stream, TryStreamExt};
 use serde_json::{json, Value};
 
 use crate::agents::CodexAppServerClient;
@@ -13,18 +13,35 @@ use super::util::string_field;
 
 const CODEX_ITEM_PAGE_SIZE: usize = 100;
 const CODEX_ITEM_LOAD_CONCURRENCY: usize = 5;
+const CODEX_FULL_TRANSCRIPT_MAX_TURNS: usize = 500;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum CodexTranscriptDirection {
+    Ascending,
+    Descending,
+}
+
+impl CodexTranscriptDirection {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ascending => "asc",
+            Self::Descending => "desc",
+        }
+    }
+}
 
 pub(crate) struct CodexTranscriptRequest<'a> {
     pub thread_id: &'a str,
     pub cursor: Option<&'a str>,
     pub limit: usize,
+    pub direction: CodexTranscriptDirection,
     pub full_content: bool,
 }
 
 pub(crate) struct CodexTranscriptPage {
     pub thread: Value,
-    pub next_cursor: Option<String>,
-    pub backwards_cursor: Option<String>,
+    pub before_cursor: Option<String>,
+    pub after_cursor: Option<String>,
 }
 
 pub(crate) async fn load_codex_transcript(
@@ -39,8 +56,8 @@ pub(crate) async fn load_codex_transcript(
         .await?;
     let mut thread = metadata_response
         .get("thread")
-        .unwrap_or(&metadata_response)
-        .clone();
+        .cloned()
+        .ok_or_else(|| "thread/read returned a response without thread".to_owned())?;
     let mut cursor = request.cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;
@@ -50,8 +67,14 @@ pub(crate) async fn load_codex_transcript(
     }
 
     loop {
-        let page =
-            load_turn_page(client, request.thread_id, cursor.as_deref(), request.limit).await?;
+        let page = load_turn_page(
+            client,
+            request.thread_id,
+            cursor.as_deref(),
+            request.limit,
+            request.direction,
+        )
+        .await?;
         if backwards_cursor.is_none() {
             backwards_cursor = string_field(&page, "backwardsCursor");
         }
@@ -64,13 +87,31 @@ pub(crate) async fn load_codex_transcript(
         turns.extend(page_turns);
 
         let next_cursor = string_field(&page, "nextCursor");
-        if !request.full_content || next_cursor.is_none() {
-            turns.reverse();
+        let reached_full_content_limit =
+            request.full_content && turns.len() >= CODEX_FULL_TRANSCRIPT_MAX_TURNS;
+        if !request.full_content || next_cursor.is_none() || reached_full_content_limit {
+            if reached_full_content_limit && next_cursor.is_some() {
+                turns.truncate(CODEX_FULL_TRANSCRIPT_MAX_TURNS);
+                eprintln!(
+                    "Codex transcript {thread_id} truncated at {max_turns} turns",
+                    thread_id = request.thread_id,
+                    max_turns = CODEX_FULL_TRANSCRIPT_MAX_TURNS,
+                );
+            }
+            if request.direction == CodexTranscriptDirection::Descending {
+                turns.reverse();
+            }
             thread["turns"] = Value::Array(turns);
+            let (before_cursor, after_cursor) =
+                if request.direction == CodexTranscriptDirection::Descending {
+                    (next_cursor, backwards_cursor)
+                } else {
+                    (backwards_cursor, next_cursor)
+                };
             return Ok(CodexTranscriptPage {
                 thread,
-                next_cursor,
-                backwards_cursor,
+                before_cursor,
+                after_cursor,
             });
         }
         let next_cursor = next_cursor.expect("checked above");
@@ -86,6 +127,7 @@ async fn load_turn_page(
     thread_id: &str,
     cursor: Option<&str>,
     limit: usize,
+    direction: CodexTranscriptDirection,
 ) -> Result<Value, String> {
     client
         .request(
@@ -94,7 +136,7 @@ async fn load_turn_page(
                 "threadId": thread_id,
                 "cursor": cursor,
                 "limit": limit,
-                "sortDirection": "desc",
+                "sortDirection": direction.as_str(),
                 "itemsView": "notLoaded",
             }),
         )
@@ -108,7 +150,7 @@ async fn load_full_turn_items(
 ) -> Result<Vec<Value>, String> {
     stream::iter(turns.into_iter().map(|turn| {
         let client = client.clone();
-        async move {
+        Ok::<_, String>(async move {
             let turn_id = string_field(&turn, "id")
                 .ok_or_else(|| "thread/turns/list returned a turn without id".to_owned())?;
             let items = load_turn_items(&client, thread_id, &turn_id).await?;
@@ -116,13 +158,11 @@ async fn load_full_turn_items(
             turn["items"] = Value::Array(items);
             turn["itemsView"] = Value::String("full".to_owned());
             Ok::<Value, String>(turn)
-        }
+        })
     }))
-    .buffered(CODEX_ITEM_LOAD_CONCURRENCY)
-    .collect::<Vec<_>>()
+    .try_buffered(CODEX_ITEM_LOAD_CONCURRENCY)
+    .try_collect()
     .await
-    .into_iter()
-    .collect()
 }
 
 async fn load_turn_items(

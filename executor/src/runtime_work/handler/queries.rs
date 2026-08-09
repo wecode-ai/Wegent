@@ -12,6 +12,7 @@ impl RuntimeWorkRpcHandler {
                 thread_id,
                 cursor: None,
                 limit: 1,
+                direction: CodexTranscriptDirection::Descending,
                 full_content: false,
             },
         )
@@ -19,14 +20,20 @@ impl RuntimeWorkRpcHandler {
         .map(|page| page.thread)
     }
 
-    pub(super) async fn read_codex_thread_history(&self, thread_id: &str) -> Result<Value, String> {
+    pub(super) async fn read_codex_turn_page(
+        &self,
+        thread_id: &str,
+        limit: usize,
+        direction: CodexTranscriptDirection,
+    ) -> Result<Value, String> {
         load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
                 thread_id,
                 cursor: None,
-                limit: CODEX_TRANSCRIPT_PAGE_SIZE,
-                full_content: true,
+                limit,
+                direction,
+                full_content: false,
             },
         )
         .await
@@ -291,14 +298,22 @@ impl RuntimeWorkRpcHandler {
         }
         let CodexTranscriptPage {
             mut thread,
-            next_cursor,
-            backwards_cursor,
+            before_cursor: page_before_cursor,
+            after_cursor: page_after_cursor,
         } = load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
                 thread_id: &thread_id,
                 cursor: before_cursor.as_deref().or(after_cursor.as_deref()),
-                limit: limit.unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE),
+                limit: limit
+                    .filter(|value| *value > 0)
+                    .unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE)
+                    .min(CODEX_TRANSCRIPT_PAGE_SIZE),
+                direction: if after_cursor.is_some() {
+                    CodexTranscriptDirection::Ascending
+                } else {
+                    CodexTranscriptDirection::Descending
+                },
                 full_content: include_full_content,
             },
         )
@@ -349,12 +364,12 @@ impl RuntimeWorkRpcHandler {
                 before_cursor: if include_full_content {
                     None
                 } else {
-                    next_cursor
+                    page_before_cursor
                 },
                 after_cursor: if include_full_content {
                     None
                 } else {
-                    backwards_cursor
+                    page_after_cursor
                 },
             },
             full_content: include_full_content,

@@ -2340,11 +2340,16 @@ async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
         .iter()
         .rposition(|call| call["method"] == "thread/resume")
         .expect("refresh should resume the thread");
+    let read_index = calls
+        .iter()
+        .rposition(|call| call["method"] == "thread/read")
+        .expect("refresh should read thread metadata");
     let list_index = calls
         .iter()
         .rposition(|call| call["method"] == "thread/turns/list")
         .expect("refresh should list the thread turns");
-    assert!(resume_index < list_index);
+    assert!(resume_index < read_index);
+    assert!(read_index < list_index);
 }
 
 #[tokio::test]
@@ -2943,7 +2948,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -3145,7 +3153,13 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"completed","itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -3339,11 +3353,16 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/read"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input","cwd":"/tmp/project","turns":[]}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/turns/list"'; then
     if [ "$turn_active" = "true" ]; then
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input","cwd":"/tmp/project","turns":[{{"id":"turn-input","status":"inProgress","items":[]}}]}}}}}}'
+      turn_status='inProgress'
     else
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input","cwd":"/tmp/project","turns":[{{"id":"turn-input","status":"interrupted","items":[]}}]}}}}}}'
+      turn_status='interrupted'
     fi
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-input","status":"'"$turn_status"'","itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/items/list"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/goal/get"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/name/set"'; then
@@ -3409,7 +3428,13 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"interrupted","items":[]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"interrupted","itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -3464,8 +3489,14 @@ while IFS= read -r line; do
     *'"method":"thread/read"'*)
       (
         sleep 0.1
-        printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-0","status":"completed","items":[]}}]}}}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
       ) &
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-0","status":"completed","itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

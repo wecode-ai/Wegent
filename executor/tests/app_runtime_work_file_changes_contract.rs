@@ -269,7 +269,8 @@ async fn runtime_transcript_keeps_interrupted_commentary_visible() {
             "payload": {
                 "workspacePath": "/tmp/project",
                 "taskId": "thread-1",
-                "runtimeHandle": {"threadId": "thread-1"}
+                "runtimeHandle": {"threadId": "thread-1"},
+                "includeFullContent": true
             }
         }))
         .await
@@ -359,10 +360,8 @@ async fn runtime_transcript_accumulates_codex_file_changes_and_uses_move_target_
             .display()
             .to_string(),
     );
-    let fake_codex = write_fake_accumulated_file_changes_codex(&temp_path(
-        "runtime-accumulated-file-changes-log",
-        "jsonl",
-    ));
+    let log_path = temp_path("runtime-accumulated-file-changes-log", "jsonl");
+    let fake_codex = write_fake_accumulated_file_changes_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let transcript = handler
@@ -371,7 +370,8 @@ async fn runtime_transcript_accumulates_codex_file_changes_and_uses_move_target_
             "payload": {
                 "workspacePath": "/tmp/project",
                 "taskId": "thread-1",
-                "runtimeHandle": {"threadId": "thread-1"}
+                "runtimeHandle": {"threadId": "thread-1"},
+                "includeFullContent": true
             }
         }))
         .await
@@ -402,6 +402,13 @@ async fn runtime_transcript_accumulates_codex_file_changes_and_uses_move_target_
         .expect("deleted script should be present");
     assert_eq!(deleted_script["path"], "scripts/delete.sh");
     assert_eq!(deleted_script["deletions"], 3);
+    let turn_page_calls = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "thread/turns/list")
+        .collect::<Vec<_>>();
+    assert_eq!(turn_page_calls.len(), 2);
+    assert_eq!(turn_page_calls[0]["params"]["cursor"], Value::Null);
+    assert_eq!(turn_page_calls[1]["params"]["cursor"], "turn-page-1");
 }
 
 fn write_fake_interrupted_commentary_codex(log_path: &Path) -> PathBuf {
@@ -638,7 +645,13 @@ fn write_fake_accumulated_file_changes_codex(log_path: &Path) -> PathBuf {
             "createdAt": 1780000000_i64,
             "updatedAt": 1780000060_i64,
             "status": "idle",
-            "turns": [{
+            "turns": [
+                {
+                    "id": "turn-empty",
+                    "createdAt": 1779999990_i64,
+                    "items": [],
+                },
+                {
                     "id": "turn-accumulated",
                     "createdAt": 1780000000_i64,
                     "items": [
@@ -721,7 +734,8 @@ fn write_fake_accumulated_file_changes_codex(log_path: &Path) -> PathBuf {
                             "phase": "final_answer",
                         },
                     ],
-                }],
+                },
+            ],
         }),
     )
 }
@@ -895,60 +909,132 @@ fn write_fake_web_search_codex(log_path: &Path) -> PathBuf {
 fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value) -> PathBuf {
     let path = temp_path(prefix, "sh");
     let _ = fs::remove_file(log_path);
-    let mut turns = thread
+    let (turns, item_response_cases) = take_fake_transcript_turns(&mut thread);
+    let turn_page_response_cases = fake_turn_page_response_cases(&turns);
+    thread["turns"] = json!([]);
+    let read_response = json!({"id": "__REQUEST_ID__", "result": {"thread": thread}});
+    let content = fake_transcript_codex_script(
+        log_path,
+        &read_response,
+        &turn_page_response_cases,
+        &item_response_cases,
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn take_fake_transcript_turns(thread: &mut Value) -> (Vec<Value>, String) {
+    let turns = thread
         .as_object_mut()
         .and_then(|object| object.remove("turns"))
         .unwrap_or_else(|| json!([]));
-    let turns = turns
-        .as_array_mut()
+    let mut turns = turns
+        .as_array()
+        .cloned()
         .expect("fake transcript turns should be an array");
     let item_response_cases = turns
         .iter_mut()
-        .map(|turn| {
-            let turn_id = turn["id"]
-                .as_str()
-                .expect("fake transcript turn should have an id")
-                .to_owned();
-            let items = turn
-                .as_object_mut()
-                .and_then(|object| object.remove("items"))
-                .unwrap_or_else(|| json!([]));
-            turn["itemsView"] = json!("notLoaded");
-            let data = items
-                .as_array()
-                .expect("fake transcript items should be an array")
-                .iter()
-                .map(|item| json!({"turnId": turn_id, "item": item}))
-                .collect::<Vec<_>>();
-            let response = json!({
-                "id": "__REQUEST_ID__",
-                "result": {
-                    "data": data,
-                    "nextCursor": null,
-                },
-            });
-            format!(
-                r#"        *'"turnId":"{}"'*)
-          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
-          ;;"#,
-                turn_id,
-                shell_single_quote(&response.to_string()),
-            )
-        })
+        .map(fake_item_response_case)
         .collect::<Vec<_>>()
         .join("\n");
     turns.reverse();
-    thread["turns"] = json!([]);
-    let read_response = json!({"id": "__REQUEST_ID__", "result": {"thread": thread}});
-    let turns_response = json!({
+    (turns, item_response_cases)
+}
+
+fn fake_item_response_case(turn: &mut Value) -> String {
+    let turn_id = turn["id"]
+        .as_str()
+        .expect("fake transcript turn should have an id")
+        .to_owned();
+    let items = turn
+        .as_object_mut()
+        .and_then(|object| object.remove("items"))
+        .unwrap_or_else(|| json!([]));
+    turn["itemsView"] = json!("notLoaded");
+    let data = items
+        .as_array()
+        .expect("fake transcript items should be an array")
+        .iter()
+        .map(|item| json!({"turnId": turn_id, "item": item}))
+        .collect::<Vec<_>>();
+    let response = json!({
         "id": "__REQUEST_ID__",
-        "result": {
-            "data": turns,
-            "nextCursor": null,
-            "backwardsCursor": null,
-        },
+        "result": {"data": data, "nextCursor": null},
     });
-    let content = format!(
+    format!(
+        r#"        *'"turnId":"{}"'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;"#,
+        turn_id,
+        shell_single_quote(&response.to_string()),
+    )
+}
+
+fn fake_turn_page_response_cases(turns: &[Value]) -> String {
+    if turns.is_empty() {
+        let response = json!({
+            "id": "__REQUEST_ID__",
+            "result": {
+                "data": [],
+                "nextCursor": null,
+                "backwardsCursor": null,
+            },
+        });
+        format!(
+            r#"        *'"cursor":null'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;"#,
+            shell_single_quote(&response.to_string()),
+        )
+    } else {
+        turns
+            .iter()
+            .enumerate()
+            .map(|(index, turn)| {
+                let request_cursor = if index == 0 {
+                    Value::Null
+                } else {
+                    Value::String(format!("turn-page-{index}"))
+                };
+                let next_cursor = if index + 1 < turns.len() {
+                    Value::String(format!("turn-page-{}", index + 1))
+                } else {
+                    Value::Null
+                };
+                let response = json!({
+                    "id": "__REQUEST_ID__",
+                    "result": {
+                        "data": [turn],
+                        "nextCursor": next_cursor,
+                        "backwardsCursor": null,
+                    },
+                });
+                format!(
+                    r#"        *'"cursor":{}'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;"#,
+                    request_cursor,
+                    shell_single_quote(&response.to_string()),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn fake_transcript_codex_script(
+    log_path: &Path,
+    read_response: &Value,
+    turn_page_response_cases: &str,
+    item_response_cases: &str,
+) -> String {
+    format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
 while IFS= read -r line; do
@@ -966,7 +1052,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/turns/list"'*)
       request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-      printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+      case "$line" in
+{}
+      esac
       ;;
     *'"method":"thread/items/list"'*)
       request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -979,17 +1067,17 @@ done
 "#,
         log_path.display(),
         shell_single_quote(&read_response.to_string()),
-        shell_single_quote(&turns_response.to_string()),
+        turn_page_response_cases,
         item_response_cases,
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
+    )
+}
+
+fn read_json_lines(path: &Path) -> Vec<Value> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect()
 }
 
 fn temp_path(prefix: &str, extension: &str) -> PathBuf {

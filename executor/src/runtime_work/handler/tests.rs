@@ -164,6 +164,36 @@ fn active_codex_items_replace_stale_paginated_items() {
 }
 
 #[test]
+fn late_codex_items_do_not_recreate_cleared_active_transcript() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.clear_active_codex_transcript("task-1");
+
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "message-1",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Late answer"
+                }
+            }
+        }),
+    );
+
+    assert!(!handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .contains_key("task-1"));
+}
+
+#[test]
 fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "turn-live");
