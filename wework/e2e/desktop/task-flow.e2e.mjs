@@ -6106,8 +6106,10 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
 
 async function visibleModelOptionId(control, targetOptionIds) {
   for (const targetOptionId of targetOptionIds) {
+    const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+    await control.command('scrollIntoView', targetSelector).catch(() => undefined)
     const metrics = await control
-      .command('getElementMetrics', `[data-testid="${targetOptionId}"]`)
+      .command('getElementMetrics', targetSelector)
       .then(value => JSON.parse(value))
       .catch(() => [])
     if (
@@ -6255,10 +6257,11 @@ async function selectE2EModel(
     targetOptionId = await visibleModelOptionId(control, targetOptionIds)
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  await control.command('waitFor', `[data-testid="${targetOptionId}"]`, {
+  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+  await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `[data-testid="${targetOptionId}"]`)
+  await control.command('click', targetSelector)
   const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
     await control.command(
