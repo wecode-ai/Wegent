@@ -168,7 +168,8 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
-const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 55
+const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
+const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
@@ -1670,8 +1671,11 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   }
 }
 
-async function verifyVirtualizedTurnNavigationActiveMarker(control) {
-  const turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN
+async function verifyTurnNavigationTracksVisibleUserMessages(
+  control,
+  turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1,
+  totalTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT
+) {
   const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
   const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
   await control.command('waitFor', previewSelector, {
@@ -1683,26 +1687,39 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
     value: 'data-turn-index',
   })
   assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
-  const targetResponseText = `Virtualized navigation response ${turnNumber}.1`
+  const anchorResponseText = `Virtualized navigation response ${turnNumber}.1`
+  const targetResponseText = `Virtualized navigation response ${turnNumber}.6`
   await control.command(
     'scrollToRatioAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
-    { value: String((turnNumber - 1) / TURN_NAVIGATION_REGRESSION_TURN_COUNT) }
+    { value: String((turnNumber - 1) / totalTurnCount) }
   )
   await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      text: targetResponseText,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    'scrollIntoViewAsUser',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
+    { text: anchorResponseText }
   )
 
-  const assistantAnchorText = `Virtualized navigation response ${turnNumber}.6`
+  const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
+  await control.command(
+    'scrollIntoViewAsUser',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    { text: promptText }
+  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${markerSelector}[data-active="true"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'turn-navigation-01-user-visible-active.png')
+
   const assistantText = await control.command(
     'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`,
-    { text: assistantAnchorText }
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
+    { text: targetResponseText }
   )
   const turnMatch = assistantText.match(/Virtualized navigation response (\d+)\.\d+/)
   assert.ok(turnMatch, `Unable to identify the virtualized navigation turn from "${assistantText}"`)
@@ -1720,17 +1737,19 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
     'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
   )
 
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"][data-active="true"]`,
-    {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-inactive.png')
 }
 
-async function reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp) {
+async function reopenCurrentTurnNavigationTask(
+  control,
+  composerSelector,
+  restartDesktopApp,
+  expectedTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT
+) {
   const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(taskId, 'The turn-navigation fixture did not expose its runtime task ID')
@@ -1751,7 +1770,7 @@ async function reopenCurrentTurnNavigationTask(control, composerSelector, restar
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
     {
-      text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${TURN_NAVIGATION_REGRESSION_TURN_COUNT}`,
+      text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${expectedTurnCount}`,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
@@ -6678,6 +6697,10 @@ async function verifyBackgroundTaskWindowLifecycle({
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
       { text: completionText, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
+    await control.command('waitFor', composerSelector, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
   }
 
   await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
@@ -6749,7 +6772,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'utf8'
   )
   await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
-  await verifyVirtualizedTurnNavigationActiveMarker(control)
+  await verifyTurnNavigationTracksVisibleUserMessages(control)
   return taskRowTestId
 }
 
@@ -13982,7 +14005,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       control.setScenario('turn_navigation')
-      for (let index = 0; index < TURN_NAVIGATION_REGRESSION_TURN_COUNT; index += 1) {
+      for (let index = 0; index < TURN_NAVIGATION_ONLY_TURN_COUNT; index += 1) {
         const turnNumber = index + 1
         await sendPrompt(
           control,
@@ -13997,6 +14020,10 @@ last_updated = "2026-07-30T00:00:00Z"`
             timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
           }
         )
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+          stableMs: COMPOSER_READY_STABILITY_MS,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
       }
       console.log(
         'Turn navigation metrics:',
@@ -14005,8 +14032,17 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await reopenCurrentTurnNavigationTask(control, ACTIVE_COMPOSER_SELECTOR, restartDesktopApp)
-      await verifyVirtualizedTurnNavigationActiveMarker(control)
+      await reopenCurrentTurnNavigationTask(
+        control,
+        ACTIVE_COMPOSER_SELECTOR,
+        restartDesktopApp,
+        TURN_NAVIGATION_ONLY_TURN_COUNT
+      )
+      await verifyTurnNavigationTracksVisibleUserMessages(
+        control,
+        2,
+        TURN_NAVIGATION_ONLY_TURN_COUNT
+      )
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
