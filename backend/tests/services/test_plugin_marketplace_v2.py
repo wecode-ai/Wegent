@@ -1819,6 +1819,10 @@ def test_reconnect_sync_clears_materialized_uninstall_state(test_db, test_user):
 
 
 def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda _url: None,
+    )
     service = PluginMarketplaceService()
     package = _plugin_zip("2.0.0")
     stored_packages: dict[str, bytes] = {}
@@ -1886,6 +1890,10 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
 def test_upstream_archive_is_scanned_before_plugin_package_selection(
     test_db, monkeypatch
 ):
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda _url: None,
+    )
     service = PluginMarketplaceService()
     package = _plugin_zip("2.0.0")
     stored_packages: dict[str, bytes] = {}
