@@ -72,6 +72,7 @@ import {
   mergeRuntimeTaskHandles,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { applyRuntimeConversationAction } from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
@@ -1461,6 +1462,14 @@ export function useWorkbenchRuntimeMessaging({
         ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
       if (runtimeFileChanges && runtimeTask) {
+        const publishFileChanges = (fileChanges: TurnFileChangesSummary) => {
+          applyRuntimeConversationAction(runtimeTask, {
+            type: 'file_changes_updated',
+            subtaskId,
+            fileChanges,
+          })
+          return fileChanges
+        }
         try {
           const response = await executorClient.runtime.revertRuntimeFileChanges({
             address: runtimeTask,
@@ -1472,20 +1481,20 @@ export function useWorkbenchRuntimeMessaging({
           if (!fileChanges) {
             throw new Error('Invalid file changes response')
           }
-          return {
+          return publishFileChanges({
             ...fileChanges,
             diff: runtimeFileChanges.diff,
             revertible: runtimeFileChanges.revertible ?? true,
-          }
+          })
         } catch (error) {
           if (error instanceof ApiError && isRecord(error.detail)) {
             const fileChanges = normalizeTurnFileChanges(error.detail.file_changes)
             if (fileChanges) {
-              return {
+              return publishFileChanges({
                 ...fileChanges,
                 diff: runtimeFileChanges.diff,
                 revertible: runtimeFileChanges.revertible ?? true,
-              }
+              })
             }
           }
           throw error

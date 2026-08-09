@@ -8,6 +8,8 @@ The built-in browser opens in the right workspace so you can inspect websites, v
 
 Open the new-tab menu, choose **Browser**, and enter an `http`, `https`, or `file://` address, or a local absolute path. The current page remains loaded when you switch to file or review tabs. `file://` addresses and paths such as `/Users/.../file.html` are useful for previewing local HTML, PDF, image, and text files, and they can also open local folders. Markdown and extensionless text files also render as text. Folders render as read-only index pages where you can enter child folders or open files. When a local file cannot be previewed, Wework cancels the local-file download and shows a short toast.
 
+You can keep multiple task tabs open at the top, and each task owns an independent built-in browser page. After you switch to another task, the previous task's browser keeps running while hidden. AI in that task can continue opening, waiting for, and inspecting pages, and the latest page state appears when you switch back. Browser pages are not shared across tasks. The right workspace currently provides one browser tab per task; it does not provide a browser-internal tab strip.
+
 Background page-state synchronization does not overwrite the address while you are editing it. If a page is already open, leaving the address field without submitting restores the current page URL. If no page is open yet, the unsubmitted address is preserved and restored after switching conversations.
 
 If a Wework dialog, menu, or overlay intersects the right browser area, the browser temporarily hides so the native page cannot cover the main interface. It returns automatically when the overlay closes or moves away.

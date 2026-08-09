@@ -490,6 +490,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
 const SIDEBAR_RUNNING_SPINNER_CLASS =
   'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
+const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
+  'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -3339,6 +3341,7 @@ export function DesktopSidebar({
                 sidebarCollapsed={false}
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
+                buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
               />
             </div>
           )}
@@ -3350,6 +3353,7 @@ export function DesktopSidebar({
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}
                     className="gap-0"
+                    buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
                   />
                 )}
                 {onOpenSearch && (

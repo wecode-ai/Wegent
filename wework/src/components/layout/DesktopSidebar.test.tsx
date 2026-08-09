@@ -1352,10 +1352,11 @@ describe('DesktopSidebar', () => {
   })
 
   test('matches Codex sidebar text emphasis levels', () => {
-    renderSidebar({}, { status: 'disconnected', isConnected: false })
+    renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 
     const newTaskButton = screen.getByTestId('new-chat-button')
     const searchButton = screen.getByTestId('runtime-search-button')
+    const collapseSidebarButton = screen.getByTestId('collapse-sidebar-button')
     const pluginsButton = screen.getByTestId('plugins-button')
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const newTaskIcon = newTaskButton.querySelector('svg')
@@ -1366,6 +1367,10 @@ describe('DesktopSidebar', () => {
     for (const button of [newTaskButton, pluginsButton, cloudButton]) {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
+    expect(collapseSidebarButton).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-primary))]',
+      'hover:text-[rgb(var(--color-sidebar-text-primary))]'
+    )
     expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
     expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')

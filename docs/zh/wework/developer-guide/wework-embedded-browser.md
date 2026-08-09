@@ -55,10 +55,13 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 WebKit API
 - 未创建运行任务的新对话使用当前 pane key 生成临时浏览器 label。
 - 新对话发送后如果创建了 runtime task，Wework 会把临时浏览器 relabel 到新 task label。
 - 切换任务时，只显示当前 pane/task 绑定的浏览器；其它任务的页面不会跨 pane 泄漏。
-- MCP 打开请求先使用默认 label；当前 pane 失活时，Wework 会把 WebView 迁移到任务专属 label，并且只有活跃任务可以接管默认 label。
+- Executor 为已有 runtime task 注入任务专属 label；临时新对话才使用默认或 pane label，并且只有活跃任务可以接管默认 label。
+- 顶层任务标签页失活时必须继续保留 workbench effect，使任务专属 bridge listener 可以处理后台 `open`、`waitFor` 和 `inspect`。React 表面通过 `hidden` 隐藏，原生 WebView 保持不可见；不要让非任务标签页承担这项保活成本。
 - 浏览器右侧面板关闭时，原生 WebView 会被隐藏到不可见区域，不应覆盖聊天区、debug panel 或分割线。
 
 这种绑定保证“用户看到的浏览器”和“agent 控制的浏览器”是同一个对象。
+
+当前每个 pane/task label 对应一个浏览器宿主。Wework 顶层可以同时保留多个任务标签页及其独立浏览器，但单个任务内部没有浏览器多标签模型；如果新增浏览器内部多标签，必须同时扩展 bridge 路由标识、生命周期和 Agent 工具协议，不能复用另一个任务的宿主模拟。
 
 程序化首次打开必须把“面板已请求打开”和“原生 WebView 已可导航”视为两个不同阶段。bridge 应保存带 request ID 的待处理导航，等任务对应的浏览器宿主获得非零可见尺寸并进入 ready 状态后再执行；监听器晚于请求注册时，前端必须通过待处理请求快照恢复事件。只有原生 WebView 已导航到请求地址后才能向工具返回成功，不能仅因右侧面板或空白 WebView 已创建就报告成功。
 
@@ -113,7 +116,7 @@ cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
-`e2e:desktop:embedded-browser` 必须从新建本地任务执行第一次 bridge `open`，验证它在工具超时前完成、只产生一个可见原生宿主，并保留请求 URL。仅验证第二次打开或手工先展开浏览器面板不能覆盖首次打开竞态。
+`e2e:desktop:embedded-browser` 必须在任务 A 创建后切换到任务 B，再使用任务 A 的专属 label 执行第一次 bridge `open`、`waitFor` 和 `inspect`，验证非活跃任务能在工具超时前完成后台导航且不会接管任务 B 的浏览器。切回任务 A 后还要验证同一页面状态可见。仅验证第二次打开、活跃任务打开或手工先展开浏览器面板，不能覆盖首次打开和非活跃任务路由竞态。
 
 浏览器涉及 Tauri 命令、原生 WebView、IPC 或 Agent 操作链路时，还应使用 `pnpm --filter wework ai:verify start` 启动隔离真实 Tauri 会话，并记录打开页面、inspect、动作和截图的验证证据。完整 E2E 太慢时，合并前至少要说明未运行的原因，并确保 CI 中的 `e2e:desktop:embedded-browser` 会覆盖该场景。
 

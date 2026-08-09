@@ -95,6 +95,11 @@ import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceT
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
+interface ViewportSize {
+  width: number
+  height: number
+}
+
 function isPopoutWindowRuntime() {
   if (!isTauriRuntime()) return false
   try {
@@ -253,13 +258,21 @@ function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
+  // Task-scoped browser routing is owned by workbench effects and must remain
+  // available while another workspace tab is active.
+  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
-          className="h-full"
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            active ? 'relative h-full' : 'absolute inset-0',
+            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+          )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
+          aria-hidden={!active}
         >
           {renderProvider ? (
             <WorkbenchProvider
@@ -443,6 +456,65 @@ function browserWorkspaceTabStorageScope(): string {
   return `browser:${window.name}`
 }
 
+function useTauriViewportSize(isTauri: boolean): ViewportSize | null {
+  const [viewportSize, setViewportSize] = useState<ViewportSize | null>(() => {
+    if (!isTauri || window.innerWidth <= 0 || window.innerHeight <= 0) return null
+    return { width: window.innerWidth, height: window.innerHeight }
+  })
+
+  useEffect(() => {
+    if (!isTauri) return undefined
+
+    const appWindow = getCurrentWindow()
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    const applyPhysicalSize = async (
+      physicalSize: Awaited<ReturnType<typeof appWindow.innerSize>>
+    ) => {
+      const scaleFactor = await appWindow.scaleFactor()
+      const logicalSize = physicalSize.toLogical(scaleFactor)
+      if (disposed || logicalSize.width <= 0 || logicalSize.height <= 0) return
+      setViewportSize(current =>
+        current?.width === logicalSize.width && current.height === logicalSize.height
+          ? current
+          : { width: logicalSize.width, height: logicalSize.height }
+      )
+    }
+
+    void appWindow
+      .innerSize()
+      .then(applyPhysicalSize)
+      .catch(error => {
+        console.error('[Wework] Failed to read the Tauri viewport size:', error)
+      })
+
+    void appWindow
+      .onResized(({ payload }) => {
+        void applyPhysicalSize(payload).catch(error => {
+          console.error('[Wework] Failed to update the Tauri viewport size:', error)
+        })
+      })
+      .then(unlistenFn => {
+        if (disposed) {
+          unlistenFn()
+          return
+        }
+        unlisten = unlistenFn
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to listen for Tauri viewport changes:', error)
+      })
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [isTauri])
+
+  return viewportSize
+}
+
 function AppShell() {
   const { t } = useTranslation('common')
   const { pathname: path, search } = useCurrentLocation()
@@ -457,6 +529,7 @@ function AppShell() {
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
+  const tauriViewportSize = useTauriViewportSize(isTauri)
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
   const titlebarOverlaysContent = false
@@ -672,8 +745,10 @@ function AppShell() {
       labels={workspaceTabLabels}
     >
       <div
+        data-testid="app-shell"
+        data-tauri-viewport-height={tauriViewportSize?.height}
         className={cn(
-          'h-dvh',
+          isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
@@ -681,6 +756,14 @@ function AppShell() {
               : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
+        style={
+          tauriViewportSize
+            ? {
+                width: `${tauriViewportSize.width}px`,
+                height: `${tauriViewportSize.height}px`,
+              }
+            : undefined
+        }
       >
         {showChromeTitlebar && (
           <ChromeTitlebar
@@ -699,6 +782,7 @@ function AppShell() {
           />
         ) : null}
         <div
+          data-testid="app-route-host"
           className={cn(
             'relative min-h-0',
             isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',

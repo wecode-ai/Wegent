@@ -1679,7 +1679,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   }
 }
 
-async function verifyTurnNavigationTracksVisibleUserMessages(
+async function verifyTurnNavigationTracksVisibleTurnMessages(
   control,
   turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1
 ) {
@@ -1734,11 +1734,11 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
   )
 
-  await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
+  await control.command('waitFor', `${markerSelector}[data-active="true"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-inactive.png')
+  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
 async function reopenCurrentTurnNavigationTask(
@@ -4023,9 +4023,15 @@ async function configureDefaultProjectSpaceAssociation(control, localProjectId) 
     value: 'Task Follow-up Board',
   })
   await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-edit-dialog'),
+    'Saving the local project did not close the edit dialog',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
     text: '加入看板 · Task Follow-up Board',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="add-context-button"]')
   await control.command('waitFor', '[data-testid="add-project-space-context-button"]', {
@@ -6802,7 +6808,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'utf8'
   )
   await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
-  await verifyTurnNavigationTracksVisibleUserMessages(control)
+  await verifyTurnNavigationTracksVisibleTurnMessages(control)
   return taskRowTestId
 }
 
@@ -7473,9 +7479,7 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     stableMs: 300,
   })
-  const queuedSnapshot = JSON.parse(
-    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-  )
+  const queuedSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     queuedSnapshot.testIds.includes('chat-input-error'),
     false,
@@ -7512,14 +7516,10 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The queued follow-up was not sent after the active turn settled'
   )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
-    {
-      text: SEND_REJECTION_RETRY_PROMPT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: SEND_REJECTION_RETRY_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
@@ -14238,7 +14238,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleUserMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -15003,6 +15003,24 @@ last_updated = "2026-07-30T00:00:00Z"`
         /\+1\s*-0/,
         'The real apply_patch result did not render the expected file diff'
       )
+
+      phase = 'file-changes-revert-confirmation'
+      await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', '[data-testid="confirm-revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', '[data-testid="cancel-revert-file-changes-button"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('confirm-revert-file-changes-button'),
+        'Cancelling the file changes revert confirmation did not restore the conversation'
+      )
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]', {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
