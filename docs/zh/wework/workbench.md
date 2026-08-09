@@ -40,7 +40,7 @@ Wework 桌面版使用顶部标签页承载任务、项目空间、智能体和�
 
 排查切换任务后终端未重绘时，前端日志会记录终端类型、任务与会话标识、激活阶段、xterm 行列数、容器尺寸和隐藏状态；不会记录终端输出、命令或工作区路径。
 
-排查 `[Terminal connection failed]` 时，按同一个会话标识查看三类日志：`Closing local terminal session` 说明会话是因面板卸载、工作区目标变化还是用户主动关闭而被移除；`Local terminal connection failed` 会标明失败发生在输出监听、退出监听或原生 attach；`Tauri local terminal attach` 会记录会话不存在、attach 通道已关闭、已附着或 attach 成功等原生状态。上述日志不记录终端输入、输出或工作区路径。
+排查 `[Terminal connection failed]` 时，按同一个会话标识串联 `Local terminal start`、`Local terminal connection`、`Tauri local terminal attach` 和 `Local terminal close` 日志。日志会记录宿主进程、子进程、任务、工作区路径、连接阶段和关闭原因，从而区分输出监听、退出监听、原生 attach、会话不存在和主动关闭等情况。上述日志不记录终端输入、输出、执行命令或环境变量内容。
 
 ## 展开右侧工作区
 
