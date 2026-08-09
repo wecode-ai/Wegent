@@ -58,6 +58,9 @@ pub(crate) async fn load_codex_transcript(
         .get("thread")
         .cloned()
         .ok_or_else(|| "thread/read returned a response without thread".to_owned())?;
+    if !thread.is_object() {
+        return Err("thread/read returned a non-object thread".to_owned());
+    }
     let mut cursor = request.cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;

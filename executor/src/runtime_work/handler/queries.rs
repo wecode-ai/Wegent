@@ -203,6 +203,12 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        if before_cursor.is_some() && after_cursor.is_some() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Codex transcript pagination accepts only one cursor at a time",
+            ));
+        }
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
@@ -290,12 +296,6 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        if before_cursor.is_some() && after_cursor.is_some() {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Codex transcript pagination accepts only one cursor at a time",
-            ));
-        }
         let CodexTranscriptPage {
             mut thread,
             before_cursor: page_before_cursor,

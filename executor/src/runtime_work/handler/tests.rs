@@ -1401,6 +1401,30 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn transcript_rejects_conflicting_cursors_before_task_lookup() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "missing-task",
+                "refresh": true,
+                "beforeCursor": "before-opaque",
+                "afterCursor": "after-opaque"
+            }
+        }))
+        .await;
+
+    let error = result.expect_err("conflicting cursors should be rejected");
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(
+        error.message,
+        "Codex transcript pagination accepts only one cursor at a time"
+    );
+}
+
 #[test]
 fn first_message_search_result_returns_bounded_snippet() {
     let link = RuntimeTaskLink::new_pending(
