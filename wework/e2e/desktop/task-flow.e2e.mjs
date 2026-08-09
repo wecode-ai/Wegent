@@ -176,7 +176,7 @@ const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const SEND_REJECTION_RUNNING_PROMPT =
   'WEWORK_DESKTOP_E2E_SEND_REJECTION_RUNNING: keep this turn active.'
 const SEND_REJECTION_RETRY_PROMPT =
-  'WEWORK_DESKTOP_E2E_SEND_REJECTION_RETRY: this send must be rejected visibly.'
+  'WEWORK_DESKTOP_E2E_SEND_REJECTION_RETRY: queue this send after stale idle state.'
 const SEND_REJECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SEND_REJECTION_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
 const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
@@ -7459,22 +7459,24 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     ACTIVE_WORKBENCH_SELECTOR
   )
   await control.command('press', composerSelector, { key: 'Enter' })
-  await control.command('waitFor', '[data-testid="chat-input-error"]', {
-    text: '当前回复仍在进行中，请稍后再发送',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    stableMs: 300,
-  })
-  const sendError = await control.command('getText', '[data-testid="chat-input-error"]')
-  assert.equal(
-    sendError,
-    '当前回复仍在进行中，请稍后再发送',
-    'The rejected follow-up did not show the localized runtime-busy error'
-  )
-  await control.command('waitFor', composerSelector, {
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: SEND_REJECTION_RETRY_PROMPT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     stableMs: 300,
   })
+  const queuedSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    queuedSnapshot.testIds.includes('chat-input-error'),
+    false,
+    'The stale busy rejection surfaced as an error instead of queueing the follow-up'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'The queued follow-up remained in the composer'
+  )
   const userMessages = await control.command(
     'getText',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -7486,7 +7488,7 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
   )
   await captureVerificationScreenshot(
     control,
-    'send-rejection-03-error-visible.png',
+    'send-rejection-03-queued.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(
@@ -7496,22 +7498,29 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
   )
 
   control.releaseSendRejectionResponse()
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: SEND_REJECTION_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('fill', composerSelector, { value: 'retry draft' })
+  await withTimeout(
+    control.awaitScenarioRequestCount('send_rejection', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The queued follow-up was not sent after the active turn settled'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    {
+      text: SEND_REJECTION_RETRY_PROMPT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes('chat-input-error'),
-    'Editing the composer did not clear the send error'
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The queued follow-up remained after it was sent'
   )
   await captureVerificationScreenshot(
     control,
     'send-rejection-04-recovered.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
-  await control.command('fill', composerSelector, { value: '' })
 }
 
 async function verifyRateLimitRecovery({ composerSelector, control }) {
