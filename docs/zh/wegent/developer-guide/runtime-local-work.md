@@ -194,7 +194,7 @@ runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Ru
 
 历史 transcript 统一使用 `subtaskId` 标识 assistant 消息所属的 subtask，但 Backend 转发的云端任务 ID 是数字，本地 executor 的 turn ID 是字符串。Wework 在恢复消息的映射边界必须把两种值统一成字符串；工具调用块和文件变更块都依赖该标识，不能因 ID 的传输类型不同而丢弃历史执行记录。
 
-Wework 展示文件变更卡片时，运行时 LocalTask 不走中心库 Task API，而是通过当前任务的 `deviceId + workspacePath` 调用设备命令 `turn_file_changes_review` 或 `turn_file_changes_revert`。这样 review 和 revert 都发生在生成该 LocalTask 的实际设备目录中。运行时本地任务可能没有中心库 `TaskResource`/`Subtask`，因此 artifact id 允许使用 `turn-file-changes/0/<subtaskId>` 这类纯数字路径；设备命令仍必须用完整正则匹配 artifact id，并从 metadata 校验 workspace 与 patch checksum，不能接受任意路径。若本地 artifact 缺失或回滚冲突，前端会把对应状态写回当前 transcript 消息，避免继续展示过期的可操作状态。
+Wework 展示文件变更卡片时，运行时 LocalTask 不走中心库 Task API，而是通过当前任务的 `deviceId + workspacePath` 调用设备命令 `turn_file_changes_review` 或 `turn_file_changes_revert`。这样 review 和 revert 都发生在生成该 LocalTask 的实际设备目录中。原生 Codex transcript 会把单轮 diff 规范化为完整 unified patch，持久化到 `turn-file-changes/codex/<turnId>`，并仅在 artifact 写入成功后把卡片标记为可撤销。设备命令仍必须完整匹配 artifact id，并从 metadata 校验 workspace 与 patch checksum，不能接受任意路径。若本地 artifact 缺失或回滚冲突，前端会把对应状态写回当前 transcript 消息，避免继续展示过期的可操作状态。
 
 ## 工作区工具上下文
 

@@ -7,6 +7,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -2798,6 +2799,67 @@ describe('createLocalAppServices', () => {
       args: ['image.png', '0'],
       timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
+
+  test('reverts local runtime file changes through the owning device command', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { success: true, status: 'reverted' },
+      stderr: '',
+      error: null,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        version: '1.9.0',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const fileChanges: TurnFileChangesSummary = {
+      version: 1,
+      status: 'active',
+      artifact_id: 'turn-file-changes/codex/turn-1',
+      device_id: 'device-uuid',
+      workspace_path: '/Users/me/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'README.md',
+          change_type: 'modified',
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      revertible: true,
+    }
+
+    const response = await services.runtimeWorkApi?.revertRuntimeFileChanges({
+      address: {
+        deviceId: 'device-uuid',
+        taskId: 'runtime-1',
+        workspacePath: '/Users/me/project',
+      },
+      fileChanges,
+    })
+
+    expect(response?.fileChanges).toMatchObject({
+      status: 'reverted',
+      artifact_id: fileChanges.artifact_id,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'turn_file_changes_revert',
+      path: '/Users/me/project',
+      args: ['turn-file-changes/codex/turn-1'],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
     })
   })
 })

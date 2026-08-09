@@ -1505,6 +1505,7 @@ async function executeLocalDeviceCommand(
   data: {
     deviceId?: string
     command_key: string
+    path?: string
     args?: string[]
     timeout_seconds?: number
     max_output_bytes?: number
@@ -2247,10 +2248,47 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeWorkspaceSearchResponse> {
       return requestWithLocalDevice('runtime.workspace.search', data)
     },
-    revertRuntimeFileChanges(
+    async revertRuntimeFileChanges(
       data: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
-      return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
+      const summary = data.fileChanges
+      if (summary.status === 'reverted') {
+        return { fileChanges: summary }
+      }
+      const response = await executeLocalDeviceCommand(
+        requestWithLocalDevice,
+        {
+          deviceId: data.address.deviceId,
+          command_key: 'turn_file_changes_revert',
+          path: summary.workspace_path,
+          args: [summary.artifact_id],
+          timeout_seconds: 30,
+          max_output_bytes: 5 * 1024 * 1024,
+        },
+        'Failed to revert runtime file changes'
+      )
+      const payload = recordValue(response.stdout)
+      const status = stringValue(payload.status)
+      if (status === 'conflicted' || status === 'artifact_missing') {
+        return {
+          fileChanges: {
+            ...summary,
+            status,
+          },
+        }
+      }
+      if (payload.success !== true || status !== 'reverted') {
+        throw new Error(
+          stringValue(payload.error) ?? 'Local executor returned an invalid file changes result'
+        )
+      }
+      return {
+        fileChanges: {
+          ...summary,
+          status: 'reverted',
+          reverted_at: new Date().toISOString(),
+        },
+      }
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)

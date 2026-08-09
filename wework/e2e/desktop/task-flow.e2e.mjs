@@ -7473,9 +7473,7 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     stableMs: 300,
   })
-  const queuedSnapshot = JSON.parse(
-    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-  )
+  const queuedSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     queuedSnapshot.testIds.includes('chat-input-error'),
     false,
@@ -7512,14 +7510,10 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The queued follow-up was not sent after the active turn settled'
   )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
-    {
-      text: SEND_REJECTION_RETRY_PROMPT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: SEND_REJECTION_RETRY_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
@@ -15002,6 +14996,24 @@ last_updated = "2026-07-30T00:00:00Z"`
         /\+1\s*-0/,
         'The real apply_patch result did not render the expected file diff'
       )
+
+      phase = 'file-changes-revert-confirmation'
+      await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', '[data-testid="confirm-revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', '[data-testid="cancel-revert-file-changes-button"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('confirm-revert-file-changes-button'),
+        'Cancelling the file changes revert confirmation did not restore the conversation'
+      )
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]', {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
