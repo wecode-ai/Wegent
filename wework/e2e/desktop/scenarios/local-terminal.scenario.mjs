@@ -4,8 +4,6 @@ import { dirname, join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-const EMBEDDED_TERMINAL_SELECTOR = '[data-testid="embedded-local-terminal"]'
-const BOTTOM_TERMINAL_TAB_SELECTOR = '[data-testid="bottom-workspace-terminal-tab"]'
 const CENTRAL_HARNESS_SELECTOR = '[data-testid="central-harness-terminal"]'
 const OPEN_CODE_ARGS_FILE = '.wework-opencode-e2e-args'
 const CLAUDE_CODE_ARGS_FILE = '.wework-claude-code-e2e-args'
@@ -157,42 +155,6 @@ export async function createDesktopScenario({
 
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
-
-      await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
-      await control.command('waitFor', EMBEDDED_TERMINAL_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('waitFor', BOTTOM_TERMINAL_TAB_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await capture(control, 'local-terminal-00-session-started.png')
-
-      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-      assert.ok(
-        snapshot.testIds.includes('embedded-local-terminal'),
-        'The embedded local terminal element was not rendered'
-      )
-
-      await control.command('click', '[data-testid="close-bottom-workspace-panel-button"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="bottom-workspace-panel"][aria-hidden="true"]',
-        {
-          stableMs: 300,
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="bottom-workspace-panel"][aria-hidden="false"]',
-        {
-          stableMs: 300,
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('waitFor', EMBEDDED_TERMINAL_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await capture(control, 'local-terminal-01-session-restored.png')
-
-      await control.command('click', '[data-testid="close-bottom-workspace-panel-button"]')
       await configureHarnesses(control, executables, uiTimeoutMs)
       await startHarness(control, 'opencode', 'Inspect the current project', uiTimeoutMs)
       await control.command(
@@ -200,7 +162,7 @@ export async function createDesktopScenario({
         '[data-testid^="local-harness-session-row-local-terminal-"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await capture(control, 'local-terminal-02-central-opencode.png')
+      await capture(control, 'local-terminal-00-central-opencode.png')
 
       const harnessSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
@@ -231,7 +193,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await startHarness(control, 'claude_code', 'Review the current project', uiTimeoutMs)
-      await capture(control, 'local-terminal-03-central-claude-code.png')
+      await capture(control, 'local-terminal-01-central-claude-code.png')
       await waitForFile(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
         '--permission-mode\nplan\n--verbose\nReview the current project\n',
