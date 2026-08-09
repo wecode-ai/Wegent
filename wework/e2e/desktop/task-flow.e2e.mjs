@@ -3995,9 +3995,15 @@ async function configureDefaultProjectSpaceAssociation(control, localProjectId) 
     value: 'Task Follow-up Board',
   })
   await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-edit-dialog'),
+    'Saving the local project did not close the edit dialog',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
     text: '加入看板 · Task Follow-up Board',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="add-context-button"]')
   await control.command('waitFor', '[data-testid="add-project-space-context-button"]', {
