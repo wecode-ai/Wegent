@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from './checkpoints.mjs'
@@ -5641,26 +5641,33 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     )
     assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
     const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
-    const standaloneWorkspaceDate = new Date().toLocaleDateString('en-CA')
-    const standaloneWorkspacePath = join(
-      homePath,
-      'Documents',
-      'Codex',
-      standaloneWorkspaceDate,
-      manualTaskId
+    const runtimeIndex = JSON.parse(
+      await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+    )
+    const standaloneWorkspacePath = runtimeIndex.tasks[manualTaskId]?.workspace_path
+    assert.equal(
+      typeof standaloneWorkspacePath,
+      'string',
+      'The projectless automation task was grouped under a project workspace'
+    )
+    const standaloneWorkspaceSegments = relative(
+      join(homePath, 'Documents', 'Codex'),
+      standaloneWorkspacePath
+    ).split(/[/\\]/)
+    assert.match(
+      standaloneWorkspaceSegments[0],
+      /^\d{4}-\d{2}-\d{2}$/,
+      'The standalone automation workspace did not use a dated directory'
+    )
+    assert.deepEqual(
+      standaloneWorkspaceSegments.slice(1),
+      [manualTaskId],
+      'The projectless automation task was grouped under a project workspace'
     )
     assert.equal(
       await pathExists(standaloneWorkspacePath),
       true,
       `The projectless automation did not create a standalone workspace: ${standaloneWorkspacePath}`
-    )
-    const runtimeIndex = JSON.parse(
-      await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
-    )
-    assert.equal(
-      runtimeIndex.tasks[manualTaskId]?.workspace_path,
-      standaloneWorkspacePath,
-      'The projectless automation task was grouped under a project workspace'
     )
     if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
       await control.command('click', `[data-testid="${manualTaskRow}"]`)
