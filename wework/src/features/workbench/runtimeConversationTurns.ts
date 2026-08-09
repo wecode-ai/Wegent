@@ -321,12 +321,18 @@ function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  const localById = new Map(localItems.map(item => [item.id, item]))
+  const reconciledLocalItems = localItems.filter(
+    localItem =>
+      !snapshotItems.some(snapshotItem =>
+        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
+      )
+  )
+  const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item)
   )
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
-  const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
+  const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
   for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
     const snapshotItem = mergedSnapshotItems[snapshotIndex]
     if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
@@ -351,6 +357,21 @@ function mergeRuntimeConversationItems(
     mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
   }
   return mergedLocalItems
+}
+
+function isEquivalentAssistantTextRepresentation(
+  local: RuntimeConversationItem,
+  snapshot: RuntimeConversationItem
+): boolean {
+  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  const localContent = assistantTextRepresentationContent(local)
+  const snapshotContent = assistantTextRepresentationContent(snapshot)
+  return localContent !== undefined && localContent === snapshotContent
+}
+
+function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {
+  if (item.type === 'assistant_text') return item.content
+  return item.type === 'block' && item.block.type === 'text' ? item.block.content : undefined
 }
 
 function mergeRuntimeConversationItem(
