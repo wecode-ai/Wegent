@@ -229,6 +229,13 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   const diagnostics = {
+    appShell: JSON.parse(await control.command('getElementMetrics', '[data-testid="app-shell"]')),
+    appShellHeight: await control.command('getInlineStyle', '[data-testid="app-shell"]', {
+      value: 'height',
+    }),
+    tauriViewportHeight: await control.command('getAttribute', '[data-testid="app-shell"]', {
+      value: 'data-tauri-viewport-height',
+    }),
     routeHost: JSON.parse(
       await control.command('getElementMetrics', '[data-testid="app-route-host"]')
     ),

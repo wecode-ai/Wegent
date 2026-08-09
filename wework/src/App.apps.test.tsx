@@ -23,11 +23,18 @@ vi.mock('@/lib/embedded-browser', async importOriginal => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
+    label: 'main',
     startDragging: vi.fn(),
     minimize: vi.fn(),
     toggleMaximize: vi.fn(),
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
+    innerSize: vi.fn().mockResolvedValue({
+      width: 1280,
+      height: 720,
+      toLogical: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+    }),
+    scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
@@ -295,8 +302,12 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
     const routeHost = screen.getByTestId('app-route-host')
-    expect(routeHost.parentElement).toHaveClass('fixed', 'inset-0')
-    expect(routeHost.parentElement).not.toHaveClass('h-dvh', 'h-screen')
+    const appShell = screen.getByTestId('app-shell')
+    expect(appShell).toHaveClass('fixed', 'inset-0')
+    expect(appShell).not.toHaveClass('h-dvh', 'h-screen')
+    await waitFor(() => {
+      expect(appShell).toHaveStyle({ width: '1280px', height: '720px' })
+    })
     expect(routeHost).toHaveClass('flex-1', 'min-h-0')
     expect(routeHost).not.toHaveClass('h-0')
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
