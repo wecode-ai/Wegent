@@ -1961,6 +1961,13 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     QUEUE_DIRECT_THIRD,
     'Continuing the queue did not send the message moved to the top'
   )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  assert.equal(
+    control.scenarioRequests.get('queue_management')?.length,
+    directRequestOffset + 2,
+    'The next queued message was sent before the active queued turn started'
+  )
+  control.releaseQueueManagementFirstResponse()
   await withTimeout(
     control.awaitScenarioRequestCount(
       'queue_management',
@@ -9220,6 +9227,9 @@ class DesktopE2EServer {
     this.sendRejectionCompletionRelease = new Promise(resolvePromise => {
       this.releaseSendRejectionCompletion = resolvePromise
     })
+    this.queueManagementFirstCompletionRelease = new Promise(resolvePromise => {
+      this.releaseQueueManagementFirstCompletion = resolvePromise
+    })
     this.sideChatQueueRelease = new Promise(resolvePromise => {
       this.resolveSideChatQueueRelease = resolvePromise
     })
@@ -9591,6 +9601,10 @@ class DesktopE2EServer {
 
   releaseSendRejectionResponse() {
     this.releaseSendRejectionCompletion()
+  }
+
+  releaseQueueManagementFirstResponse() {
+    this.releaseQueueManagementFirstCompletion()
   }
 
   releaseSideChatQueueResponse() {
@@ -11629,6 +11643,24 @@ class DesktopE2EServer {
       ]
       const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
       assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
+      if (prompt === QUEUE_DIRECT_THIRD) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.queueManagementFirstCompletionRelease
+        if (response.destroyed || response.writableEnded) return
+        response.end(
+          createSse([
+            assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+            responseCompleted(responseId),
+          ])
+        )
+        return
+      }
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
