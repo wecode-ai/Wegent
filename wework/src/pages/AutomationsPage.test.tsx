@@ -1,5 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Automation } from '@/types/automation'
 import { AutomationsPage } from './AutomationsPage'
@@ -97,16 +96,25 @@ describe('AutomationsPage', () => {
   })
 
   test('keeps the detail panel closed after the user dismisses it', async () => {
-    render(<AutomationsPage />)
+    vi.useFakeTimers()
+    try {
+      render(<AutomationsPage />)
+      await act(() => vi.advanceTimersByTimeAsync(0))
 
-    expect(await screen.findByTestId('automation-detail-panel')).toBeInTheDocument()
+      expect(screen.getByTestId('automation-detail-panel')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('automation-detail-close'))
+      fireEvent.click(screen.getByTestId('automation-detail-close'))
 
-    await waitFor(() => {
       expect(screen.queryByTestId('automation-detail-panel')).not.toBeInTheDocument()
-    })
-    expect(screen.getByText('选择一个任务查看详情')).toBeInTheDocument()
-    expect(automationApi.listAutomations).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('选择一个任务查看详情')).toBeInTheDocument()
+      expect(automationApi.listAutomations).toHaveBeenCalledTimes(1)
+
+      await act(() => vi.advanceTimersByTimeAsync(30_000))
+
+      expect(automationApi.listAutomations).toHaveBeenCalledTimes(2)
+      expect(screen.queryByTestId('automation-detail-panel')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
