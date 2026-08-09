@@ -8115,6 +8115,38 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
   await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
+  const readyCountBeforeContinuationReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeContinuationReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The reloaded Wework WebView did not reconnect during the active Goal continuation'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'Reloading lost the provider-confirmed running state during Goal continuation',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const reloadedContinuationDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.taskExecution?.running === true,
+    'Reloading did not restore the provider-confirmed active Goal turn'
+  )
+  assert.equal(
+    reloadedContinuationDebugSnapshot.pane?.status?.isBusy,
+    true,
+    'Reloading exposed a direct send path while the provider turn was still active'
+  )
+  await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
+
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
   await waitForSnapshot(
@@ -8125,13 +8157,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       snapshot.testIds.includes(goalRunningTestId),
     'The background Goal continuation stopped running or became unread'
   )
-  await captureVerificationScreenshot(control, 'goal-idle-03-background-unread-free.png')
+  await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
 
   control.releaseGoalIdleResponse()
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'goal-idle-04-settled-unread.png')
+  await captureVerificationScreenshot(control, 'goal-idle-05-settled-unread.png')
   await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

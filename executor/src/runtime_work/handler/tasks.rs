@@ -467,6 +467,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_active_turn_check(payload, true)
+            .await
+    }
+
+    async fn send_message_with_active_turn_check(
+        &self,
+        payload: Value,
+        verify_no_active_turn: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -552,6 +561,19 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         };
+        if verify_no_active_turn {
+            let thread = self
+                .read_codex_thread_with_turns(&thread_id)
+                .await
+                .map_err(|error| AppIpcError::new("codex_error", error))?;
+            if codex_thread_has_in_progress_turn(&thread) {
+                return Ok(json!({
+                    "success": false,
+                    "error": "runtime task is already running",
+                    "code": "bad_request",
+                }));
+            }
+        }
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -621,7 +643,8 @@ impl RuntimeWorkRpcHandler {
                 "code": "interrupt_timeout",
             }));
         }
-        self.send_message(payload).await
+        self.send_message_with_active_turn_check(payload, false)
+            .await
     }
 
     pub(super) async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {

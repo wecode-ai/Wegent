@@ -1961,6 +1961,93 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_settles() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-send-provider-active-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-provider-active-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                "local-task-1": {
+                    "local_task_id": "local-task-1",
+                    "thread_id": "thread-1",
+                    "workspace_path": "/tmp/project",
+                    "title": "Provider-active task",
+                    "runtime": "codex",
+                    "status": "active",
+                    "running": false,
+                    "continuable": true,
+                    "created_at": 1780000000000_i64,
+                    "updated_at": 1780000060000_i64,
+                    "runtime_handle": {"threadId": "thread-1"},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let log_path = temp_path("runtime-send-provider-active-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1"
+            }
+        }))
+        .await
+        .expect("provider-active transcript should load");
+    assert_eq!(transcript["running"], true);
+
+    let rejected = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "second turn",
+                "executionRequest": codex_execution_request(
+                    "second turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("provider-active send should return a contract response");
+
+    assert_eq!(
+        rejected,
+        json!({
+            "success": false,
+            "error": "runtime task is already running",
+            "code": "bad_request"
+        })
+    );
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| call["method"] == "thread/read"));
+    assert!(
+        calls.iter().all(|call| call["method"] != "turn/start"),
+        "send must not create an overlapping Codex turn: {calls:?}"
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_guidance_steers_running_codex_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2812,6 +2899,9 @@ while IFS= read -r line; do
     *'"method":"thread/inject_items"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-ephemeral","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}}}}}'
+      ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread should not resume"}}}}'
       ;;
@@ -2908,6 +2998,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -3159,6 +3252,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"interrupted","items":[]}}]}}}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'

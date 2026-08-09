@@ -1858,9 +1858,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return
         }
 
-        const sent = await sendRuntimeMessage(queuedMessage)
+        let sendError: string | null = null
+        const sent = await sendRuntimeMessage(queuedMessage, {
+          onError: error => {
+            sendError = error
+          },
+        })
         if (sent) {
           setCodeCommentContexts([])
+          return
+        }
+        if (isRuntimeTaskBusyError(sendError)) {
+          setQueuedMessages(messages => [...messages, queuedMessage])
         }
       },
       [

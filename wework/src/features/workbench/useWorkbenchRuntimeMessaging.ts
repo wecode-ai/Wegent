@@ -73,6 +73,7 @@ import {
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
+import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import {
   inferRuntimeName,
@@ -239,15 +240,33 @@ export function useWorkbenchRuntimeMessaging({
         }
         return true
       } catch (error) {
-        if (sendRequested) lifecycleStore.sendRejected(request.address)
+        const errorMessage = error instanceof Error ? error.message : '发送失败'
+        const blockedByActiveTurn = isRuntimeTaskBusyError(errorMessage)
+        if (sendRequested) {
+          if (blockedByActiveTurn) {
+            lifecycleStore.sendBlockedByActiveTurn(request.address)
+          } else {
+            lifecycleStore.sendRejected(request.address)
+          }
+        }
+        if (blockedByActiveTurn) {
+          try {
+            await refreshWorkLists()
+          } catch (refreshError) {
+            console.warn('[Wework] Runtime busy-state refresh failed', {
+              taskId: request.address.taskId,
+              error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+            })
+          }
+        }
         console.warn('[Wework] Runtime send failed', {
           taskId: request.address.taskId,
           deviceId: request.address.deviceId,
           workspacePath: request.address.workspacePath ?? null,
           addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
         })
-        reportError(error instanceof Error ? error.message : '发送失败', options)
+        reportError(errorMessage, options)
         return false
       }
     },
