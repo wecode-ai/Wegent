@@ -1595,6 +1595,8 @@ export interface RuntimeContextUsage {
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
+  itemId?: string
+  item_id?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]

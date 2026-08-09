@@ -29,7 +29,7 @@ Rust executor 为运行时任务保留设备侧 JSON LocalTask 索引：
 $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 ```
 
-Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制。executor 会在本地索引中保存 Wegent 侧 `localTaskId`、工作区、标题、状态以及真实 Codex `threadId` 的关联，便于 app 模式创建任务后重启仍能恢复映射；完整 transcript 仍以 Codex app-server `thread/read` 返回的会话 metadata 和本机 rollout JSONL 为准，不同步到中心数据库。
+Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制。executor 会在本地索引中保存 Wegent 侧 `localTaskId`、工作区、标题、状态以及真实 Codex `threadId` 的关联，便于 app 模式创建任务后重启仍能恢复映射；完整 transcript 以 Codex app-server 的 `thread/turns/list` 和 `thread/items/list` 返回值为准，不同步到中心数据库。
 
 `localTaskId` 是 Wegent 侧本地任务身份，不等同于底层 runtime 的 provider 会话 id。前端、Backend 和 executor 需要传递 provider 会话定位信息时必须使用 opaque `runtimeHandle`，例如 Codex `threadId`、Claude Code `sessionId` 或 OpenCode `sessionId`，也可以使用明确的 `providerSessionId`。`runtime.tasks.transcript` 不能在缺少 LocalTask 索引映射或 `runtimeHandle` 时把 `localTaskId` 当成 provider 会话 id 读取；这种仍在创建中的 optimistic 任务应先返回空本地 transcript，等待 create/link 完成后再读取真实运行时会话。
 
@@ -85,37 +85,16 @@ Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.tra
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
 
 1. 列表通过常驻 Codex app-server 调用 `thread/list`，使用 `recency_at` 降序、`archived` 过滤和 `useStateDbOnly` 参数读取 thread metadata，不扫描 JSONL transcript。executor 对短时间内的重复列表请求做小窗口缓存，线程管理操作或本地任务状态变化后会失效缓存，然后合并设备侧 LocalTask 索引。
-2. 首次打开调用 `thread/read`，并传 `includeTurns: false`，只拿 thread metadata 和 rollout path。executor 用这个 path 自己顺序解析一次 JSONL，生成标准化消息、tool block、thinking block、文件变更和 raw rollout turns，并把这些结果连同文件长度/mtime 签名放进内存 cache。
-3. 已加载后的切换不再访问 Codex app-server，也不重新读文件。executor 从内存 cache 取完整消息数组，然后用请求里的 `limit`/`beforeCursor` 做分页返回。
-4. 切换时需要获取最新数据时，executor 先读取当前 rollout 文件签名。如果文件只发生 append，就从上次文件长度开始读取新增字节，把新增事件合并到缓存的 rollout turns，并只从受影响的第一个 turn 重新生成消息，按 `turnId` 替换缓存尾部。这样 tool item、thinking、运行状态和最新文本都来自同一个 append 结果，不需要额外 fallback。
-5. 只有文件被截断、mtime 变化但长度不变、或老缓存没有 raw turns 时，才丢弃缓存重新执行一次首次打开路径。这是文件非 append 变化的恢复路径，不承载正常功能。
+2. 打开或刷新先调用 `thread/read(includeTurns=false)` 获取 thread metadata，再调用 `thread/turns/list(itemsView=notLoaded, sortDirection=desc)` 获取一页回合。executor 不读取或解析 rollout JSONL，也不调用 `thread/read(includeTurns=true)`。
+3. 每个返回的回合都必须通过 `thread/items/list(sortDirection=asc)` 加载完整 item。executor 按 provider item ID 去重和更新运行中快照，再统一生成 message、tool block、thinking block 和文件变更。
+4. `nextCursor` 和 `backwardsCursor` 是 Codex 生成的不透明游标。普通打开只读取请求页；向前或向后翻页时原样传回对应游标。搜索、Supervisor、fork 等需要完整历史的消费者沿 `nextCursor` 读取到末尾。
+5. executor 不保留旧的本地 offset 分页或 `itemsView=full` 兼容路径。Codex app-server 不支持 `thread/turns/list` 或 `thread/items/list` 时，请求直接失败，不能回退到 rollout 文件或 `thread/read(includeTurns=true)`。
 
-列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
+列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。新建 thread 显式设置 `historyMode=paginated`；Wework 随包 Codex 版本必须支持 `thread/turns/list` 和 `thread/items/list`，否则属于不受支持的运行时版本。
 
 本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
 
-分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
-
-`loadedTranscriptRanges` 是判断历史区间是否已加载的权威状态，不能只根据当前可见消息的 `messageIndex` 是否连续来判断。模型透明重试等流程可能让前端折叠已经加载的失败尝试，此时可见消息索引会跳号，但中间记录并不缺失。只有相邻可见消息之间存在未被任何已加载区间覆盖的索引时，Wework 才显示缺失区间标记，并且请求范围必须裁剪为实际未覆盖的部分。
-
-发言导航以稳定的客户端消息 ID 标识用户消息。重试或恢复可能让 transcript 导航元数据暂时包含多个指向同一客户端消息的条目；前端必须合并这些重复项，并优先保留与当前已加载消息索引匹配的条目，避免重复刻度、重叠预览和错误跳转。
-
-可用下面的手工 benchmark 复测本机 rollout：
-
-```bash
-cd executor
-WEGENT_MANUAL_ROLLOUT=/path/to/rollout.jsonl \
-WEGENT_MANUAL_APPEND=1 \
-cargo test --test manual_runtime_perf -- --ignored --nocapture
-```
-
-当前本机实测结果：
-
-| 样本                             | 文件大小 |  列表 | 首次打开 | 已加载切换 | append 刷新 |
-| -------------------------------- | -------- | ----: | -------: | ---------: | ----------: |
-| “修复进行中任务未显示 tool 调用” | 约 61 MB | 13 ms |   2.09 s |      33 ms |       53 ms |
-
-因此当前目标达到列表 1 秒以内、首次打开 3 秒以内、已加载切换和获取最新数据 500 ms 以内。更大的极端历史首次冷解析仍受 JSONL 文件大小限制，但加载后切换和 append 刷新不再随历史总长度增长。
+分页页面之间只按稳定消息 ID 合并。provider 游标不编码全局 message offset，因此前端不能根据游标生成 `messageIndex`、缺失区间或完整会话导航。发言导航只覆盖当前已经加载的消息；加载更早页面后再从合并结果重建导航。
 
 继续 LocalTask 时，Wework 调用：
 
@@ -149,7 +128,7 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
-Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或 transcript 解析主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 `thread/read` 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由 `thread/read` 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
+Codex 原生任务的持久消息只以 `thread/turns/list` 和 `thread/items/list` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存并入 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或分页读取主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 provider 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由分页 transcript 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
@@ -248,7 +227,7 @@ Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体
 
 - Claude Code 创建 executor JSON LocalTask，并在该索引中保存 transcript 和 runtime handle。
 - Codex 创建时先返回 Wegent 侧 `localTaskId`，让前端立即打开任务并接收 stream；后台通过 app-server `thread/start` 和 `turn/start` 创建真实 Codex thread 后，会把 `localTaskId -> threadId` 关联写入 JSON LocalTask 索引用于后续 send/resume。
-- Codex 创建和继续时不把完整 transcript 缓存到 executor JSON 索引；executor 重启后通过 `thread/list` 和本地索引恢复任务链接，再用 `thread/read` metadata 加 rollout JSONL 读取 transcript。
+- Codex 创建和继续时不把完整 transcript 缓存到 executor JSON 索引；executor 重启后通过 `thread/list` 和本地索引恢复任务链接，再用 `thread/turns/list` 与 `thread/items/list` 读取 transcript。
 - Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
 - Codex app-server 输入支持 `input_text`、`input_image` 和 `localImage` prompt block 映射。Backend 附件 id 下载与沙箱路径重写仍和 local-first 附件分离：本地 App 模式通过 executor IPC 发送同设备附件记录，云端/Backend 路径继续使用上传后的附件 ID。
 - Codex 回复完成时如果 Responses `response.completed` 中带有 `file_changes` 或 `fileChanges`，executor 会把它保存到当前 assistant message 的 `fileChanges` 字段，后续 transcript 刷新继续展示同一张文件变更卡片。

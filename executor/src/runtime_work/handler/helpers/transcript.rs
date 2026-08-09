@@ -15,9 +15,12 @@ fn cached_transcript_response(
         messages,
         context_usage,
         running,
-        limit,
-        before_cursor: before_cursor.map(ToOwned::to_owned),
-        after_cursor: after_cursor.map(ToOwned::to_owned),
+        pagination: transcript_pagination(
+            &link.runtime,
+            limit,
+            before_cursor.map(ToOwned::to_owned),
+            after_cursor.map(ToOwned::to_owned),
+        ),
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
     })
@@ -64,11 +67,51 @@ struct TranscriptResponseInput {
     messages: Vec<Value>,
     context_usage: Option<Value>,
     running: bool,
+    pagination: TranscriptPagination,
+    full_content: bool,
+    turn_item_source: TranscriptTurnItemSource,
+}
+
+enum TranscriptPagination {
+    Offset {
+        limit: Option<usize>,
+        before_cursor: Option<String>,
+        after_cursor: Option<String>,
+    },
+    Opaque {
+        before_cursor: Option<String>,
+        after_cursor: Option<String>,
+    },
+}
+
+struct ResolvedTranscriptPagination {
+    messages: Vec<Value>,
+    range_start: Option<usize>,
+    range_end: Option<usize>,
+    has_more_before: bool,
+    before_cursor: Option<String>,
+    has_more_after: bool,
+    after_cursor: Option<String>,
+    opaque_cursor: bool,
+}
+
+fn transcript_pagination(
+    runtime: &str,
     limit: Option<usize>,
     before_cursor: Option<String>,
     after_cursor: Option<String>,
-    full_content: bool,
-    turn_item_source: TranscriptTurnItemSource,
+) -> TranscriptPagination {
+    if runtime_has_provider_transcript_reader(runtime) {
+        return TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        };
+    }
+    TranscriptPagination::Offset {
+        limit,
+        before_cursor,
+        after_cursor,
+    }
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -79,41 +122,81 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         messages,
         context_usage,
         running,
-        limit,
-        before_cursor,
-        after_cursor,
+        pagination,
         full_content,
         turn_item_source,
     } = input;
-    let turn_navigation = transcript_turn_navigation(&messages);
-    let page = transcript_page(
+    let ResolvedTranscriptPagination {
         messages,
-        limit,
-        before_cursor.as_deref(),
-        after_cursor.as_deref(),
-    );
-    let turns = transcript_canonical_turns(&page.messages, turn_item_source);
+        range_start,
+        range_end,
+        has_more_before,
+        before_cursor,
+        has_more_after,
+        after_cursor,
+        opaque_cursor,
+    } = match pagination {
+        TranscriptPagination::Offset {
+            limit,
+            before_cursor,
+            after_cursor,
+        } => {
+            let page = transcript_page(
+                messages,
+                limit,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            );
+            ResolvedTranscriptPagination {
+                messages: page.messages,
+                range_start: Some(page.range_start),
+                range_end: Some(page.range_end),
+                has_more_before: page.has_more_before,
+                before_cursor: page.before_cursor,
+                has_more_after: page.has_more_after,
+                after_cursor: page.after_cursor,
+                opaque_cursor: false,
+            }
+        }
+        TranscriptPagination::Opaque {
+            before_cursor,
+            after_cursor,
+        } => {
+            let has_more_before = before_cursor.is_some();
+            let has_more_after = after_cursor.is_some();
+            ResolvedTranscriptPagination {
+                messages,
+                range_start: None,
+                range_end: None,
+                has_more_before,
+                before_cursor,
+                has_more_after,
+                after_cursor,
+                opaque_cursor: true,
+            }
+        }
+    };
+    let turn_navigation = transcript_turn_navigation(&messages, opaque_cursor);
+    let turns = transcript_canonical_turns(&messages, turn_item_source);
     json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "running": running,
-        "messages": page.messages,
+        "messages": messages,
         "turns": turns,
         "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
-        "rangeStart": page.range_start,
-        "rangeEnd": page.range_end,
-        "hasMoreBefore": page.has_more_before,
-        "beforeCursor": page
-            .before_cursor
+        "rangeStart": range_start,
+        "rangeEnd": range_end,
+        "hasMoreBefore": has_more_before,
+        "beforeCursor": before_cursor
             .map(Value::String)
             .unwrap_or(Value::Null),
-        "hasMoreAfter": page.has_more_after,
-        "afterCursor": page
-            .after_cursor
+        "hasMoreAfter": has_more_after,
+        "afterCursor": after_cursor
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
@@ -258,7 +341,10 @@ fn transcript_context_usage(thread: &Value) -> Option<Value> {
     rollout_context_usage(thread)
 }
 
-fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
+fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Value> {
+    if opaque_cursor {
+        return Vec::new();
+    }
     let mut turns: Vec<Value> = Vec::new();
     let mut pending_response_turn_indexes: Vec<usize> = Vec::new();
 
@@ -283,9 +369,9 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
             "id": transcript_navigation_message_id(message, message_index),
             "turnIndex": turns.len(),
             "messageIndex": message_index,
-            "cursor": format!("offset:{message_index}"),
             "promptPreview": transcript_message_preview(message),
             "responsePreview": "",
+            "cursor": format!("offset:{message_index}"),
         }));
         pending_response_turn_indexes.push(turns.len() - 1);
     }
@@ -353,28 +439,84 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         .get("message")
         .or_else(|| payload.get("content"))
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
     let references = local_presentation_reference_descriptors(content);
     let source = payload.get("source").filter(|value| value.is_object()).cloned();
-    if references.is_empty() && source.is_none() {
-        return None;
-    }
-    let mut presentation = json!({
+    let presentation = json!({
         "clientUserMessageId": client_user_message_id,
+        "content": content,
+        "createdAt": timestamp_ms_field(payload, "createdAt").unwrap_or_else(now_ms),
+        "ensureVisible": true,
         "references": references,
         "source": source,
     });
-    let supervisor_generated = presentation
-        .get("source")
-        .and_then(|source| source.get("source"))
-        .and_then(Value::as_str)
-        == Some("supervisor");
-    if supervisor_generated {
-        presentation["content"] = Value::String(content.to_owned());
-        presentation["createdAt"] = json!(now_ms());
-        presentation["ensureVisible"] = Value::Bool(true);
-    }
     Some(presentation)
+}
+
+fn attach_legacy_thread_preview(
+    messages: &mut Vec<Value>,
+    thread: &Value,
+    has_older_page: bool,
+) {
+    if has_older_page
+        || string_field(thread, "historyMode").as_deref() != Some("legacy")
+    {
+        return;
+    }
+    let Some(preview) = string_field(thread, "preview")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let oldest_turn = thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.first());
+    let turn_id = oldest_turn.and_then(|turn| id_field(turn, "id"));
+    let oldest_turn_has_user_message = messages.iter().any(|message| {
+        if string_field(message, "role").as_deref() != Some("user") {
+            return false;
+        }
+        match turn_id.as_deref() {
+            Some(turn_id) => string_field(message, "turnId")
+                .or_else(|| string_field(message, "turn_id"))
+                .or_else(|| string_field(message, "subtaskId"))
+                .or_else(|| string_field(message, "subtask_id"))
+                .as_deref()
+                == Some(turn_id),
+            None => true,
+        }
+    });
+    if oldest_turn_has_user_message {
+        return;
+    }
+    let created_at = oldest_turn
+        .and_then(|turn| {
+            timestamp_ms_field(turn, "startedAt")
+                .or_else(|| timestamp_ms_field(turn, "started_at"))
+                .or_else(|| timestamp_ms_field(turn, "createdAt"))
+                .or_else(|| timestamp_ms_field(turn, "created_at"))
+        })
+        .or_else(|| timestamp_ms_field(thread, "createdAt"))
+        .unwrap_or_else(now_ms);
+    let synthetic_id = turn_id
+        .as_deref()
+        .map(|turn_id| format!("{turn_id}-legacy-preview"))
+        .unwrap_or_else(|| "legacy-thread-preview".to_owned());
+    let mut synthetic = json!({
+        "id": synthetic_id,
+        "role": "user",
+        "content": preview,
+        "status": "done",
+        "createdAt": created_at,
+    });
+    if let Some(turn_id) = turn_id {
+        synthetic["turnId"] = Value::String(turn_id.clone());
+        synthetic["subtaskId"] = Value::String(turn_id);
+    }
+    messages.insert(0, synthetic);
 }
 
 fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: Vec<Value>) {

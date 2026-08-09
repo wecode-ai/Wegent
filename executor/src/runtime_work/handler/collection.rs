@@ -507,7 +507,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
-        match self.read_codex_thread_with_turns(thread_id).await {
+        match self
+            .read_codex_turn_page(thread_id, 1, CodexTranscriptDirection::Ascending)
+            .await
+        {
             Ok(thread) => transcript_messages(&thread, &self.device_id),
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");

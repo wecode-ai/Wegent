@@ -168,8 +168,9 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
+const E2E_TRANSCRIPT_PAGE_SIZE = 49
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
-const TURN_NAVIGATION_ONLY_TURN_COUNT = 3
+const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
@@ -1693,20 +1694,10 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     value: 'data-turn-index',
   })
   assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
-  const anchorResponseText = `Virtualized navigation response ${turnNumber}.1`
   const targetResponseText = `Virtualized navigation response ${turnNumber}.6`
-  await control.command(
-    'scrollToRatioAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
-    { value: '0' }
-  )
-  await control.command(
-    'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
-    { text: anchorResponseText }
-  )
 
   const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
+  await control.command('click', markerSelector)
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
@@ -1732,6 +1723,16 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
 
   assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
+
+  const mountedUserMessages = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const virtualizedOutPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_1`
+  assert.ok(
+    !mountedUserMessages.includes(virtualizedOutPrompt),
+    'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
+  )
 
   await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -1770,6 +1771,16 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
+    await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+  }
+  await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
+    text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -4607,23 +4618,21 @@ async function openMarketplacePluginActions(control, { pluginId, marketplaceName
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
-    if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
-      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
-    } else if (snapshot.testIds.includes('plugins-search-input')) {
-      await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
-    }
-    await control.command('waitFor', marketplaceTabSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', marketplaceTabSelector)
-    await control.command('fill', '[data-testid="plugins-search-input"]', {
-      value: displayName,
-    })
-    await control.command('waitFor', actionsSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
+  if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+  } else if (snapshot.testIds.includes('plugins-search-input')) {
+    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
   }
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: displayName,
+  })
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const actionsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!actionsSnapshot.testIds.includes(`plugin-marketplace-try-${pluginId}`)) {
     await control.command('click', actionsSelector)
@@ -13083,7 +13092,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
+        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
