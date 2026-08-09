@@ -118,17 +118,17 @@ export function ContextUsageIndicator({
         }}
         className={cn(
           'context-usage-compact-trigger flex h-4 w-4 items-center justify-center rounded-full disabled:cursor-default',
-          overThreshold ? 'text-red-500' : 'text-[#a5abb2]'
+          overThreshold ? 'text-red-500' : 'text-text-muted'
         )}
         aria-label={t('workbench.compact_context_prompt', '是否压缩上下文?')}
       >
         <span
           className={cn(
             'context-usage-compact-visual flex h-3 w-3 items-center justify-center rounded-full',
-            overThreshold ? 'text-red-500' : 'text-[#a5abb2]'
+            overThreshold ? 'text-red-500' : 'text-text-muted'
           )}
           style={{
-            background: `conic-gradient(currentColor ${metrics.usedPercent * 3.6}deg, #edf0f2 0deg)`,
+            background: `conic-gradient(currentColor ${metrics.usedPercent * 3.6}deg, rgb(var(--color-border) / 0.7) 0deg)`,
           }}
         >
           <span className="h-2 w-2 rounded-full bg-background" />
