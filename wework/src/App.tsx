@@ -681,7 +681,7 @@ function AppShell() {
     >
       <div
         className={cn(
-          isTauri ? 'h-screen' : 'h-dvh',
+          isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
