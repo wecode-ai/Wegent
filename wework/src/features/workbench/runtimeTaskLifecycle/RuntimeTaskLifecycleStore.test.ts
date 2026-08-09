@@ -189,20 +189,13 @@ describe('RuntimeTaskLifecycleStore', () => {
   test('recovers from a stale idle view when the provider rejects an overlapping turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
+    store.turnStarted(address, 'stale-client-turn')
     store.sendRequested(address)
     store.sendBlockedByActiveTurn(address)
 
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
-
-    store.syncRuntimeWork(
-      runtimeWork(
-        task({
-          running: false,
-          status: 'active',
-        })
-      )
-    )
+    store.turnSettled(address, 'provider-active-turn', 'succeeded')
 
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.turn.phase).toBe('idle')

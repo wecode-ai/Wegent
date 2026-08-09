@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     time::{Duration, Instant},
 };
@@ -74,8 +74,8 @@ use super::{
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
-        runtime_status_is_running, search_result_item, workspace_response, RuntimeTaskLink,
-        RuntimeWorkspaceLink, SearchResultMatch,
+        codex_thread_in_progress_turn_id, runtime_status_is_running, search_result_item,
+        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
         append_runtime_handle_message, append_runtime_handle_user_message_presentation,
@@ -100,6 +100,8 @@ const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer
 const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
+const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
+const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
@@ -292,6 +294,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
+    task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -375,6 +378,7 @@ impl RuntimeWorkRpcHandler {
             )),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
+            task_send_gates: Arc::new(Mutex::new(HashMap::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),

@@ -8136,6 +8136,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     WORKBENCH_READY_TIMEOUT_MS,
     'The reloaded Wework WebView did not reconnect during the active Goal continuation'
   )
+  await control.command('waitFor', `[data-testid="${goalRunningTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot =>

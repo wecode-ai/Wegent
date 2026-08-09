@@ -83,6 +83,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: 'idle',
+        activeTurnId: null,
         expectedExecutorRunning: null,
       }
 

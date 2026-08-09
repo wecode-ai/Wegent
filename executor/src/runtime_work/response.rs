@@ -849,6 +849,19 @@ pub(super) fn codex_thread_has_in_progress_turn(thread: &Value) -> bool {
         .any(|status| runtime_status_is_running(&status))
 }
 
+pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String> {
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|turn| {
+            string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
+        })
+        .and_then(|turn| string_field(turn, "id"))
+}
+
 fn normalize_codex_turn_status(status: String) -> String {
     match status.replace(['_', '-'], "").to_ascii_lowercase().as_str() {
         "inprogress" | "running" | "active" => "inProgress".to_owned(),
