@@ -546,6 +546,11 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
       await control.command(
+        'waitFor',
+        `[data-testid="${firstTaskTabTestId}"][aria-selected="true"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
         'click',
         `[data-testid="${secondTaskTabTestId.replace('workspace-tab-select-', 'workspace-tab-close-')}"]`
       )
@@ -557,6 +562,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         closedTaskContentCount,
         '0',
         'Closing the second task left its workbench mounted'
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${firstTaskTabTestId.replace(
+          'workspace-tab-select-',
+          ''
+        )}"]:not([hidden])`,
+        { timeoutMs: uiTimeoutMs }
       )
       const browserMenuButtonCount = await control.command(
         'getElementCount',
