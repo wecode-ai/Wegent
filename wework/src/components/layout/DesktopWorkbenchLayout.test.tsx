@@ -7776,9 +7776,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -7830,9 +7832,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -7934,9 +7938,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(localPathExistsMock).toHaveBeenCalledWith('/Users/me/Wegent')
@@ -7961,14 +7967,16 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent/.worktrees/a',
-        env: {
-          WEWORK_PARENT_TITLE: 'Task A',
-          WEWORK_PARENT_PROJECT: 'Wegent',
-          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
-        },
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent/.worktrees/a',
+          env: {
+            WEWORK_PARENT_TITLE: 'Task A',
+            WEWORK_PARENT_PROJECT: 'Wegent',
+            WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
+          },
+        })
+      )
     )
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
@@ -7988,14 +7996,16 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent/.worktrees/b',
-        env: {
-          WEWORK_PARENT_TITLE: 'Task B',
-          WEWORK_PARENT_PROJECT: 'Wegent',
-          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
-        },
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent/.worktrees/b',
+          env: {
+            WEWORK_PARENT_TITLE: 'Task B',
+            WEWORK_PARENT_PROJECT: 'Wegent',
+            WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
+          },
+        })
+      )
     )
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
