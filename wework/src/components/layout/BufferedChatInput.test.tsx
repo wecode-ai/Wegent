@@ -83,6 +83,62 @@ describe('BufferedChatInput', () => {
     expect(onDraftEdit).toHaveBeenCalled()
   })
 
+  test('restores the submitted draft when an async send promise rejects', async () => {
+    let rejectSubmission: (error: Error) => void = () => undefined
+    const unhandledRejection = vi.fn()
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectSubmission = reject
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('retry rejected promise')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    window.addEventListener('unhandledrejection', unhandledRejection)
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    rejectSubmission(new Error('send failed'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('retry rejected promise')
+    })
+    await Promise.resolve()
+    expect(unhandledRejection).not.toHaveBeenCalled()
+    window.removeEventListener('unhandledrejection', unhandledRejection)
+  })
+
+  test('keeps a newer draft when an earlier async send promise rejects', async () => {
+    let rejectSubmission: (error: Error) => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectSubmission = reject
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'newer draft')
+    rejectSubmission(new Error('send failed'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('newer draft')
+    })
+  })
+
   test('clears only the draft accepted by an async send', async () => {
     let resolveSubmission: (accepted: boolean) => void = () => undefined
     const onSubmit = vi.fn(

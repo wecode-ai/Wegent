@@ -41,6 +41,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const committedValueRef = useRef(value)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
+  const draftEditVersionRef = useRef(0)
+  const scopeKeyRef = useRef(scopeKey)
+  scopeKeyRef.current = scopeKey
 
   const setComposerValue = useCallback((nextValue: string, cursor: number) => {
     programmaticUpdateDepthRef.current += 1
@@ -103,6 +106,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
     appliedInsertionIdRef.current = insertion.id
+    draftEditVersionRef.current += 1
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
@@ -115,6 +119,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (nextDraft: string) => {
       draftRef.current = nextDraft
       if (programmaticUpdateDepthRef.current === 0) {
+        draftEditVersionRef.current += 1
         onDraftEdit?.()
       }
       scheduleDraftFlush(nextDraft)
@@ -130,6 +135,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draftRef.current
+      const submittedDraftEditVersion = draftEditVersionRef.current
+      const submittedScopeKey = scopeKey
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
       if (submittedDraft.trim()) {
@@ -139,15 +146,21 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         setComposerValue('', 0)
         onChange('')
       }
-      void Promise.resolve(submission).then(accepted => {
-        if (accepted !== false || !submittedDraft.trim()) return
+      const restoreSubmittedDraft = () => {
+        if (!submittedDraft.trim()) return
+        if (scopeKeyRef.current !== submittedScopeKey) return
+        if (draftEditVersionRef.current !== submittedDraftEditVersion) return
         if (draftRef.current) return
         draftRef.current = submittedDraft
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
         setComposerValue(submittedDraft, submittedDraft.length)
         onChange(submittedDraft)
-      })
+      }
+      void Promise.resolve(submission).then(accepted => {
+        if (accepted !== false) return
+        restoreSubmittedDraft()
+      }, restoreSubmittedDraft)
     },
     [cancelPendingFlush, onChange, onSubmit, scopeKey, setComposerValue]
   )

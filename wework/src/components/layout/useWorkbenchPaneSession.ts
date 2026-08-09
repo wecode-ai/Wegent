@@ -963,11 +963,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (sent) {
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       } else if (appendedLocalMessage) {
-        setMessages(
-          removeRuntimeConversationTurn(currentRuntimeTask, {
-            clientUserMessageId: message.id,
-          })
+        const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+          currentRuntimeTask,
+          currentRuntimeTaskRef.current,
+          message.id
         )
+        if (rolledBackMessages) setMessages(rolledBackMessages)
       }
       return sent
     },
@@ -2344,6 +2345,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 }
 
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
+
+export function rollbackRejectedRuntimeConversationTurn(
+  target: RuntimeTaskAddress,
+  activeTarget: RuntimeTaskAddress | null,
+  clientUserMessageId: string
+): WorkbenchMessage[] | null {
+  const messages = removeRuntimeConversationTurn(target, { clientUserMessageId })
+  if (
+    !activeTarget ||
+    runtimeTranscriptPaneIdentityKey(activeTarget) !== runtimeTranscriptPaneIdentityKey(target)
+  ) {
+    return null
+  }
+  return messages
+}
 
 function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
   return message.status === 'sending' && message.deliveryMode === 'guidance'
