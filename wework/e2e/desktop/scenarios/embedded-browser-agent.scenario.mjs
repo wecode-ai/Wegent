@@ -128,7 +128,11 @@ function browserDataCookieFixtureHtml() {
   <head><meta charset="utf-8" /><title>Browser data Cookie fixture</title></head>
   <body>
     <h1>Browser data Cookie fixture</h1>
-    <script>document.cookie = 'wework_browser_data_e2e=present; Path=/';</script>
+    <script>
+      if (new URLSearchParams(location.search).get('set') === '1') {
+        document.cookie = 'wework_browser_data_e2e=present; Path=/';
+      }
+    </script>
   </body>
 </html>`
 }
@@ -651,7 +655,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
       await pendingAgentWait
 
-      const cookieFixtureUrl = `${control.url}${BROWSER_DATA_COOKIE_PATH}`
+      const cookieVerificationUrl = `${control.url}${BROWSER_DATA_COOKIE_PATH}`
+      const cookieFixtureUrl = `${cookieVerificationUrl}?set=1`
       await bridgeCall({ action: 'open', url: cookieFixtureUrl, timeoutMs: 8_000 })
       await bridgeCall({
         action: 'waitFor',
@@ -670,7 +675,15 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.equal(cookieBeforeClear.value, true, 'Cookie fixture did not set its test cookie')
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_DATA_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_COOKIES_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_STARTED_TEXT,
@@ -678,7 +691,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: 35_000,
+      })
+      await bridgeCall({ action: 'open', url: cookieVerificationUrl, timeoutMs: 8_000 })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'Browser data Cookie fixture' } },
+        timeoutMs: 5_000,
       })
       const cookieAfterClear = await bridgeCall({
         action: 'evaluate',
@@ -701,11 +720,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.equal(cacheResourceRequests, 1, 'Cache fixture did not request its resource once')
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_DATA_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_CACHE_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_CACHE_SELECTOR)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        text: BROWSER_CLEAR_STARTED_TEXT,
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        timeoutMs: 35_000,
       })
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })
