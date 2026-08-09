@@ -6,6 +6,11 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
+The context indicator beside the task composer shows the current model's context usage. Its used
+arc and remaining track automatically adapt their contrast for light and dark themes. When usage
+reaches the compaction threshold, the indicator switches to a warning color and, when compaction
+is available, offers the compact action.
+
 ## View app information
 
 Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
