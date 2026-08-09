@@ -292,6 +292,12 @@ export function createRuntimeTaskStreamHandlers(
             : typeof payload.result.turn_id === 'string'
               ? payload.result.turn_id
               : undefined,
+        itemId:
+          typeof payload.result.itemId === 'string'
+            ? payload.result.itemId
+            : typeof payload.result.item_id === 'string'
+              ? payload.result.item_id
+              : undefined,
         ...(typeof payload.result.value === 'string' &&
           payload.result.value.trim() && { content: payload.result.value }),
         blocks,

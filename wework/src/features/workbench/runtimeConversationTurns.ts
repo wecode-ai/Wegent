@@ -104,6 +104,7 @@ export function reduceRuntimeConversationTurns(
         const items = applyCompletedAssistantContent(
           settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
           turn.id,
+          action.itemId,
           action.content
         )
         return {
@@ -527,6 +528,7 @@ function upsertAssistantText(
 function applyCompletedAssistantContent(
   items: RuntimeConversationItem[],
   turnId: string | null,
+  itemId: string | undefined,
   content: string | undefined
 ): RuntimeConversationItem[] {
   if (!content) return items
@@ -540,7 +542,7 @@ function applyCompletedAssistantContent(
   )
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
@@ -552,7 +554,7 @@ function applyCompletedAssistantContent(
   return [
     ...retained,
     {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),

@@ -200,6 +200,7 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub response_item_id: Option<String>,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
 }
@@ -1443,10 +1444,12 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
+        let response_item_id = state.response_item_id().map(str::to_owned);
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
+            response_item_id,
             goal_status,
             goal_status_observed,
         })
@@ -1656,10 +1659,12 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
+        let response_item_id = state.response_item_id().map(str::to_owned);
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
+            response_item_id,
             goal_status,
             goal_status_observed,
         })

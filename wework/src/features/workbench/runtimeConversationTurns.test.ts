@@ -206,6 +206,49 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('reuses the Codex response item identity when terminal content arrives without a chunk', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        itemId: 'assistant-item-1',
+        content: 'The final answer.',
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: 'The final answer.',
+      }),
+    ])
+
+    const merged = mergeRuntimeConversationTurns(turns, [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content: 'The final answer.',
+            createdAt: '2026-08-09T00:00:00.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ])
+    expect(merged[0].items).toHaveLength(1)
+    expect(projectRuntimeConversationTurns(merged)).toHaveLength(1)
+  })
+
   test('settles streaming process blocks when the assistant turn completes', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-06T00:00:00.000Z'))

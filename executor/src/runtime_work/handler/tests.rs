@@ -314,6 +314,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
             },
+            response_item_id: Some("assistant-1".to_owned()),
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
         }),
@@ -755,18 +756,20 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
 
 #[test]
 fn completed_responses_use_the_active_codex_turn_id() {
-    for (case, outcome) in [
+    for (case, outcome, response_item_id) in [
         (
             "completed",
             ExecutionOutcome::Completed {
                 content: "Done".to_owned(),
             },
+            Some("assistant-item-1".to_owned()),
         ),
         (
             "waiting",
             ExecutionOutcome::WaitingForUserInput {
                 stop_reason: "Need input".to_owned(),
             },
+            None,
         ),
     ] {
         let (event_tx, mut event_rx) = broadcast::channel(1);
@@ -798,6 +801,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
             Ok(crate::agents::CodexAppServerTurn {
                 thread_id: format!("thread-{case}"),
                 outcome,
+                response_item_id: response_item_id.clone(),
                 goal_status: None,
                 goal_status_observed: false,
             }),
@@ -809,6 +813,11 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(
+            event["payload"]["data"]["itemId"],
+            response_item_id.map(Value::String).unwrap_or(Value::Null),
+            "{case}"
+        );
 
         let _ = fs::remove_file(index_path);
     }

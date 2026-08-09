@@ -361,6 +361,7 @@ impl RuntimeWorkRpcHandler {
                 );
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request);
+                let response_item_id = turn.response_item_id;
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -371,6 +372,7 @@ impl RuntimeWorkRpcHandler {
                         json!({
                             "value": content,
                             "turnId": active_turn.map(|turn| &turn.turn_id),
+                            "itemId": response_item_id,
                         }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
