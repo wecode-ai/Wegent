@@ -10108,10 +10108,14 @@ describe('WorkbenchProvider runtime tasks', () => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
-    const sendRuntimeMessage = vi.fn().mockResolvedValue({
-      accepted: true,
-      taskId: 'runtime-a',
-    })
+    const firstQueuedSend = deferred<{ accepted: boolean; taskId: string }>()
+    const sendRuntimeMessage = vi
+      .fn()
+      .mockReturnValueOnce(firstQueuedSend.promise)
+      .mockResolvedValue({
+        accepted: true,
+        taskId: 'runtime-a',
+      })
     const runningRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -10267,6 +10271,13 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
+    firstQueuedSend.resolve({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    await act(async () => {
+      await firstQueuedSend.promise
+    })
     expect(
       getRuntimeConversationQueuedMessages({
         deviceId: 'device-1',

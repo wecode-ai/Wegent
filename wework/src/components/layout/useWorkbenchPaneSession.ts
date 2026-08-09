@@ -82,6 +82,7 @@ import {
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
   setRuntimeConversationGoal,
+  settleRuntimeConversationAcceptedMessage,
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
   takeInterruptedRuntimeConversationGuidance,
@@ -1342,6 +1343,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 message.id === queuedMessage.id ? { ...message, deliveryMode: 'message' } : message
               )
             )
+            if (
+              currentRuntimeTask &&
+              lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
+            ) {
+              settleRuntimeConversationAcceptedMessage(currentRuntimeTask)
+            }
             return
           }
           if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
@@ -1372,7 +1379,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [sendRuntimeMessage, setQueuedMessages]
+    [currentRuntimeTask, lifecycleStore, sendRuntimeMessage, setQueuedMessages]
   )
 
   useEffect(() => {
