@@ -461,6 +461,7 @@ const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKI
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
 const PLUGIN_NAME = 'desktop-e2e-plugin'
+const PLUGIN_ICON_FILE_NAME = 'desktop-e2e-plugin-icon.svg'
 const PLUGIN_CREATOR_PROMPT = 'Create a desktop E2E verification plugin'
 const PLUGIN_CREATOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PLUGIN_CREATOR_COMPLETE'
 const PLUGIN_REFINEMENT_PROMPT =
@@ -648,6 +649,7 @@ async function createPluginMarketplaceFixture(root) {
   await Promise.all([
     mkdir(marketplaceManifestDir, { recursive: true }),
     mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
+    mkdir(join(pluginRoot, 'assets'), { recursive: true }),
     mkdir(join(pluginRoot, 'scripts'), { recursive: true }),
     mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
   ])
@@ -705,11 +707,17 @@ async function createPluginMarketplaceFixture(root) {
             category: 'Developer Tools',
             capabilities: [],
             defaultPrompt: 'Verify the Wework desktop plugin lifecycle.',
+            composerIcon: `./assets/${PLUGIN_ICON_FILE_NAME}`,
+            logo: `./assets/${PLUGIN_ICON_FILE_NAME}`,
           },
         },
         null,
         2
       )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, 'assets', PLUGIN_ICON_FILE_NAME),
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2f63e0"/><path d="M18 18h28v28H18z" fill="none" stroke="#fff" stroke-width="4"/><path d="M24 32h16M32 24v16" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>\n`
     ),
     writeFile(
       join(pluginRoot, 'scripts', 'local-auth.sh'),
@@ -2418,6 +2426,17 @@ async function assertMentionRenderedAsToken(
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
   assert.equal(userMessageText.includes(plainTextMention), false, errorLabel)
+}
+
+async function assertPluginLogoImage(control, selector, failureMessage) {
+  await control.command('waitFor', selector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const source = await control.command('getAttribute', selector, { value: 'src' })
+  assert.ok(
+    source.includes(PLUGIN_ICON_FILE_NAME),
+    `${failureMessage}; received src=${JSON.stringify(source)}`
+  )
 }
 
 async function getElementMetrics(control, selector) {
@@ -4877,6 +4896,11 @@ async function verifyMarketplacePluginLifecycle({
     text: PLUGIN_DISPLAY_NAME,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertPluginLogoImage(
+    control,
+    `${rowSelector} img`,
+    'The marketplace card did not render the declared plugin logo'
+  )
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'marketplace-plugins-01-marketplace.png')
 
@@ -4884,6 +4908,12 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugin-detail-get-started"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertPluginLogoImage(
+    control,
+    '[data-testid="plugin-detail-logo"] img',
+    'The plugin detail did not reuse the marketplace logo'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-01a-detail.png')
   await control.command('click', '[data-testid="plugin-prompt-0"]')
   await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4938,6 +4968,11 @@ async function verifyMarketplacePluginLifecycle({
       ),
     'The plugin was not shown as installed after the real app-server request'
   )
+  await assertPluginLogoImage(
+    control,
+    `[data-testid^="plugins-installed-strip-item-"][aria-label="${PLUGIN_DISPLAY_NAME}"] img`,
+    'The installed plugin entry did not reuse the marketplace logo'
+  )
   if (!installedSnapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
     // Install succeeded but the active market/distribution filter hid the card.
     if (installedSnapshot.testIds.includes('plugins-clear-marketplace-filters')) {
@@ -4987,6 +5022,11 @@ async function verifyMarketplacePluginLifecycle({
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  await assertPluginLogoImage(
+    control,
+    `[data-testid="composer-plugin-chip-${PLUGIN_NAME}"] img`,
+    'The composer plugin reference did not reuse the marketplace logo'
+  )
   await waitForWorkbenchDebugState(
     control,
     snapshot =>
@@ -5031,7 +5071,18 @@ async function verifyMarketplacePluginLifecycle({
     pluginDisplayName: PLUGIN_DISPLAY_NAME,
   })
   const composerPluginSelector = `[data-testid="${composerPluginItemTestId}"]`
+  await assertPluginLogoImage(
+    control,
+    `[data-testid="composer-plugin-picker-icon-plugin:${PLUGIN_NAME}"] img`,
+    'The composer shortcut did not reuse the marketplace logo'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-05a-composer-picker.png')
   await control.command('click', composerPluginSelector)
+  await assertPluginLogoImage(
+    control,
+    `[data-testid="composer-plugin-preview-icon-plugin:${PLUGIN_NAME}"] img`,
+    'The composer toolbar entry did not reuse the marketplace logo'
+  )
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.includes('plugin-trial-template-strip'),
@@ -13295,11 +13346,18 @@ async function main() {
       false,
       'The isolated Wework Codex home was not blank before application startup'
     )
-    await createOfficialPluginMarketplaceFixture({
-      marketplaceRoot: pluginMarketplacePath,
-      repositoryRoot: officialPluginRepositoryPath,
-    })
-    await createPluginMarketplaceFixture(marketplacePluginPath)
+    if (
+      shouldRunPluginSegment('plugin-lifecycle') ||
+      shouldRunPluginSegment('skill-mention-rendering')
+    ) {
+      await createOfficialPluginMarketplaceFixture({
+        marketplaceRoot: pluginMarketplacePath,
+        repositoryRoot: officialPluginRepositoryPath,
+      })
+    }
+    if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
+      await createPluginMarketplaceFixture(marketplacePluginPath)
+    }
     await mkdir(nativeCodexHome, { recursive: true })
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
@@ -13806,14 +13864,17 @@ last_updated = "2026-07-30T00:00:00Z"`
         return officialPluginFixture
       }
 
-      if (shouldRunPluginSegment('plugin-lifecycle')) {
-        phase = 'plugin-lifecycle'
+      if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
+        phase = 'plugin-marketplace-lifecycle'
         await verifyMarketplacePluginLifecycle({
           control,
           executorHome,
           marketplacePath: marketplacePluginPath,
           workspacePath,
         })
+      }
+      if (shouldRunPluginSegment('plugin-lifecycle')) {
+        phase = 'plugin-lifecycle'
         await verifyPluginLifecycle({
           control,
           fixture: await ensureOfficialPluginFixture(),

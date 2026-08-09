@@ -300,6 +300,7 @@ export function PluginPickerMenu({
                         RECENT_PLUGIN_APPS_KEY,
                         JSON.stringify([app.id, ...recent.filter(id => id !== app.id)].slice(0, 8))
                       )
+                      setApps(current => [app, ...current.filter(item => item.id !== app.id)])
                       setOpen(false)
                     }}
                   >

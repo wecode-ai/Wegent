@@ -507,6 +507,72 @@ function pluginDisplayName(summary: CodexPluginSummary): string {
   return summary.interface?.displayName?.trim() || summary.name
 }
 
+function safeRelativePluginAssetPath(value: string): string | null {
+  const segments = value.replace(/\\/g, '/').split('/')
+  const safeSegments: string[] = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') return null
+    safeSegments.push(segment)
+  }
+  return safeSegments.length > 0 ? safeSegments.join('/') : null
+}
+
+function isRelativePluginAssetPath(value: string): boolean {
+  if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)) return false
+  return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value)
+}
+
+function localPluginRoot(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null
+): string | null {
+  if (marketplace.path && isLocalMarketplacePath(marketplace.path)) {
+    const sourcePath =
+      plugin.source && typeof plugin.source.path === 'string' ? plugin.source.path.trim() : ''
+    if (sourcePath) {
+      if (isLocalMarketplacePath(sourcePath)) return sourcePath.replace(/[\\/]+$/, '')
+      const relativeSourcePath = safeRelativePluginAssetPath(sourcePath)
+      if (relativeSourcePath) {
+        return `${normalizeMarketplaceSource(marketplace.path).replace(/[\\/]+$/, '')}/${relativeSourcePath}`
+      }
+    }
+  }
+
+  for (const path of (detail?.skills ?? []).map(skill => skill.path)) {
+    if (!path || !isLocalMarketplacePath(path)) continue
+    const normalized = path.replace(/\\/g, '/')
+    const skillsIndex = normalized.lastIndexOf('/skills/')
+    if (skillsIndex > 0) return normalized.slice(0, skillsIndex)
+  }
+  return null
+}
+
+function resolvePluginInterfaceAssets(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null
+): PluginInterface | null {
+  const interfaceData = plugin.interface
+  if (!interfaceData) return null
+  const root = localPluginRoot(marketplace, plugin, detail)
+  if (!root) return interfaceData
+  const resolve = (value?: string | null): string | null | undefined => {
+    const source = value?.trim()
+    if (!source || !isRelativePluginAssetPath(source)) return value
+    const relativePath = safeRelativePluginAssetPath(source)
+    return relativePath ? `${root}/${relativePath}` : null
+  }
+  return {
+    ...interfaceData,
+    composerIcon: resolve(interfaceData.composerIcon),
+    logo: resolve(interfaceData.logo),
+    logoDark: resolve(interfaceData.logoDark),
+    screenshots: interfaceData.screenshots?.map(screenshot => resolve(screenshot) || screenshot),
+  }
+}
+
 function catalogItemId(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary
@@ -702,7 +768,8 @@ function toMarketplaceItem(
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
   const source = localMarketplaceSource(marketplace)
-  const pluginInterface = plugin.interface as
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
+  const pluginInterface = resolvedInterface as
     | (PluginInterface & {
         tags?: string[]
         keywords?: string[]
@@ -717,14 +784,14 @@ function toMarketplaceItem(
     displayName: pluginDisplayName(plugin),
     description: pluginDescription(plugin, detail),
     version: plugin.localVersion ?? null,
-    author: plugin.interface?.developerName ?? null,
+    author: resolvedInterface?.developerName ?? null,
     visibility: source.visibility,
     featured: false,
     installed: plugin.installed,
     installedPluginId: plugin.installed ? plugin.id : null,
     enabled: plugin.enabled,
     sourceType: 'marketplace',
-    interface: plugin.interface ?? null,
+    interface: resolvedInterface,
     components,
     manifest: {
       name: plugin.name,
@@ -796,6 +863,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
   const isCreated = isPersonalMarketplaceId(marketplace.name)
   const source = localMarketplaceSource(marketplace)
   const skillStates = Object.fromEntries(
@@ -825,7 +893,7 @@ function toInstalledPlugin(
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
-      author: plugin.interface?.developerName ?? null,
+      author: resolvedInterface?.developerName ?? null,
       installState: plugin.installed ? 'installed' : 'not_installed',
       enabled: plugin.enabled !== false,
       componentStates: skillStates,
@@ -838,7 +906,7 @@ function toInstalledPlugin(
         availability: plugin.availability ?? null,
       },
       components,
-      interface: plugin.interface ?? null,
+      interface: resolvedInterface,
       packageRef: null,
       sourcePayload: {
         ...sourcePayload(marketplace, plugin),
