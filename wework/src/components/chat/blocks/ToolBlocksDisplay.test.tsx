@@ -461,6 +461,75 @@ describe('ToolBlocksDisplay', () => {
     clearTimeoutSpy.mockRestore()
   })
 
+  test('restarts the diff copy feedback timer after repeated copies', async () => {
+    vi.useFakeTimers()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+
+    const copyButton = screen.getByTestId('copy-process-file-change-diff-button')
+    fireEvent.click(copyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('process-file-change-diff-copy-success-icon')).toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(1000))
+    fireEvent.click(copyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    act(() => vi.advanceTimersByTime(1499))
+    expect(screen.getByTestId('process-file-change-diff-copy-success-icon')).toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(
+      screen.queryByTestId('process-file-change-diff-copy-success-icon')
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not finish an in-flight diff copy after unmount', async () => {
+    let resolveWriteText: (() => void) | undefined
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveWriteText = resolve
+        })
+    )
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    const { unmount } = render(
+      <ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+    fireEvent.click(screen.getByTestId('copy-process-file-change-diff-button'))
+    expect(writeText).toHaveBeenCalledOnce()
+
+    unmount()
+    const timerCallsBeforeCopyResolved = setTimeoutSpy.mock.calls.length
+
+    await act(async () => {
+      resolveWriteText?.()
+      await Promise.resolve()
+    })
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(timerCallsBeforeCopyResolved)
+    setTimeoutSpy.mockRestore()
+  })
+
   test('renders reversed diff lines for a created file as additions', () => {
     render(
       <ToolBlocksDisplay

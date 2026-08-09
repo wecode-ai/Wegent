@@ -589,21 +589,25 @@ function InlineDiffPreview({
   const previewRef = useLockedMessageContentVisibility()
   const [copied, setCopied] = useState(false)
   const copyResetTimerRef = useRef<number | null>(null)
+  const isDisposedRef = useRef(false)
   const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
   const truncated = lines.length > INLINE_DIFF_MAX_LINES
   const copyText = formatDiffPreviewCopyText(visibleLines, truncated)
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    isDisposedRef.current = false
+    return () => {
+      isDisposedRef.current = true
       if (copyResetTimerRef.current !== null) {
         window.clearTimeout(copyResetTimerRef.current)
+        copyResetTimerRef.current = null
       }
-    },
-    []
-  )
+    }
+  }, [])
 
   const handleCopy = async () => {
     await copyCodeText(copyText)
+    if (isDisposedRef.current) return
     track('ai_output_action_completed', { action: 'copy', source: 'chat' })
     setCopied(true)
     if (copyResetTimerRef.current !== null) {
