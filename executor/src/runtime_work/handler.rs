@@ -295,6 +295,7 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
+    active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
@@ -339,6 +340,12 @@ struct ActiveCodexTurn {
     turn_id: String,
 }
 
+#[derive(Clone)]
+struct ActiveCodexTranscriptItems {
+    turn_id: String,
+    items: Vec<Value>,
+}
+
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
@@ -378,6 +385,7 @@ impl RuntimeWorkRpcHandler {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
+            active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),

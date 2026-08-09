@@ -78,6 +78,102 @@ fn skips_backend_connection_without_a_configured_connection() {
     assert!(request.runtime_auth_token.is_none());
 }
 
+#[test]
+fn active_codex_items_replace_stale_paginated_items() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/started",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "change-1",
+                    "type": "fileChange",
+                    "status": "inProgress",
+                    "changes": []
+                }
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "change-1",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "changes": [{"path": "/tmp/result.txt", "diff": "created\n"}]
+                }
+            }
+        }),
+    );
+    let mut thread = json!({
+        "turns": [{
+            "id": "turn-1",
+            "itemsView": "full",
+            "status": "inProgress",
+            "items": [{
+                "id": "change-1",
+                "type": "fileChange",
+                "status": "inProgress",
+                "changes": []
+            }]
+        }]
+    });
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        thread["turns"][0]["items"][0]["status"],
+        Value::String("completed".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["changes"][0]["path"],
+        Value::String("/tmp/result.txt".to_owned())
+    );
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["type"], "file_changes");
+}
+
+#[test]
+fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-live",
+                "item": {
+                    "id": "message-live",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Still working"
+                }
+            }
+        }),
+    );
+    let mut thread = json!({"turns": []});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["id"], "turn-live");
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    assert_eq!(thread["turns"][0]["items"][0]["id"], "message-live");
+}
+
 #[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
     for (case, persisted_running, active_in_memory) in

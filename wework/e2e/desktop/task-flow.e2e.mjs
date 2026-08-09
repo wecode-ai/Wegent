@@ -168,6 +168,7 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
+const E2E_TRANSCRIPT_PAGE_SIZE = 49
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
 const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
@@ -1774,10 +1775,12 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+  if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
+    await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+  }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -12893,7 +12896,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
+        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_POSTHOG_HOST: modelServerUrl,

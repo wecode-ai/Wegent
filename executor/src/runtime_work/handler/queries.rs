@@ -279,7 +279,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let CodexTranscriptPage {
-            thread,
+            mut thread,
             next_cursor,
             backwards_cursor,
         } = load_codex_transcript(
@@ -293,6 +293,7 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("codex_error", error))?;
+        self.merge_active_codex_transcript(&local_task_id, &mut thread);
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))

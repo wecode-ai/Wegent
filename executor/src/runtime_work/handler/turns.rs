@@ -152,6 +152,11 @@ impl RuntimeWorkRpcHandler {
                     }
                     let mut event_request = mapper_request.clone();
                     if let Some(active_turn) = active_turn {
+                        mapper_handler.record_active_codex_transcript_item(
+                            &mapper_local_task_id,
+                            &active_turn.turn_id,
+                            &message,
+                        );
                         event_request.subtask_id = active_turn.turn_id;
                     }
                     event_mapper.map(
@@ -190,6 +195,8 @@ impl RuntimeWorkRpcHandler {
                         thread_id,
                         turn_id.clone(),
                     );
+                    active_turn_handler
+                        .begin_active_codex_transcript(&active_turn_local_task_id, &turn_id);
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
@@ -259,6 +266,7 @@ impl RuntimeWorkRpcHandler {
                     }),
                 );
                 let _ = mapper_handle.await;
+                handler.clear_active_codex_transcript(&turn_local_task_id);
                 handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -268,6 +276,7 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
+            handler.clear_active_codex_transcript(&turn_local_task_id);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")
