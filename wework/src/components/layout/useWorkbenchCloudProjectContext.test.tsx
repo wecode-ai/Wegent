@@ -54,6 +54,7 @@ function loopItem(projectId: string): CloudLoopItem {
 function renderCloudContext(services?: WorkbenchServices) {
   return renderHook(() =>
     useWorkbenchCloudProjectContext({
+      active: true,
       currentRuntimeTask: null,
       currentProjectId: 42,
       defaultProjectSpace: null,
@@ -93,6 +94,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     const { result, rerender } = renderHook(
       ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
         useWorkbenchCloudProjectContext({
+          active: true,
           currentRuntimeTask,
           currentProjectId: 42,
           defaultProjectSpace: null,
@@ -148,6 +150,7 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     const { result } = renderHook(() =>
       useWorkbenchCloudProjectContext({
+        active: true,
         currentRuntimeTask: null,
         currentProjectId: 42,
         defaultProjectSpace,
@@ -163,6 +166,47 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(deliveryApi.listCloudProjects).toHaveBeenCalledOnce()
     await waitFor(() => expect(deliveryApi.listCloudFiles).toHaveBeenCalledOnce())
     expect(deliveryApi.listLoopItems).toHaveBeenCalledOnce()
+  })
+
+  test('reloads project spaces when a retained workbench becomes active again', async () => {
+    const defaultProject = project('space-default')
+    let projects: CloudProject[] = []
+    const deliveryApi = {
+      listCloudProjects: vi.fn().mockImplementation(async () => ({ items: projects })),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const services = {
+      deliveryApi,
+    } as unknown as WorkbenchServices
+    const defaultProjectSpace = {
+      projectStore: defaultProject.project_store,
+      projectId: defaultProject.id,
+    } as const
+    const { result, rerender } = renderHook(
+      ({ active }: { active: boolean }) =>
+        useWorkbenchCloudProjectContext({
+          active,
+          currentRuntimeTask: null,
+          currentProjectId: 42,
+          defaultProjectSpace,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      { initialProps: { active: true } }
+    )
+
+    await waitFor(() => expect(deliveryApi.listCloudProjects).toHaveBeenCalledOnce())
+    expect(result.current.pendingCloudProject).toBeNull()
+
+    rerender({ active: false })
+    projects = [defaultProject]
+    rerender({ active: true })
+
+    await waitFor(() => expect(deliveryApi.listCloudProjects).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.pendingCloudProject).toEqual(defaultProject))
   })
 
   test('loads mentions from the selected local project-space API', async () => {

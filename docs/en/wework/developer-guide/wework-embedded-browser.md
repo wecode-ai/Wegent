@@ -55,10 +55,13 @@ Browser instances are bound by pane/task label:
 - A new conversation without a runtime task uses the current pane key as a temporary browser label.
 - After sending from a new conversation creates a runtime task, Wework relabels the temporary browser to the new task label.
 - When the user switches tasks, only the browser bound to the active pane/task is visible; pages from other tasks must not leak across panes.
-- MCP open requests initially use the default label. When the current pane becomes inactive, Wework moves its WebView to a task-specific label, and only the active task may claim the default label.
+- Executor injects a task-specific label for an existing runtime task. Only temporary new conversations use the default or pane label, and only the active task may claim the default label.
+- When a top-level task tab becomes inactive, its workbench effects must stay active so the task-specific bridge listener can handle background `open`, `waitFor`, and `inspect` requests. Hide the React surface with `hidden` and keep the native WebView invisible; non-task tabs should not pay this keep-alive cost.
 - When the right browser panel is closed, the native WebView is hidden offscreen and must not cover the chat area, debug panel, or splitter.
 
 This binding keeps the browser the user sees and the browser the agent controls as the same object.
+
+Each pane/task label currently maps to one browser host. Wework can keep multiple top-level task tabs and their independent browsers alive, but there is no browser-internal multi-tab model inside one task. Adding browser-internal tabs must extend bridge routing identity, lifecycle ownership, and the Agent tool protocol instead of reusing another task's host.
 
 A programmatic first open must treat "the panel was requested" and "the native WebView is ready for navigation" as separate phases. The bridge stores pending navigation with a request ID and executes it only after the browser host for that task has nonzero visible bounds and reaches the ready state. If the frontend listener registers after the request, it recovers the event from the pending-request snapshot. The tool may report success only after the native WebView has navigated to the requested URL, not merely because the right panel or a blank WebView was created.
 
@@ -113,7 +116,7 @@ cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
-`e2e:desktop:embedded-browser` must issue the first bridge `open` from a newly created local task and verify that it completes before the tool timeout, creates exactly one visible native host, and preserves the requested URL. A test that covers only a second open or manually exposes the browser panel first does not exercise the first-open race.
+`e2e:desktop:embedded-browser` must create task A, switch to task B, and then use task A's specific label for the first bridge `open`, `waitFor`, and `inspect`. It verifies that the inactive task completes background navigation before the tool timeout without taking over task B's browser, and that the same page state is visible after switching back to task A. A test that covers only a second open, an active-task open, or a manually exposed browser panel does not exercise the first-open and inactive-task routing races.
 
 When the browser change touches Tauri commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Tauri session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
 

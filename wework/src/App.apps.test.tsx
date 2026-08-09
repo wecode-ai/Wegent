@@ -23,11 +23,18 @@ vi.mock('@/lib/embedded-browser', async importOriginal => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
+    label: 'main',
     startDragging: vi.fn(),
     minimize: vi.fn(),
     toggleMaximize: vi.fn(),
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
+    innerSize: vi.fn().mockResolvedValue({
+      width: 1280,
+      height: 720,
+      toLogical: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+    }),
+    scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
@@ -294,6 +301,15 @@ describe('App center route', () => {
 
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
+    const routeHost = screen.getByTestId('app-route-host')
+    const appShell = screen.getByTestId('app-shell')
+    expect(appShell).toHaveClass('fixed', 'inset-0')
+    expect(appShell).not.toHaveClass('h-dvh', 'h-screen')
+    await waitFor(() => {
+      expect(appShell).toHaveStyle({ width: '1280px', height: '720px' })
+    })
+    expect(routeHost).toHaveClass('flex-1', 'min-h-0')
+    expect(routeHost).not.toHaveClass('h-0')
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('app-view-surface')
@@ -329,10 +345,26 @@ describe('App center route', () => {
       target: { value: 'second task draft' },
     })
 
+    const taskContents = screen.getAllByTestId(/^workspace-tab-content-task-/)
+    expect(taskContents).toHaveLength(2)
+    expect(
+      taskContents.filter(content => content.getAttribute('aria-hidden') === 'true')
+    ).toHaveLength(1)
+
     fireEvent.click(taskTabs[0])
     await waitFor(() => expect(firstInput).toHaveValue('first task draft'))
+    expect(taskContents[0]).toHaveAttribute('aria-hidden', 'false')
+    expect(taskContents[0]).toHaveClass('relative', 'h-full')
+    expect(taskContents[0]).not.toHaveClass('absolute', 'invisible')
+    expect(taskContents[1]).toHaveAttribute('aria-hidden', 'true')
+    expect(taskContents[1]).toHaveClass('absolute', 'inset-0', 'invisible', 'pointer-events-none')
     fireEvent.click(taskTabs[1])
     await waitFor(() => expect(secondInput).toHaveValue('second task draft'))
+    expect(taskContents[0]).toHaveAttribute('aria-hidden', 'true')
+    expect(taskContents[0]).toHaveClass('absolute', 'inset-0', 'invisible', 'pointer-events-none')
+    expect(taskContents[1]).toHaveAttribute('aria-hidden', 'false')
+    expect(taskContents[1]).toHaveClass('relative', 'h-full')
+    expect(taskContents[1]).not.toHaveClass('absolute', 'invisible')
     expect(firstInput).toHaveValue('first task draft')
   })
 
