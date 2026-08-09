@@ -41,9 +41,11 @@ describe('local-terminal', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     listenMock.mockReset()
+    vi.unstubAllEnvs()
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
@@ -65,6 +67,19 @@ describe('local-terminal', () => {
   test('is available inside the WeWork Windows Tauri app', () => {
     setNavigatorValue('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     setNavigatorValue('platform', 'Win32')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    expect(isLocalTerminalAvailable()).toBe(true)
+  })
+
+  test('is available inside the Linux Tauri desktop E2E app', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
+    setNavigatorValue('platform', 'Linux x86_64')
     setNavigatorValue('maxTouchPoints', 0)
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
