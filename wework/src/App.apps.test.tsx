@@ -294,8 +294,10 @@ describe('App center route', () => {
 
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('app-route-host')).toHaveClass('flex-1', 'min-h-0')
-    expect(screen.getByTestId('app-route-host')).not.toHaveClass('h-0')
+    const routeHost = screen.getByTestId('app-route-host')
+    expect(routeHost.parentElement).toHaveClass('app-viewport-height')
+    expect(routeHost).toHaveClass('flex-1', 'min-h-0')
+    expect(routeHost).not.toHaveClass('h-0')
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('app-view-surface')
