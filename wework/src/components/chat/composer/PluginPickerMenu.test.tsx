@@ -31,6 +31,7 @@ const superpowersApp: LocalDeviceApp = {
   id: 'plugin:superpowers',
   name: 'superpowers',
   description: 'A complete software development workflow for coding agents',
+  logoUrl: '/plugin-icons/wework.svg',
   isAccessible: true,
   isEnabled: true,
   source: 'installed-plugin',
@@ -59,15 +60,18 @@ describe('PluginPickerMenu', () => {
   })
 
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
-    const onListLocalApps = vi
-      .fn()
-      .mockResolvedValue([
-        githubApp,
-        superpowersApp,
-        { ...githubApp, id: 'gitlab', name: 'GitLab' },
-        { ...githubApp, id: 'linear', name: 'Linear' },
-        { ...githubApp, id: 'notion', name: 'Notion' },
-      ])
+    const onListLocalApps = vi.fn().mockResolvedValue([
+      githubApp,
+      superpowersApp,
+      {
+        ...githubApp,
+        id: 'gitlab',
+        name: 'GitLab',
+        logoUrl: '/plugin-icons/wework.svg',
+      },
+      { ...githubApp, id: 'linear', name: 'Linear' },
+      { ...githubApp, id: 'notion', name: 'Notion' },
+    ])
     const inserted: string[] = []
     const shownGuides: string[] = []
     const onInsert = (event: Event) => {
@@ -97,6 +101,10 @@ describe('PluginPickerMenu', () => {
     )
     expect(trigger).not.toHaveTextContent('+2')
 
+    const gitlabPreview = screen.getByTestId('composer-plugin-preview-icon-gitlab')
+    expect(gitlabPreview).toHaveTextContent('G')
+    expect(gitlabPreview.querySelector('img')).toBeNull()
+
     const githubPreview = screen.getByTestId('composer-plugin-preview-icon-github')
     const githubLogo = githubPreview.querySelector('img')
     expect(githubLogo).not.toBeNull()
@@ -108,6 +116,11 @@ describe('PluginPickerMenu', () => {
 
     expect(picker).toHaveTextContent('可用插件')
     expect(picker).toHaveTextContent('GitHub')
+    const superpowersPickerIcon = screen.getByTestId(
+      'composer-plugin-picker-icon-plugin:superpowers'
+    )
+    expect(superpowersPickerIcon).toHaveTextContent('S')
+    expect(superpowersPickerIcon.querySelector('img')).toBeNull()
     expect(picker).toHaveTextContent('superpowers')
     expect(picker).toHaveTextContent('检查仓库')
     expect(picker).toHaveTextContent('A complete software development workflow')

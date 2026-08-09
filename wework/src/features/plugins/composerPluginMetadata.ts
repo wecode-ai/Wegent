@@ -1,4 +1,5 @@
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
+import { resolveInstalledPluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { pluginTrialTemplates } from './pluginTrial'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
@@ -137,7 +138,7 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
     name: displayName,
     description:
       interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
-    logoUrl: interfaceData?.composerIcon || interfaceData?.logo || null,
+    logoUrl: resolveInstalledPluginLogoUrl(plugin) || null,
     isAccessible: true,
     isEnabled: true,
     pluginDisplayNames: [displayName],
@@ -168,7 +169,7 @@ export function enrichComposerApps(
           name: plugin.spec.displayName || app.name,
           description:
             interfaceData?.shortDescription || plugin.spec.description || app.description || null,
-          logoUrl: interfaceData?.composerIcon || interfaceData?.logo || app.logoUrl || null,
+          logoUrl: resolveInstalledPluginLogoUrl(plugin) || app.logoUrl || null,
           pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
             (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
           ),

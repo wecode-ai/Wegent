@@ -682,6 +682,18 @@ button:disabled {
     object-fit: cover;
   }
 
+  .composer-mention-initial-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.2em;
+    background: rgb(var(--color-focus) / 0.1);
+    color: currentColor;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1;
+  }
+
   .composer-mention-icon-slot::selection,
   .composer-mention-icon::selection {
     color: inherit;

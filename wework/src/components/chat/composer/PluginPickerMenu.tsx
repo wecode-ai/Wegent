@@ -9,7 +9,7 @@ import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { pluginNameInitial, resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import {
   getComposerApps,
   publishComposerApps,
@@ -30,33 +30,34 @@ interface PluginPickerMenuProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
-function pluginNameInitial(name: string): string {
-  return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '?'
-}
-
-function PluginPreviewIcon({ app }: { app: LocalDeviceApp }) {
-  const logo = resolvePluginLogoUrl({
+function ComposerPluginIcon({
+  app,
+  className,
+  initialClassName,
+  testId,
+}: {
+  app: LocalDeviceApp
+  className: string
+  initialClassName: string
+  testId: string
+}) {
+  const logo = resolvePluginLogo({
     pluginKey: composerAppPluginKey(app),
     logo: app.logoUrl,
   })
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
-  const showInitial = !logo || failedLogoUrl === logo
+  const showInitial = logo.isGenericFallback || failedLogoUrl === logo.url
 
   return (
-    <span
-      data-testid={`composer-plugin-preview-icon-${app.id}`}
-      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
-    >
+    <span data-testid={testId} className={className}>
       {showInitial ? (
-        <span className="scale-75 text-xs font-medium leading-none text-text-secondary">
-          {pluginNameInitial(app.name)}
-        </span>
+        <span className={initialClassName}>{pluginNameInitial(app.name)}</span>
       ) : (
         <img
-          src={logo}
+          src={logo.url}
           alt=""
           className="h-full w-full object-contain p-px"
-          onError={() => setFailedLogoUrl(logo)}
+          onError={() => setFailedLogoUrl(logo.url)}
         />
       )}
     </span>
@@ -233,7 +234,13 @@ export function PluginPickerMenu({
               aria-hidden="true"
             >
               {apps.slice(0, 3).map(app => (
-                <PluginPreviewIcon key={app.id} app={app} />
+                <ComposerPluginIcon
+                  key={app.id}
+                  app={app}
+                  testId={`composer-plugin-preview-icon-${app.id}`}
+                  className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
+                  initialClassName="scale-75 text-xs font-medium leading-none text-text-secondary"
+                />
               ))}
             </span>
           </>
@@ -267,7 +274,7 @@ export function PluginPickerMenu({
               </div>
             ) : visibleApps.length > 0 ? (
               visibleApps.slice(0, 8).map(app => {
-                const logo = resolvePluginLogoUrl({
+                const logo = resolvePluginLogo({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
                 })
@@ -280,7 +287,10 @@ export function PluginPickerMenu({
                     title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
-                      registerComposerMentionIcon(reference, logo)
+                      registerComposerMentionIcon(
+                        reference,
+                        logo.isGenericFallback ? null : logo.url
+                      )
                       insertPluginReference(reference)
                       showPluginTrialGuide(displayAppName(app), app.trialTemplates)
                       const recent = JSON.parse(
@@ -293,13 +303,12 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background">
-                      {logo ? (
-                        <img src={logo} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <Boxes className="h-3.5 w-3.5 text-text-muted" />
-                      )}
-                    </span>
+                    <ComposerPluginIcon
+                      app={app}
+                      testId={`composer-plugin-picker-icon-${app.id}`}
+                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background"
+                      initialClassName="text-xs font-medium leading-none text-text-secondary"
+                    />
                     <span className="min-w-0 truncate text-base leading-5">
                       {displayAppName(app)}
                     </span>

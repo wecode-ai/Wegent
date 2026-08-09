@@ -1,5 +1,5 @@
 import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { resolveInstalledPluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
@@ -90,17 +90,7 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
 }
 
 function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
-  const pluginKey =
-    plugin.spec.source.pluginKey ||
-    (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null)
-  registerComposerMentionIcon(
-    reference,
-    resolvePluginLogoUrl({
-      pluginKey,
-      logo: plugin.spec.interface?.logo,
-      composerIcon: plugin.spec.interface?.composerIcon,
-    })
-  )
+  registerComposerMentionIcon(reference, resolveInstalledPluginLogoUrl(plugin))
 }
 
 function skillFilePath(path: string): string {

@@ -1735,6 +1735,14 @@ export function WorkbenchProvider({
               currentComposerDeviceId = state.deviceId
               return state.installedPlugins
             }),
+          readLocalInstalledPluginDetail: plugin => {
+            const labels = plugin.metadata.labels
+            const id =
+              labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
+            return localPluginApi.readInstalledPluginForTrial(
+              typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
+            )
+          },
           listCloudInstalledPlugins: () =>
             cloudPluginApi
               .listInstalledPlugins(currentComposerDeviceId ?? undefined)

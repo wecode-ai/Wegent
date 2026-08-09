@@ -105,7 +105,7 @@ describe('composer mention icons', () => {
     expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
   })
 
-  test('falls back to bundled plugin brand icons for plugin mentions', () => {
+  test('uses the plugin initial when no brand logo exists', () => {
     const reference = '[$superpowers](plugin://superpowers@openai-official)'
     const element = createComposerMentionElement({
       name: 'superpowers',
@@ -113,7 +113,8 @@ describe('composer mention icons', () => {
       reference,
     })
 
-    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(element.querySelector('img')).toBeNull()
+    expect(element.querySelector('.composer-mention-initial-icon')).toHaveTextContent('S')
     expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
   })
 

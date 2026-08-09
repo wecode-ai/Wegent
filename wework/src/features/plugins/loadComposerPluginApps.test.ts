@@ -35,6 +35,52 @@ const dingtalk: InstalledPlugin = {
 }
 
 describe('loadComposerPluginApps', () => {
+  test('resolves a declared relative logo from the installed plugin root', async () => {
+    const localPlugin: InstalledPlugin = {
+      ...dingtalk,
+      spec: {
+        ...dingtalk.spec,
+        origin: 'created',
+        source: {
+          ...dingtalk.spec.source,
+          type: 'local',
+        },
+        interface: {
+          composerIcon: './assets/icon.png',
+        },
+      },
+    }
+    const readDetail = vi.fn().mockResolvedValue({
+      ...localPlugin,
+      spec: {
+        ...localPlugin.spec,
+        components: {
+          ...localPlugin.spec.components,
+          skills: [
+            {
+              name: 'dingtalk',
+              path: '/Users/test/.codex/plugins/cache/personal/dingtalk/1/skills/dingtalk/SKILL.md',
+            },
+          ],
+        },
+      },
+    } satisfies InstalledPlugin)
+
+    const apps = await loadComposerPluginApps({
+      listCodexApps: async () => [],
+      readLocalInstalledPlugins: async () => [localPlugin],
+      readLocalInstalledPluginDetail: readDetail,
+      listCloudInstalledPlugins: async () => [],
+    })
+
+    expect(readDetail).toHaveBeenCalledWith(localPlugin)
+    expect(apps).toEqual([
+      expect.objectContaining({
+        logoUrl: '/Users/test/.codex/plugins/cache/personal/dingtalk/1/assets/icon.png',
+      }),
+    ])
+  })
+
   test('still lists cloud installs when local Codex state read fails', async () => {
     const apps = await loadComposerPluginApps({
       listCodexApps: vi.fn().mockResolvedValue([] as LocalDeviceApp[]),

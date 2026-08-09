@@ -1,5 +1,6 @@
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import { mergeInstalledPlugins } from '@/components/plugins/installedPluginMerge'
+import { installedPluginHasRelativeLogo } from '@/components/plugins/plugin-assets'
 import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
@@ -8,6 +9,7 @@ import {
 export interface ComposerPluginAppSources {
   listCodexApps: () => Promise<LocalDeviceApp[]>
   readLocalInstalledPlugins: () => Promise<InstalledPlugin[]>
+  readLocalInstalledPluginDetail?: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
   listCloudInstalledPlugins: () => Promise<InstalledPlugin[]>
 }
 
@@ -33,6 +35,20 @@ export async function loadComposerPluginApps(
     localItems = await sources.readLocalInstalledPlugins()
   } catch (error) {
     console.warn('[Wework] Failed to read local installed plugins for composer.', error)
+  }
+  const readLocalInstalledPluginDetail = sources.readLocalInstalledPluginDetail
+  if (readLocalInstalledPluginDetail) {
+    localItems = await Promise.all(
+      localItems.map(async plugin => {
+        if (!installedPluginHasRelativeLogo(plugin)) return plugin
+        try {
+          return await readLocalInstalledPluginDetail(plugin)
+        } catch (error) {
+          console.warn('[Wework] Failed to resolve an installed plugin logo for composer.', error)
+          return plugin
+        }
+      })
+    )
   }
 
   let cloudItems: InstalledPlugin[] = []

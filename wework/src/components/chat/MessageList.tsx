@@ -52,6 +52,7 @@ import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
+import { pluginNameInitial } from '@/components/plugins/plugin-assets'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
@@ -1804,6 +1805,13 @@ function renderUserContent(
             alt=""
             className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
           />
+        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+          <span
+            data-testid={iconTestId}
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+          >
+            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+          </span>
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}

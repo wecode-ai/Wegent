@@ -1,26 +1,68 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import type { InstalledPlugin } from '@/types/api'
 
 const PLUGIN_ICON_FALLBACKS: Record<string, string> = {
   github: '/plugin-icons/github.svg',
   gitlab: '/plugin-icons/gitlab.svg',
   'weibo-api': '/plugin-icons/weibo.svg',
   weibo: '/plugin-icons/weibo.svg',
-  review: '/plugin-icons/wework.svg',
-  'code-review': '/plugin-icons/wework.svg',
   'product-design': '/plugin-icons/openai.svg',
   analytics: '/plugin-icons/data-analytics.svg',
   'data-analytics': '/plugin-icons/data-analytics.svg',
   'plugin-creator': '/plugin-icons/openai.svg',
-  ding: '/plugin-icons/wework.svg',
-  'release-check': '/plugin-icons/wework.svg',
 }
 
-const GENERIC_PLUGIN_ICON_URL = '/plugin-icons/wework.svg'
+const LEGACY_GENERIC_PLUGIN_ICON_URL = '/plugin-icons/wework.svg'
+
+export function pluginNameInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '?'
+}
 
 function isLocalAssetPath(value: string): boolean {
   if (value.startsWith('file://')) return true
   if (/^[a-zA-Z]:[\\/]/.test(value)) return true
   return value.startsWith('/')
+}
+
+export function isRelativePluginAssetPath(value?: string | null): boolean {
+  const source = value?.trim()
+  if (!source || isLocalAssetPath(source)) return false
+  return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(source)
+}
+
+function pluginRootFromComponentPath(value?: string | null): string | null {
+  const source = value?.trim()
+  if (!source || !isLocalAssetPath(source)) return null
+  const normalized = localPathFromFileUrl(source).replace(/\\/g, '/')
+  const marker = ['/skills/', '/agents/', '/commands/']
+    .map(directory => normalized.lastIndexOf(directory))
+    .find(index => index > 0)
+  return marker === undefined ? null : normalized.slice(0, marker)
+}
+
+function installedPluginRoot(plugin: InstalledPlugin): string | null {
+  const components = plugin.spec.components
+  const paths = [
+    ...(components.skills ?? []).map(component => component.path),
+    ...(components.agents ?? []).map(component => component.path),
+    ...(components.commands ?? []).map(component => component.path),
+  ]
+  return paths.map(pluginRootFromComponentPath).find(Boolean) ?? null
+}
+
+function resolveInstalledPluginAssetPath(plugin: InstalledPlugin, value?: string | null): string {
+  const source = value?.trim()
+  if (!source || !isRelativePluginAssetPath(source)) return source ?? ''
+  const root = installedPluginRoot(plugin)
+  if (!root) return source
+  const segments = source.replace(/\\/g, '/').split('/')
+  const safeSegments: string[] = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') return ''
+    safeSegments.push(segment)
+  }
+  return safeSegments.length > 0 ? `${root}/${safeSegments.join('/')}` : ''
 }
 
 function localPathFromFileUrl(value: string): string {
@@ -55,7 +97,7 @@ function isRenderablePluginLogoUrl(value: string): boolean {
 
 function isGenericPluginIconUrl(value?: string | null): boolean {
   const normalized = value?.trim().split(/[?#]/, 1)[0]?.replace(/\\/g, '/') ?? ''
-  return normalized.endsWith(GENERIC_PLUGIN_ICON_URL)
+  return normalized.endsWith(LEGACY_GENERIC_PLUGIN_ICON_URL)
 }
 
 function fallbackPluginIcon(pluginKey?: string | null): {
@@ -63,14 +105,14 @@ function fallbackPluginIcon(pluginKey?: string | null): {
   isGeneric: boolean
 } {
   const normalized = (pluginKey || '').trim().toLowerCase()
-  if (!normalized) return { url: GENERIC_PLUGIN_ICON_URL, isGeneric: true }
+  if (!normalized) return { url: '', isGeneric: true }
 
   if (PLUGIN_ICON_FALLBACKS[normalized]) {
     const url = PLUGIN_ICON_FALLBACKS[normalized]
     return { url, isGeneric: isGenericPluginIconUrl(url) }
   }
 
-  return { url: GENERIC_PLUGIN_ICON_URL, isGeneric: true }
+  return { url: '', isGeneric: true }
 }
 
 export function resolvePluginLogoUrl(options: {
@@ -78,7 +120,22 @@ export function resolvePluginLogoUrl(options: {
   logo?: string | null
   composerIcon?: string | null
 }): string {
-  return resolvePluginLogo(options).url
+  const logo = resolvePluginLogo(options)
+  return logo.isGenericFallback ? '' : logo.url
+}
+
+export function installedPluginHasRelativeLogo(plugin: InstalledPlugin): boolean {
+  const interfaceData = plugin.spec.interface
+  return isRelativePluginAssetPath(interfaceData?.composerIcon || interfaceData?.logo)
+}
+
+export function resolveInstalledPluginLogoUrl(plugin: InstalledPlugin): string {
+  const interfaceData = plugin.spec.interface
+  const declaredLogo = interfaceData?.composerIcon || interfaceData?.logo
+  return resolvePluginLogoUrl({
+    pluginKey: plugin.spec.source.pluginKey,
+    logo: resolveInstalledPluginAssetPath(plugin, declaredLogo),
+  })
 }
 
 export function resolvePluginLogo(options: {

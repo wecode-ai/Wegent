@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { PluginDistribution } from './pluginDistribution'
+import { pluginNameInitial } from './plugin-assets'
 
 interface PluginSourceAvatarProps {
   className: string
@@ -10,11 +11,6 @@ interface PluginSourceAvatarProps {
   name: string
   testId?: string
   useInitial: boolean
-}
-
-function pluginNameInitial(name: string): string {
-  const normalized = name.trim()
-  return normalized ? (Array.from(normalized)[0]?.toLocaleUpperCase() ?? '?') : '?'
 }
 
 export function PluginSourceAvatar({
