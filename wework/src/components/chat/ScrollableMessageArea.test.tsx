@@ -1474,7 +1474,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('tracks the active turn from a mounted assistant row when the user row is virtualized', () => {
+  test('does not activate a turn from mounted assistant rows when user rows are virtualized', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -1559,16 +1559,16 @@ describe('ScrollableMessageArea', () => {
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers).toHaveLength(3)
     expect(markers[0]).toHaveAttribute('data-active', 'false')
-    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[1]).toHaveAttribute('data-active', 'false')
     expect(markers[2]).toHaveAttribute('data-active', 'false')
 
     scroller.scrollTop = 2_900
     fireEvent.scroll(scroller)
 
-    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[1]).toHaveAttribute('data-active', 'false')
   })
 
-  test('tracks a page-leading assistant without a runtime message index', () => {
+  test('does not activate a turn from a page-leading assistant', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
 
@@ -1649,6 +1649,66 @@ describe('ScrollableMessageArea', () => {
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers).toHaveLength(3)
     expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'false')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
+  test('activates every user message visible in the viewport', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'visible-user-1',
+            role: 'user',
+            content: 'Visible request one',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:00.000Z',
+          },
+          {
+            id: 'visible-assistant',
+            role: 'assistant',
+            content: 'Visible response',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:01.000Z',
+          },
+          {
+            id: 'visible-user-2',
+            role: 'user',
+            content: 'Visible request two',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:02.000Z',
+          },
+          {
+            id: 'hidden-user',
+            role: 'user',
+            content: 'Hidden request',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:03.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 200,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Visible request one').closest('[data-message-id]')!, -20, 80)
+    mockRect(screen.getByText('Visible response').closest('[data-message-id]')!, 80, 120)
+    mockRect(screen.getByText('Visible request two').closest('[data-message-id]')!, 200, 80)
+    mockRect(screen.getByText('Hidden request').closest('[data-message-id]')!, 420, 80)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'true')
     expect(markers[1]).toHaveAttribute('data-active', 'true')
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })
