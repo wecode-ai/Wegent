@@ -404,6 +404,10 @@ function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightW
   return tab.startsWith('browser:')
 }
 
+function logBrowserOpenDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
+  console.info(`[Wework][browser-open] ${stage}`, detail)
+}
+
 function normalizeRightWorkspaceBrowserState(
   tab: RightWorkspaceBrowserTab,
   state: Partial<RightWorkspaceBrowserState> | undefined,
@@ -2087,6 +2091,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const openBrowserTab = useCallback(
     (request?: EmbeddedBrowserOpenRequest | null, targetTab?: RightWorkspaceBrowserTab) => {
       const tab = targetTab ?? allocateBrowserTab()
+      logBrowserOpenDiagnostic('openBrowserTab', {
+        tab,
+        targetTab: targetTab ?? null,
+        requestId: request?.id ?? null,
+        url: request?.url ?? null,
+        requestLabel: request?.label ?? null,
+        requestTargetLabel: request?.targetLabel ?? null,
+      })
       const existingState = browserStatesRef.current[tab]
       const stateLabel =
         existingState?.label ??
@@ -2180,10 +2192,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
         requestBaseLabel === defaultEmbeddedBrowserLabel ||
         Boolean(targetByLabel)
-      if (!baseLabelMatchesPane) return
+      if (!baseLabelMatchesPane) {
+        logBrowserOpenDiagnostic('routeRequestDropped', {
+          requestId: request.id,
+          url: request.url,
+          reason: 'baseLabel-mismatch',
+          requestBaseLabel,
+          defaultEmbeddedBrowserLabel,
+        })
+        return
+      }
 
       const source = request.source || 'agent'
       const disposition = request.disposition || 'current-tab'
+      logBrowserOpenDiagnostic('routeRequest', {
+        requestId: request.id,
+        url: request.url,
+        label: request.label ?? null,
+        baseLabel: requestBaseLabel,
+        source,
+        disposition,
+        targetByLabel: targetByLabel ?? null,
+        defaultEmbeddedBrowserLabel,
+      })
       const normalizedRequest: EmbeddedBrowserOpenRequest = {
         ...request,
         id: request.id || `legacy-open-request-${++legacyEmbeddedBrowserOpenRequestSequence}`,
@@ -2205,6 +2236,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useEffect(() => {
     if (!paneActive) return
     const listener = listenEmbeddedBrowserOpenRequests(request => {
+      logBrowserOpenDiagnostic('openRequestReceived', {
+        requestId: request.id,
+        url: request.url,
+        label: request.label ?? null,
+        source: request.source ?? null,
+      })
       routeEmbeddedBrowserOpenRequest(request)
     })
 

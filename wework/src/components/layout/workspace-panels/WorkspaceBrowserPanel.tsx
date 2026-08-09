@@ -945,6 +945,11 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (!activeRef.current || event.label !== currentLabelRef.current) return
+      console.info('[Wework][browser-open] closeEventReset', {
+        label,
+        eventLabel: event.label,
+        currentUrl: currentUrlRef.current,
+      })
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
@@ -1336,6 +1341,11 @@ export function WorkspaceBrowserTabPanel({
 
     setStatus('loading')
     const openWhenHostIsReady = async () => {
+      console.info('[Wework][browser-open] nativeOpenStart', {
+        label,
+        currentUrl,
+        active,
+      })
       try {
         const bounds = await waitForElementBounds(
           () => browserHostRef.current,
@@ -1357,12 +1367,21 @@ export function WorkspaceBrowserTabPanel({
         adoptNativeLabel(pageState.nativeLabel, label)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
+        console.info('[Wework][browser-open] nativeOpenSucceeded', {
+          label,
+          nativeLabel: pageState.nativeLabel,
+          url: pageState.url,
+        })
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
       } catch (error) {
-        console.error('Failed to open embedded browser:', error)
+        console.error('[Wework][browser-open] nativeOpenFailed', {
+          label,
+          currentUrl,
+          error: error instanceof Error ? error.message : String(error),
+        })
         if (!disposed) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
           const recoveryDelays = [0, 120, 300, 600]
@@ -1626,11 +1645,18 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     return () => {
+      // Do NOT close the native embedded browser here. React StrictMode double-invokes
+      // effects in development (mount -> unmount -> remount), so this cleanup runs once
+      // for a "fake" unmount immediately before the real mount. Closing the native
+      // webview here tears down the very browser the remounted panel is about to open,
+      // which resets the panel back to the empty start page (blank address bar).
+      // The native browser lifecycle is owned by the explicit close-tab action
+      // (closeRightPanelTab -> closeEmbeddedBrowsers), not by component unmount.
+      // Here we only clear local references so a remount re-adopts the existing browser.
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
-      void closeEmbeddedBrowser(label).catch(() => undefined)
     }
   }, [label])
 
@@ -1831,9 +1857,22 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     if (!openRequest?.url) return
-    if (openRequest.label && openRequest.label !== label) return
+    if (openRequest.label && openRequest.label !== label) {
+      console.info('[Wework][browser-open] openRequestLabelMismatch', {
+        requestId: openRequest.id,
+        requestLabel: openRequest.label,
+        panelLabel: label,
+      })
+      return
+    }
     if (handledOpenRequestIdRef.current === openRequest.id) return
     handledOpenRequestIdRef.current = openRequest.id
+    console.info('[Wework][browser-open] consumeOpenRequest', {
+      requestId: openRequest.id,
+      url: openRequest.url,
+      label,
+      active: activeRef.current,
+    })
     openBrowserUrl(openRequest.url)
   }, [label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
 
