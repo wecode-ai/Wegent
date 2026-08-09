@@ -50,6 +50,9 @@ const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const deliveryApiMock = vi.hoisted(() => ({
   available: false,
   listCloudProjects: vi.fn(),
+  listCloudFiles: vi.fn(),
+  listLoopItems: vi.fn(),
+  listDeliveries: vi.fn(),
 }))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
@@ -550,6 +553,9 @@ describe('DesktopWorkbenchLayout', () => {
     vi.clearAllMocks()
     deliveryApiMock.available = false
     deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
+    deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
+    deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
+    deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1021,6 +1027,9 @@ describe('DesktopWorkbenchLayout', () => {
           ? {
               deliveryApi: {
                 listCloudProjects: deliveryApiMock.listCloudProjects,
+                listCloudFiles: deliveryApiMock.listCloudFiles,
+                listLoopItems: deliveryApiMock.listLoopItems,
+                listDeliveries: deliveryApiMock.listDeliveries,
               },
             }
           : {}),
@@ -1959,6 +1968,113 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     expect(await screen.findByTestId('mention-cloud-space-direct-action')).toBeInTheDocument()
+  })
+
+  test('treats a runtime task missing from runtime work as a new project-space task', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'space-1',
+          public_id: 'public-space-1',
+          project_key: 'SPACE-1',
+          name: 'Task Follow-up Board',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].project.defaultProjectSpace = {
+      projectStore: 'local',
+      projectId: 'space-1',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/github_wegent',
+            taskId: 'stale-runtime-task',
+          },
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          currentProject,
+          currentProjectId: currentProject.id,
+          runtimeWork,
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
+      '加入看板 · Task Follow-up Board'
+    )
+  })
+
+  test('rechecks project spaces when a retained task workbench becomes visible again', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].project.defaultProjectSpace = {
+      projectStore: 'local',
+      projectId: 'space-1',
+    }
+    const props = {
+      ...baseProps,
+      state: {
+        ...activeProjectState,
+        runtimeWork,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        currentProject,
+        currentProjectId: currentProject.id,
+        runtimeWork,
+      },
+    }
+    const { rerender } = render(<DesktopWorkbenchLayout {...props} />)
+
+    await waitFor(() => expect(deliveryApiMock.listCloudProjects).toHaveBeenCalledOnce())
+
+    rerender(<DesktopWorkbenchLayout {...props} routeActive={false} />)
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'space-1',
+          public_id: 'public-space-1',
+          project_key: 'SPACE-1',
+          name: 'Task Follow-up Board',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    rerender(<DesktopWorkbenchLayout {...props} />)
+
+    await waitFor(() => expect(deliveryApiMock.listCloudProjects).toHaveBeenCalledTimes(2))
   })
 
   test('forks an earlier completed turn without stopping the running follow-up', async () => {

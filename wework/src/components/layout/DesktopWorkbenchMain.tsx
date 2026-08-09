@@ -511,6 +511,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const {
     activeDeliveryItem,
@@ -538,7 +539,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     todoBindingPickerOpen,
     visibleCloudMentionCandidates,
   } = useWorkbenchCloudProjectContext({
-    currentRuntimeTask,
+    active: paneActive && workbenchVisible,
+    currentRuntimeTask: currentProjectSpaceRuntimeTask,
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
     paneKey,
@@ -547,7 +549,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     userId: state.user?.id,
   })
   const pendingProjectSpaceContext =
-    !currentRuntimeTask && pendingCloudProject ? (
+    !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
       <ComposerModePill
         label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
           name: pendingCloudProject.name,
@@ -2822,10 +2824,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         {todoBindingPickerOpen && todoBindingApis.length > 0 && (
           <TodoBindingPicker
             apis={todoBindingApis}
-            runtimeTask={currentRuntimeTask ?? undefined}
+            runtimeTask={currentProjectSpaceRuntimeTask ?? undefined}
             runtimeTaskTitle={runtimeTaskTitle}
-            currentProject={currentRuntimeTask ? boundCloudProject : pendingCloudProject}
-            currentItem={currentRuntimeTask ? boundCloudItem : pendingTodoItem}
+            currentProject={
+              currentProjectSpaceRuntimeTask ? boundCloudProject : pendingCloudProject
+            }
+            currentItem={currentProjectSpaceRuntimeTask ? boundCloudItem : pendingTodoItem}
             onClose={closeTodoBindingPicker}
             onBound={handleTodoBound}
           />
