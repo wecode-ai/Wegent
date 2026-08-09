@@ -568,7 +568,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `[data-testid="workspace-tab-content-${firstTaskTabTestId.replace(
           'workspace-tab-select-',
           ''
-        )}"]:not([hidden])`,
+        )}"][aria-hidden="false"]`,
         { timeoutMs: uiTimeoutMs }
       )
       const browserMenuButtonCount = await control.command(

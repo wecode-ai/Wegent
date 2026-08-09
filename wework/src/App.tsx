@@ -260,10 +260,13 @@ function WorkspaceTabSurface({
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
-          className="col-start-1 row-start-1 min-h-0 min-w-0 overflow-hidden"
+          className={cn(
+            'col-start-1 row-start-1 min-h-0 min-w-0 overflow-hidden',
+            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+          )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
-          hidden={!active && keepTaskRuntimeActive}
+          aria-hidden={!active}
         >
           {renderProvider ? (
             <WorkbenchProvider

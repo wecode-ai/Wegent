@@ -334,16 +334,22 @@ describe('App center route', () => {
     taskContents.forEach(content => {
       expect(content).toHaveClass('col-start-1', 'row-start-1', 'min-h-0')
     })
-    expect(taskContents.filter(content => content.hidden)).toHaveLength(1)
+    expect(
+      taskContents.filter(content => content.getAttribute('aria-hidden') === 'true')
+    ).toHaveLength(1)
 
     fireEvent.click(taskTabs[0])
     await waitFor(() => expect(firstInput).toHaveValue('first task draft'))
-    expect(taskContents[0]).not.toHaveAttribute('hidden')
-    expect(taskContents[1]).toHaveAttribute('hidden')
+    expect(taskContents[0]).toHaveAttribute('aria-hidden', 'false')
+    expect(taskContents[0]).not.toHaveClass('invisible')
+    expect(taskContents[1]).toHaveAttribute('aria-hidden', 'true')
+    expect(taskContents[1]).toHaveClass('invisible', 'pointer-events-none')
     fireEvent.click(taskTabs[1])
     await waitFor(() => expect(secondInput).toHaveValue('second task draft'))
-    expect(taskContents[0]).toHaveAttribute('hidden')
-    expect(taskContents[1]).not.toHaveAttribute('hidden')
+    expect(taskContents[0]).toHaveAttribute('aria-hidden', 'true')
+    expect(taskContents[0]).toHaveClass('invisible', 'pointer-events-none')
+    expect(taskContents[1]).toHaveAttribute('aria-hidden', 'false')
+    expect(taskContents[1]).not.toHaveClass('invisible')
     expect(firstInput).toHaveValue('first task draft')
   })
 
