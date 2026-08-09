@@ -130,6 +130,8 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 Codex 原生任务的持久消息只以 `thread/turns/list` 和 `thread/items/list` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存并入 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或分页读取主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 provider 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由分页 transcript 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
+同一 turn 的实时流和 Provider 快照可能用不同结构表达同一条 assistant 文本，例如实时事件产生 `block:text`，而恢复旧会话时的快照返回 `assistant_text`。前端合并 turn 时必须把内容完全相同、类型为这两种互补表示的 item 视为同一消息，并以快照表示替换实时表示；不能只按 item id 合并，否则旧会话追问时会把同一段流式文本渲染两次。相同类型的同文 item 仍按各自 id 保留，避免删除模型确实连续输出的重复消息。该边界由 `runtimeConversationTurns` 单元测试和 `streaming-text` 真实 Tauri E2E 覆盖。
+
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
 ```text
