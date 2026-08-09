@@ -6,7 +6,6 @@ export interface LocalHarnessPreference {
   id: LocalHarnessId
   enabled: boolean
   executablePath: string | null
-  models: string[]
   args: string[]
   env: Record<string, string>
   permissionMode: ClaudeCodePermissionMode
@@ -19,7 +18,6 @@ export const defaultLocalHarnessPreferences: LocalHarnessPreference[] = LOCAL_HA
     id,
     enabled: true,
     executablePath: null,
-    models: [],
     args: [],
     env: {},
     permissionMode: 'default',
@@ -48,15 +46,6 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
     const args = Array.isArray(record.args)
       ? record.args.flatMap(arg => (typeof arg === 'string' && arg ? [arg] : []))
       : []
-    const models = Array.isArray(record.models)
-      ? Array.from(
-          new Set(
-            record.models.flatMap(model =>
-              typeof model === 'string' && model.trim() ? [model.trim()] : []
-            )
-          )
-        )
-      : []
     const env =
       record.env && typeof record.env === 'object' && !Array.isArray(record.env)
         ? Object.fromEntries(
@@ -75,7 +64,6 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
       id: defaultPreference.id,
       enabled: typeof record.enabled === 'boolean' ? record.enabled : true,
       executablePath,
-      models,
       args,
       env,
       permissionMode,

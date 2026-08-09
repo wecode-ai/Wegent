@@ -467,6 +467,8 @@ const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalHarnessMock = vi.mocked(startLocalHarness)
+const resolveLocalHarnessLaunchMock = vi.fn()
+const unregisterHarnessProxyMock = vi.fn()
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
@@ -615,6 +617,18 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalHarnessMock.mockResolvedValue('local-harness-1')
+    resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
+      modelId: harnessId === 'claude_code' ? 'wework-selected' : 'wework-messages/wework-selected',
+      proxyToken: 'proxy-token',
+      env:
+        harnessId === 'claude_code'
+          ? {
+              ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+              ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
+            }
+          : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
+    }))
+    unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
@@ -760,6 +774,20 @@ describe('DesktopWorkbenchLayout', () => {
     onSend: vi.fn(),
     onRequestUserInputSubmit: vi.fn().mockResolvedValue(true),
     onLogout: vi.fn(),
+  }
+  const harnessTestModel = {
+    name: 'local-model:test',
+    type: 'runtime' as const,
+    provider: 'local',
+    displayName: 'Test Model',
+    modelId: 'test-model',
+    config: { weworkModelKind: 'model-interface' },
+  }
+  const secondHarnessTestModel = {
+    ...harnessTestModel,
+    name: 'local-model:second',
+    displayName: 'Second Test Model',
+    modelId: 'second-test-model',
   }
 
   const activeProjectState = {
@@ -1058,6 +1086,10 @@ describe('DesktopWorkbenchLayout', () => {
           startDeviceTerminal: startDeviceTerminalSessionMock,
           startDeviceCodeServer: startDeviceCodeServerSessionMock,
           createRemoteTerminalClient: createRemoteTerminalClientMock,
+        },
+        localHarnessModelApi: {
+          resolveLaunch: resolveLocalHarnessLaunchMock,
+          unregisterProxy: unregisterHarnessProxyMock,
         },
       },
       state,
@@ -3031,6 +3063,10 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{ ...activeProjectState, input: '检查当前项目' }}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [harnessTestModel, secondHarnessTestModel],
+        }}
       />
     )
 
@@ -3043,6 +3079,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-bar')).toContainElement(
       screen.getByTestId('workbench-harness-selector')
     )
+    await userEvent.click(screen.getByTestId('workbench-harness-model-selector'))
+    await userEvent.click(screen.getByTestId('workbench-harness-model-option-opencode-1'))
+    expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent(
+      'Second Test Model'
+    )
 
     const input = screen.getByTestId('chat-message-input')
     const form = input.closest('form')
@@ -3050,13 +3091,23 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.submit(form)
 
     await waitFor(() =>
+      expect(resolveLocalHarnessLaunchMock).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          label: 'Second Test Model',
+          model: expect.objectContaining({ modelId: 'second-test-model' }),
+        })
+      )
+    )
+    await waitFor(() =>
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'opencode',
         prompt: '检查当前项目',
         cwd: '/workspace/github_wegent',
         executablePath: null,
-        args: [],
-        env: {},
+        args: ['--model', 'wework-messages/wework-selected'],
+        proxyToken: 'proxy-token',
+        env: { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
       })
     )
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
@@ -3111,6 +3162,7 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
       />
     )
 
@@ -3132,8 +3184,12 @@ describe('DesktopWorkbenchLayout', () => {
         prompt: '分析并修复测试失败',
         cwd: '/workspace/github_wegent',
         executablePath: null,
-        args: [],
-        env: {},
+        args: ['--model', 'wework-selected'],
+        proxyToken: 'proxy-token',
+        env: {
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+          ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
+        },
       })
     )
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
@@ -3156,6 +3212,7 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{ ...baseProps.state, input: '检查当前工作区' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
       />
     )
 
@@ -3176,8 +3233,9 @@ describe('DesktopWorkbenchLayout', () => {
         prompt: '检查当前工作区',
         cwd: '/workspace/current-wework',
         executablePath: null,
-        args: [],
-        env: {},
+        args: ['--model', 'wework-messages/wework-selected'],
+        proxyToken: 'proxy-token',
+        env: { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
       })
     )
 

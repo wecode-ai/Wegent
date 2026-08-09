@@ -35,8 +35,6 @@ harness. Under **Settings → Connections → Harnesses**, you can:
   the new-conversation runtime selector.
 - Leave the executable field empty to search the desktop process `PATH` and the tool's common
   install locations, or provide an absolute path.
-- Enter selectable model IDs one per line. OpenCode uses the `provider/model` format, such as
-  `openai/gpt-5.2`; Claude Code accepts aliases such as `sonnet` and `opus`, or a full model ID.
 - Enter default arguments one per line. Wework passes them without shell parsing and appends the
   current prompt according to the selected harness protocol.
 - Enter launch environment variables as one `NAME=VALUE` per line. These settings remain on the
@@ -54,10 +52,18 @@ running session and restore its bounded terminal scrollback. Closing the session
 local process, and processes that have ended are not restored after Wework exits.
 
 After selecting OpenCode or Claude Code, the ordinary Codex model picker is replaced by the
-selected harness's model picker. **Default model** omits a model argument; selecting a configured
-model passes it to the executable as `--model <model ID>`. An explicit composer selection replaces
-any `--model` or `-m` value from the default arguments so one launch cannot contain conflicting
-model choices.
+harness model picker. It directly lists local model interfaces from **Settings → Models** and the
+public, personal, and group models available through the connected Wegent account. Harnesses no
+longer maintain a separate list of model IDs. An explicit composer selection replaces any
+`--model` or `-m` value from the default arguments.
+
+Both harnesses connect only to an Anthropic Messages-compatible loopback route exposed by the
+executor. The child process receives a fixed local model alias and non-privileged placeholder
+credentials. Provider keys, cloud login tokens, model resource identity, and the configured local
+HTTP/SOCKS proxy remain inside the executor. The executor converts Messages requests as peer
+adapters to Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions according to the
+selected model. Native Anthropic upstream requests and responses preserve their original fields.
+Closing or exiting a harness unregisters its route; abandoned routes expire after an idle timeout.
 
 ## Model availability
 

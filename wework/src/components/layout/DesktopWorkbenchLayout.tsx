@@ -147,6 +147,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
           title: session.title,
           cwd: session.cwd,
           createdAt: session.created_at,
+          proxyToken: session.proxy_token,
         }))
         setLocalHarnessSessions(current => [
           ...current,
@@ -207,10 +208,19 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     setActiveLocalHarnessSessionId(sessionId)
     navigateTo('/')
   }, [])
-  const removeLocalHarnessSession = useCallback((sessionId: string) => {
-    setLocalHarnessSessions(current => current.filter(session => session.sessionId !== sessionId))
-    setActiveLocalHarnessSessionId(current => (current === sessionId ? null : current))
-  }, [])
+  const removeLocalHarnessSession = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current => current.filter(session => session.sessionId !== sessionId))
+      setActiveLocalHarnessSessionId(current => (current === sessionId ? null : current))
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
   const closeLocalHarnessSession = useCallback(
     async (sessionId: string) => {
       await closeLocalTerminal(sessionId)

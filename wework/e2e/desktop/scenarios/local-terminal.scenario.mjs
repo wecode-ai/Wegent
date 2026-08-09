@@ -6,10 +6,20 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CENTRAL_HARNESS_SELECTOR = '[data-testid="central-harness-terminal"]'
 const OPEN_CODE_ARGS_FILE = '.wework-opencode-e2e-args'
+const OPEN_CODE_PROXY_FILE = '.wework-opencode-e2e-proxy'
 const CLAUDE_CODE_ARGS_FILE = '.wework-claude-code-e2e-args'
 const CLAUDE_CODE_ENV_FILE = '.wework-claude-code-e2e-env'
+const CLAUDE_CODE_PROXY_FILE = '.wework-claude-code-e2e-proxy'
 
-async function createHarnessFixture({ executablePath, name, version, argsFile, envFile = null }) {
+async function createHarnessFixture({
+  executablePath,
+  name,
+  version,
+  argsFile,
+  envFile = null,
+  proxyFile,
+  proxyVariable,
+}) {
   await mkdir(dirname(executablePath), { recursive: true })
   await writeFile(
     executablePath,
@@ -24,6 +34,7 @@ for arg in "$@"; do
   printf '%s\\n' "$arg" >> "$args_file"
 done
 ${envFile ? `printf '%s\\n' "$WEWORK_HARNESS_E2E" > "$HOME/${envFile}"` : ''}
+printf '%s\\n' "$${proxyVariable}" > "$HOME/${proxyFile}"
 printf '\\033[2J\\033[H${name} E2E harness\\r\\n'
 exec sleep 600
 `
@@ -40,6 +51,8 @@ async function createHarnessFixtures(homePath) {
       name: 'OpenCode',
       version: 'opencode-e2e 1.0.0',
       argsFile: OPEN_CODE_ARGS_FILE,
+      proxyFile: OPEN_CODE_PROXY_FILE,
+      proxyVariable: 'OPENCODE_CONFIG_CONTENT',
     }),
     createHarnessFixture({
       executablePath: claudeCodeExecutable,
@@ -47,6 +60,8 @@ async function createHarnessFixtures(homePath) {
       version: 'claude-code-e2e 2.0.0',
       argsFile: CLAUDE_CODE_ARGS_FILE,
       envFile: CLAUDE_CODE_ENV_FILE,
+      proxyFile: CLAUDE_CODE_PROXY_FILE,
+      proxyVariable: 'ANTHROPIC_BASE_URL',
     }),
   ])
   return { openCodeExecutable, claudeCodeExecutable }
@@ -65,6 +80,41 @@ async function waitForFile(path, expected, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   assert.equal(lastValue, expected, `Unexpected harness evidence in ${path}`)
+}
+
+async function readFileWhenReady(path, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const value = await readFile(path, 'utf8')
+      if (value.trim()) return value.trim()
+    } catch {
+      // The harness writes the evidence file immediately after launch.
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.fail(`Timed out waiting for harness evidence in ${path}`)
+}
+
+async function probeMessagesProxy(url, prompt) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'wework-local-router',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'wework-selected',
+      max_tokens: 32,
+      stream: true,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+  const body = await response.text()
+  assert.equal(response.status, 200, `Messages proxy returned ${response.status}: ${body}`)
+  assert.match(body, /event: message_start/, 'Messages proxy did not emit message_start')
+  assert.match(body, /event: message_stop/, 'Messages proxy did not emit message_stop')
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
@@ -101,9 +151,6 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   await control.command('fill', '[data-testid="harness-executable-opencode"]', {
     value: executables.openCodeExecutable,
   })
-  await control.command('fill', '[data-testid="harness-models-opencode"]', {
-    value: 'openai/gpt-5.2\nanthropic/claude-sonnet-4-6',
-  })
   await control.command('fill', '[data-testid="harness-executable-claude_code"]', {
     value: executables.claudeCodeExecutable,
   })
@@ -112,9 +159,6 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   })
   await control.command('fill', '[data-testid="harness-args-claude_code"]', {
     value: '--verbose',
-  })
-  await control.command('fill', '[data-testid="harness-models-claude_code"]', {
-    value: 'sonnet\nopus',
   })
   await control.command('fill', '[data-testid="harness-env-claude_code"]', {
     value: 'WEWORK_HARNESS_E2E=claude-settings',
@@ -149,7 +193,10 @@ async function startHarness({
   modelMenuScreenshot,
   readyScreenshot,
 }) {
-  await control.command('click', '[data-testid="workbench-harness-selector"]')
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+  )
   await control.command('waitFor', `[data-testid="workbench-harness-option-${harnessId}"]`, {
     visible: true,
     timeoutMs,
@@ -160,7 +207,10 @@ async function startHarness({
     `[data-testid="workbench-harness-option-${harnessId}"]`,
     { timeoutMs }
   )
-  await control.command('click', '[data-testid="workbench-harness-model-selector"]')
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`
+  )
   await control.command(
     'waitFor',
     `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`,
@@ -171,13 +221,22 @@ async function startHarness({
   )
   await capturePage(control, modelMenuScreenshot)
   await control.command(
-    'click',
-    `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`
+    'clickDescendantInElementWithText',
+    '[data-testid="workbench-harness-model-selector-menu"]',
+    {
+      text: model,
+      target: `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`,
+      timeoutMs,
+    }
   )
-  await control.command('waitFor', '[data-testid="workbench-harness-model-selector"]', {
-    text: model,
-    timeoutMs,
-  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`,
+    {
+      text: model,
+      timeoutMs,
+    }
+  )
   await control.command('fill', '[data-testid="chat-message-input"]', { value: prompt })
   await capturePage(control, readyScreenshot)
   await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', { timeoutMs })
@@ -206,7 +265,7 @@ export async function createDesktopScenario({
       await startHarness({
         control,
         harnessId: 'opencode',
-        model: 'openai/gpt-5.2',
+        model: 'Desktop E2E Responses',
         modelOptionIndex: 0,
         prompt: 'Inspect the current project',
         timeoutMs: uiTimeoutMs,
@@ -233,8 +292,17 @@ export async function createDesktopScenario({
       )
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
-        '--model\nopenai/gpt-5.2\n--prompt\nInspect the current project\n',
+        '--model\nwework-messages/wework-selected\n--prompt\nInspect the current project\n',
         uiTimeoutMs
+      )
+      const openCodeConfig = JSON.parse(
+        await readFileWhenReady(join(homePath, OPEN_CODE_PROXY_FILE), uiTimeoutMs)
+      )
+      const openCodeBaseUrl = openCodeConfig.provider?.['wework-messages']?.options?.baseURL
+      assert.equal(typeof openCodeBaseUrl, 'string', 'OpenCode did not receive its Messages URL')
+      await probeMessagesProxy(
+        `${openCodeBaseUrl}/messages`,
+        'WEWORK_HARNESS_OPENCODE_RESPONSES_PROXY'
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -254,7 +322,7 @@ export async function createDesktopScenario({
       await startHarness({
         control,
         harnessId: 'claude_code',
-        model: 'opus',
+        model: 'Desktop E2E Chat',
         modelOptionIndex: 1,
         prompt: 'Review the current project',
         timeoutMs: uiTimeoutMs,
@@ -266,10 +334,18 @@ export async function createDesktopScenario({
       await captureWorkbench(control, 'local-harness-12-claude-code-running.png')
       await waitForFile(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
-        '--permission-mode\nplan\n--verbose\n--model\nopus\nReview the current project\n',
+        '--permission-mode\nplan\n--verbose\n--model\nwework-selected\nReview the current project\n',
         uiTimeoutMs
       )
       await waitForFile(join(homePath, CLAUDE_CODE_ENV_FILE), 'claude-settings\n', uiTimeoutMs)
+      const claudeCodeBaseUrl = await readFileWhenReady(
+        join(homePath, CLAUDE_CODE_PROXY_FILE),
+        uiTimeoutMs
+      )
+      await probeMessagesProxy(
+        `${claudeCodeBaseUrl}/v1/messages`,
+        'WEWORK_HARNESS_CLAUDE_CHAT_PROXY'
+      )
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
@@ -280,8 +356,10 @@ export async function createDesktopScenario({
     diagnostics() {
       return {
         openCodeArgsFile: join(homePath, OPEN_CODE_ARGS_FILE),
+        openCodeProxyFile: join(homePath, OPEN_CODE_PROXY_FILE),
         claudeCodeArgsFile: join(homePath, CLAUDE_CODE_ARGS_FILE),
         claudeCodeEnvFile: join(homePath, CLAUDE_CODE_ENV_FILE),
+        claudeCodeProxyFile: join(homePath, CLAUDE_CODE_PROXY_FILE),
       }
     },
   }

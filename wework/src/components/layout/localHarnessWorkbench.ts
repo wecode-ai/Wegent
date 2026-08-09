@@ -6,4 +6,5 @@ export interface LocalHarnessWorkbenchSession {
   title: string
   cwd: string
   createdAt: number
+  proxyToken?: string
 }

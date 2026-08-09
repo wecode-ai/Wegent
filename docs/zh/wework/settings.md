@@ -45,8 +45,6 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 
 - 启用或隐藏某个工具。只有已启用且检测成功的工具才会出现在新对话的运行工具选择器中。
 - 留空可执行文件路径，让 Wework 从当前进程的 `PATH` 和工具的常见安装目录中检测；也可以填写绝对路径。
-- 按每行一个模型 ID 配置可选模型。OpenCode 使用 `provider/model` 格式，例如
-  `openai/gpt-5.2`；Claude Code 可以使用 `sonnet`、`opus` 等别名或完整模型 ID。
 - 按每行一个参数的方式配置默认参数。Wework 不经过 shell 解析，并会按照工具协议追加本次输入的提示词。
 - 按每行一个 `NAME=VALUE` 配置启动环境变量。这些设置只保存在当前设备。
 - 为 Claude Code 选择默认、计划模式或跳过权限确认模式。跳过权限确认会传入
@@ -58,10 +56,15 @@ PTY 运行，终端显示在工作台中央，并支持键盘输入和窗口尺�
 区域；刷新主 WebView 后可以重新附着并恢复有限的终端回滚内容。关闭会话会终止对应的本地进程，
 退出 Wework 后不会恢复已经结束的进程。
 
-选择 OpenCode 或 Claude Code 后，普通 Codex 模型选择器会切换为该运行工具自己的模型选择器。
-选择“默认模型”时不传模型参数；选择已配置模型时，Wework 会把它作为 `--model <模型 ID>`
-传给对应工具。如果默认参数中已经包含 `--model` 或 `-m`，输入区中的显式选择会替换该值，
-避免同一次启动出现相互冲突的模型参数。
+选择 OpenCode 或 Claude Code 后，普通 Codex 模型选择器会切换为运行工具模型选择器。这里直接
+展示“设置 → 模型”中的本地模型接口，以及当前已连接 Wegent 账号可访问的公共、个人和群组模型；
+不再单独维护一份 harness 模型 ID。输入区中的显式选择会替换默认参数里的 `--model` 或 `-m`。
+
+两个运行工具都只连接 executor 暴露在回环地址上的 Anthropic Messages 兼容路由。工具进程只收到
+固定的本地模型别名和无权限的占位凭证；真实 provider 凭证、云端登录 token、模型资源身份和本地
+HTTP/SOCKS 代理配置都保留在 executor 中。executor 按选中模型把 Messages 请求平级转换到
+Anthropic Messages、OpenAI Responses 或 OpenAI Chat Completions，上游为 Anthropic Messages
+时保留原始请求和响应字段。关闭或退出运行工具会注销对应路由，异常遗留路由会在空闲超时后回收。
 
 ## 模型可用状态
 

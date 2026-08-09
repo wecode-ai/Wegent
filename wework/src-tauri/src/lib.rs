@@ -646,8 +646,6 @@ struct LocalHarnessPreference {
     #[serde(default)]
     executable_path: Option<String>,
     #[serde(default)]
-    models: Vec<String>,
-    #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
     env: HashMap<String, String>,
@@ -666,7 +664,6 @@ fn default_local_harness_preferences() -> Vec<LocalHarnessPreference> {
             id: id.to_string(),
             enabled: true,
             executable_path: None,
-            models: Vec::new(),
             args: Vec::new(),
             env: HashMap::new(),
             permission_mode: default_harness_permission_mode(),
@@ -688,17 +685,6 @@ fn normalize_local_harness_preferences(
                 return default_preference;
             };
             preference.executable_path = preference.executable_path.and_then(normalized_non_empty);
-            preference.models = preference
-                .models
-                .into_iter()
-                .filter_map(normalized_non_empty)
-                .filter(|model| !model.contains('\0'))
-                .fold(Vec::new(), |mut models, model| {
-                    if !models.contains(&model) {
-                        models.push(model);
-                    }
-                    models
-                });
             preference
                 .args
                 .retain(|arg| !arg.is_empty() && !arg.contains('\0'));
@@ -4363,11 +4349,6 @@ mod tests {
             id: "claude_code".to_string(),
             enabled: false,
             executable_path: Some("  /opt/claude  ".to_string()),
-            models: vec![
-                " sonnet ".to_string(),
-                "sonnet".to_string(),
-                "bad\0model".to_string(),
-            ],
             args: vec![
                 "--verbose".to_string(),
                 String::new(),
@@ -4391,7 +4372,6 @@ mod tests {
             preferences[1].executable_path.as_deref(),
             Some("/opt/claude")
         );
-        assert_eq!(preferences[1].models, vec!["sonnet"]);
         assert_eq!(preferences[1].args, vec!["--verbose"]);
         assert_eq!(
             preferences[1].env.get("REGION").map(String::as_str),

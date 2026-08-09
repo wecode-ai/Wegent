@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, State};
 
-use crate::process_environment;
+use crate::{normalized_non_empty, process_environment};
 
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
@@ -75,6 +75,7 @@ pub struct StartLocalHarnessRequest {
     rows: Option<u16>,
     cols: Option<u16>,
     env: Option<HashMap<String, String>>,
+    proxy_token: Option<String>,
 }
 
 struct PtyProcessSpec {
@@ -105,11 +106,13 @@ struct LocalHarnessSessionMetadata {
     title: String,
     cwd: String,
     created_at: u64,
+    proxy_token: Option<String>,
 }
 
 struct LocalHarnessLaunchMetadata {
     harness_id: String,
     title: String,
+    proxy_token: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -119,6 +122,7 @@ pub struct LocalHarnessSessionDescriptor {
     title: String,
     cwd: String,
     created_at: u64,
+    proxy_token: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -405,6 +409,7 @@ pub fn list_local_harness_sessions(
                 title: harness.title.clone(),
                 cwd: harness.cwd.clone(),
                 created_at: harness.created_at,
+                proxy_token: harness.proxy_token.clone(),
             })
         })
         .collect::<Vec<_>>();
@@ -599,6 +604,7 @@ pub fn start_local_harness(
         Some(LocalHarnessLaunchMetadata {
             harness_id: definition.id.to_string(),
             title: harness_session_title(definition.id, &request.prompt),
+            proxy_token: request.proxy_token.and_then(normalized_non_empty),
         }),
     )
 }
@@ -690,6 +696,7 @@ fn start_pty_process(
             title: metadata.title,
             cwd: effective_cwd,
             created_at: current_timestamp_millis(),
+            proxy_token: metadata.proxy_token,
         }),
         output_sequence: 0,
         scrollback: String::new(),

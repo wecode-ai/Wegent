@@ -38,6 +38,7 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
+    server::{executor_loopback_base_url, local_model_proxy},
 };
 
 mod archives;
@@ -523,6 +524,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
+            "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
+            "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
             "runtime.connectors.status" => self.connectors.status().await,

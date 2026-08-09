@@ -88,6 +88,7 @@ export interface LocalHarnessSessionDescriptor {
   title: string
   cwd: string
   created_at: number
+  proxy_token?: string
 }
 
 export interface LocalTerminalSnapshot {
@@ -101,6 +102,7 @@ export interface StartLocalHarnessOptions extends StartLocalTerminalOptions {
   prompt: string
   executablePath?: string | null
   args?: string[]
+  proxyToken?: string
 }
 
 export interface LocalTerminalOutputPayload {
@@ -171,6 +173,7 @@ export async function startLocalHarness({
   rows,
   cols,
   env,
+  proxyToken,
 }: StartLocalHarnessOptions): Promise<string> {
   if (!isLocalHarnessAvailable()) {
     throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
@@ -187,6 +190,7 @@ export async function startLocalHarness({
     rows?: number
     cols?: number
     env?: Record<string, string>
+    proxyToken?: string
   } = {
     harnessId,
     prompt,
@@ -195,6 +199,7 @@ export async function startLocalHarness({
     cwd: trimmedCwd || null,
     rows,
     cols,
+    proxyToken: proxyToken?.trim() || undefined,
   }
   if (normalizedEnv) {
     payload.env = normalizedEnv

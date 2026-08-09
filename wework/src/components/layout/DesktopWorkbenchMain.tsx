@@ -92,6 +92,10 @@ import {
   localHarnessLabel,
   type LocalHarnessId,
 } from '@/lib/local-harness'
+import {
+  listLocalHarnessModelOptions,
+  type LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
@@ -613,7 +617,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
   const [localHarnessModels, setLocalHarnessModels] = useState<
-    Record<LocalHarnessId, string | null>
+    Record<LocalHarnessId, LocalHarnessModelOption | null>
   >({
     opencode: null,
     claude_code: null,
@@ -1262,10 +1266,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const configuredHarnessModel = selectedHarnessPreference
     ? localHarnessModels[selectedHarnessPreference.id]
     : null
+  const harnessModelOptions = selectedHarnessPreference
+    ? listLocalHarnessModelOptions(selectedHarnessPreference.id, projectChat.models)
+    : []
   const selectedHarnessModel =
-    configuredHarnessModel && selectedHarnessPreference?.models.includes(configuredHarnessModel)
+    configuredHarnessModel &&
+    harnessModelOptions.some(option => option.key === configuredHarnessModel.key)
       ? configuredHarnessModel
-      : null
+      : (harnessModelOptions[0] ?? null)
   const selectedHarnessInstalled = Boolean(
     selectedHarnessPreference &&
     localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
@@ -1274,7 +1282,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedHarnessInstalled &&
     isLocalHarnessAvailable() &&
     preferLocalWorkspaceTerminal &&
-    centralHarnessCwd
+    centralHarnessCwd &&
+    selectedHarnessModel &&
+    services?.localHarnessModelApi
   )
   const activeNewChatRuntime =
     newChatRuntime !== 'codex' && selectedHarnessInstalled ? newChatRuntime : 'codex'
@@ -1317,17 +1327,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setCentralHarnessError(null)
     const requestId = centralHarnessRequestIdRef.current + 1
     centralHarnessRequestIdRef.current = requestId
+    let proxyToken: string | null = null
     try {
+      const modelLaunch = await services?.localHarnessModelApi?.resolveLaunch(
+        selectedHarnessPreference.id,
+        selectedHarnessModel
+      )
+      if (!modelLaunch) {
+        throw new Error(t('workbench.harness_model_required', '请选择可用的 Wework 模型'))
+      }
+      proxyToken = modelLaunch.proxyToken
       const sessionId = await startLocalHarness({
         harnessId: selectedHarnessPreference.id,
         prompt,
         cwd: centralHarnessCwd,
         executablePath: selectedHarnessPreference.executablePath,
-        args: buildLocalHarnessLaunchArgs(selectedHarnessPreference, selectedHarnessModel),
-        env: selectedHarnessPreference.env,
+        args: buildLocalHarnessLaunchArgs(selectedHarnessPreference, modelLaunch?.modelId ?? null),
+        proxyToken: modelLaunch.proxyToken,
+        env: {
+          ...selectedHarnessPreference.env,
+          ...modelLaunch?.env,
+        },
       })
       if (centralHarnessRequestIdRef.current !== requestId) {
         await closeLocalTerminal(sessionId)
+        await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
         return
       }
       setPaneInput('')
@@ -1339,8 +1363,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           prompt.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) ||
           localHarnessLabel(selectedHarnessPreference.id),
         createdAt: Date.now(),
+        proxyToken: modelLaunch.proxyToken,
       })
     } catch (error) {
+      if (proxyToken) {
+        await services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
       setCentralHarnessError(
         error instanceof Error
           ? error.message
@@ -2860,7 +2888,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         selectedHarnessPreference ? (
                           <WorkbenchHarnessModelSelector
                             harnessId={selectedHarnessPreference.id}
-                            models={selectedHarnessPreference.models}
+                            models={harnessModelOptions}
                             selectedModel={selectedHarnessModel}
                             onModelChange={model =>
                               setLocalHarnessModels(current => ({
