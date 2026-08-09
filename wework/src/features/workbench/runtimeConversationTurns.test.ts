@@ -915,6 +915,7 @@ describe('runtimeConversationTurns', () => {
     expect(projectRuntimeConversationTurns(merged).at(-1)).toMatchObject({
       content: 'New response',
       status: 'streaming',
+      runtimeMessageIndex: 12,
     })
   })
 

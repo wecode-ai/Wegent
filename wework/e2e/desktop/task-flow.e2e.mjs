@@ -1679,7 +1679,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   }
 }
 
-async function verifyTurnNavigationTracksVisibleUserMessages(
+async function verifyTurnNavigationTracksVisibleTurnMessages(
   control,
   turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1
 ) {
@@ -1734,11 +1734,11 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
   )
 
-  await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
+  await control.command('waitFor', `${markerSelector}[data-active="true"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-inactive.png')
+  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
 async function reopenCurrentTurnNavigationTask(
@@ -6802,7 +6802,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'utf8'
   )
   await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
-  await verifyTurnNavigationTracksVisibleUserMessages(control)
+  await verifyTurnNavigationTracksVisibleTurnMessages(control)
   return taskRowTestId
 }
 
@@ -14237,7 +14237,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleUserMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
