@@ -480,6 +480,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
         { value: 'data-embedded-browser-label' }
       )
+      assert.ok(activeBrowserLabel, 'The active task did not expose a browser label')
       assert.notEqual(
         activeBrowserLabel,
         browserLabel,
@@ -523,6 +524,26 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         inactiveInspect.inspectText.includes(READY_TEXT),
         'The inactive task browser did not load the requested page'
       )
+      const selectedTaskAfterBackgroundCalls = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.equal(
+        selectedTaskAfterBackgroundCalls,
+        secondTaskTabTestId,
+        'Inactive task browser calls changed the selected task tab'
+      )
+      const activeLabelAfterBackgroundCalls = await control.command(
+        'getAttribute',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.equal(
+        activeLabelAfterBackgroundCalls,
+        activeBrowserLabel,
+        'Inactive task browser calls changed the active task browser host'
+      )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
       await control.command(
         'click',
@@ -556,11 +577,11 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('finishAnimations', 'body')
-      const browserPanelMetrics = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
-        )
+      const browserPanelMetrics = await waitForVisibleSingleElement(
+        control,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`,
+        uiTimeoutMs,
+        'Browser panel did not become visible'
       )
       const [browserPanelWidth, rightPanelShellWidth] = await Promise.all([
         control.command(
@@ -574,11 +595,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           { value: 'width' }
         ),
       ])
-      assert.equal(browserPanelMetrics.length, 1, 'Expected exactly one active browser panel')
       assert.ok(
-        browserPanelMetrics[0].width > 1 && browserPanelMetrics[0].height > 1,
+        browserPanelMetrics.width > 1 && browserPanelMetrics.height > 1,
         `Browser panel is not visible: ${JSON.stringify({
-          metrics: browserPanelMetrics[0],
+          metrics: browserPanelMetrics,
           browserPanelWidth,
           rightPanelShellWidth,
         })}`
