@@ -10249,6 +10249,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
 
+    await userEvent.click(screen.getByText('open follow-up runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+        'device-1:runtime-b'
+      )
+    )
+    expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement()
+
     runtimeRunning = true
     await act(async () => {
       streamHandlers.onChatStart?.({
@@ -10258,10 +10266,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
-    await waitFor(() =>
-      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:执行ls')
-    )
     expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
+    expect(
+      getRuntimeConversationQueuedMessages({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      })
+    ).toEqual([expect.objectContaining({ content: '执行ls', status: 'queued' })])
 
     runtimeRunning = false
     await act(async () => {
@@ -10272,6 +10284,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         result: { value: 'done' },
       })
     })
+
+    await userEvent.click(screen.getByText('open follow-up runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({

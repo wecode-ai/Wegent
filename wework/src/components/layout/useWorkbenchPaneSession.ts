@@ -1376,24 +1376,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
 
   useEffect(() => {
-    if (!paneStatus.isAssistantStreaming) return
-    if (
-      !queuedMessages.some(
-        message => message.status === 'sending' && message.deliveryMode === 'message'
-      )
-    ) {
-      return
-    }
-
-    // An accepted queued message stays visible until the runtime confirms that
-    // its turn started, preventing the next queued item from being sent early.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Runtime turn start settles accepted queue delivery.
-    setQueuedMessages(messages =>
-      messages.filter(message => message.status !== 'sending' || message.deliveryMode !== 'message')
-    )
-  }, [paneStatus.isAssistantStreaming, queuedMessages, setQueuedMessages])
-
-  useEffect(() => {
     if (queuedMessagesPaused) return
     if (!paneStatus.canSendQueuedMessage) return
     if (queuedMessages.some(message => message.status === 'sending')) return
