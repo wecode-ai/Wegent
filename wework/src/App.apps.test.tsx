@@ -332,7 +332,7 @@ describe('App center route', () => {
     const taskContents = screen.getAllByTestId(/^workspace-tab-content-task-/)
     expect(taskContents).toHaveLength(2)
     taskContents.forEach(content => {
-      expect(content).toHaveClass('absolute', 'inset-0')
+      expect(content).toHaveClass('col-start-1', 'row-start-1', 'min-h-0')
     })
     expect(taskContents.filter(content => content.hidden)).toHaveLength(1)
 

@@ -260,7 +260,7 @@ function WorkspaceTabSurface({
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
-          className="absolute inset-0"
+          className="col-start-1 row-start-1 min-h-0 min-w-0 overflow-hidden"
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
           hidden={!active && keepTaskRuntimeActive}
@@ -375,25 +375,29 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
   if (!workspaceTabs) return null
 
-  return workspaceTabs.tabs.map(tab => {
-    if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
-    return (
-      <WorkspaceTabSurface
-        key={tab.id}
-        active={tab.id === workspaceTabs.activeTabId}
-        cloudWebUrl={
-          cloudConnection.webUrl
-            ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
-            : cloudConnection.webUrl
-        }
-        experimentalFeaturesEnabled={experimentalFeatures.enabled}
-        onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-        onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-        tab={tab}
-        user={user}
-      />
-    )
-  })
+  return (
+    <div className="grid h-full min-h-0">
+      {workspaceTabs.tabs.map(tab => {
+        if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
+        return (
+          <WorkspaceTabSurface
+            key={tab.id}
+            active={tab.id === workspaceTabs.activeTabId}
+            cloudWebUrl={
+              cloudConnection.webUrl
+                ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+                : cloudConnection.webUrl
+            }
+            experimentalFeaturesEnabled={experimentalFeatures.enabled}
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+            tab={tab}
+            user={user}
+          />
+        )
+      })}
+    </div>
+  )
 }
 
 export default function App() {
