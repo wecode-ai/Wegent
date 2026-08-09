@@ -566,6 +566,30 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         activeBrowserLabel,
         'Inactive task browser calls changed the active task browser host'
       )
+      const inactiveTaskSurfaceSelector = `[data-testid="workspace-tab-content-${firstTaskTabTestId.replace(
+        'workspace-tab-select-',
+        ''
+      )}"]`
+      const inactiveTaskAriaHidden = await control.command(
+        'getAttribute',
+        inactiveTaskSurfaceSelector,
+        { value: 'aria-hidden' }
+      )
+      assert.equal(
+        inactiveTaskAriaHidden,
+        'true',
+        'Inactive task browser calls exposed the task surface to accessibility'
+      )
+      const inactiveTaskClassName = await control.command(
+        'getAttribute',
+        inactiveTaskSurfaceSelector,
+        { value: 'class' }
+      )
+      assert.match(
+        inactiveTaskClassName,
+        /(?:^|\s)invisible(?:\s|$)/,
+        'Inactive task browser calls made the task surface visible'
+      )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
       await control.command(
         'waitFor',
