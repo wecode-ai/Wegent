@@ -1355,6 +1355,12 @@ describe('DesktopSidebar', () => {
     expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
     expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
 
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
