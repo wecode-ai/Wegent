@@ -3413,9 +3413,10 @@ export function DesktopSidebar({
             data-scrolled={sidebarScrolled}
             onScroll={event => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
             className={cn(
-              'scrollbar-none relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              'relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
               sidebarScrolled &&
-                '[mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]'
+                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
+              !sidebarScrolled && 'scrollbar-none'
             )}
           >
             <nav className="mb-4 space-y-0.5">

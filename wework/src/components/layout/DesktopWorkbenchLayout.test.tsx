@@ -4275,6 +4275,8 @@ describe('DesktopWorkbenchLayout', () => {
       'flex-1',
       'overflow-y-auto',
       'scrollbar-none',
+      'border-t',
+      'border-transparent',
       '[overflow-anchor:none]'
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')

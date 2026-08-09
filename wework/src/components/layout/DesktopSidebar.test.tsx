@@ -1346,6 +1346,15 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
+    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
+
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
