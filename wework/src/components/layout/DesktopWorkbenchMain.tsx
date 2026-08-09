@@ -624,7 +624,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const connectorAuthGate = useLocalConnectorAuthGate({
     messages: paneSession.messages,
-    onResumeSend: input => sendPaneInputWithContext(input),
+    onResumeSend: async input => {
+      await sendPaneInputWithContext(input)
+    },
     onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
 
@@ -636,7 +638,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (gate === 'blocked') {
           // Keep composer text so cancel does not discard the draft; resume
           // send still uses pendingInput and clears after a successful send.
-          return
+          return false
         }
       }
       return sendPaneInputWithContext(value, options)
@@ -2372,6 +2374,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     insertion={conversationSelectionInsertion}
                                     value={paneSession.input}
                                     onChange={paneSession.setInput}
+                                    onDraftEdit={paneSession.clearError}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled}
                                     pluginPickerIconOnly={hasConversation}
@@ -2533,6 +2536,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     <BufferedChatInput
                       value={paneSession.input}
                       onChange={paneSession.setInput}
+                      onDraftEdit={paneSession.clearError}
                       onSubmit={submitPaneInput}
                       disabled={composerDisabled}
                       submitDisabled={paneSession.status.isSubmitting}

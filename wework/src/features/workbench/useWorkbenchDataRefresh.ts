@@ -326,44 +326,19 @@ export function useWorkbenchDataRefresh({
       if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
 
       if (activeChecks.length === 0) return
+      const inFlightRevision = cloudRuntimeStateRef.current.inFlightRevision
       cloudBackgroundRequestControllerRef.current?.abort()
+      if (inFlightRevision != null) {
+        updateCloudRuntimeState(
+          abandonCloudRuntimeSync(cloudRuntimeStateRef.current, inFlightRevision)
+        )
+      }
       const controller = new AbortController()
       cloudBackgroundRequestControllerRef.current = controller
       const isCurrentRefresh = () =>
         cloudBackgroundRequestControllerRef.current === controller && !controller.signal.aborted
 
       try {
-        if (cloudRuntimeStateRef.current.inFlightRevision != null) {
-          if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
-          const inFlightBackgroundApi = backgroundApi
-          const devicesResult = await timedWorkbenchBootstrapRequest(
-            'cloudDevices',
-            () => backgroundApi.listDevices?.({ signal: controller.signal }) ?? Promise.resolve([]),
-            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
-            controller.signal
-          )
-          if (
-            !isCurrentRefresh() ||
-            options?.isCancelled?.() ||
-            devicesResult.status !== 'fulfilled' ||
-            cloudBackgroundApiRef.current !== inFlightBackgroundApi
-          ) {
-            return
-          }
-          const devices = resolveDeviceListWithCache(
-            mergeDeviceLists(baseDevices, devicesResult.value)
-          )
-          dispatch({
-            type: 'devices_refreshed',
-            devices,
-            standaloneDeviceId: getPreferredStandaloneDeviceId(
-              devices,
-              options?.standaloneDeviceId ?? null
-            ),
-          })
-          return
-        }
-
         const startedState = startCloudRuntimeSync(
           cloudRuntimeStateRef.current,
           options?.trigger ?? 'manual-refresh',

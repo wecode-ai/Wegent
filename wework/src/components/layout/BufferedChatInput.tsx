@@ -13,6 +13,7 @@ export interface BufferedChatInputInsertion {
 
 interface BufferedChatInputProps extends ChatInputProps {
   insertion?: BufferedChatInputInsertion | null
+  onDraftEdit?: () => void
 }
 
 const DRAFT_FLUSH_DELAY_MS = 300
@@ -22,6 +23,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   onChange,
   onSubmit,
   insertion,
+  onDraftEdit,
   ...props
 }: BufferedChatInputProps) {
   const scopeKey = props.projectChat?.scopeKey
@@ -38,6 +40,18 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const composerRef = useRef<ChatInputHandle>(null)
   const committedValueRef = useRef(value)
   const pendingChangeRef = useRef(onChange)
+  const programmaticUpdateDepthRef = useRef(0)
+  const draftEditVersionRef = useRef(0)
+  const scopeKeyRef = useRef(scopeKey)
+  scopeKeyRef.current = scopeKey
+
+  const setComposerValue = useCallback((nextValue: string, cursor: number) => {
+    programmaticUpdateDepthRef.current += 1
+    composerRef.current?.setValue(nextValue, cursor)
+    queueMicrotask(() => {
+      programmaticUpdateDepthRef.current = Math.max(0, programmaticUpdateDepthRef.current - 1)
+    })
+  }, [])
 
   const cancelPendingFlush = useCallback(() => {
     if (flushTimeoutRef.current !== null) {
@@ -74,9 +88,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     committedValueRef.current = value
     setDraftState({ scopeKey, sourceValue: value, draft: value })
     if (shouldSetComposer) {
-      composerRef.current?.setValue(value, value.length)
+      setComposerValue(value, value.length)
     }
-  }, [scopeKey, value])
+  }, [scopeKey, setComposerValue, value])
 
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
@@ -92,20 +106,25 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
     appliedInsertionIdRef.current = insertion.id
+    draftEditVersionRef.current += 1
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
     setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
-    composerRef.current?.setValue(nextDraft, nextDraft.length)
+    setComposerValue(nextDraft, nextDraft.length)
     scheduleDraftFlush(nextDraft)
-  }, [insertion, scheduleDraftFlush, scopeKey, value])
+  }, [insertion, scheduleDraftFlush, scopeKey, setComposerValue, value])
 
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
+      if (programmaticUpdateDepthRef.current === 0) {
+        draftEditVersionRef.current += 1
+        onDraftEdit?.()
+      }
       scheduleDraftFlush(nextDraft)
     },
-    [scheduleDraftFlush]
+    [onDraftEdit, scheduleDraftFlush]
   )
 
   // Flush after the next frame so the editor state settles first.
@@ -116,20 +135,34 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draftRef.current
-      if (options === undefined) {
-        void onSubmit(submittedDraft)
-      } else {
-        void onSubmit(submittedDraft, options)
-      }
+      const submittedDraftEditVersion = draftEditVersionRef.current
+      const submittedScopeKey = scopeKey
+      const submission =
+        options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
       if (submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
-        composerRef.current?.setValue('', 0)
+        setComposerValue('', 0)
         onChange('')
       }
+      const restoreSubmittedDraft = () => {
+        if (!submittedDraft.trim()) return
+        if (scopeKeyRef.current !== submittedScopeKey) return
+        if (draftEditVersionRef.current !== submittedDraftEditVersion) return
+        if (draftRef.current) return
+        draftRef.current = submittedDraft
+        cancelPendingFlush()
+        setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
+        setComposerValue(submittedDraft, submittedDraft.length)
+        onChange(submittedDraft)
+      }
+      void Promise.resolve(submission).then(accepted => {
+        if (accepted !== false) return
+        restoreSubmittedDraft()
+      }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, onChange, onSubmit, scopeKey]
+    [cancelPendingFlush, onChange, onSubmit, scopeKey, setComposerValue]
   )
 
   return (

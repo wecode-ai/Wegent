@@ -165,6 +165,7 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    composerError?: string | null
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
     hasConversationContext?: boolean
@@ -184,6 +185,7 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>

@@ -55,6 +55,7 @@ import type {
   RuntimeTranscriptResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptTurn,
+  Team,
   TurnFileChangesSummary,
   RuntimeWorkListResponse,
   UnifiedModel,
@@ -1643,6 +1644,7 @@ function FollowUpProbe() {
   return (
     <div>
       <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
           .map(message => `${message.status}:${message.content}`)
@@ -2454,6 +2456,106 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
+  test('keeps available status during refresh and becomes unavailable when backend reads fail', async () => {
+    const teamsRefresh = deferred<Team[]>()
+    const devicesRefresh = deferred<DeviceInfo[]>()
+    const runtimeWorkRefresh = deferred<RuntimeWorkListResponse>()
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockImplementationOnce(() => teamsRefresh.promise),
+        listDevices: vi
+          .fn()
+          .mockResolvedValueOnce([
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ])
+          .mockImplementationOnce(() => devicesRefresh.promise),
+        listRuntimeWork: vi
+          .fn()
+          .mockResolvedValueOnce({ projects: [], chats: [], totalTasks: 0 })
+          .mockImplementationOnce(() => runtimeWorkRefresh.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('available')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('available')
+
+    await act(async () => {
+      teamsRefresh.reject(new Error('backend unavailable'))
+      devicesRefresh.reject(new Error('backend unavailable'))
+      runtimeWorkRefresh.reject(new Error('backend unavailable'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('unavailable')
+    )
+    expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('backend unavailable')
+  })
+
+  test('keeps unavailable status during refresh and becomes available after backend recovery', async () => {
+    const teamsRefresh = deferred<Team[]>()
+    const devicesRefresh = deferred<DeviceInfo[]>()
+    const runtimeWorkRefresh = deferred<RuntimeWorkListResponse>()
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('backend unavailable'))
+          .mockImplementationOnce(() => teamsRefresh.promise),
+        listDevices: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('backend unavailable'))
+          .mockImplementationOnce(() => devicesRefresh.promise),
+        listRuntimeWork: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('backend unavailable'))
+          .mockImplementationOnce(() => runtimeWorkRefresh.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('unavailable')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('unavailable')
+
+    await act(async () => {
+      teamsRefresh.resolve([])
+      devicesRefresh.resolve([
+        createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+      ])
+      runtimeWorkRefresh.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('available')
+    )
+    expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
+  })
+
   test('publishes cloud devices before a slow runtime-work refresh completes', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     let runtimeWorkResolved = false
@@ -2568,7 +2670,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('cancels an in-flight cloud sync before a manual device refresh', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const manualDevices = deferred<DeviceInfo[]>()
-    let initialRuntimeSignal: AbortSignal | undefined
+    const runtimeSignals: AbortSignal[] = []
     const listDevices = vi
       .fn()
       .mockResolvedValueOnce([
@@ -2576,7 +2678,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       ])
       .mockImplementationOnce(() => manualDevices.promise)
     const listRuntimeWork = vi.fn((requestOptions?: { signal?: AbortSignal }) => {
-      initialRuntimeSignal = requestOptions?.signal
+      if (requestOptions?.signal) runtimeSignals.push(requestOptions.signal)
       return runtimeWork.promise
     })
     const services = createWorkbenchServices({
@@ -2594,7 +2696,8 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
     await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
-    expect(initialRuntimeSignal?.aborted).toBe(true)
+    expect(runtimeSignals[0]?.aborted).toBe(true)
+    expect(runtimeSignals[1]?.aborted).toBe(false)
     await act(async () => {
       runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
       await Promise.resolve()
@@ -7806,6 +7909,89 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('shows the runtime rejection in the active pane when a follow-up send fails', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: false,
+      taskId: 'runtime-a',
+      error: 'runtime send failed',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pane-session-error')).toHaveTextContent('runtime send failed')
+    )
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
+  })
+
+  test('shows model preparation cancellation in the active pane', async () => {
+    const prepareRuntimeModel = vi.fn().mockResolvedValue(false)
+    const sendRuntimeMessage = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      prepareRuntimeModel,
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pane-session-error')).toHaveTextContent('已取消模型配置同步')
+    )
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
   })
 
   test('marks an existing runtime task running while a follow-up send is pending', async () => {
