@@ -1896,6 +1896,51 @@ fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
 }
 
 #[test]
+fn codex_thread_plan_selects_resume_when_fork_is_absent() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/resume");
+            assert_eq!(params["threadId"], "resume-thread");
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected resume request, got direct thread {thread_id}")
+        }
+    }
+    assert!(plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
+fn codex_thread_plan_starts_new_thread_without_identifiers() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        None,
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected start request, got direct thread {thread_id}")
+        }
+    }
+    assert!(!plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
 fn thread_id_from_response_validates_provider_and_requires_thread_id() {
     assert_eq!(
         thread_id_from_response(
