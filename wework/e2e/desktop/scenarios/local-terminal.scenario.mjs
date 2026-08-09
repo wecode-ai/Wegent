@@ -92,13 +92,17 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
   })
 }
 
-async function configureHarnesses(control, executables, timeoutMs) {
+async function configureHarnesses(control, executables, timeoutMs, capturePage) {
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
   await control.command('click', '[data-testid="settings-nav-harnesses"]')
   await control.command('waitFor', '[data-testid="harness-settings-page"]', { timeoutMs })
+  await capturePage(control, 'local-harness-01-settings-open.png')
   await control.command('fill', '[data-testid="harness-executable-opencode"]', {
     value: executables.openCodeExecutable,
+  })
+  await control.command('fill', '[data-testid="harness-models-opencode"]', {
+    value: 'openai/gpt-5.2\nanthropic/claude-sonnet-4-6',
   })
   await control.command('fill', '[data-testid="harness-executable-claude_code"]', {
     value: executables.claudeCodeExecutable,
@@ -108,6 +112,9 @@ async function configureHarnesses(control, executables, timeoutMs) {
   })
   await control.command('fill', '[data-testid="harness-args-claude_code"]', {
     value: '--verbose',
+  })
+  await control.command('fill', '[data-testid="harness-models-claude_code"]', {
+    value: 'sonnet\nopus',
   })
   await control.command('fill', '[data-testid="harness-env-claude_code"]', {
     value: 'WEWORK_HARNESS_E2E=claude-settings',
@@ -123,18 +130,56 @@ async function configureHarnesses(control, executables, timeoutMs) {
     text: 'claude-code-e2e 2.0.0',
     timeoutMs,
   })
+  await capturePage(control, 'local-harness-02-settings-detected.png')
+  await control.command('scrollIntoView', '[data-testid="harness-permission-mode-claude_code"]')
+  await capturePage(control, 'local-harness-03-claude-settings.png')
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', { timeoutMs })
 }
 
-async function startHarness(control, harnessId, prompt, timeoutMs) {
+async function startHarness({
+  control,
+  harnessId,
+  model,
+  modelOptionIndex,
+  prompt,
+  timeoutMs,
+  capturePage,
+  runtimeMenuScreenshot,
+  modelMenuScreenshot,
+  readyScreenshot,
+}) {
   await control.command('click', '[data-testid="workbench-harness-selector"]')
+  await control.command('waitFor', `[data-testid="workbench-harness-option-${harnessId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
+  await capturePage(control, runtimeMenuScreenshot)
   await control.command(
     'clickWhenEnabled',
     `[data-testid="workbench-harness-option-${harnessId}"]`,
     { timeoutMs }
   )
+  await control.command('click', '[data-testid="workbench-harness-model-selector"]')
+  await control.command(
+    'waitFor',
+    `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`,
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
+  await capturePage(control, modelMenuScreenshot)
+  await control.command(
+    'click',
+    `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`
+  )
+  await control.command('waitFor', '[data-testid="workbench-harness-model-selector"]', {
+    text: model,
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="chat-message-input"]', { value: prompt })
+  await capturePage(control, readyScreenshot)
   await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', { timeoutMs })
   await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
 }
@@ -146,7 +191,9 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   const executables = await createHarnessFixtures(homePath)
-  const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+  const capturePage = (control, name) => captureScreenshot(control, name, 'body')
+  const captureWorkbench = (control, name) =>
+    captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
 
   return {
     async handleHttp() {
@@ -155,14 +202,25 @@ export async function createDesktopScenario({
 
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
-      await configureHarnesses(control, executables, uiTimeoutMs)
-      await startHarness(control, 'opencode', 'Inspect the current project', uiTimeoutMs)
+      await configureHarnesses(control, executables, uiTimeoutMs, capturePage)
+      await startHarness({
+        control,
+        harnessId: 'opencode',
+        model: 'openai/gpt-5.2',
+        modelOptionIndex: 0,
+        prompt: 'Inspect the current project',
+        timeoutMs: uiTimeoutMs,
+        capturePage,
+        runtimeMenuScreenshot: 'local-harness-04-opencode-runtime-menu.png',
+        modelMenuScreenshot: 'local-harness-05-opencode-model-menu.png',
+        readyScreenshot: 'local-harness-06-opencode-ready.png',
+      })
       await control.command(
         'waitFor',
         '[data-testid^="local-harness-session-row-local-terminal-"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await capture(control, 'local-terminal-00-central-opencode.png')
+      await captureWorkbench(control, 'local-harness-07-opencode-running.png')
 
       const harnessSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
@@ -175,7 +233,7 @@ export async function createDesktopScenario({
       )
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
-        '--prompt\nInspect the current project\n',
+        '--model\nopenai/gpt-5.2\n--prompt\nInspect the current project\n',
         uiTimeoutMs
       )
 
@@ -188,15 +246,27 @@ export async function createDesktopScenario({
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      await captureWorkbench(control, 'local-harness-08-opencode-restored.png')
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await startHarness(control, 'claude_code', 'Review the current project', uiTimeoutMs)
-      await capture(control, 'local-terminal-01-central-claude-code.png')
+      await startHarness({
+        control,
+        harnessId: 'claude_code',
+        model: 'opus',
+        modelOptionIndex: 1,
+        prompt: 'Review the current project',
+        timeoutMs: uiTimeoutMs,
+        capturePage,
+        runtimeMenuScreenshot: 'local-harness-09-claude-code-runtime-menu.png',
+        modelMenuScreenshot: 'local-harness-10-claude-code-model-menu.png',
+        readyScreenshot: 'local-harness-11-claude-code-ready.png',
+      })
+      await captureWorkbench(control, 'local-harness-12-claude-code-running.png')
       await waitForFile(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
-        '--permission-mode\nplan\n--verbose\nReview the current project\n',
+        '--permission-mode\nplan\n--verbose\n--model\nopus\nReview the current project\n',
         uiTimeoutMs
       )
       await waitForFile(join(homePath, CLAUDE_CODE_ENV_FILE), 'claude-settings\n', uiTimeoutMs)
@@ -204,6 +274,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await captureWorkbench(control, 'local-harness-13-session-closed.png')
     },
 
     diagnostics() {

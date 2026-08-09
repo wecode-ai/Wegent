@@ -6,6 +6,7 @@ export interface LocalHarnessPreference {
   id: LocalHarnessId
   enabled: boolean
   executablePath: string | null
+  models: string[]
   args: string[]
   env: Record<string, string>
   permissionMode: ClaudeCodePermissionMode
@@ -18,6 +19,7 @@ export const defaultLocalHarnessPreferences: LocalHarnessPreference[] = LOCAL_HA
     id,
     enabled: true,
     executablePath: null,
+    models: [],
     args: [],
     env: {},
     permissionMode: 'default',
@@ -46,6 +48,15 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
     const args = Array.isArray(record.args)
       ? record.args.flatMap(arg => (typeof arg === 'string' && arg ? [arg] : []))
       : []
+    const models = Array.isArray(record.models)
+      ? Array.from(
+          new Set(
+            record.models.flatMap(model =>
+              typeof model === 'string' && model.trim() ? [model.trim()] : []
+            )
+          )
+        )
+      : []
     const env =
       record.env && typeof record.env === 'object' && !Array.isArray(record.env)
         ? Object.fromEntries(
@@ -64,6 +75,7 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
       id: defaultPreference.id,
       enabled: typeof record.enabled === 'boolean' ? record.enabled : true,
       executablePath,
+      models,
       args,
       env,
       permissionMode,
@@ -71,15 +83,34 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
   })
 }
 
-export function buildLocalHarnessLaunchArgs(preference: LocalHarnessPreference): string[] {
-  if (preference.id !== 'claude_code') return preference.args
-  if (preference.permissionMode === 'plan') {
-    return ['--permission-mode', 'plan', ...preference.args]
+export function buildLocalHarnessLaunchArgs(
+  preference: LocalHarnessPreference,
+  model: string | null = null
+): string[] {
+  const configuredArgs = model?.trim()
+    ? removeConfiguredModelArgs(preference.args)
+    : [...preference.args]
+  const args =
+    preference.id === 'claude_code' && preference.permissionMode === 'plan'
+      ? ['--permission-mode', 'plan', ...configuredArgs]
+      : preference.id === 'claude_code' && preference.permissionMode === 'bypass'
+        ? ['--dangerously-skip-permissions', ...configuredArgs]
+        : configuredArgs
+  return model?.trim() ? [...args, '--model', model.trim()] : args
+}
+
+function removeConfiguredModelArgs(args: string[]): string[] {
+  const result: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--model' || arg === '-m') {
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--model=') || arg.startsWith('-m=')) continue
+    result.push(arg)
   }
-  if (preference.permissionMode === 'bypass') {
-    return ['--dangerously-skip-permissions', ...preference.args]
-  }
-  return preference.args
+  return result
 }
 
 export function parseLocalHarnessArgs(value: string): string[] {

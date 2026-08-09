@@ -69,6 +69,7 @@ describe('HarnessSettingsPage', () => {
       '/opt/claude/bin/claude'
     )
     await userEvent.selectOptions(screen.getByTestId('harness-permission-mode-claude_code'), 'plan')
+    await userEvent.type(screen.getByTestId('harness-models-claude_code'), 'sonnet\nopus')
     await userEvent.type(
       screen.getByTestId('harness-args-claude_code'),
       '--verbose\n--model\nsonnet'
@@ -87,6 +88,7 @@ describe('HarnessSettingsPage', () => {
             id: 'opencode',
             enabled: false,
             executablePath: null,
+            models: [],
             args: [],
             env: {},
             permissionMode: 'default',
@@ -95,6 +97,7 @@ describe('HarnessSettingsPage', () => {
             id: 'claude_code',
             enabled: true,
             executablePath: '/opt/claude/bin/claude',
+            models: ['sonnet', 'opus'],
             args: ['--verbose', '--model', 'sonnet'],
             env: {
               CLAUDE_CODE_USE_BEDROCK: '1',

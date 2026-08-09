@@ -26,6 +26,7 @@ import {
 
 interface HarnessDraft {
   preference: LocalHarnessPreference
+  modelsText: string
   argsText: string
   envText: string
 }
@@ -33,6 +34,7 @@ interface HarnessDraft {
 function toDraft(preference: LocalHarnessPreference): HarnessDraft {
   return {
     preference,
+    modelsText: formatLocalHarnessArgs(preference.models),
     argsText: formatLocalHarnessArgs(preference.args),
     envText: formatLocalHarnessEnv(preference.env),
   }
@@ -135,6 +137,7 @@ export function HarnessSettingsPage() {
       nextPreferences.push({
         ...draft.preference,
         executablePath: draft.preference.executablePath?.trim() || null,
+        models: parseLocalHarnessArgs(draft.modelsText),
         args: parseLocalHarnessArgs(draft.argsText),
         env: parsedEnv.env,
       })
@@ -288,6 +291,30 @@ export function HarnessSettingsPage() {
                     }
                   />
                 ) : null}
+                <SettingsRow
+                  label={t('workbench.harness_models', '模型')}
+                  description={t(
+                    'workbench.harness_models_description',
+                    '每行一个模型 ID；启动新会话时可在输入框中选择。'
+                  )}
+                  className="items-start"
+                  control={
+                    <textarea
+                      data-testid={`harness-models-${id}`}
+                      value={draft.modelsText}
+                      onChange={event =>
+                        updateDraft(id, current => ({ ...current, modelsText: event.target.value }))
+                      }
+                      rows={3}
+                      placeholder={
+                        id === 'claude_code'
+                          ? 'sonnet\nopus'
+                          : 'openai/gpt-5.2\nanthropic/claude-sonnet-4-6'
+                      }
+                      className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none focus:border-focus max-sm:w-full"
+                    />
+                  }
+                />
                 <SettingsRow
                   label={t('workbench.harness_default_args', '默认参数')}
                   description={t(

@@ -109,6 +109,7 @@ interface ProjectChatComposerProps {
   inputLeadingContext?: ReactNode
   toolbarLeadingContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  modelSelectorOverride?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -180,6 +181,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       inputLeadingContext,
       toolbarLeadingContext,
       projectWorkBarTrailingContext,
+      modelSelectorOverride,
     },
     ref
   ) {
@@ -430,6 +432,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
+            modelSelectorOverride={modelSelectorOverride}
             contextUsage={contextUsage}
             onFileSelect={onFileSelect}
             planModeActive={planModeActive}

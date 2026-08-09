@@ -35,6 +35,8 @@ harness. Under **Settings → Connections → Harnesses**, you can:
   the new-conversation runtime selector.
 - Leave the executable field empty to search the desktop process `PATH` and the tool's common
   install locations, or provide an absolute path.
+- Enter selectable model IDs one per line. OpenCode uses the `provider/model` format, such as
+  `openai/gpt-5.2`; Claude Code accepts aliases such as `sonnet` and `opus`, or a full model ID.
 - Enter default arguments one per line. Wework passes them without shell parsing and appends the
   current prompt according to the selected harness protocol.
 - Enter launch environment variables as one `NAME=VALUE` per line. These settings remain on the
@@ -50,6 +52,12 @@ through a local PTY, with its interactive terminal shown in the center of the wo
 sessions also appear in the left task section. Reloading the main WebView can reattach to a
 running session and restore its bounded terminal scrollback. Closing the session terminates the
 local process, and processes that have ended are not restored after Wework exits.
+
+After selecting OpenCode or Claude Code, the ordinary Codex model picker is replaced by the
+selected harness's model picker. **Default model** omits a model argument; selecting a configured
+model passes it to the executable as `--model <model ID>`. An explicit composer selection replaces
+any `--model` or `-m` value from the default arguments so one launch cannot contain conflicting
+model choices.
 
 ## Model availability
 

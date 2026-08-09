@@ -148,6 +148,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
@@ -611,6 +612,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
+  const [localHarnessModels, setLocalHarnessModels] = useState<
+    Record<LocalHarnessId, string | null>
+  >({
+    opencode: null,
+    claude_code: null,
+  })
   const localHarnessPreferences =
     appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
   const enabledLocalHarnesses = useMemo(
@@ -1250,6 +1257,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     newChatRuntime === 'codex'
       ? null
       : (enabledLocalHarnesses.find(preference => preference.id === newChatRuntime) ?? null)
+  const configuredHarnessModel = selectedHarnessPreference
+    ? localHarnessModels[selectedHarnessPreference.id]
+    : null
+  const selectedHarnessModel =
+    configuredHarnessModel && selectedHarnessPreference?.models.includes(configuredHarnessModel)
+      ? configuredHarnessModel
+      : null
   const selectedHarnessInstalled = Boolean(
     selectedHarnessPreference &&
     localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
@@ -1307,7 +1321,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         prompt,
         cwd: centralHarnessCwd,
         executablePath: selectedHarnessPreference.executablePath,
-        args: buildLocalHarnessLaunchArgs(selectedHarnessPreference),
+        args: buildLocalHarnessLaunchArgs(selectedHarnessPreference, selectedHarnessModel),
         env: selectedHarnessPreference.env,
       })
       if (centralHarnessRequestIdRef.current !== requestId) {
@@ -2834,6 +2848,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             setNewChatRuntime(runtime)
                           }}
                         />
+                      }
+                      modelSelectorOverride={
+                        selectedHarnessPreference ? (
+                          <WorkbenchHarnessModelSelector
+                            harnessId={selectedHarnessPreference.id}
+                            models={selectedHarnessPreference.models}
+                            selectedModel={selectedHarnessModel}
+                            onModelChange={model =>
+                              setLocalHarnessModels(current => ({
+                                ...current,
+                                [selectedHarnessPreference.id]: model,
+                              }))
+                            }
+                          />
+                        ) : undefined
                       }
                       showWorkspaceMenu={showComposerProjectMenuAction}
                       queuedMessages={paneQueuedMessages}

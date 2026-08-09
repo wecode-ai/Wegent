@@ -13,6 +13,7 @@ describe('local harness settings', () => {
         id: 'opencode',
         enabled: false,
         executablePath: ' /custom/opencode ',
+        models: [' openai/gpt-5 ', 'openai/gpt-5', 'anthropic/claude-sonnet-4-6'],
         args: ['--model', 'openai/gpt-5'],
         env: { OPENCODE_CONFIG: '/tmp/opencode.json' },
         permissionMode: 'bypass',
@@ -24,6 +25,7 @@ describe('local harness settings', () => {
         id: 'opencode',
         enabled: false,
         executablePath: '/custom/opencode',
+        models: ['openai/gpt-5', 'anthropic/claude-sonnet-4-6'],
         args: ['--model', 'openai/gpt-5'],
         env: { OPENCODE_CONFIG: '/tmp/opencode.json' },
         permissionMode: 'default',
@@ -32,6 +34,7 @@ describe('local harness settings', () => {
         id: 'claude_code',
         enabled: true,
         executablePath: null,
+        models: [],
         args: [],
         env: {},
         permissionMode: 'default',
@@ -41,15 +44,36 @@ describe('local harness settings', () => {
 
   test('adds Claude Code permission arguments before custom arguments', () => {
     expect(
-      buildLocalHarnessLaunchArgs({
-        id: 'claude_code',
-        enabled: true,
-        executablePath: null,
-        args: ['--model', 'opus'],
-        env: {},
-        permissionMode: 'plan',
-      })
-    ).toEqual(['--permission-mode', 'plan', '--model', 'opus'])
+      buildLocalHarnessLaunchArgs(
+        {
+          id: 'claude_code',
+          enabled: true,
+          executablePath: null,
+          models: ['sonnet', 'opus'],
+          args: ['--model', 'opus'],
+          env: {},
+          permissionMode: 'plan',
+        },
+        'sonnet'
+      )
+    ).toEqual(['--permission-mode', 'plan', '--model', 'sonnet'])
+  })
+
+  test('replaces configured model arguments with the selected OpenCode model', () => {
+    expect(
+      buildLocalHarnessLaunchArgs(
+        {
+          id: 'opencode',
+          enabled: true,
+          executablePath: null,
+          models: ['openai/gpt-5.2'],
+          args: ['--model=old/model', '--verbose'],
+          env: {},
+          permissionMode: 'default',
+        },
+        'openai/gpt-5.2'
+      )
+    ).toEqual(['--verbose', '--model', 'openai/gpt-5.2'])
   })
 
   test('parses arguments and environment without shell evaluation', () => {
