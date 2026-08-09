@@ -1,8 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 import {
   cloudItemAsLocalWorkItem,
   useWorkbenchCloudProjectContext,
@@ -65,10 +66,43 @@ function renderCloudContext(services?: WorkbenchServices) {
 }
 
 describe('useWorkbenchCloudProjectContext', () => {
+  afterEach(() => {
+    const { result, unmount } = renderCloudContext()
+    act(() => result.current.clearPendingProjectContext())
+    unmount()
+  })
+
   test('prepares a pending backend project and task for runtime creation', async () => {
     const cloudProject = project('space-cloud')
     const item = loopItem(cloudProject.id)
-    const { result } = renderCloudContext()
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    const deliveryApi = {
+      bindTask: vi.fn().mockResolvedValue(undefined),
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const services = {
+      deliveryApi,
+    } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
+        useWorkbenchCloudProjectContext({
+          currentRuntimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      { initialProps: { currentRuntimeTask: null } }
+    )
 
     await act(async () => {})
     act(() => result.current.handleTodoBound(cloudProject, item))
@@ -85,7 +119,16 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.pendingCloudProject).toEqual(cloudProject)
     expect(result.current.pendingTodoItem).toEqual(item)
 
-    act(() => result.current.clearPendingProjectContext())
+    act(() => submission?.onRuntimeTaskCreated(runtimeTask))
+    rerender({ currentRuntimeTask: runtimeTask })
+
+    await waitFor(() =>
+      expect(deliveryApi.bindTask).toHaveBeenCalledWith(
+        item.id,
+        runtimeTask,
+        'Implement the selected task'
+      )
+    )
   })
 
   test('automatically selects the configured default project space', async () => {
@@ -120,8 +163,6 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(deliveryApi.listCloudProjects).toHaveBeenCalledOnce()
     await waitFor(() => expect(deliveryApi.listCloudFiles).toHaveBeenCalledOnce())
     expect(deliveryApi.listLoopItems).toHaveBeenCalledOnce()
-
-    act(() => result.current.clearPendingProjectContext())
   })
 
   test('loads mentions from the selected local project-space API', async () => {
@@ -155,8 +196,6 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(localApi.listDeliveries).toHaveBeenCalledWith(item.id)
     expect(cloudApi.listCloudFiles).not.toHaveBeenCalled()
     expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
-
-    act(() => result.current.clearPendingProjectContext())
   })
 
   test('keeps transient notice clear callbacks stable across renders', () => {
