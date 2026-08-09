@@ -681,7 +681,7 @@ function AppShell() {
     >
       <div
         className={cn(
-          'app-viewport-height',
+          isTauri ? 'h-screen' : 'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow

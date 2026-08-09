@@ -69,11 +69,6 @@
   --z-system-popover: 1010;
 }
 
-.app-viewport-height {
-  height: 100vh;
-  height: 100dvh;
-}
-
 .app-view-surface {
   height: calc(100% - var(--app-view-block-end-inset));
   margin: 0 var(--app-view-inline-inset) var(--app-view-block-end-inset);
