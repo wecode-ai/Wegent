@@ -102,6 +102,7 @@ export function AutomationsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const initialAutomationLoadCompletedRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -124,7 +125,9 @@ export function AutomationsPage() {
     try {
       const response = await automationApi.listAutomations()
       setAutomations(response.items)
-      if (!selectedAutomationId && response.items[0]) {
+      const shouldSelectInitialAutomation = !initialAutomationLoadCompletedRef.current
+      initialAutomationLoadCompletedRef.current = true
+      if (shouldSelectInitialAutomation && response.items[0]) {
         setSelectedAutomationId(response.items[0].id)
         setEditing(response.items[0])
         setDraft(automationDraftFromAutomation(response.items[0]))
@@ -140,7 +143,7 @@ export function AutomationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [automationApi, selectedAutomationId, t])
+  }, [automationApi, t])
 
   const loadRuns = useCallback(
     async (automationId: string) => {

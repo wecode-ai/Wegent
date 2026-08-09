@@ -42,5 +42,11 @@ and executed by the current device's local Executor.
   later run to that task. Regular history and a task that is merely open are
   not selected automatically; pin the task in the sidebar first.
 
+## Viewing details
+
+When **Automations** opens, Wework displays the first task after the initial
+load. After you close the detail pane with its top-right close button, the pane
+stays closed. Select a task in the list to open its details again.
+
 Automations run unattended by default. If Codex requests user input, Wework does
 not guess an answer and marks the run as **Needs attention**.

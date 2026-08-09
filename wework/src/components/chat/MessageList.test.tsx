@@ -3326,6 +3326,37 @@ describe('MessageList', () => {
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
 
+  test('copies only the visible request from Codex user messages with file mentions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-copy',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/me/.wework/workspace/attachments/draft/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    expect(writeText).toHaveBeenCalledWith('分析下这个图片')
+  })
+
   test('renders Codex local non-image file mentions as compact file chips', () => {
     const onOpenWorkspaceFile = vi.fn()
 
