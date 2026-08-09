@@ -103,12 +103,56 @@ describe('localModelProviders', () => {
         modelDefaults: { 'glm-5.2': { contextWindow: 1_000_000 } },
       },
     ],
+    [
+      'minimax',
+      {
+        baseUrl: 'https://api.minimax.io/anthropic',
+        group: 'MiniMax',
+        apiFormat: 'anthropic-messages',
+        requestPath: '/v1/messages',
+        modelsPath: '/v1/models',
+        modelsApiKeyHeader: 'X-Api-Key',
+        toolProfile: 'function',
+        webSearchMode: 'disabled',
+        contextWindow: 204_800,
+        modelDefaults: {
+          'MiniMax-M2.7': { contextWindow: 204_800 },
+          'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.5': { contextWindow: 204_800 },
+          'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.1': { contextWindow: 204_800 },
+          'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2': { contextWindow: 204_800 },
+        },
+      },
+    ],
   ] as const)('defines the %s official provider profile', (profileId, expected) => {
     expect(findLocalModelProviderProfile(profileId)).toMatchObject({
       ...expected,
-      modelsPath: '/models',
+      modelsPath: 'modelsPath' in expected ? expected.modelsPath : '/models',
       imageGenerationEnabled: false,
     })
+  })
+
+  it('uses the MiniMax API key header when discovering Anthropic-compatible models', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+
+    await expect(
+      discoverProviderModels(findLocalModelProviderProfile('minimax'), 'secret-key', { fetcher })
+    ).resolves.toEqual([{ id: 'MiniMax-M2.7', displayName: 'MiniMax-M2.7' }])
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.minimax.io/anthropic/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: { 'X-Api-Key': 'secret-key' },
+      })
+    )
   })
 
   it('only exposes models supported by the DeepSeek Codex integration', async () => {
