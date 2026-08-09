@@ -3980,6 +3980,7 @@ async function verifyWorkspaceDocumentTabs(control) {
 }
 
 async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
+  await ensureExperimentalFeaturesEnabled(control)
   const taskTabTestId = await control.command(
     'getAttribute',
     '[data-tab-kind="task"][aria-selected="true"]',
