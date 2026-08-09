@@ -128,7 +128,10 @@ export interface ChatInputProps {
   onChange: (value: string) => void
   onBlur?: () => void
   onCompositionEnd?: () => void
-  onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
+  onSubmit: (
+    valueOverride?: string,
+    options?: ChatSubmitOptions
+  ) => void | boolean | Promise<void | boolean>
   disabled: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
