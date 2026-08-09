@@ -1674,8 +1674,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
 
 async function verifyTurnNavigationTracksVisibleUserMessages(
   control,
-  turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1,
-  totalTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT
+  turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1
 ) {
   const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
   const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
@@ -1688,20 +1687,10 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     value: 'data-turn-index',
   })
   assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
-  const anchorResponseText = `Virtualized navigation response ${turnNumber}.1`
   const targetResponseText = `Virtualized navigation response ${turnNumber}.6`
-  await control.command(
-    'scrollToRatioAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
-    { value: String((turnNumber - 1) / totalTurnCount) }
-  )
-  await control.command(
-    'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
-    { text: anchorResponseText }
-  )
 
   const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
+  await control.command('click', markerSelector)
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
@@ -14039,11 +14028,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleUserMessages(
-        control,
-        2,
-        TURN_NAVIGATION_ONLY_TURN_COUNT
-      )
+      await verifyTurnNavigationTracksVisibleUserMessages(control, 2)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
