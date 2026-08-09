@@ -4,7 +4,6 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
-  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
@@ -86,14 +85,6 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
-  | {
-      type: 'runtime_project_updated'
-      deviceId: string
-      projectKey: string
-      name: string
-      roots: string[]
-      defaultProjectSpace: RuntimeProjectSpaceRef | null
-    }
   | { type: 'runtime_project_removed'; projectId: number }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
@@ -1057,41 +1048,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
-    case 'runtime_project_updated': {
-      let updatedProjectId: number | null = null
-      const runtimeWork = state.runtimeWork
-        ? {
-            ...state.runtimeWork,
-            projects: state.runtimeWork.projects.map(projectWork => {
-              const project = projectWork.project
-              if (
-                project.key !== action.projectKey ||
-                (project.stateDeviceId && project.stateDeviceId !== action.deviceId)
-              ) {
-                return projectWork
-              }
-              updatedProjectId = runtimeProjectUiId(project)
-              return {
-                ...projectWork,
-                project: {
-                  ...project,
-                  name: action.name,
-                  roots: action.roots.map(path => ({ kind: 'local', path })),
-                  defaultProjectSpace: action.defaultProjectSpace,
-                },
-              }
-            }),
-          }
-        : state.runtimeWork
-      return {
-        ...state,
-        runtimeWork,
-        currentProject:
-          updatedProjectId != null && state.currentProject?.id === updatedProjectId
-            ? { ...state.currentProject, name: action.name }
-            : state.currentProject,
-      }
-    }
     case 'runtime_project_removed': {
       const removedCurrentProject = state.currentProject?.id === action.projectId
       const runtimeWork = state.runtimeWork

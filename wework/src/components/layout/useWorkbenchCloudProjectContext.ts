@@ -44,6 +44,7 @@ interface CloudSubmissionContext {
 }
 
 interface UseWorkbenchCloudProjectContextOptions {
+  active: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
   currentProjectId?: number
   defaultProjectSpace: RuntimeProjectSpaceRef | null
@@ -157,6 +158,7 @@ function cloudProjectAdditionalContext(
 }
 
 export function useWorkbenchCloudProjectContext({
+  active: contextActive,
   currentRuntimeTask,
   currentProjectId,
   defaultProjectSpace,
@@ -447,6 +449,7 @@ export function useWorkbenchCloudProjectContext({
       : []
 
   useEffect(() => {
+    if (!contextActive) return
     let active = true
     const apis = todoBindingApis
     if (!apis.length) {
@@ -478,7 +481,7 @@ export function useWorkbenchCloudProjectContext({
     return () => {
       active = false
     }
-  }, [todoBindingApis])
+  }, [contextActive, todoBindingApis])
 
   useEffect(() => {
     const pendingAutoJoin = pendingAutoJoinResolutionRef.current

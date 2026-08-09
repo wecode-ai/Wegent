@@ -539,6 +539,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     todoBindingPickerOpen,
     visibleCloudMentionCandidates,
   } = useWorkbenchCloudProjectContext({
+    active: paneActive && workbenchVisible,
     currentRuntimeTask: currentProjectSpaceRuntimeTask,
     currentProjectId: currentProject?.id,
     defaultProjectSpace,

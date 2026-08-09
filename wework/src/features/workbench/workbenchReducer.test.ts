@@ -359,56 +359,6 @@ describe('workbenchReducer', () => {
     })
   })
 
-  test('applies confirmed local project metadata after refreshing work lists', () => {
-    const runtimeWork = {
-      projects: [
-        {
-          project: {
-            key: 'project:wegent',
-            name: 'Wegent',
-            stateDeviceId: 'local-device',
-            roots: [{ kind: 'local', path: '/repo/Wegent' }],
-          },
-          deviceWorkspaces: [],
-          totalTasks: 0,
-        },
-      ],
-      chats: [],
-      totalTasks: 0,
-    }
-    const projectId = runtimeProjectUiId(runtimeWork.projects[0].project)
-    const state = {
-      ...initialWorkbenchState,
-      runtimeWork,
-      currentProject: { id: projectId, name: 'Wegent', tasks: [] },
-    }
-
-    const updated = workbenchReducer(state, {
-      type: 'runtime_project_updated',
-      deviceId: 'local-device',
-      projectKey: 'project:wegent',
-      name: 'Wegent Workspace',
-      roots: ['/repo/Wegent', '/repo/shared'],
-      defaultProjectSpace: {
-        projectStore: 'local',
-        projectId: 'space-1',
-      },
-    })
-
-    expect(updated.runtimeWork?.projects[0].project).toMatchObject({
-      name: 'Wegent Workspace',
-      roots: [
-        { kind: 'local', path: '/repo/Wegent' },
-        { kind: 'local', path: '/repo/shared' },
-      ],
-      defaultProjectSpace: {
-        projectStore: 'local',
-        projectId: 'space-1',
-      },
-    })
-    expect(updated.currentProject?.name).toBe('Wegent Workspace')
-  })
-
   test('selects the runtime project when opening a standalone workspace', () => {
     const state = {
       ...initialWorkbenchState,
