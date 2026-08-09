@@ -118,8 +118,58 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(result.current.pendingCloudProject).toEqual(defaultProject))
     expect(result.current.pendingTodoItem).toBeNull()
     expect(deliveryApi.listCloudProjects).toHaveBeenCalledOnce()
+    await waitFor(() => expect(deliveryApi.listCloudFiles).toHaveBeenCalledOnce())
+    expect(deliveryApi.listLoopItems).toHaveBeenCalledOnce()
 
     act(() => result.current.clearPendingProjectContext())
+  })
+
+  test('loads mentions from the selected local project-space API', async () => {
+    const localProject = project('space-local', 'local')
+    const item = loopItem(localProject.id)
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [localProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const cloudApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        cloud: cloudApi,
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderCloudContext(services)
+
+    act(() => result.current.handleTodoBound(localProject, item))
+
+    await waitFor(() => expect(result.current.visibleCloudMentionCandidates).not.toHaveLength(0))
+    expect(localApi.listCloudFiles).toHaveBeenCalledWith(localProject.id)
+    expect(localApi.listLoopItems).toHaveBeenCalledWith(localProject.id)
+    expect(localApi.listDeliveries).toHaveBeenCalledWith(item.id)
+    expect(cloudApi.listCloudFiles).not.toHaveBeenCalled()
+    expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
+
+    act(() => result.current.clearPendingProjectContext())
+  })
+
+  test('keeps transient notice clear callbacks stable across renders', () => {
+    const { result, rerender } = renderCloudContext()
+    const clearCloudActionNotice = result.current.clearCloudActionNotice
+    const clearTodoBindingError = result.current.clearTodoBindingError
+    const closeDeliveryDialog = result.current.closeDeliveryDialog
+
+    rerender()
+
+    expect(result.current.clearCloudActionNotice).toBe(clearCloudActionNotice)
+    expect(result.current.clearTodoBindingError).toBe(clearTodoBindingError)
+    expect(result.current.closeDeliveryDialog).toBe(closeDeliveryDialog)
   })
 
   test('maps a cloud task to the local delivery model', () => {

@@ -243,7 +243,7 @@ export function useWorkbenchCloudProjectContext({
         active = false
       }
     }
-    const contextApis = projectSpaceApis(services)
+    const contextApis = todoBindingApis
     if (contextApis.length > 0) {
       void findProjectSpaceContextForTask(contextApis, currentRuntimeTask)
         .then(context => {
@@ -267,23 +267,30 @@ export function useWorkbenchCloudProjectContext({
         active = false
       }
     }
-    void hydrateLocalWorkItems(userId).then(items => {
-      if (!active) return
-      setBoundCloudItem(null)
-      setDeliveryItem(
-        items.find(item =>
-          item.runtimeRefs.some(
-            reference =>
-              reference.taskId === currentRuntimeTask.taskId &&
-              reference.deviceId === currentRuntimeTask.deviceId
-          )
-        ) ?? null
-      )
-    })
+    void hydrateLocalWorkItems(userId)
+      .then(items => {
+        if (!active) return
+        setBoundCloudItem(null)
+        setDeliveryItem(
+          items.find(item =>
+            item.runtimeRefs.some(
+              reference =>
+                reference.taskId === currentRuntimeTask.taskId &&
+                reference.deviceId === currentRuntimeTask.deviceId
+            )
+          ) ?? null
+        )
+      })
+      .catch(() => {
+        if (active) {
+          setBoundCloudItem(null)
+          setDeliveryItem(null)
+        }
+      })
     return () => {
       active = false
     }
-  }, [currentRuntimeTask, services, userId])
+  }, [currentRuntimeTask, todoBindingApis, userId])
 
   useEffect(() => {
     const projectToBind = pendingCloudProject ?? pendingTodoBinding?.project ?? null
@@ -346,8 +353,13 @@ export function useWorkbenchCloudProjectContext({
 
   useEffect(() => {
     let active = true
-    const api = services?.deliveryApi
-    if (!api || !composerCloudProject) {
+    if (!composerCloudProject) {
+      return () => {
+        active = false
+      }
+    }
+    const api = projectSpaceApiFor(composerCloudProject)
+    if (!api) {
       return () => {
         active = false
       }
@@ -426,7 +438,7 @@ export function useWorkbenchCloudProjectContext({
     return () => {
       active = false
     }
-  }, [composerCloudProject, composerTodoItem, services?.deliveryApi, t])
+  }, [composerCloudProject, composerTodoItem, projectSpaceApiFor, t])
 
   const visibleCloudMentionCandidates =
     composerCloudProject &&
@@ -436,7 +448,7 @@ export function useWorkbenchCloudProjectContext({
 
   useEffect(() => {
     let active = true
-    const apis = projectSpaceApis(services)
+    const apis = todoBindingApis
     if (!apis.length) {
       queueMicrotask(() => {
         if (active) setCloudProjects([])
@@ -450,27 +462,23 @@ export function useWorkbenchCloudProjectContext({
         const result = await api.listCloudProjects()
         return result.items
       })
-    )
-      .then(results => {
-        if (!active) return
-        const candidates = results.flatMap(result =>
-          result.status === 'fulfilled' ? result.value : []
-        )
-        const uniqueProjects = candidates.filter(
-          (candidate, index) =>
-            candidates.findIndex(
-              other => other.id === candidate.id && other.project_store === candidate.project_store
-            ) === index
-        )
-        setCloudProjects(uniqueProjects)
-      })
-      .catch(() => {
-        if (active) setCloudProjects([])
-      })
+    ).then(results => {
+      if (!active) return
+      const candidates = results.flatMap(result =>
+        result.status === 'fulfilled' ? result.value : []
+      )
+      const uniqueProjects = candidates.filter(
+        (candidate, index) =>
+          candidates.findIndex(
+            other => other.id === candidate.id && other.project_store === candidate.project_store
+          ) === index
+      )
+      setCloudProjects(uniqueProjects)
+    })
     return () => {
       active = false
     }
-  }, [services])
+  }, [todoBindingApis])
 
   useEffect(() => {
     const pendingAutoJoin = pendingAutoJoinResolutionRef.current
@@ -641,15 +649,14 @@ export function useWorkbenchCloudProjectContext({
   const prepareSubmission = useCallback(
     (description: string): CloudSubmissionContext => {
       const submissionProject = currentRuntimeTask ? null : pendingCloudProject
-      const submissionItem =
-        submissionProject?.id === pendingCloudProject?.id ? pendingTodoItem : null
+      const submissionItem = submissionProject ? pendingTodoItem : null
       if (!currentRuntimeTask) {
         setPendingCloudContext(submissionProject, submissionItem)
         pendingAutoJoinResolutionRef.current =
           !submissionProject &&
           Boolean(defaultProjectSpace) &&
           dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
-          projectSpaceApis(services).length > 0
+          todoBindingApis.length > 0
             ? { target: null, description }
             : null
       }
@@ -682,8 +689,8 @@ export function useWorkbenchCloudProjectContext({
       dismissedDefaultCloudProjectKey,
       pendingCloudProject,
       pendingTodoItem,
-      services,
       setPendingCloudContext,
+      todoBindingApis,
     ]
   )
 
@@ -715,6 +722,10 @@ export function useWorkbenchCloudProjectContext({
     setDeliverAfterBinding(false)
   }, [])
 
+  const clearCloudActionNotice = useCallback(() => setCloudActionNotice(null), [])
+  const clearTodoBindingError = useCallback(() => setTodoBindingError(null), [])
+  const closeDeliveryDialog = useCallback(() => setDeliveryDialogOpen(false), [])
+
   const handleTodoBound = useCallback(
     (project: CloudProject | null, item: CloudLoopItem | null) => {
       if (!currentRuntimeTask) {
@@ -736,13 +747,14 @@ export function useWorkbenchCloudProjectContext({
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
-    clearCloudActionNotice: () => setCloudActionNotice(null),
+    clearCloudActionNotice,
     clearPendingProjectContext,
-    clearTodoBindingError: () => setTodoBindingError(null),
-    closeDeliveryDialog: () => setDeliveryDialogOpen(false),
+    clearTodoBindingError,
+    closeDeliveryDialog,
     closeTodoBindingPicker,
     cloudActionNotice,
     cloudProjectMentionCandidates,
+    composerCloudProject,
     deliveryDialogOpen,
     finishLocalDelivery,
     handleSelectCloudProject,

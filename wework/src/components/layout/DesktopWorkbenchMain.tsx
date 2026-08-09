@@ -512,15 +512,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
-  const cloudProjectContext = useWorkbenchCloudProjectContext({
-    currentRuntimeTask,
-    currentProjectId: currentProject?.id,
-    defaultProjectSpace,
-    paneKey,
-    runtimeTaskTitle,
-    services,
-    userId: state.user?.id,
-  })
   const {
     activeDeliveryItem,
     boundCloudItem,
@@ -532,6 +523,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     closeTodoBindingPicker,
     cloudActionNotice,
     cloudProjectMentionCandidates,
+    composerCloudProject,
     deliveryDialogOpen,
     finishLocalDelivery,
     handleSelectCloudProject,
@@ -545,8 +537,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     todoBindingError,
     todoBindingPickerOpen,
     visibleCloudMentionCandidates,
-  } = cloudProjectContext
-  const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
+  } = useWorkbenchCloudProjectContext({
+    currentRuntimeTask,
+    currentProjectId: currentProject?.id,
+    defaultProjectSpace,
+    paneKey,
+    runtimeTaskTitle,
+    services,
+    userId: state.user?.id,
+  })
   const pendingProjectSpaceContext =
     !currentRuntimeTask && pendingCloudProject ? (
       <ComposerModePill
