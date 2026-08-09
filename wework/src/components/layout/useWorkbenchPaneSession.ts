@@ -1869,10 +1869,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             setInput('')
             projectChat.resetAttachments()
             setCodeCommentContexts([])
+          } else if (isRuntimeTaskBusyError(sendError)) {
+            setQueuedMessages(messages => [...messages, queuedMessage])
+            setInput('')
+            projectChat.resetAttachments()
+            setCodeCommentContexts([])
           } else {
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }
-          return sent
+          return sent || isRuntimeTaskBusyError(sendError)
         }
 
         const queuedMessage: RuntimePaneQueuedMessage = {
@@ -1913,11 +1918,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (sent) {
           setInput('')
           setCodeCommentContexts([])
+        } else if (isRuntimeTaskBusyError(sendError)) {
+          setQueuedMessages(messages => [...messages, queuedMessage])
+          setInput('')
         } else {
           currentAttachments.forEach(projectChat.addExistingAttachment)
           setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
         }
-        return sent
+        return sent || isRuntimeTaskBusyError(sendError)
       },
       [
         appendLocalUserMessage,

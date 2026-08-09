@@ -117,6 +117,20 @@ async function probeMessagesProxy(url, prompt) {
   assert.match(body, /event: message_stop/, 'Messages proxy did not emit message_stop')
 }
 
+async function readJsonBody(request) {
+  const chunks = []
+  for await (const chunk of request) chunks.push(chunk)
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+function writeSse(response, events) {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache',
+  })
+  response.end(events.join(''))
+}
+
 async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('waitFor', '[data-testid="project-work-button"]', { timeoutMs })
   await control.command('click', '[data-testid="project-work-button"]')
@@ -185,7 +199,6 @@ async function startHarness({
   control,
   harnessId,
   model,
-  modelOptionIndex,
   prompt,
   timeoutMs,
   capturePage,
@@ -213,19 +226,20 @@ async function startHarness({
   )
   await control.command(
     'waitFor',
-    `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`,
+    `[data-testid^="workbench-harness-model-option-${harnessId}-"]`,
     {
       visible: true,
+      text: model,
       timeoutMs,
     }
   )
   await capturePage(control, modelMenuScreenshot)
   await control.command(
     'clickDescendantInElementWithText',
-    '[data-testid="workbench-harness-model-selector-menu"]',
+    `[data-testid^="workbench-harness-model-option-${harnessId}-"]`,
     {
       text: model,
-      target: `[data-testid="workbench-harness-model-option-${harnessId}-${modelOptionIndex}"]`,
+      target: 'span',
       timeoutMs,
     }
   )
@@ -250,13 +264,72 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   const executables = await createHarnessFixtures(homePath)
+  const harnessModelRequests = []
   const capturePage = (control, name) => captureScreenshot(control, name, 'body')
   const captureWorkbench = (control, name) =>
     captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
 
   return {
-    async handleHttp() {
-      return false
+    async handleHttp(request, response, url) {
+      if (request.method !== 'POST') return false
+      if (!['/v1/chat/completions', '/v1/responses'].includes(url.pathname)) return false
+
+      const body = await readJsonBody(request)
+      const expected =
+        body.model === 'kimi-k3'
+          ? { path: '/v1/chat/completions', protocol: 'chat' }
+          : body.model === 'deepseek-v4-pro'
+            ? { path: '/v1/responses', protocol: 'responses' }
+            : null
+      assert.ok(expected, `Unexpected harness upstream model: ${body.model}`)
+      assert.equal(url.pathname, expected.path, `${body.model} reached the wrong protocol endpoint`)
+      assert.equal(body.stream, true, `${body.model} was not streamed`)
+      assert.equal(
+        request.headers.authorization,
+        'Bearer wework-e2e-test-key',
+        `${body.model} did not receive the configured authentication`
+      )
+      harnessModelRequests.push({ model: body.model, protocol: expected.protocol })
+
+      if (expected.protocol === 'chat') {
+        writeSse(response, [
+          `data: ${JSON.stringify({
+            id: 'harness-chat',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            id: 'harness-chat',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          })}\n\n`,
+          'data: [DONE]\n\n',
+        ])
+        return true
+      }
+
+      writeSse(response, [
+        `event: response.created\ndata: ${JSON.stringify({
+          type: 'response.created',
+          response: {
+            id: 'harness-responses',
+            object: 'response',
+            status: 'in_progress',
+            output: [],
+          },
+        })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: 'response.completed',
+          response: {
+            id: 'harness-responses',
+            object: 'response',
+            status: 'completed',
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+          },
+        })}\n\n`,
+      ])
+      return true
     },
 
     async verify(control) {
@@ -265,8 +338,7 @@ export async function createDesktopScenario({
       await startHarness({
         control,
         harnessId: 'opencode',
-        model: 'Desktop E2E Responses',
-        modelOptionIndex: 0,
+        model: 'Desktop E2E Vision',
         prompt: 'Inspect the current project',
         timeoutMs: uiTimeoutMs,
         capturePage,
@@ -302,7 +374,7 @@ export async function createDesktopScenario({
       assert.equal(typeof openCodeBaseUrl, 'string', 'OpenCode did not receive its Messages URL')
       await probeMessagesProxy(
         `${openCodeBaseUrl}/messages`,
-        'WEWORK_HARNESS_OPENCODE_RESPONSES_PROXY'
+        'WEWORK_HARNESS_OPENCODE_CHAT_PROXY'
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -322,8 +394,7 @@ export async function createDesktopScenario({
       await startHarness({
         control,
         harnessId: 'claude_code',
-        model: 'Desktop E2E Chat',
-        modelOptionIndex: 1,
+        model: 'Desktop E2E DeepSeek Pro Vision Main',
         prompt: 'Review the current project',
         timeoutMs: uiTimeoutMs,
         capturePage,
@@ -344,8 +415,12 @@ export async function createDesktopScenario({
       )
       await probeMessagesProxy(
         `${claudeCodeBaseUrl}/v1/messages`,
-        'WEWORK_HARNESS_CLAUDE_CHAT_PROXY'
+        'WEWORK_HARNESS_CLAUDE_RESPONSES_PROXY'
       )
+      assert.deepEqual(harnessModelRequests, [
+        { model: 'kimi-k3', protocol: 'chat' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+      ])
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,

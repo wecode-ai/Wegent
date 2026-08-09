@@ -73,6 +73,13 @@ export interface StartLocalTerminalOptions {
   rows?: number
   cols?: number
   env?: Record<string, string | null | undefined>
+  diagnosticContext?: LocalTerminalDiagnosticContext
+}
+
+export interface LocalTerminalDiagnosticContext {
+  taskId?: string | null
+  workspacePath?: string | null
+  reason?: string | null
 }
 
 export interface LocalHarnessDescriptor {
@@ -120,6 +127,7 @@ export async function startLocalTerminal({
   rows,
   cols,
   env,
+  diagnosticContext,
 }: StartLocalTerminalOptions = {}): Promise<string> {
   if (!isLocalTerminalAvailable()) {
     throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
@@ -127,21 +135,45 @@ export async function startLocalTerminal({
 
   const trimmedCwd = cwd?.trim()
   const normalizedEnv = normalizeLocalTerminalEnv(env)
+  const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
   const payload: {
     cwd: string | null
     rows?: number
     cols?: number
     env?: Record<string, string>
+    taskId: string | null
+    workspacePath: string | null
   } = {
     cwd: trimmedCwd || null,
     rows,
     cols,
+    taskId: context.taskId,
+    workspacePath: context.workspacePath,
   }
   if (normalizedEnv) {
     payload.env = normalizedEnv
   }
 
-  return invoke<string>('start_local_terminal', payload)
+  console.info('Local terminal start requested', {
+    cwd: trimmedCwd || null,
+    ...context,
+  })
+  try {
+    const sessionId = await invoke<string>('start_local_terminal', payload)
+    console.info('Local terminal start succeeded', {
+      sessionId,
+      cwd: trimmedCwd || null,
+      ...context,
+    })
+    return sessionId
+  } catch (error) {
+    console.error('Local terminal start failed', {
+      cwd: trimmedCwd || null,
+      ...context,
+      error: formatLocalTerminalError(error),
+    })
+    throw error
+  }
 }
 
 export async function listLocalHarnesses(
@@ -219,6 +251,20 @@ function normalizeLocalTerminalEnv(env?: Record<string, string | null | undefine
   })
 
   return entries.length > 0 ? Object.fromEntries(entries) : null
+}
+
+function normalizeLocalTerminalDiagnosticContext(
+  context?: LocalTerminalDiagnosticContext
+): Required<LocalTerminalDiagnosticContext> {
+  return {
+    taskId: context?.taskId?.trim() || null,
+    workspacePath: context?.workspacePath?.trim() || null,
+    reason: context?.reason?.trim() || null,
+  }
+}
+
+function formatLocalTerminalError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export interface OpenLocalWorkspaceOptions {
@@ -356,9 +402,15 @@ export async function writeLocalTerminal(sessionId: string, data: string): Promi
   })
 }
 
-export async function attachLocalTerminal(sessionId: string): Promise<void> {
+export async function attachLocalTerminal(
+  sessionId: string,
+  diagnosticContext?: LocalTerminalDiagnosticContext
+): Promise<void> {
+  const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
   await invoke('attach_local_terminal', {
     sessionId,
+    taskId: context.taskId,
+    workspacePath: context.workspacePath,
   })
 }
 
@@ -374,10 +426,28 @@ export async function resizeLocalTerminal(
   })
 }
 
-export async function closeLocalTerminal(sessionId: string): Promise<void> {
-  await invoke('close_local_terminal', {
-    sessionId,
-  })
+export async function closeLocalTerminal(
+  sessionId: string,
+  diagnosticContext?: LocalTerminalDiagnosticContext
+): Promise<void> {
+  const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
+  console.info('Local terminal close requested', { sessionId, ...context })
+  try {
+    await invoke('close_local_terminal', {
+      sessionId,
+      taskId: context.taskId,
+      workspacePath: context.workspacePath,
+      reason: context.reason,
+    })
+    console.info('Local terminal close succeeded', { sessionId, ...context })
+  } catch (error) {
+    console.error('Local terminal close failed', {
+      sessionId,
+      ...context,
+      error: formatLocalTerminalError(error),
+    })
+    throw error
+  }
 }
 
 export function listenLocalTerminalOutput(
@@ -401,20 +471,26 @@ type LocalTerminalConnectionStage = 'listen-output' | 'listen-exit' | 'snapshot'
 function logLocalTerminalConnectionFailure(
   sessionId: string,
   stage: LocalTerminalConnectionStage,
+  diagnosticContext: LocalTerminalDiagnosticContext | undefined,
   error: unknown
 ) {
+  const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
   console.error('Local terminal connection failed', {
     sessionId,
     stage,
-    error: error instanceof Error ? error.message : String(error),
+    ...context,
+    error: formatLocalTerminalError(error),
   })
 }
 
 export async function connectLocalTerminal(
   sessionId: string,
   onOutput: (payload: LocalTerminalOutputPayload) => void,
-  onExit: (payload: LocalTerminalExitPayload) => void
+  onExit: (payload: LocalTerminalExitPayload) => void,
+  diagnosticContext?: LocalTerminalDiagnosticContext
 ): Promise<UnlistenFn> {
+  const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
+  console.info('Local terminal connection requested', { sessionId, ...context })
   let snapshotLoaded = false
   let lastSequence = 0
   const pendingOutput: LocalTerminalOutputPayload[] = []
@@ -430,8 +506,13 @@ export async function connectLocalTerminal(
   let outputUnlisten: UnlistenFn
   try {
     outputUnlisten = await listenLocalTerminalOutput(handleOutput)
+    console.info('Local terminal connection stage succeeded', {
+      sessionId,
+      stage: 'listen-output',
+      ...context,
+    })
   } catch (error) {
-    logLocalTerminalConnectionFailure(sessionId, 'listen-output', error)
+    logLocalTerminalConnectionFailure(sessionId, 'listen-output', context, error)
     throw error
   }
 
@@ -442,9 +523,14 @@ export async function connectLocalTerminal(
         onExit(payload)
       }
     })
+    console.info('Local terminal connection stage succeeded', {
+      sessionId,
+      stage: 'listen-exit',
+      ...context,
+    })
   } catch (error) {
     outputUnlisten()
-    logLocalTerminalConnectionFailure(sessionId, 'listen-exit', error)
+    logLocalTerminalConnectionFailure(sessionId, 'listen-exit', context, error)
     throw error
   }
 
@@ -456,19 +542,29 @@ export async function connectLocalTerminal(
     }
     snapshotLoaded = true
     pendingOutput.sort((left, right) => left.sequence - right.sequence).forEach(handleOutput)
+    console.info('Local terminal connection stage succeeded', {
+      sessionId,
+      stage: 'snapshot',
+      ...context,
+    })
   } catch (error) {
     outputUnlisten()
     exitUnlisten()
-    logLocalTerminalConnectionFailure(sessionId, 'snapshot', error)
+    logLocalTerminalConnectionFailure(sessionId, 'snapshot', context, error)
     throw error
   }
 
   try {
-    await attachLocalTerminal(sessionId)
+    await attachLocalTerminal(sessionId, context)
+    console.info('Local terminal connection stage succeeded', {
+      sessionId,
+      stage: 'attach',
+      ...context,
+    })
   } catch (error) {
     outputUnlisten()
     exitUnlisten()
-    logLocalTerminalConnectionFailure(sessionId, 'attach', error)
+    logLocalTerminalConnectionFailure(sessionId, 'attach', context, error)
     throw error
   }
 

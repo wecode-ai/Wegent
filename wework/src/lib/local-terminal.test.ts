@@ -222,12 +222,22 @@ describe('local-terminal', () => {
     invokeMock.mockResolvedValue('local-terminal-1')
 
     await expect(
-      startLocalTerminal({ cwd: ' /Users/me/project ', rows: 30, cols: 100 })
+      startLocalTerminal({
+        cwd: ' /Users/me/project ',
+        rows: 30,
+        cols: 100,
+        diagnosticContext: {
+          taskId: ' runtime-1 ',
+          workspacePath: ' /Users/me/project ',
+        },
+      })
     ).resolves.toBe('local-terminal-1')
     expect(invokeMock).toHaveBeenCalledWith('start_local_terminal', {
       cwd: '/Users/me/project',
       rows: 30,
       cols: 100,
+      taskId: 'runtime-1',
+      workspacePath: '/Users/me/project',
     })
   })
 
@@ -258,6 +268,8 @@ describe('local-terminal', () => {
       cwd: '/Users/me/project',
       rows: undefined,
       cols: undefined,
+      taskId: null,
+      workspacePath: null,
       env: {
         WEWORK_PARENT_TITLE: 'Task A',
       },
@@ -349,7 +361,11 @@ describe('local-terminal', () => {
 
     await writeLocalTerminal('local-terminal-1', 'pwd\r')
     await resizeLocalTerminal('local-terminal-1', 40, 120)
-    await closeLocalTerminal('local-terminal-1')
+    await closeLocalTerminal('local-terminal-1', {
+      taskId: 'runtime-1',
+      workspacePath: '/Users/me/project',
+      reason: 'user-closed-session',
+    })
 
     expect(invokeMock).toHaveBeenCalledWith('write_local_terminal', {
       sessionId: 'local-terminal-1',
@@ -362,6 +378,9 @@ describe('local-terminal', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('close_local_terminal', {
       sessionId: 'local-terminal-1',
+      taskId: 'runtime-1',
+      workspacePath: '/Users/me/project',
+      reason: 'user-closed-session',
     })
   })
 
@@ -394,7 +413,10 @@ describe('local-terminal', () => {
       return undefined
     })
 
-    const unlisten = await connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn())
+    const unlisten = await connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn(), {
+      taskId: ' runtime-1 ',
+      workspacePath: ' /Users/me/project ',
+    })
 
     expect(calls).toEqual([
       'listen:local-terminal-output',
@@ -402,6 +424,11 @@ describe('local-terminal', () => {
       'invoke:get_local_terminal_snapshot',
       'invoke:attach_local_terminal',
     ])
+    expect(invokeMock).toHaveBeenCalledWith('attach_local_terminal', {
+      sessionId: 'local-terminal-1',
+      taskId: 'runtime-1',
+      workspacePath: '/Users/me/project',
+    })
 
     unlisten()
     expect(outputUnlisten).toHaveBeenCalledOnce()
@@ -429,6 +456,9 @@ describe('local-terminal', () => {
     expect(consoleError).toHaveBeenCalledWith('Local terminal connection failed', {
       sessionId: 'local-terminal-1',
       stage: 'attach',
+      taskId: null,
+      workspacePath: null,
+      reason: null,
       error: 'attach failed',
     })
   })
