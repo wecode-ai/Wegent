@@ -921,14 +921,21 @@ fn cached_user_message_does_not_fallback_to_prompt() {
 }
 
 #[test]
-fn user_message_presentation_stores_only_reference_descriptors() {
+fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
+        "createdAt": 42,
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
     }))
     .expect("rich references should produce presentation metadata");
 
     assert_eq!(presentation["clientUserMessageId"], "runtime-local-pane-1");
+    assert_eq!(
+        presentation["content"],
+        "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
+    );
+    assert_eq!(presentation["createdAt"], 42_000);
+    assert_eq!(presentation["ensureVisible"], true);
     assert_eq!(
         presentation["references"],
         json!([
@@ -942,7 +949,6 @@ fn user_message_presentation_stores_only_reference_descriptors() {
             }
         ])
     );
-    assert!(presentation.get("content").is_none());
 }
 
 #[test]
@@ -951,6 +957,86 @@ fn user_message_presentation_requires_a_stable_client_user_message_id() {
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md)"
     }))
     .is_none());
+}
+
+#[test]
+fn user_message_presentation_preserves_plain_visible_content() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "message": "合并到main"
+    }))
+    .expect("plain user content should remain available when Codex filters internal context");
+
+    assert_eq!(presentation["content"], "合并到main");
+    assert_eq!(presentation["ensureVisible"], true);
+    assert_eq!(presentation["references"], json!([]));
+}
+
+#[test]
+fn legacy_thread_preview_restores_filtered_initial_user_message() {
+    let thread = json!({
+        "id": "thread-1",
+        "historyMode": "legacy",
+        "preview": "Initial task request",
+        "createdAt": 100,
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 110,
+            "items": []
+        }]
+    });
+    let mut messages = vec![json!({
+        "id": "assistant-1",
+        "turnId": "turn-1",
+        "role": "assistant",
+        "content": "Working",
+        "createdAt": 120
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, false);
+
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "Initial task request");
+    assert_eq!(messages[0]["turnId"], "turn-1");
+    assert_eq!(messages[1]["role"], "assistant");
+}
+
+#[test]
+fn legacy_thread_preview_waits_until_the_oldest_page() {
+    let thread = json!({
+        "historyMode": "legacy",
+        "preview": "Initial task request"
+    });
+    let mut messages = vec![json!({
+        "id": "assistant-1",
+        "role": "assistant",
+        "content": "Working"
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, true);
+
+    assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn legacy_thread_preview_does_not_duplicate_provider_user_message() {
+    let thread = json!({
+        "historyMode": "legacy",
+        "preview": "Initial task request",
+        "turns": [{
+            "id": "turn-1"
+        }]
+    });
+    let mut messages = vec![json!({
+        "id": "provider-user",
+        "turnId": "turn-1",
+        "role": "user",
+        "content": "Initial task request with attachment metadata"
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, false);
+
+    assert_eq!(messages.len(), 1);
 }
 
 #[test]

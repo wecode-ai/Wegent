@@ -439,28 +439,84 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         .get("message")
         .or_else(|| payload.get("content"))
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
     let references = local_presentation_reference_descriptors(content);
     let source = payload.get("source").filter(|value| value.is_object()).cloned();
-    if references.is_empty() && source.is_none() {
-        return None;
-    }
-    let mut presentation = json!({
+    let presentation = json!({
         "clientUserMessageId": client_user_message_id,
+        "content": content,
+        "createdAt": timestamp_ms_field(payload, "createdAt").unwrap_or_else(now_ms),
+        "ensureVisible": true,
         "references": references,
         "source": source,
     });
-    let supervisor_generated = presentation
-        .get("source")
-        .and_then(|source| source.get("source"))
-        .and_then(Value::as_str)
-        == Some("supervisor");
-    if supervisor_generated {
-        presentation["content"] = Value::String(content.to_owned());
-        presentation["createdAt"] = json!(now_ms());
-        presentation["ensureVisible"] = Value::Bool(true);
-    }
     Some(presentation)
+}
+
+fn attach_legacy_thread_preview(
+    messages: &mut Vec<Value>,
+    thread: &Value,
+    has_older_page: bool,
+) {
+    if has_older_page
+        || string_field(thread, "historyMode").as_deref() != Some("legacy")
+    {
+        return;
+    }
+    let Some(preview) = string_field(thread, "preview")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let oldest_turn = thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.first());
+    let turn_id = oldest_turn.and_then(|turn| id_field(turn, "id"));
+    let oldest_turn_has_user_message = messages.iter().any(|message| {
+        if string_field(message, "role").as_deref() != Some("user") {
+            return false;
+        }
+        match turn_id.as_deref() {
+            Some(turn_id) => string_field(message, "turnId")
+                .or_else(|| string_field(message, "turn_id"))
+                .or_else(|| string_field(message, "subtaskId"))
+                .or_else(|| string_field(message, "subtask_id"))
+                .as_deref()
+                == Some(turn_id),
+            None => true,
+        }
+    });
+    if oldest_turn_has_user_message {
+        return;
+    }
+    let created_at = oldest_turn
+        .and_then(|turn| {
+            timestamp_ms_field(turn, "startedAt")
+                .or_else(|| timestamp_ms_field(turn, "started_at"))
+                .or_else(|| timestamp_ms_field(turn, "createdAt"))
+                .or_else(|| timestamp_ms_field(turn, "created_at"))
+        })
+        .or_else(|| timestamp_ms_field(thread, "createdAt"))
+        .unwrap_or_else(now_ms);
+    let synthetic_id = turn_id
+        .as_deref()
+        .map(|turn_id| format!("{turn_id}-legacy-preview"))
+        .unwrap_or_else(|| "legacy-thread-preview".to_owned());
+    let mut synthetic = json!({
+        "id": synthetic_id,
+        "role": "user",
+        "content": preview,
+        "status": "done",
+        "createdAt": created_at,
+    });
+    if let Some(turn_id) = turn_id {
+        synthetic["turnId"] = Value::String(turn_id.clone());
+        synthetic["subtaskId"] = Value::String(turn_id);
+    }
+    messages.insert(0, synthetic);
 }
 
 fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: Vec<Value>) {
