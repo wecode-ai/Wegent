@@ -61,6 +61,7 @@ pub(crate) async fn load_codex_transcript(
     if !thread.is_object() {
         return Err("thread/read returned a non-object thread".to_owned());
     }
+    let paginated_history = thread_uses_paginated_history(&thread);
     let mut cursor = request.cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;
@@ -76,6 +77,7 @@ pub(crate) async fn load_codex_transcript(
             cursor.as_deref(),
             request.limit,
             request.direction,
+            paginated_history,
         )
         .await?;
         if backwards_cursor.is_none() {
@@ -86,7 +88,9 @@ pub(crate) async fn load_codex_transcript(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        page_turns = load_full_turn_items(client, request.thread_id, page_turns).await?;
+        if paginated_history {
+            page_turns = load_full_turn_items(client, request.thread_id, page_turns).await?;
+        }
         turns.extend(page_turns);
 
         let next_cursor = string_field(&page, "nextCursor");
@@ -131,6 +135,7 @@ async fn load_turn_page(
     cursor: Option<&str>,
     limit: usize,
     direction: CodexTranscriptDirection,
+    paginated_history: bool,
 ) -> Result<Value, String> {
     client
         .request(
@@ -140,10 +145,22 @@ async fn load_turn_page(
                 "cursor": cursor,
                 "limit": limit,
                 "sortDirection": direction.as_str(),
-                "itemsView": "notLoaded",
+                "itemsView": turn_items_view(paginated_history),
             }),
         )
         .await
+}
+
+fn thread_uses_paginated_history(thread: &Value) -> bool {
+    string_field(thread, "historyMode").as_deref() == Some("paginated")
+}
+
+fn turn_items_view(paginated_history: bool) -> &'static str {
+    if paginated_history {
+        "notLoaded"
+    } else {
+        "full"
+    }
 }
 
 async fn load_full_turn_items(
@@ -218,5 +235,33 @@ async fn load_turn_items(
             ));
         }
         cursor = Some(next_cursor);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{thread_uses_paginated_history, turn_items_view};
+
+    #[test]
+    fn detects_paginated_thread_history() {
+        assert!(thread_uses_paginated_history(
+            &json!({"historyMode": "paginated"})
+        ));
+    }
+
+    #[test]
+    fn treats_legacy_and_missing_history_modes_as_non_paginated() {
+        assert!(!thread_uses_paginated_history(
+            &json!({"historyMode": "legacy"})
+        ));
+        assert!(!thread_uses_paginated_history(&json!({})));
+    }
+
+    #[test]
+    fn requests_items_only_for_paginated_thread_history() {
+        assert_eq!(turn_items_view(true), "notLoaded");
+        assert_eq!(turn_items_view(false), "full");
     }
 }

@@ -68,6 +68,8 @@ Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于
 
 前端显示对话时仍以 transcript/message action 生成的 `WorkbenchMessage` 为准；任务列表和状态轮询只用于状态、标题、运行态和 workspace 信息。排查“列表很慢”或“切换任务内存上涨”时，应优先确认是否又把原始消息或命令输出加入了 runtime list/handle/transcript 元数据路径。
 
+Codex 0.147 的历史读取必须遵循线程持久化时确定的 `historyMode`。Executor 先通过 `thread/read(includeTurns: false)` 读取元数据：`paginated` 线程使用 `thread/turns/list(itemsView: notLoaded)`，再通过 `thread/items/list` 加载每个 turn 的完整 item；`legacy` 线程则直接使用 `thread/turns/list(itemsView: full)`。旧 rollout store 不支持 `thread/items/list`，因此不能仅根据 Codex 版本强制走 item 分页。
+
 ### Pane 缓存与资源生命周期
 
 桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
