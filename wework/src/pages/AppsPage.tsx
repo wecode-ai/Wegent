@@ -14,6 +14,8 @@ import type { DeviceInfo } from '@/types/devices'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { cn } from '@/lib/utils'
 import { useAppearance } from '@/features/appearance'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { resolveUiTypographyVariables } from '@/features/appearance/typography'
 
 interface AppsPageState {
@@ -35,6 +37,7 @@ interface AppCardData {
   meta: string
   action: string
   onClick: () => void
+  experimental?: boolean
 }
 
 const initialState: AppsPageState = {
@@ -399,7 +402,14 @@ function AppCard({ app }: { app: AppCardData }) {
         </div>
         <StatusPill label={app.status} tone={app.statusTone} />
       </div>
-      <div className="mt-4 text-sm font-bold text-text-primary">{app.title}</div>
+      <div className="mt-4 flex items-center gap-2 text-sm font-bold text-text-primary">
+        <span>{app.title}</span>
+        {app.experimental ? (
+          <ExperimentalBadge
+            testId={`apps-${app.title.toLowerCase().replaceAll(' ', '-')}-experimental-badge`}
+          />
+        ) : null}
+      </div>
       <p className="mt-2 text-sm leading-6 text-text-secondary">{app.description}</p>
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
         <button
@@ -529,22 +539,30 @@ function InstalledAppsSection({ apps }: { apps: WegentInstalledConnectorApp[] })
   )
 }
 
-function buildRecommendedApps(state: AppsPageState): AppCardData[] {
+function buildRecommendedApps(
+  state: AppsPageState,
+  experimentalFeaturesEnabled: boolean
+): AppCardData[] {
   const proxyConfigured = state.proxyConfig?.configured ?? false
   const codexConfigured = state.codexConfig?.configured ?? false
 
   return [
-    {
-      title: 'Claude Code',
-      description: '使用 WeWork 模型服务代理 Claude Code，统一接入账号、模型与运行时环境。',
-      icon: TerminalSquare,
-      iconClassName: 'bg-gradient-to-br from-orange-400 to-red-500 text-white',
-      status: proxyConfigured ? '已代理' : '待配置',
-      statusTone: proxyConfigured ? 'online' : 'warning',
-      meta: proxyConfigured ? '模型代理可用' : '未配置代理',
-      action: proxyConfigured ? '打开' : '去配置',
-      onClick: () => navigateTo('/settings/personal/proxy'),
-    },
+    ...(experimentalFeaturesEnabled
+      ? [
+          {
+            title: 'Claude Code',
+            description: '使用 WeWork 模型服务代理 Claude Code，统一接入账号、模型与运行时环境。',
+            icon: TerminalSquare,
+            iconClassName: 'bg-gradient-to-br from-orange-400 to-red-500 text-white',
+            status: proxyConfigured ? '已代理' : '待配置',
+            statusTone: proxyConfigured ? 'online' : 'warning',
+            meta: proxyConfigured ? '模型代理可用' : '未配置代理',
+            action: proxyConfigured ? '打开' : '去配置',
+            onClick: () => navigateTo('/settings/personal/proxy'),
+            experimental: true,
+          } satisfies AppCardData,
+        ]
+      : []),
     {
       title: '模型设置',
       description: '管理本机模型与 Codex auth.json 云端同步，可从在线设备导入认证。',
@@ -561,6 +579,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 
 export function AppsPage() {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const [state, setState] = useState<AppsPageState>(initialState)
   const [activeSection, setActiveSection] = useState<AppsSection>(() =>
@@ -636,7 +655,10 @@ export function AppsPage() {
 
   const onlineCount = countOnlineDevices(state.devices)
   const slotUsage = getSlotUsage(state.devices)
-  const recommendedApps = useMemo(() => buildRecommendedApps(state), [state])
+  const recommendedApps = useMemo(
+    () => buildRecommendedApps(state, experimentalFeaturesEnabled),
+    [experimentalFeaturesEnabled, state]
+  )
   const extensionSection = appsPageSectionExtensions.find(
     extension => extension.key === activeSection
   )

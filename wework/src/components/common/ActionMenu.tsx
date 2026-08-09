@@ -34,7 +34,7 @@ function formatActionMenuShortcut(shortcut: string): string {
 }
 
 export interface ActionMenuItem {
-  label: string
+  label: ReactNode
   icon?: ComponentType<{ className?: string }>
   onSelect?: () => void | Promise<void>
   testId: string
@@ -440,7 +440,9 @@ export function ActionMenu({
                   ].join(' ')}
                 >
                   {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                    {item.label}
+                  </span>
                   {item.shortcut ? (
                     <KeyboardShortcut
                       value={formatActionMenuShortcut(item.shortcut)}
@@ -504,7 +506,9 @@ export function ActionMenu({
                     ].join(' ')}
                   >
                     {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                    <span className="truncate">{item.label}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                      {item.label}
+                    </span>
                     {item.shortcut ? (
                       <KeyboardShortcut
                         value={formatActionMenuShortcut(item.shortcut)}

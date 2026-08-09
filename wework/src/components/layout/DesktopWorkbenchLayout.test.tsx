@@ -1981,6 +1981,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
   test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {

@@ -632,8 +632,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const localHarnessPreferences =
     appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
   const enabledLocalHarnesses = useMemo(
-    () => localHarnessPreferences.filter(preference => preference.enabled),
-    [localHarnessPreferences]
+    () =>
+      experimentalFeaturesEnabled
+        ? localHarnessPreferences.filter(preference => preference.enabled)
+        : [],
+    [experimentalFeaturesEnabled, localHarnessPreferences]
   )
   const executableOverrides = useMemo(
     () =>
@@ -643,15 +646,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [localHarnessPreferences]
   )
   const [localHarnesses, setLocalHarnesses] = useState<LocalHarnessDescriptor[]>([])
-  const [localHarnessesLoading, setLocalHarnessesLoading] = useState(() =>
-    isLocalHarnessAvailable()
+  const [localHarnessesLoading, setLocalHarnessesLoading] = useState(
+    () => experimentalFeaturesEnabled && isLocalHarnessAvailable()
   )
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
   useEffect(() => {
-    if (!isLocalHarnessAvailable()) return
+    if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
     let cancelled = false
     void listLocalHarnesses(executableOverrides)
@@ -677,9 +680,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       cancelled = true
     }
-  }, [executableOverrides])
+  }, [executableOverrides, experimentalFeaturesEnabled])
   const refreshLocalHarnesses = useCallback(() => {
-    if (!isLocalHarnessAvailable()) return
+    if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
     setLocalHarnessesLoading(true)
     void listLocalHarnesses(executableOverrides)
@@ -693,7 +696,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setLocalHarnessDetectionFailed(true)
       })
       .finally(() => setLocalHarnessesLoading(false))
-  }, [executableOverrides])
+  }, [executableOverrides, experimentalFeaturesEnabled])
   const [pendingSupervisorConfig, setPendingSupervisorConfig] =
     useState<TaskSupervisorConfig | null>(null)
   const supervisorTaskKey = currentRuntimeTask
@@ -1287,7 +1290,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !centralHarnessUsesRemoteDevice &&
     !centralHarnessUsesRemoteSource
   const selectedHarnessPreference =
-    newChatRuntime === 'codex'
+    !experimentalFeaturesEnabled || newChatRuntime === 'codex'
       ? null
       : (enabledLocalHarnesses.find(preference => preference.id === newChatRuntime) ?? null)
   const configuredHarnessModel = selectedHarnessPreference
@@ -1314,7 +1317,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services?.localHarnessModelApi
   )
   const activeNewChatRuntime =
-    newChatRuntime !== 'codex' && selectedHarnessInstalled ? newChatRuntime : 'codex'
+    experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
+      ? newChatRuntime
+      : 'codex'
 
   useEffect(() => {
     const resetCentralHarness = () => {
@@ -2935,18 +2940,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
                       projectWorkBarTrailingContext={
-                        <WorkbenchHarnessSelector
-                          runtime={activeNewChatRuntime}
-                          harnesses={localHarnesses}
-                          enabledHarnesses={enabledLocalHarnesses.map(preference => preference.id)}
-                          loading={localHarnessesLoading}
-                          detectionFailed={localHarnessDetectionFailed}
-                          onRefresh={refreshLocalHarnesses}
-                          onRuntimeChange={runtime => {
-                            setCentralHarnessError(null)
-                            setNewChatRuntime(runtime)
-                          }}
-                        />
+                        experimentalFeaturesEnabled ? (
+                          <WorkbenchHarnessSelector
+                            runtime={activeNewChatRuntime}
+                            harnesses={localHarnesses}
+                            enabledHarnesses={enabledLocalHarnesses.map(
+                              preference => preference.id
+                            )}
+                            loading={localHarnessesLoading}
+                            detectionFailed={localHarnessDetectionFailed}
+                            onRefresh={refreshLocalHarnesses}
+                            onRuntimeChange={runtime => {
+                              setCentralHarnessError(null)
+                              setNewChatRuntime(runtime)
+                            }}
+                          />
+                        ) : undefined
                       }
                       modelSelectorOverride={
                         selectedHarnessPreference ? (

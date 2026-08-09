@@ -1,6 +1,7 @@
 import { Loader2, RefreshCw, Save, SquareTerminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultLocalHarnessPreferences,
@@ -157,7 +158,12 @@ export function HarnessSettingsPage() {
   return (
     <SettingsPage data-testid="harness-settings-page">
       <SettingsPageHeader
-        title={t('workbench.harness_settings_title', '运行工具')}
+        title={
+          <span className="flex items-center gap-2">
+            {t('workbench.harness_settings_title', '运行工具')}
+            <ExperimentalBadge testId="harness-settings-experimental-badge" />
+          </span>
+        }
         description={t(
           'workbench.harness_settings_description',
           '配置 Wework 中可直接启动的本地编码工具。模型统一来自 Wework 模型设置，并通过本地 Messages 路由使用代理与云端模型能力。'
@@ -198,6 +204,7 @@ export function HarnessSettingsPage() {
               <div className="mb-2 flex items-center gap-2">
                 <SquareTerminal className="h-4 w-4 text-text-secondary" aria-hidden="true" />
                 <h2 className="text-sm font-medium text-text-primary">{label}</h2>
+                <ExperimentalBadge testId={`harness-settings-${id}-experimental-badge`} />
                 <span className="text-xs text-text-muted">
                   {detecting
                     ? t('workbench.harness_status_detecting', '检测中')

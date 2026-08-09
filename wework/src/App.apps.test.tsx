@@ -15,6 +15,15 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   }),
   setEmbeddedBrowserBounds: vi.fn().mockResolvedValue(undefined),
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+  useExperimentalFeaturesState: () => ({
+    enabled: experimentalFeatures.enabled,
+    loaded: true,
+  }),
+}))
 
 vi.mock('@/lib/embedded-browser', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
@@ -141,6 +150,7 @@ function enableTauri() {
 
 describe('App center route', () => {
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     localStorage.clear()
     enableTauri()
     vi.stubEnv('DEV', false)
@@ -265,10 +275,22 @@ describe('App center route', () => {
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
     expect(screen.getByText('Claude Code')).toBeInTheDocument()
+    expect(screen.getByTestId('apps-claude-code-experimental-badge')).toHaveTextContent('实验性')
     expect(screen.getByText('模型设置')).toBeInTheDocument()
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('hides experimental coding apps while experimental features are off', async () => {
+    experimentalFeatures.enabled = false
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(await screen.findByText('模型设置')).toBeInTheDocument()
+    expect(screen.queryByText('Claude Code')).not.toBeInTheDocument()
   })
 
   test('loads Agent from the connected cloud address', async () => {

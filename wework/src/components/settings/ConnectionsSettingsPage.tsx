@@ -35,6 +35,8 @@ import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
@@ -106,6 +108,7 @@ interface SettingsNavItem {
   label: string
   fallback: string
   category?: SettingsCategory
+  experimental?: boolean
 }
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -199,6 +202,7 @@ const settingsNavItems: SettingsNavItem[] = [
     label: 'settings_nav_harnesses',
     fallback: '运行工具',
     category: 'coding',
+    experimental: true,
   },
   {
     key: 'worktrees',
@@ -1366,18 +1370,23 @@ export function ConnectionsSettingsPage({
   onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const isDesktopRuntime = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
-    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || isDesktopRuntime
+    item =>
+      (!item.experimental || experimentalFeaturesEnabled) &&
+      (!['keyboard-shortcuts', 'appshots'].includes(item.key) || isDesktopRuntime)
   )
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
+  const effectiveActiveNav =
+    activeNav === 'harnesses' && !experimentalFeaturesEnabled ? 'general' : activeNav
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1457,13 +1466,19 @@ export function ConnectionsSettingsPage({
                   }}
                   className={[
                     'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
-                    activeNav === item.key
+                    effectiveActiveNav === item.key
                       ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
                       : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
                   ].join(' ')}
                 >
                   <item.icon className="h-4 w-4 shrink-0" />
                   <span className="truncate">{t(`workbench.${item.label}`, item.fallback)}</span>
+                  {item.experimental ? (
+                    <ExperimentalBadge
+                      className="ml-auto"
+                      testId={`settings-nav-${item.key}-experimental-badge`}
+                    />
+                  ) : null}
                 </button>
               </div>
             )
@@ -1485,31 +1500,31 @@ export function ConnectionsSettingsPage({
           background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
         )}
       >
-        {activeNav === 'general' ? (
+        {effectiveActiveNav === 'general' ? (
           <GeneralSettingsPage />
-        ) : activeNav === 'appearance' ? (
+        ) : effectiveActiveNav === 'appearance' ? (
           <AppearanceSettingsPage />
-        ) : activeNav === 'context' ? (
+        ) : effectiveActiveNav === 'context' ? (
           <ContextSettingsPage />
-        ) : activeNav === 'about' ? (
+        ) : effectiveActiveNav === 'about' ? (
           <AboutSettingsPage />
-        ) : activeNav === 'model-settings' ? (
+        ) : effectiveActiveNav === 'model-settings' ? (
           <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
-        ) : activeNav === 'proxy' ? (
+        ) : effectiveActiveNav === 'proxy' ? (
           <ProxySettingsPage />
-        ) : activeNav === 'keyboard-shortcuts' ? (
+        ) : effectiveActiveNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
-        ) : activeNav === 'quick-phrases' ? (
+        ) : effectiveActiveNav === 'quick-phrases' ? (
           <QuickPhrasesSettingsPage />
-        ) : activeNav === 'appshots' ? (
+        ) : effectiveActiveNav === 'appshots' ? (
           <AppshotsSettingsPage />
-        ) : activeNav === 'plugins' ? (
+        ) : effectiveActiveNav === 'plugins' ? (
           <PluginSettingsPage />
-        ) : activeNav === 'browser' ? (
+        ) : effectiveActiveNav === 'browser' ? (
           <BrowserSettingsPage />
-        ) : activeNav === 'harnesses' ? (
+        ) : effectiveActiveNav === 'harnesses' ? (
           <HarnessSettingsPage />
-        ) : activeNav === 'worktrees' ? (
+        ) : effectiveActiveNav === 'worktrees' ? (
           <WorktreesSettingsPage
             api={services?.runtimeWorkApi}
             devices={devices}
@@ -1517,9 +1532,9 @@ export function ConnectionsSettingsPage({
             onRefreshWorkLists={onRefreshWorkLists}
             onLeaveSettings={onBack}
           />
-        ) : activeNav === 'hooks' ? (
+        ) : effectiveActiveNav === 'hooks' ? (
           <HooksSettingsPage />
-        ) : activeNav === 'archived-conversations' ? (
+        ) : effectiveActiveNav === 'archived-conversations' ? (
           <ArchivedConversationsSettingsPage
             api={services?.runtimeWorkApi}
             onOpenRuntimeTask={onOpenRuntimeTask}

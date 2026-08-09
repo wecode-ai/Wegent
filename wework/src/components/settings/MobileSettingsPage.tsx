@@ -14,6 +14,8 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -46,6 +48,7 @@ export function MobileSettingsPage({
   onRefreshWorkLists,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [activePage, setActivePage] = useState<
     | 'menu'
     | 'general'
@@ -256,7 +259,7 @@ export function MobileSettingsPage({
     )
   }
 
-  if (activePage === 'harnesses') {
+  if (activePage === 'harnesses' && experimentalFeaturesEnabled) {
     return (
       <main
         data-testid="mobile-harness-settings-page"
@@ -272,8 +275,9 @@ export function MobileSettingsPage({
           >
             <ArrowLeft className="h-6 w-6" />
           </button>
-          <h1 className="text-lg font-semibold">
-            {t('workbench.settings_nav_harnesses', '运行工具')}
+          <h1 className="flex items-center gap-2 text-lg font-semibold">
+            <span>{t('workbench.settings_nav_harnesses', '运行工具')}</span>
+            <ExperimentalBadge testId="mobile-harness-settings-experimental-badge" />
           </h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -479,18 +483,21 @@ export function MobileSettingsPage({
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-harnesses-button"
-          onClick={() => setActivePage('harnesses')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_harnesses', '运行工具')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        {experimentalFeaturesEnabled ? (
+          <button
+            type="button"
+            data-testid="mobile-settings-harnesses-button"
+            onClick={() => setActivePage('harnesses')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_harnesses', '运行工具')}
+            </span>
+            <ExperimentalBadge testId="mobile-settings-harnesses-experimental-badge" />
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+        ) : null}
         <button
           type="button"
           data-testid="mobile-settings-worktrees-button"

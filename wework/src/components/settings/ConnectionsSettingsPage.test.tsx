@@ -36,6 +36,11 @@ const cloudDesktopExtensionMock = vi.hoisted(() => ({
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
@@ -193,6 +198,7 @@ describe('ConnectionsSettingsPage', () => {
   }
 
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -334,6 +340,9 @@ describe('ConnectionsSettingsPage', () => {
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
     const harnessesNav = screen.getByTestId('settings-nav-harnesses')
+    expect(screen.getByTestId('settings-nav-harnesses-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
     expect(personalCategory).toHaveClass('mt-2')
@@ -361,6 +370,18 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(window.location.pathname).toBe('/settings/worktrees')
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
+  })
+
+  test('hides harness settings and redirects direct routes while experimental features are off', async () => {
+    experimentalFeatures.enabled = false
+    window.history.pushState({}, '', '/settings/harnesses')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-harnesses')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('harness-settings-page')).not.toBeInTheDocument()
   })
 
   test('settings page fills its container instead of the full viewport', async () => {
