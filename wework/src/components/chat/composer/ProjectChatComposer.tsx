@@ -108,6 +108,7 @@ interface ProjectChatComposerProps {
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
   toolbarLeadingContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -178,6 +179,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       showWorkspaceMenu,
       inputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarTrailingContext,
     },
     ref
   ) {
@@ -304,6 +306,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            trailingContext={projectWorkBarTrailingContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />

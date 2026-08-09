@@ -359,6 +359,9 @@ describe('local-terminal', () => {
     })
     invokeMock.mockImplementation(async command => {
       calls.push(`invoke:${command}`)
+      if (command === 'get_local_terminal_snapshot') {
+        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
+      }
       return undefined
     })
 
@@ -367,6 +370,7 @@ describe('local-terminal', () => {
     expect(calls).toEqual([
       'listen:local-terminal-output',
       'listen:local-terminal-exit',
+      'invoke:get_local_terminal_snapshot',
       'invoke:attach_local_terminal',
     ])
 
@@ -380,7 +384,12 @@ describe('local-terminal', () => {
     const exitUnlisten = vi.fn()
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     listenMock.mockResolvedValueOnce(outputUnlisten).mockResolvedValueOnce(exitUnlisten)
-    invokeMock.mockRejectedValue(new Error('attach failed'))
+    invokeMock.mockImplementation(async command => {
+      if (command === 'get_local_terminal_snapshot') {
+        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
+      }
+      throw new Error('attach failed')
+    })
 
     await expect(connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn())).rejects.toThrow(
       'attach failed'
@@ -393,5 +402,55 @@ describe('local-terminal', () => {
       stage: 'attach',
       error: 'attach failed',
     })
+  })
+
+  test('replays a snapshot before buffered live output without duplicates', async () => {
+    const outputHandler = vi.fn()
+    let nativeOutput:
+      | ((event: { payload: { session_id: string; sequence: number; data: string } }) => void)
+      | undefined
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === 'local-terminal-output') {
+        nativeOutput = handler as typeof nativeOutput
+      }
+      return vi.fn()
+    })
+    invokeMock.mockImplementation(async command => {
+      if (command === 'get_local_terminal_snapshot') {
+        nativeOutput?.({
+          payload: { session_id: 'local-terminal-1', sequence: 3, data: 'live' },
+        })
+        return { session_id: 'local-terminal-1', sequence: 2, data: 'history' }
+      }
+      return undefined
+    })
+
+    await connectLocalTerminal('local-terminal-1', outputHandler, vi.fn())
+
+    expect(outputHandler.mock.calls.map(([payload]) => payload.data)).toEqual(['history', 'live'])
+  })
+
+  test('ignores exit events from other local terminal sessions', async () => {
+    const exitHandler = vi.fn()
+    let nativeExit: ((event: { payload: { session_id: string } }) => void) | undefined
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === 'local-terminal-exit') {
+        nativeExit = handler as typeof nativeExit
+      }
+      return vi.fn()
+    })
+    invokeMock.mockImplementation(async command => {
+      if (command === 'get_local_terminal_snapshot') {
+        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
+      }
+      return undefined
+    })
+
+    await connectLocalTerminal('local-terminal-1', vi.fn(), exitHandler)
+    nativeExit?.({ payload: { session_id: 'local-terminal-2' } })
+    nativeExit?.({ payload: { session_id: 'local-terminal-1' } })
+
+    expect(exitHandler).toHaveBeenCalledOnce()
+    expect(exitHandler).toHaveBeenCalledWith({ session_id: 'local-terminal-1' })
   })
 })

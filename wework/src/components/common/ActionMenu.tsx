@@ -56,6 +56,7 @@ interface ActionMenuProps {
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
   onContextMenuClose?: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 export interface MenuPosition {
@@ -75,6 +76,7 @@ export function ActionMenu({
   placement = 'side',
   contextMenuPosition,
   onContextMenuClose,
+  onOpenChange,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -95,11 +97,12 @@ export function ActionMenu({
       setOpenSubmenuId(null)
       setSubmenuPosition(null)
       onContextMenuClose?.()
+      onOpenChange?.(false)
       if (restoreFocus) {
         window.requestAnimationFrame(() => triggerRef.current?.focus())
       }
     },
-    [onContextMenuClose]
+    [onContextMenuClose, onOpenChange]
   )
   const menuOpen = open || Boolean(contextMenuPosition)
   const openSubmenuItem = items.find(item => item.testId === openSubmenuId)
@@ -114,6 +117,7 @@ export function ActionMenu({
       closeMenu()
     } else {
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 
@@ -124,6 +128,7 @@ export function ActionMenu({
     if (!menuOpen) {
       setMenuPosition(null)
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 

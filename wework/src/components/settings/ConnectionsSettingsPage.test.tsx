@@ -333,6 +333,7 @@ describe('ConnectionsSettingsPage', () => {
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
+    const harnessesNav = screen.getByTestId('settings-nav-harnesses')
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
     expect(personalCategory).toHaveClass('mt-2')
@@ -344,10 +345,13 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(worktreesNav)
+    expect(codingCategory.parentElement).toContainElement(harnessesNav)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING

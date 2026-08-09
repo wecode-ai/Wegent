@@ -1,9 +1,12 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, State};
 
 use crate::process_environment;
@@ -12,9 +15,75 @@ const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
 const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
+const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(2);
+const OPEN_CODE_HARNESS_ID: &str = "opencode";
+const CLAUDE_CODE_HARNESS_ID: &str = "claude_code";
+const MAX_TERMINAL_SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum HarnessPromptMode {
+    Flag(&'static str),
+    Positional,
+}
+
+#[derive(Clone, Copy)]
+struct LocalHarnessDefinition {
+    id: &'static str,
+    executable: &'static str,
+    version_args: &'static [&'static str],
+    home_relative_paths: &'static [&'static str],
+    prompt_mode: HarnessPromptMode,
+}
+
+const LOCAL_HARNESSES: [LocalHarnessDefinition; 2] = [
+    LocalHarnessDefinition {
+        id: OPEN_CODE_HARNESS_ID,
+        executable: "opencode",
+        version_args: &["--version"],
+        home_relative_paths: &[".opencode/bin/opencode"],
+        prompt_mode: HarnessPromptMode::Flag("--prompt"),
+    },
+    LocalHarnessDefinition {
+        id: CLAUDE_CODE_HARNESS_ID,
+        executable: "claude",
+        version_args: &["--version"],
+        home_relative_paths: &[
+            ".local/bin/claude",
+            ".claude/local/claude",
+            ".claude/bin/claude",
+        ],
+        prompt_mode: HarnessPromptMode::Positional,
+    },
+];
+
+#[derive(Serialize)]
+pub struct LocalHarnessDescriptor {
+    id: String,
+    installed: bool,
+    executable_path: Option<String>,
+    version: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartLocalHarnessRequest {
+    harness_id: String,
+    prompt: String,
+    executable_path: Option<String>,
+    args: Option<Vec<String>>,
+    cwd: Option<String>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+    env: Option<HashMap<String, String>>,
+}
+
+struct PtyProcessSpec {
+    program: String,
+    args: Vec<String>,
+}
 
 pub struct LocalTerminalState {
-    sessions: Mutex<HashMap<String, LocalTerminalSession>>,
+    sessions: Arc<Mutex<HashMap<String, LocalTerminalSession>>>,
     next_id: AtomicU64,
 }
 
@@ -25,11 +94,44 @@ struct LocalTerminalSession {
     child_pid: Option<u32>,
     attach_sender: Option<mpsc::SyncSender<()>>,
     attached: bool,
+    harness: Option<LocalHarnessSessionMetadata>,
+    output_sequence: u64,
+    scrollback: String,
+}
+
+#[derive(Clone)]
+struct LocalHarnessSessionMetadata {
+    harness_id: String,
+    title: String,
+    cwd: String,
+    created_at: u64,
+}
+
+struct LocalHarnessLaunchMetadata {
+    harness_id: String,
+    title: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct LocalHarnessSessionDescriptor {
+    session_id: String,
+    harness_id: String,
+    title: String,
+    cwd: String,
+    created_at: u64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct LocalTerminalSnapshot {
+    session_id: String,
+    sequence: u64,
+    data: String,
 }
 
 #[derive(Serialize, Clone)]
 struct LocalTerminalOutput {
     session_id: String,
+    sequence: u64,
     data: String,
 }
 
@@ -41,7 +143,7 @@ struct LocalTerminalExit {
 impl Default for LocalTerminalState {
     fn default() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(1),
         }
     }
@@ -62,6 +164,271 @@ impl LocalTerminalState {
 fn next_session_id(state: &LocalTerminalState) -> String {
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     format!("local-terminal-{id}")
+}
+
+fn current_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn harness_session_title(id: &str, prompt: &str) -> String {
+    let fallback = match id {
+        OPEN_CODE_HARNESS_ID => "OpenCode",
+        CLAUDE_CODE_HARNESS_ID => "Claude Code",
+        _ => id,
+    };
+    prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(80).collect())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn append_bounded_scrollback(scrollback: &mut String, data: &str) {
+    scrollback.push_str(data);
+    if scrollback.len() <= MAX_TERMINAL_SCROLLBACK_BYTES {
+        return;
+    }
+
+    let mut remove_end = scrollback.len() - MAX_TERMINAL_SCROLLBACK_BYTES;
+    while !scrollback.is_char_boundary(remove_end) {
+        remove_end += 1;
+    }
+    scrollback.drain(..remove_end);
+}
+
+fn local_harness_definition(id: &str) -> Option<LocalHarnessDefinition> {
+    LOCAL_HARNESSES
+        .iter()
+        .copied()
+        .find(|definition| definition.id == id)
+}
+
+fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        if path.extension().is_some() {
+            return vec![path];
+        }
+        return [".exe", ".cmd", ".bat", ".com"]
+            .iter()
+            .map(|extension| path.with_extension(&extension[1..]))
+            .collect();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![path]
+    }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_executable(
+    executable: &str,
+    search_path: &str,
+    home: Option<&Path>,
+    home_relative_paths: &[&str],
+) -> Option<PathBuf> {
+    let path = Path::new(executable);
+    if path.components().count() > 1 {
+        return is_executable_file(path).then(|| path.to_path_buf());
+    }
+
+    std::env::split_paths(search_path)
+        .flat_map(|directory| executable_candidates(directory.join(executable)))
+        .chain(home.into_iter().flat_map(|directory| {
+            home_relative_paths
+                .iter()
+                .map(move |path| directory.join(path))
+        }))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn resolve_local_harness_executable(
+    definition: LocalHarnessDefinition,
+    executable_override: Option<&str>,
+) -> Option<PathBuf> {
+    let search_path = process_environment::normalized_current_path();
+    let home = preferred_home_directory(std::env::var_os("HOME"), dirs::home_dir());
+    let executable = executable_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(definition.executable);
+    resolve_executable(
+        executable,
+        &search_path,
+        home.as_deref(),
+        if executable_override.is_some() {
+            &[]
+        } else {
+            definition.home_relative_paths
+        },
+    )
+}
+
+fn preferred_home_directory(
+    environment_home: Option<std::ffi::OsString>,
+    fallback_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    environment_home
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or(fallback_home)
+}
+
+fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new(path);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + HARNESS_VERSION_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut version = String::new();
+                child.stdout.take()?.read_to_string(&mut version).ok()?;
+                return version
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned);
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn harness_launch_args(
+    definition: LocalHarnessDefinition,
+    configured_args: Option<Vec<String>>,
+    prompt: &str,
+) -> Vec<String> {
+    let mut args = configured_args.unwrap_or_default();
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return args;
+    }
+    match definition.prompt_mode {
+        HarnessPromptMode::Flag(flag) => {
+            args.push(flag.to_string());
+            args.push(prompt.to_string());
+        }
+        HarnessPromptMode::Positional => args.push(prompt.to_string()),
+    }
+    args
+}
+
+#[tauri::command]
+pub fn list_local_harnesses(
+    executable_overrides: Option<HashMap<String, Option<String>>>,
+) -> Vec<LocalHarnessDescriptor> {
+    LOCAL_HARNESSES
+        .iter()
+        .map(|definition| {
+            let executable_override = executable_overrides
+                .as_ref()
+                .and_then(|overrides| overrides.get(definition.id))
+                .and_then(|value| value.as_deref());
+            let executable_path =
+                resolve_local_harness_executable(*definition, executable_override);
+            let version = executable_path
+                .as_deref()
+                .and_then(|path| read_command_version(path, definition.version_args));
+            LocalHarnessDescriptor {
+                id: definition.id.to_string(),
+                installed: executable_path.is_some(),
+                executable_path: executable_path.map(|path| path.display().to_string()),
+                version,
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn list_local_harness_sessions(
+    state: State<'_, LocalTerminalState>,
+) -> Result<Vec<LocalHarnessSessionDescriptor>, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    let mut descriptors = sessions
+        .iter()
+        .filter_map(|(session_id, session)| {
+            let harness = session.harness.as_ref()?;
+            Some(LocalHarnessSessionDescriptor {
+                session_id: session_id.clone(),
+                harness_id: harness.harness_id.clone(),
+                title: harness.title.clone(),
+                cwd: harness.cwd.clone(),
+                created_at: harness.created_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(descriptors)
+}
+
+#[tauri::command]
+pub fn get_local_terminal_snapshot(
+    state: State<'_, LocalTerminalState>,
+    session_id: String,
+) -> Result<LocalTerminalSnapshot, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Local terminal session not found: {session_id}"))?;
+    Ok(LocalTerminalSnapshot {
+        session_id,
+        sequence: session.output_sequence,
+        data: session.scrollback.clone(),
+    })
 }
 
 fn normalized_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
@@ -201,6 +568,41 @@ pub fn start_local_terminal(
     }
 }
 
+#[tauri::command]
+pub fn start_local_harness(
+    app: tauri::AppHandle,
+    state: State<'_, LocalTerminalState>,
+    request: StartLocalHarnessRequest,
+) -> Result<String, String> {
+    let definition = local_harness_definition(request.harness_id.trim())
+        .ok_or_else(|| format!("Unsupported local harness: {}", request.harness_id))?;
+    let executable =
+        resolve_local_harness_executable(definition, request.executable_path.as_deref())
+            .ok_or_else(|| {
+                format!(
+                    "{} is not installed or is unavailable on PATH",
+                    definition.executable
+                )
+            })?;
+    let args = harness_launch_args(definition, request.args, &request.prompt);
+    start_pty_process(
+        app,
+        &state,
+        request.cwd,
+        request.rows,
+        request.cols,
+        request.env,
+        PtyProcessSpec {
+            program: executable.display().to_string(),
+            args,
+        },
+        Some(LocalHarnessLaunchMetadata {
+            harness_id: definition.id.to_string(),
+            title: harness_session_title(definition.id, &request.prompt),
+        }),
+    )
+}
+
 fn start_pty_shell(
     app: tauri::AppHandle,
     state: &LocalTerminalState,
@@ -210,7 +612,37 @@ fn start_pty_shell(
     env: Option<HashMap<String, String>>,
     shell: String,
 ) -> Result<String, String> {
+    start_pty_process(
+        app,
+        state,
+        cwd,
+        rows,
+        cols,
+        env,
+        PtyProcessSpec {
+            program: shell,
+            args: Vec::new(),
+        },
+        None,
+    )
+}
+
+fn start_pty_process(
+    app: tauri::AppHandle,
+    state: &LocalTerminalState,
+    cwd: Option<String>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+    env: Option<HashMap<String, String>>,
+    process: PtyProcessSpec,
+    harness: Option<LocalHarnessLaunchMetadata>,
+) -> Result<String, String> {
     let cwd = normalized_cwd(cwd)?;
+    let effective_cwd = cwd.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+    });
     let size = PtySize {
         rows: rows.unwrap_or(24).max(1),
         cols: cols.unwrap_or(80).max(1),
@@ -229,7 +661,10 @@ fn start_pty_shell(
         .master
         .take_writer()
         .map_err(|error| format!("Failed to create PTY writer: {error}"))?;
-    let mut command = CommandBuilder::new(shell);
+    let mut command = CommandBuilder::new(process.program);
+    for arg in process.args {
+        command.arg(arg);
+    }
     configure_terminal_environment(&mut command);
     configure_terminal_extra_environment(&mut command, normalized_extra_env(env));
     if let Some(cwd) = cwd {
@@ -250,6 +685,14 @@ fn start_pty_shell(
         child,
         attach_sender: Some(attach_sender),
         attached: false,
+        harness: harness.map(|metadata| LocalHarnessSessionMetadata {
+            harness_id: metadata.harness_id,
+            title: metadata.title,
+            cwd: effective_cwd,
+            created_at: current_timestamp_millis(),
+        }),
+        output_sequence: 0,
+        scrollback: String::new(),
     };
     state
         .sessions
@@ -257,6 +700,7 @@ fn start_pty_shell(
         .map_err(|_| "Failed to lock local terminal state".to_string())?
         .insert(session_id.clone(), session);
 
+    let sessions = Arc::clone(&state.sessions);
     let output_session_id = session_id.clone();
     let exit_session_id = session_id.clone();
     std::thread::spawn(move || {
@@ -273,10 +717,22 @@ fn start_pty_shell(
                     if data.is_empty() {
                         continue;
                     }
+                    let sequence = match sessions.lock() {
+                        Ok(mut sessions) => {
+                            let Some(session) = sessions.get_mut(&output_session_id) else {
+                                break;
+                            };
+                            session.output_sequence += 1;
+                            append_bounded_scrollback(&mut session.scrollback, &data);
+                            session.output_sequence
+                        }
+                        Err(_) => break,
+                    };
                     let _ = app.emit(
                         TERMINAL_OUTPUT_EVENT,
                         LocalTerminalOutput {
                             session_id: output_session_id.clone(),
+                            sequence,
                             data,
                         },
                     );
@@ -284,12 +740,18 @@ fn start_pty_shell(
                 Err(_) => break,
             }
         }
-        let _ = app.emit(
-            TERMINAL_EXIT_EVENT,
-            LocalTerminalExit {
-                session_id: exit_session_id,
-            },
-        );
+        let removed = sessions
+            .lock()
+            .map(|mut sessions| sessions.remove(&exit_session_id).is_some())
+            .unwrap_or(false);
+        if removed {
+            let _ = app.emit(
+                TERMINAL_EXIT_EVENT,
+                LocalTerminalExit {
+                    session_id: exit_session_id,
+                },
+            );
+        }
     });
 
     Ok(session_id)
@@ -472,5 +934,72 @@ mod tests {
             resolve_utf8_locale_value(Some("zh_CN.UTF-8"), "en_US.UTF-8"),
             "zh_CN.UTF-8"
         );
+    }
+
+    #[test]
+    fn keeps_harness_prompt_in_one_argument() {
+        let prompt = "fix '$HOME' `whoami`\nthen explain";
+
+        assert_eq!(
+            harness_launch_args(
+                local_harness_definition(OPEN_CODE_HARNESS_ID).unwrap(),
+                None,
+                prompt
+            ),
+            vec!["--prompt", prompt]
+        );
+    }
+
+    #[test]
+    fn launches_claude_code_with_a_positional_prompt() {
+        let prompt = "fix the tests";
+
+        assert_eq!(
+            harness_launch_args(
+                local_harness_definition(CLAUDE_CODE_HARNESS_ID).unwrap(),
+                Some(vec!["--permission-mode".into(), "plan".into()]),
+                prompt
+            ),
+            vec!["--permission-mode", "plan", prompt]
+        );
+    }
+
+    #[test]
+    fn prefers_explicit_home_for_harness_detection() {
+        let environment_home = PathBuf::from("/explicit/home");
+        let fallback_home = PathBuf::from("/fallback/home");
+
+        assert_eq!(
+            preferred_home_directory(
+                Some(environment_home.clone().into_os_string()),
+                Some(fallback_home)
+            ),
+            Some(environment_home)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_harness_from_home_install_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let test_home =
+            std::env::temp_dir().join(format!("wework-opencode-home-{}", std::process::id()));
+        let executable = test_home.join(".opencode/bin/opencode");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "#!/bin/sh\n").unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+
+        let resolved = resolve_executable(
+            "opencode",
+            "",
+            Some(&test_home),
+            &[".opencode/bin/opencode"],
+        );
+
+        assert_eq!(resolved, Some(executable));
+        std::fs::remove_dir_all(test_home).unwrap();
     }
 }

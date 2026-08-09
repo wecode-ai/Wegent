@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import i18n from '@/i18n'
+import type { LocalHarnessId } from './local-harness'
 import type { LocalWorkspaceOpenerId } from './local-workspace-openers'
 import { isTauriRuntime } from './runtime-environment'
 
@@ -58,8 +59,37 @@ export interface StartLocalTerminalOptions {
   env?: Record<string, string | null | undefined>
 }
 
+export interface LocalHarnessDescriptor {
+  id: LocalHarnessId
+  installed: boolean
+  executable_path: string | null
+  version: string | null
+}
+
+export interface LocalHarnessSessionDescriptor {
+  session_id: string
+  harness_id: LocalHarnessId
+  title: string
+  cwd: string
+  created_at: number
+}
+
+export interface LocalTerminalSnapshot {
+  session_id: string
+  sequence: number
+  data: string
+}
+
+export interface StartLocalHarnessOptions extends StartLocalTerminalOptions {
+  harnessId: LocalHarnessId
+  prompt: string
+  executablePath?: string | null
+  args?: string[]
+}
+
 export interface LocalTerminalOutputPayload {
   session_id: string
+  sequence: number
   data: string
 }
 
@@ -94,6 +124,67 @@ export async function startLocalTerminal({
   }
 
   return invoke<string>('start_local_terminal', payload)
+}
+
+export async function listLocalHarnesses(
+  executableOverrides: Partial<Record<LocalHarnessId, string | null>> = {}
+): Promise<LocalHarnessDescriptor[]> {
+  if (!isLocalTerminalAvailable()) return []
+
+  return invoke<LocalHarnessDescriptor[]>('list_local_harnesses', {
+    executableOverrides,
+  })
+}
+
+export async function listLocalHarnessSessions(): Promise<LocalHarnessSessionDescriptor[]> {
+  if (!isLocalTerminalAvailable()) return []
+
+  return invoke<LocalHarnessSessionDescriptor[]>('list_local_harness_sessions')
+}
+
+export async function getLocalTerminalSnapshot(sessionId: string): Promise<LocalTerminalSnapshot> {
+  return invoke<LocalTerminalSnapshot>('get_local_terminal_snapshot', { sessionId })
+}
+
+export async function startLocalHarness({
+  harnessId,
+  prompt,
+  executablePath,
+  args,
+  cwd,
+  rows,
+  cols,
+  env,
+}: StartLocalHarnessOptions): Promise<string> {
+  if (!isLocalTerminalAvailable()) {
+    throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
+  }
+
+  const trimmedCwd = cwd?.trim()
+  const normalizedEnv = normalizeLocalTerminalEnv(env)
+  const payload: {
+    harnessId: LocalHarnessId
+    prompt: string
+    executablePath: string | null
+    args: string[]
+    cwd: string | null
+    rows?: number
+    cols?: number
+    env?: Record<string, string>
+  } = {
+    harnessId,
+    prompt,
+    executablePath: executablePath?.trim() || null,
+    args: args ?? [],
+    cwd: trimmedCwd || null,
+    rows,
+    cols,
+  }
+  if (normalizedEnv) {
+    payload.env = normalizedEnv
+  }
+
+  return invoke<string>('start_local_harness', { request: payload })
 }
 
 function normalizeLocalTerminalEnv(env?: Record<string, string | null | undefined>) {
@@ -284,7 +375,7 @@ export function listenLocalTerminalExit(
   })
 }
 
-type LocalTerminalConnectionStage = 'listen-output' | 'listen-exit' | 'attach'
+type LocalTerminalConnectionStage = 'listen-output' | 'listen-exit' | 'snapshot' | 'attach'
 
 function logLocalTerminalConnectionFailure(
   sessionId: string,
@@ -303,9 +394,21 @@ export async function connectLocalTerminal(
   onOutput: (payload: LocalTerminalOutputPayload) => void,
   onExit: (payload: LocalTerminalExitPayload) => void
 ): Promise<UnlistenFn> {
+  let snapshotLoaded = false
+  let lastSequence = 0
+  const pendingOutput: LocalTerminalOutputPayload[] = []
+  const handleOutput = (payload: LocalTerminalOutputPayload) => {
+    if (payload.session_id !== sessionId || payload.sequence <= lastSequence) return
+    if (!snapshotLoaded) {
+      pendingOutput.push(payload)
+      return
+    }
+    lastSequence = payload.sequence
+    onOutput(payload)
+  }
   let outputUnlisten: UnlistenFn
   try {
-    outputUnlisten = await listenLocalTerminalOutput(onOutput)
+    outputUnlisten = await listenLocalTerminalOutput(handleOutput)
   } catch (error) {
     logLocalTerminalConnectionFailure(sessionId, 'listen-output', error)
     throw error
@@ -313,10 +416,29 @@ export async function connectLocalTerminal(
 
   let exitUnlisten: UnlistenFn
   try {
-    exitUnlisten = await listenLocalTerminalExit(onExit)
+    exitUnlisten = await listenLocalTerminalExit(payload => {
+      if (payload.session_id === sessionId) {
+        onExit(payload)
+      }
+    })
   } catch (error) {
     outputUnlisten()
     logLocalTerminalConnectionFailure(sessionId, 'listen-exit', error)
+    throw error
+  }
+
+  try {
+    const snapshot = await getLocalTerminalSnapshot(sessionId)
+    lastSequence = snapshot.sequence
+    if (snapshot.data) {
+      onOutput(snapshot)
+    }
+    snapshotLoaded = true
+    pendingOutput.sort((left, right) => left.sequence - right.sequence).forEach(handleOutput)
+  } catch (error) {
+    outputUnlisten()
+    exitUnlisten()
+    logLocalTerminalConnectionFailure(sessionId, 'snapshot', error)
     throw error
   }
 

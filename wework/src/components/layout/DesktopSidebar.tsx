@@ -20,6 +20,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  SquareTerminal,
   Sparkles,
   UserRound,
   X,
@@ -159,6 +160,7 @@ import {
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -173,6 +175,8 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  localHarnessSessions?: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -186,6 +190,8 @@ interface DesktopSidebarProps {
   onToggleSidebar?: () => void
   onNewChat: () => void
   onStartStandaloneChat: () => void
+  onOpenLocalHarnessSession?: (sessionId: string) => void
+  onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -2600,8 +2606,12 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
+  localHarnessSessions = [],
+  activeLocalHarnessSessionId = null,
   onNewChat,
   onStartStandaloneChat,
+  onOpenLocalHarnessSession,
+  onCloseLocalHarnessSession,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -3088,7 +3098,8 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
-  const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
+  const displayedChatsExpanded =
+    chatsExpanded || selectedRuntimeChatVisible || Boolean(activeLocalHarnessSessionId)
   const isArchiveSectionSubmitting =
     archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
   const archiveSectionDialogTestId =
@@ -3847,7 +3858,7 @@ export function DesktopSidebar({
                   <DesktopSidebarSectionHeader
                     title={t('workbench.tasks')}
                     expanded={displayedChatsExpanded}
-                    hasContent={regularChatTaskItems.length > 0}
+                    hasContent={localHarnessSessions.length > 0 || regularChatTaskItems.length > 0}
                     toggleTestId="runtime-chat-section-toggle"
                     iconTestId="runtime-chat-section-chevron-right"
                     onToggle={() => setChatsExpanded(expanded => !expanded)}
@@ -3886,14 +3897,52 @@ export function DesktopSidebar({
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
-                      {regularChatTaskItems.length === 0 ? (
+                      {localHarnessSessions.map(session => (
+                        <div
+                          key={session.sessionId}
+                          className="group/harness-session relative flex items-center"
+                        >
+                          <button
+                            type="button"
+                            data-testid={`local-harness-session-row-${session.sessionId}`}
+                            onClick={() => onOpenLocalHarnessSession?.(session.sessionId)}
+                            aria-current={
+                              activeLocalHarnessSessionId === session.sessionId ? 'page' : undefined
+                            }
+                            className={cn(
+                              'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2.5 text-left text-sm',
+                              activeLocalHarnessSessionId === session.sessionId
+                                ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                                : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+                            )}
+                          >
+                            <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{session.title}</span>
+                          </button>
+                          {onCloseLocalHarnessSession && (
+                            <button
+                              type="button"
+                              data-testid={`close-local-harness-session-${session.sessionId}`}
+                              onClick={event => {
+                                event.stopPropagation()
+                                void onCloseLocalHarnessSession(session.sessionId)
+                              }}
+                              aria-label={t('workbench.close_harness', '关闭运行工具')}
+                              className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {localHarnessSessions.length === 0 && regularChatTaskItems.length === 0 ? (
                         <div
                           data-testid="runtime-chat-empty"
                           className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
                         >
                           {t('workbench.no_chats', '暂无会话')}
                         </div>
-                      ) : (
+                      ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"
                           className="space-y-0.5"
@@ -3950,7 +3999,7 @@ export function DesktopSidebar({
                             />
                           )}
                         />
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </section>

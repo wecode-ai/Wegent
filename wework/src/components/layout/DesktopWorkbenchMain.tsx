@@ -93,8 +93,23 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
-import { getLocalPathKind } from '@/lib/local-terminal'
+import {
+  closeLocalTerminal,
+  getLocalPathKind,
+  isLocalTerminalAvailable,
+  listLocalHarnesses,
+  startLocalHarness,
+  type LocalHarnessDescriptor,
+} from '@/lib/local-terminal'
+import {
+  buildLocalHarnessLaunchArgs,
+  defaultLocalHarnessPreferences,
+  localHarnessLabel,
+  type LocalHarnessId,
+} from '@/lib/local-harness'
 import { navigateTo } from '@/lib/navigation'
+import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   browserDiagnosticUrl,
   DEFAULT_EMBEDDED_BROWSER_LABEL,
@@ -149,7 +164,10 @@ import type {
 } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
+import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
@@ -404,11 +422,16 @@ function rightPanelTabType(
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  localHarnessSessions?: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId?: string | null
   visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   showComposerProjectMenuAction?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
+  onLocalHarnessSessionStarted?: (session: LocalHarnessWorkbenchSession) => void
+  onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
+  onLocalHarnessSessionExit?: (sessionId: string) => void
 }
 
 const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel({
@@ -454,12 +477,63 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
+  const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
+    props
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
+  const [internalHarnessSessions, setInternalHarnessSessions] = useState<
+    LocalHarnessWorkbenchSession[]
+  >([])
+  const [internalActiveHarnessSessionId, setInternalActiveHarnessSessionId] = useState<
+    string | null
+  >(null)
+  const localHarnessSessions = props.localHarnessSessions ?? internalHarnessSessions
+  const activeLocalHarnessSessionId =
+    props.activeLocalHarnessSessionId === undefined
+      ? internalActiveHarnessSessionId
+      : props.activeLocalHarnessSessionId
+  const registerLocalHarnessSession = useCallback(
+    (session: LocalHarnessWorkbenchSession) => {
+      if (onLocalHarnessSessionStarted) {
+        onLocalHarnessSessionStarted(session)
+        return
+      }
+      setInternalHarnessSessions(current => [
+        session,
+        ...current.filter(candidate => candidate.sessionId !== session.sessionId),
+      ])
+      setInternalActiveHarnessSessionId(session.sessionId)
+    },
+    [onLocalHarnessSessionStarted]
+  )
+  const removeLocalHarnessSession = useCallback(
+    (sessionId: string) => {
+      if (onLocalHarnessSessionExit) {
+        onLocalHarnessSessionExit(sessionId)
+        return
+      }
+      setInternalHarnessSessions(current =>
+        current.filter(session => session.sessionId !== sessionId)
+      )
+      setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
+    },
+    [onLocalHarnessSessionExit]
+  )
+  const closeHarnessSession = useCallback(
+    async (sessionId: string) => {
+      if (onLocalHarnessSessionClose) {
+        await onLocalHarnessSessionClose(sessionId)
+        return
+      }
+      await closeLocalTerminal(sessionId)
+      removeLocalHarnessSession(sessionId)
+    },
+    [onLocalHarnessSessionClose, removeLocalHarnessSession]
+  )
   const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
     {}
   )
@@ -535,12 +609,43 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onTerminalPanePinChange={setTerminalPanePinned}
           initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
           onWorkspaceStateChange={rememberPaneWorkspaceState}
+          onLocalHarnessSessionStarted={registerLocalHarnessSession}
         />
       )}
     />
   )
 
-  if (!isTauri) return paneStack
+  const mainContent = (
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {activeLocalHarnessSessionId ? null : paneStack}
+      {localHarnessSessions.map(session => {
+        const active = activeLocalHarnessSessionId === session.sessionId
+        return (
+          <div
+            key={session.sessionId}
+            data-testid={active ? 'desktop-workbench-main' : undefined}
+            data-active-workbench-pane={active ? 'true' : undefined}
+            className="absolute inset-0 flex min-h-0 min-w-0"
+            hidden={!active}
+            aria-hidden={!active}
+          >
+            <CentralHarnessTerminal
+              sessionId={session.sessionId}
+              title={session.title}
+              cwd={session.cwd}
+              active={active && (props.visible ?? true)}
+              onClose={() => {
+                void closeHarnessSession(session.sessionId)
+              }}
+              onExit={() => removeLocalHarnessSession(session.sessionId)}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  if (!isTauri) return mainContent
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -552,7 +657,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
         )}
       />
-      {paneStack}
+      {mainContent}
     </div>
   )
 }
@@ -572,6 +677,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinChange,
   initialWorkspaceState,
   onWorkspaceStateChange,
+  onLocalHarnessSessionStarted,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -587,6 +693,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
+  onLocalHarnessSessionStarted: (session: LocalHarnessWorkbenchSession) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -634,6 +741,74 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
+  const paneInput = paneSession.input
+  const setPaneInput = paneSession.setInput
+  const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
+  const localHarnessPreferences =
+    appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
+  const enabledLocalHarnesses = useMemo(
+    () => localHarnessPreferences.filter(preference => preference.enabled),
+    [localHarnessPreferences]
+  )
+  const executableOverrides = useMemo(
+    () =>
+      Object.fromEntries(
+        localHarnessPreferences.map(preference => [preference.id, preference.executablePath])
+      ) as Partial<Record<LocalHarnessId, string | null>>,
+    [localHarnessPreferences]
+  )
+  const [localHarnesses, setLocalHarnesses] = useState<LocalHarnessDescriptor[]>([])
+  const [localHarnessesLoading, setLocalHarnessesLoading] = useState(() =>
+    isLocalTerminalAvailable()
+  )
+  const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
+  const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
+  const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const centralHarnessRequestIdRef = useRef(0)
+  useEffect(() => {
+    if (!isLocalTerminalAvailable()) return
+
+    let cancelled = false
+    void listLocalHarnesses(executableOverrides)
+      .then(harnesses => {
+        if (!cancelled) {
+          setLocalHarnesses(harnesses)
+          setLocalHarnessDetectionFailed(false)
+        }
+      })
+      .catch(error => {
+        console.error('Failed to detect local harnesses:', error)
+        if (!cancelled) {
+          setLocalHarnesses([])
+          setLocalHarnessDetectionFailed(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLocalHarnessesLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [executableOverrides])
+  const refreshLocalHarnesses = useCallback(() => {
+    if (!isLocalTerminalAvailable()) return
+
+    setLocalHarnessesLoading(true)
+    void listLocalHarnesses(executableOverrides)
+      .then(harnesses => {
+        setLocalHarnesses(harnesses)
+        setLocalHarnessDetectionFailed(false)
+      })
+      .catch(error => {
+        console.error('Failed to refresh local harnesses:', error)
+        setLocalHarnesses([])
+        setLocalHarnessDetectionFailed(true)
+      })
+      .finally(() => setLocalHarnessesLoading(false))
+  }, [executableOverrides])
   const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
@@ -1646,19 +1821,124 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       : null
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
-  const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
-    ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
+  const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
+  const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
+    ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
-  const workspaceTargetUsesRemoteDevice = Boolean(
-    workspaceTargetDevice &&
-    (isCloudDevice(workspaceTargetDevice) || isRemoteDevice(workspaceTargetDevice))
+  const centralHarnessUsesRemoteDevice = Boolean(
+    centralHarnessTargetDevice &&
+    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
   )
-  const workspaceTargetUsesRemoteSource = effectiveWorkspaceTarget?.workspaceSource === 'remote'
+  const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
+  const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
   const preferLocalWorkspaceTerminal =
     paneProjectWork.executionMode === 'current_workspace' &&
-    effectiveWorkspaceTarget?.source !== 'runtime' &&
-    !workspaceTargetUsesRemoteDevice &&
-    !workspaceTargetUsesRemoteSource
+    Boolean(centralHarnessCwd) &&
+    !centralHarnessUsesRemoteDevice &&
+    !centralHarnessUsesRemoteSource
+  const selectedHarnessPreference =
+    newChatRuntime === 'codex'
+      ? null
+      : (enabledLocalHarnesses.find(preference => preference.id === newChatRuntime) ?? null)
+  const selectedHarnessInstalled = Boolean(
+    selectedHarnessPreference &&
+    localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
+  )
+  const selectedHarnessAvailable = Boolean(
+    selectedHarnessInstalled &&
+    isLocalTerminalAvailable() &&
+    preferLocalWorkspaceTerminal &&
+    centralHarnessCwd
+  )
+  const activeNewChatRuntime =
+    newChatRuntime !== 'codex' && selectedHarnessInstalled ? newChatRuntime : 'codex'
+
+  const finishCentralHarnessSession = useCallback(() => {
+    centralHarnessRequestIdRef.current += 1
+    setCentralHarnessStarting(false)
+    setCentralHarnessError(null)
+    setNewChatRuntime('codex')
+  }, [])
+
+  useEffect(() => {
+    const resetCentralHarness = () => finishCentralHarnessSession()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
+    }
+  }, [finishCentralHarnessSession])
+
+  const submitWorkbenchInput = useCallback(
+    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
+        return submitPaneInput(value, options)
+      }
+
+      const prompt = (value ?? paneInput).trim()
+      if (!prompt || centralHarnessStarting) return
+      if (!selectedHarnessAvailable || !centralHarnessCwd || !selectedHarnessPreference) {
+        const harnessName = newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime)
+        setCentralHarnessError(
+          t('workbench.harness_start_unavailable', {
+            name: harnessName,
+            defaultValue: `当前工作区无法启动 ${harnessName}`,
+          })
+        )
+        return
+      }
+
+      setCentralHarnessStarting(true)
+      setCentralHarnessError(null)
+      const requestId = centralHarnessRequestIdRef.current + 1
+      centralHarnessRequestIdRef.current = requestId
+      try {
+        const sessionId = await startLocalHarness({
+          harnessId: selectedHarnessPreference.id,
+          prompt,
+          cwd: centralHarnessCwd,
+          executablePath: selectedHarnessPreference.executablePath,
+          args: buildLocalHarnessLaunchArgs(selectedHarnessPreference),
+          env: selectedHarnessPreference.env,
+        })
+        if (centralHarnessRequestIdRef.current !== requestId) {
+          await closeLocalTerminal(sessionId)
+          return
+        }
+        setPaneInput('')
+        onLocalHarnessSessionStarted({
+          sessionId,
+          harnessId: selectedHarnessPreference.id,
+          cwd: centralHarnessCwd,
+          title:
+            prompt.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) ||
+            localHarnessLabel(selectedHarnessPreference.id),
+          createdAt: Date.now(),
+        })
+      } catch (error) {
+        setCentralHarnessError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.harness_start_failed', '启动运行工具失败')
+        )
+      } finally {
+        setCentralHarnessStarting(false)
+      }
+    },
+    [
+      centralHarnessCwd,
+      centralHarnessStarting,
+      currentRuntimeTask,
+      activeNewChatRuntime,
+      newChatRuntime,
+      onLocalHarnessSessionStarted,
+      paneInput,
+      setPaneInput,
+      selectedHarnessAvailable,
+      selectedHarnessPreference,
+      submitPaneInput,
+      t,
+    ]
+  )
 
   useEffect(() => {
     if (currentRuntimeTask || !rightPanelTabs.includes('browser')) {
@@ -3135,11 +3415,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     <BufferedChatInput
                       value={paneSession.input}
                       onChange={paneSession.setInput}
-                      onSubmit={submitPaneInput}
-                      disabled={composerDisabled}
-                      submitDisabled={paneSession.status.isSubmitting}
-                      error={paneSession.error}
-                      disabledReason={inlineComposerDisabledReason}
+                      onSubmit={submitWorkbenchInput}
+                      disabled={
+                        centralHarnessStarting ||
+                        (activeNewChatRuntime === 'codex' && composerDisabled)
+                      }
+                      submitDisabled={
+                        centralHarnessStarting ||
+                        (activeNewChatRuntime === 'codex' && paneSession.status.isSubmitting)
+                      }
+                      error={centralHarnessError ?? paneSession.error}
+                      disabledReason={
+                        activeNewChatRuntime === 'codex' ? inlineComposerDisabledReason : undefined
+                      }
                       placeholder={
                         showComposerProjectMenuAction
                           ? 'values' in popoutComposerPlaceholder
@@ -3150,6 +3438,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       variant="desktop"
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
+                      projectWorkBarTrailingContext={
+                        <WorkbenchHarnessSelector
+                          runtime={activeNewChatRuntime}
+                          harnesses={localHarnesses}
+                          enabledHarnesses={enabledLocalHarnesses.map(preference => preference.id)}
+                          loading={localHarnessesLoading}
+                          detectionFailed={localHarnessDetectionFailed}
+                          onRefresh={refreshLocalHarnesses}
+                          onRuntimeChange={runtime => {
+                            setCentralHarnessError(null)
+                            setNewChatRuntime(runtime)
+                          }}
+                        />
+                      }
                       showWorkspaceMenu={showComposerProjectMenuAction}
                       queuedMessages={paneQueuedMessages}
                       guidanceMessages={paneGuidanceMessages}

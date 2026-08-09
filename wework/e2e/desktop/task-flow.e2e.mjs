@@ -13602,6 +13602,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       executorHome,
+      homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -15977,6 +15978,22 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
         console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('local-harness')) {
+      phase = 'local-harness-scenario'
+      assert.ok(
+        desktopScenario,
+        'The local-harness checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      if (!desktopScenarioVerified) {
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
+      if (shouldStopAfterDesktopCheckpoint('local-harness')) {
+        console.log(`Wework desktop local-harness checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

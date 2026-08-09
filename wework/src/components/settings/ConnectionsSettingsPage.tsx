@@ -76,6 +76,7 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HarnessSettingsPage } from './HarnessSettingsPage'
 import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
@@ -191,6 +192,13 @@ const settingsNavItems: SettingsNavItem[] = [
     label: 'settings_nav_browser',
     fallback: '浏览器',
     category: 'integrations',
+  },
+  {
+    key: 'harnesses',
+    icon: Code2,
+    label: 'settings_nav_harnesses',
+    fallback: '运行工具',
+    category: 'coding',
   },
   {
     key: 'worktrees',
@@ -1499,6 +1507,8 @@ export function ConnectionsSettingsPage({
           <PluginSettingsPage />
         ) : activeNav === 'browser' ? (
           <BrowserSettingsPage />
+        ) : activeNav === 'harnesses' ? (
+          <HarnessSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage
             api={services?.runtimeWorkApi}

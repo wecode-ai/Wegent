@@ -24,6 +24,7 @@ import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettin
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HarnessSettingsPage } from './HarnessSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
@@ -55,6 +56,7 @@ export function MobileSettingsPage({
     | 'model-settings'
     | 'quick-phrases'
     | 'plugins'
+    | 'harnesses'
     | 'worktrees'
     | 'archived-conversations'
   >('menu')
@@ -254,6 +256,34 @@ export function MobileSettingsPage({
     )
   }
 
+  if (activePage === 'harnesses') {
+    return (
+      <main
+        data-testid="mobile-harness-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-harness-settings-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t('workbench.settings_nav_harnesses', '运行工具')}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <HarnessSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
   if (activePage === 'plugins') {
     return (
       <main
@@ -446,6 +476,18 @@ export function MobileSettingsPage({
           <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_personal', '个人')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        <button
+          type="button"
+          data-testid="mobile-settings-harnesses-button"
+          onClick={() => setActivePage('harnesses')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_harnesses', '运行工具')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

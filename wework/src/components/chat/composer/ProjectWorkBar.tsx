@@ -104,6 +104,7 @@ interface ProjectWorkBarProps {
   projectMenuOpenSignal?: number
   externalMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
+  trailingContext?: ReactNode
 }
 
 export function ProjectWorkBar({
@@ -137,6 +138,7 @@ export function ProjectWorkBar({
   projectMenuOpenSignal,
   externalMenuOpenSignal,
   projectMenuAnchorElement = null,
+  trailingContext,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -579,7 +581,10 @@ export function ProjectWorkBar({
   }
 
   return (
-    <div className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}>
+    <div
+      data-testid="project-work-bar"
+      className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+    >
       <div
         ref={containerRef}
         className={cn('relative min-w-0', !isMobile && 'max-w-[18rem] shrink')}
@@ -977,6 +982,7 @@ export function ProjectWorkBar({
           </button>
         )}
       </div>
+      {trailingContext}
       {projectExecutionUi.canShowModeControl && (
         <div
           ref={executionModeContainerRef}

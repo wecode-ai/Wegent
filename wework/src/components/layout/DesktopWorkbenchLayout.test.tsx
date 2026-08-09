@@ -24,8 +24,11 @@ import {
   getLocalPathKind,
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
+  listLocalHarnesses,
+  listLocalHarnessSessions,
   localPathExists,
   openLocalWorkspace,
+  startLocalHarness,
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
@@ -276,8 +279,11 @@ vi.mock('@/lib/local-terminal', () => ({
   getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
+  listLocalHarnesses: vi.fn().mockResolvedValue([]),
+  listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
   localPathExists: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
 }))
 
@@ -452,9 +458,12 @@ const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const listLocalHarnessesMock = vi.mocked(listLocalHarnesses)
+const listLocalHarnessSessionsMock = vi.mocked(listLocalHarnessSessions)
 const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
+const startLocalHarnessMock = vi.mocked(startLocalHarness)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
@@ -595,10 +604,13 @@ describe('DesktopWorkbenchLayout', () => {
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
+    listLocalHarnessesMock.mockResolvedValue([])
+    listLocalHarnessSessionsMock.mockResolvedValue([])
     getLocalPathKindMock.mockResolvedValue('file')
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    startLocalHarnessMock.mockResolvedValue('local-harness-1')
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
@@ -2998,6 +3010,192 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('overflow-hidden')
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('overflow-y-auto')
+  })
+
+  test('replaces the central message area with an OpenCode harness session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '检查当前项目' }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    await waitFor(() => expect(openCodeOption).not.toBeDisabled())
+    await userEvent.click(openCodeOption)
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('OpenCode')
+    expect(screen.getByTestId('project-work-bar')).toContainElement(
+      screen.getByTestId('workbench-harness-selector')
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '检查当前项目',
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: [],
+        env: {},
+      })
+    )
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-harness-1'
+    )
+
+    await userEvent.click(screen.getByTestId('central-harness-close-button'))
+
+    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-1'))
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+  })
+
+  test('restores active native harness sessions after a WebView reload', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-terminal-restored',
+        harness_id: 'claude_code',
+        title: '继续修复测试',
+        cwd: '/workspace/github_wegent',
+        created_at: 1234,
+      },
+    ])
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(
+      await screen.findByTestId('local-harness-session-row-local-terminal-restored')
+    ).toHaveTextContent('继续修复测试')
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-restored'
+    )
+  })
+
+  test('starts Claude Code with its configured permission mode and arguments', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'claude_code',
+        installed: true,
+        executable_path: '/usr/local/bin/claude',
+        version: '2.1.0',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const claudeCodeOption = screen.getByTestId('workbench-harness-option-claude_code')
+    await waitFor(() => expect(claudeCodeOption).not.toBeDisabled())
+    await userEvent.click(claudeCodeOption)
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Claude Code')
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'claude_code',
+        prompt: '分析并修复测试失败',
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: [],
+        env: {},
+      })
+    )
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+  })
+
+  test('starts OpenCode from the Wework dev workspace without selecting a project', async () => {
+    vi.stubEnv('VITE_WEWORK_DEV_TITLE', 'OpenCode harness development')
+    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '/workspace/current-wework')
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, input: '检查当前工作区' }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    await waitFor(() => expect(openCodeOption).not.toBeDisabled())
+    await userEvent.click(openCodeOption)
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '检查当前工作区',
+        cwd: '/workspace/current-wework',
+        executablePath: null,
+        args: [],
+        env: {},
+      })
+    )
+
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('central-harness-terminal')).not.toBeVisible()
+
+    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-1'))
+
+    await waitFor(() => expect(screen.getByTestId('central-harness-terminal')).toBeVisible())
+
+    await userEvent.click(screen.getByTestId('central-harness-close-button'))
+
+    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-1'))
+    expect(
+      screen.queryByTestId('local-harness-session-row-local-harness-1')
+    ).not.toBeInTheDocument()
   })
 
   test('closes the settings menu when clicking outside it', async () => {

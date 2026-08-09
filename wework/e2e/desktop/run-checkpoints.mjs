@@ -10,6 +10,7 @@ import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const CHECKPOINT_SCENARIO_MODULES = {
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
+  'local-harness': './scenarios/local-terminal.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
 }
 const scriptDir = dirname(fileURLToPath(import.meta.url))
