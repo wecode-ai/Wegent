@@ -784,7 +784,7 @@ class ExternalLoopItemProvider:
             )
         else:
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
-            row.assignee_agent_id = None
+            row.assignee_agent_id = ""
             loop_item_service._write_assignment_change(
                 metadata, user_id, "user", assignee_id or None, assignee_name
             )
