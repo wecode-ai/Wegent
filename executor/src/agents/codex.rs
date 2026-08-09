@@ -1373,6 +1373,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let wait_for_goal_continuation = state.goal_is_active();
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1434,6 +1435,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 active_turn_started,
                 active_turn_finished,
+                wait_for_goal_continuation,
             },
         )
         .await;
@@ -1700,6 +1702,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    wait_for_goal_continuation: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -1875,7 +1878,11 @@ async fn read_shared_turn_notifications(
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
             }
-            if !should_wait_for_goal_continuation(&outcome, state) {
+            if !should_wait_for_goal_continuation(
+                &outcome,
+                state,
+                options.wait_for_goal_continuation,
+            ) {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
@@ -1884,8 +1891,14 @@ async fn read_shared_turn_notifications(
     }
 }
 
-fn should_wait_for_goal_continuation(outcome: &ExecutionOutcome, state: &CodexRunState) -> bool {
-    matches!(outcome, ExecutionOutcome::Completed { .. }) && state.goal_is_active()
+fn should_wait_for_goal_continuation(
+    outcome: &ExecutionOutcome,
+    state: &CodexRunState,
+    goal_was_active_at_turn_start: bool,
+) -> bool {
+    goal_was_active_at_turn_start
+        && matches!(outcome, ExecutionOutcome::Completed { .. })
+        && state.goal_is_active()
 }
 
 async fn recover_stalled_shared_turn(
