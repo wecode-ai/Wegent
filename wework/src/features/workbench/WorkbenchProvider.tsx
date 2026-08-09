@@ -339,6 +339,7 @@ export function WorkbenchProvider({
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
   )
+  const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   useEffect(() => {
     if (!workspaceTabId) return
     publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope })
@@ -348,6 +349,7 @@ export function WorkbenchProvider({
   >({})
   const [trialPluginNameByScope, setTrialPluginNameByScope] = useState<Record<string, string>>({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
   useEffect(() => {
@@ -399,6 +401,21 @@ export function WorkbenchProvider({
           return next
         })
       }
+    },
+    [projectChatScopeKey]
+  )
+  const setComposerError = useCallback(
+    (error: string | null) => {
+      setComposerErrorByScope(current => {
+        if (error) {
+          if (current[projectChatScopeKey] === error) return current
+          return { ...current, [projectChatScopeKey]: error }
+        }
+        if (!current[projectChatScopeKey]) return current
+        const next = { ...current }
+        delete next[projectChatScopeKey]
+        return next
+      })
     },
     [projectChatScopeKey]
   )
@@ -1901,6 +1918,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      composerError,
       trialTemplates,
       trialPluginName,
       hasConversationContext: Boolean(state.currentRuntimeTask),
@@ -1920,6 +1938,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -1940,6 +1959,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      composerError,
       trialTemplates,
       trialPluginName,
       state.currentRuntimeTask,
@@ -1961,6 +1981,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -1977,6 +1998,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      composerError,
       trialTemplates,
       trialPluginName,
       hasConversationContext: Boolean(state.currentRuntimeTask),
@@ -1996,6 +2018,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2016,6 +2039,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      composerError,
       trialTemplates,
       trialPluginName,
       state.currentRuntimeTask,
@@ -2036,6 +2060,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
