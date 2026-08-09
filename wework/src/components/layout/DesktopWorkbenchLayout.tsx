@@ -41,7 +41,7 @@ import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
   closeLocalTerminal,
-  isLocalTerminalAvailable,
+  isLocalHarnessAvailable,
   listLocalHarnessSessions,
 } from '@/lib/local-terminal'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
@@ -135,7 +135,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     null
   )
   useEffect(() => {
-    if (!isLocalTerminalAvailable()) return
+    if (!isLocalHarnessAvailable()) return
 
     let cancelled = false
     void listLocalHarnessSessions()

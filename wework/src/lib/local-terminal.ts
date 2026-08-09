@@ -8,18 +8,33 @@ import { isTauriRuntime } from './runtime-environment'
 const localFileOpenerIconCache = new Map<string, string>()
 const localFileOpenerIconRequests = new Map<string, Promise<string>>()
 
-export function isLocalTerminalAvailable(): boolean {
-  if (typeof navigator === 'undefined') return false
+function getLocalRuntimePlatform() {
+  if (typeof navigator === 'undefined') return null
 
   const userAgent = navigator.userAgent || ''
   const platform = navigator.platform || ''
-  const isIosLike =
-    /iPad|iPhone|iPod/.test(userAgent) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  const isMacOs = platform.startsWith('Mac') || userAgent.includes('Mac OS X')
-  const isWindows = platform.startsWith('Win') || /Windows NT/.test(userAgent)
-  const isDesktopE2E = import.meta.env.VITE_WEWORK_E2E === 'true'
+  return {
+    isIosLike:
+      /iPad|iPhone|iPod/.test(userAgent) ||
+      (platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+    isMacOs: platform.startsWith('Mac') || userAgent.includes('Mac OS X'),
+    isWindows: platform.startsWith('Win') || /Windows NT/.test(userAgent),
+  }
+}
 
-  return isTauriRuntime() && (isMacOs || isWindows || isDesktopE2E) && !isIosLike
+export function isLocalTerminalAvailable(): boolean {
+  const platform = getLocalRuntimePlatform()
+  return Boolean(
+    platform && isTauriRuntime() && (platform.isMacOs || platform.isWindows) && !platform.isIosLike
+  )
+}
+
+export function isLocalHarnessAvailable(): boolean {
+  if (isLocalTerminalAvailable()) return true
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return false
+
+  const platform = getLocalRuntimePlatform()
+  return Boolean(platform && isTauriRuntime() && !platform.isIosLike)
 }
 
 export async function getLocalExecutorDeviceId(
@@ -130,7 +145,7 @@ export async function startLocalTerminal({
 export async function listLocalHarnesses(
   executableOverrides: Partial<Record<LocalHarnessId, string | null>> = {}
 ): Promise<LocalHarnessDescriptor[]> {
-  if (!isLocalTerminalAvailable()) return []
+  if (!isLocalHarnessAvailable()) return []
 
   return invoke<LocalHarnessDescriptor[]>('list_local_harnesses', {
     executableOverrides,
@@ -138,7 +153,7 @@ export async function listLocalHarnesses(
 }
 
 export async function listLocalHarnessSessions(): Promise<LocalHarnessSessionDescriptor[]> {
-  if (!isLocalTerminalAvailable()) return []
+  if (!isLocalHarnessAvailable()) return []
 
   return invoke<LocalHarnessSessionDescriptor[]>('list_local_harness_sessions')
 }
@@ -157,7 +172,7 @@ export async function startLocalHarness({
   cols,
   env,
 }: StartLocalHarnessOptions): Promise<string> {
-  if (!isLocalTerminalAvailable()) {
+  if (!isLocalHarnessAvailable()) {
     throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
   }
 

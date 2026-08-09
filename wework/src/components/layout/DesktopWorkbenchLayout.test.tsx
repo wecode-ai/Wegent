@@ -23,6 +23,7 @@ import {
   closeLocalTerminal,
   getLocalPathKind,
   getLocalExecutorDeviceId,
+  isLocalHarnessAvailable,
   isLocalTerminalAvailable,
   listLocalHarnesses,
   listLocalHarnessSessions,
@@ -278,6 +279,7 @@ vi.mock('@/lib/local-terminal', () => ({
   closeLocalTerminal: vi.fn(),
   getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
+  isLocalHarnessAvailable: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
   listLocalHarnesses: vi.fn().mockResolvedValue([]),
   listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
@@ -457,6 +459,7 @@ const createProjectApiMock = vi.mocked(createProjectApi)
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalHarnessAvailableMock = vi.mocked(isLocalHarnessAvailable)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const listLocalHarnessesMock = vi.mocked(listLocalHarnesses)
 const listLocalHarnessSessionsMock = vi.mocked(listLocalHarnessSessions)
@@ -604,6 +607,7 @@ describe('DesktopWorkbenchLayout', () => {
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
+    isLocalHarnessAvailableMock.mockImplementation(() => isLocalTerminalAvailableMock())
     listLocalHarnessesMock.mockResolvedValue([])
     listLocalHarnessSessionsMock.mockResolvedValue([])
     getLocalPathKindMock.mockResolvedValue('file')

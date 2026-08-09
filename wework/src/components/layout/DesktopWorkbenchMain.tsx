@@ -81,7 +81,7 @@ import { getPlatform } from '@/lib/platform'
 import {
   closeLocalTerminal,
   getLocalPathKind,
-  isLocalTerminalAvailable,
+  isLocalHarnessAvailable,
   listLocalHarnesses,
   startLocalHarness,
   type LocalHarnessDescriptor,
@@ -633,14 +633,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const [localHarnesses, setLocalHarnesses] = useState<LocalHarnessDescriptor[]>([])
   const [localHarnessesLoading, setLocalHarnessesLoading] = useState(() =>
-    isLocalTerminalAvailable()
+    isLocalHarnessAvailable()
   )
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
   useEffect(() => {
-    if (!isLocalTerminalAvailable()) return
+    if (!isLocalHarnessAvailable()) return
 
     let cancelled = false
     void listLocalHarnesses(executableOverrides)
@@ -668,7 +668,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [executableOverrides])
   const refreshLocalHarnesses = useCallback(() => {
-    if (!isLocalTerminalAvailable()) return
+    if (!isLocalHarnessAvailable()) return
 
     setLocalHarnessesLoading(true)
     void listLocalHarnesses(executableOverrides)
@@ -1272,7 +1272,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const selectedHarnessAvailable = Boolean(
     selectedHarnessInstalled &&
-    isLocalTerminalAvailable() &&
+    isLocalHarnessAvailable() &&
     preferLocalWorkspaceTerminal &&
     centralHarnessCwd
   )

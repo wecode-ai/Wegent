@@ -6,6 +6,7 @@ import {
   closeLocalTerminal,
   connectLocalTerminal,
   getLocalExecutorDeviceId,
+  isLocalHarnessAvailable,
   isLocalTerminalAvailable,
   listenLocalTerminalExit,
   listenLocalTerminalOutput,
@@ -76,7 +77,7 @@ describe('local-terminal', () => {
     expect(isLocalTerminalAvailable()).toBe(true)
   })
 
-  test('is available inside the Linux Tauri desktop E2E app', () => {
+  test('keeps the local terminal unavailable inside the Linux Tauri desktop E2E app', () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
     setNavigatorValue('platform', 'Linux x86_64')
@@ -86,7 +87,20 @@ describe('local-terminal', () => {
       value: {},
     })
 
-    expect(isLocalTerminalAvailable()).toBe(true)
+    expect(isLocalTerminalAvailable()).toBe(false)
+  })
+
+  test('makes local harnesses available inside the Linux Tauri desktop E2E app', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
+    setNavigatorValue('platform', 'Linux x86_64')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    expect(isLocalHarnessAvailable()).toBe(true)
   })
 
   test('is unavailable for regular browsers even on macOS', () => {
