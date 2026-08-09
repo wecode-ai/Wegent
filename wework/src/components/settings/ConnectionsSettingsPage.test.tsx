@@ -756,6 +756,60 @@ describe('ConnectionsSettingsPage', () => {
     }
   })
 
+  test('configures MiniMax through the managed Anthropic-compatible profile', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: fetchMock,
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'minimax')
+      expect(screen.getByTestId('local-model-group-input')).toHaveValue('MiniMax')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
+      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue('MiniMax-M2.7')
+      )
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.minimax.io/anthropic/v1/models',
+        expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
+      )
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored[0]).toMatchObject({
+        providerProfileId: 'minimax',
+        group: 'MiniMax',
+        modelId: 'MiniMax-M2.7',
+        baseUrl: 'https://api.minimax.io/anthropic',
+        apiFormat: 'anthropic-messages',
+        requestPath: '/v1/messages',
+        toolProfile: 'function',
+        contextWindow: 204_800,
+        catalogReady: true,
+      })
+      expect(requestLocalExecutor).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
   test('tests a model before saving it', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
