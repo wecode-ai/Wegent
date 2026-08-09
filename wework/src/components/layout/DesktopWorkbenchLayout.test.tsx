@@ -3116,11 +3116,25 @@ describe('DesktopWorkbenchLayout', () => {
       'data-session-id',
       'local-harness-1'
     )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('检查当前项目')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
+    expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
 
     await userEvent.click(screen.getByTestId('central-harness-close-button'))
 
     await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-1'))
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
   })
 
   test('restores active native harness sessions after a WebView reload', async () => {
@@ -3141,6 +3155,9 @@ describe('DesktopWorkbenchLayout', () => {
       await screen.findByTestId('local-harness-session-row-local-terminal-restored')
     ).toHaveTextContent('继续修复测试')
     expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('继续修复测试')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',
       'local-terminal-restored'

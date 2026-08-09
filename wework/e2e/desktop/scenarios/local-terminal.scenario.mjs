@@ -257,6 +257,84 @@ async function startHarness({
   await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
 }
 
+async function verifyHarnessWorkbenchChrome({
+  control,
+  title,
+  timeoutMs,
+  captureWorkbench,
+  screenshot,
+}) {
+  const titleSelector = '[data-testid="workbench-pane-task-title"]'
+  const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
+  const rightPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel"]`
+  const rightPanelLauncherSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-launcher"]`
+  const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+  const bottomPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="bottom-workspace-panel"]`
+
+  await control.command('waitFor', titleSelector, {
+    text: title,
+    timeoutMs,
+  })
+  await control.command('waitFor', rightPanelToggleSelector, {
+    timeoutMs,
+  })
+  await control.command('waitFor', bottomPanelToggleSelector, {
+    timeoutMs,
+  })
+
+  await control.command('click', rightPanelToggleSelector)
+  await control.command('waitFor', rightPanelLauncherSelector, { timeoutMs })
+  const rightPanelSnapshot = JSON.parse(await control.command('snapshot', rightPanelSelector))
+  assert.ok(
+    !rightPanelSnapshot.testIds.includes('right-workspace-chat-option'),
+    `${title} exposed the Codex-only side chat action`
+  )
+  assert.ok(
+    !rightPanelSnapshot.testIds.includes('right-workspace-chat-panel'),
+    `${title} exposed a Codex-only side chat`
+  )
+
+  await control.command('click', bottomPanelToggleSelector)
+  await control.command('waitFor', bottomPanelSelector, {
+    timeoutMs,
+  })
+  assert.equal(
+    await control.command('getAttribute', bottomPanelSelector, {
+      value: 'aria-hidden',
+    }),
+    'false',
+    `${title} did not open the bottom workspace panel`
+  )
+  const bottomPanelClass = await control.command('getAttribute', bottomPanelSelector, {
+    value: 'class',
+  })
+  const bottomPanelInlineStyle = await control.command('getAttribute', bottomPanelSelector, {
+    value: 'style',
+  })
+  assert.match(
+    bottomPanelClass,
+    /(?:^|\s)opacity-100(?:\s|$)/,
+    `${title} did not apply the open bottom-panel style`
+  )
+  assert.match(
+    bottomPanelInlineStyle,
+    /height:\s*(?!0(?:px)?[;"\s])\d+(?:\.\d+)?px/,
+    `${title} did not assign an open bottom-panel height`
+  )
+  const [bottomPanelMetrics] = JSON.parse(
+    await control.command('getElementMetrics', bottomPanelSelector)
+  )
+  assert.ok(bottomPanelMetrics.width > 0, `${title} opened a zero-width bottom workspace panel`)
+  assert.ok(
+    bottomPanelMetrics.scrollHeight > 0,
+    `${title} opened a bottom workspace panel without content`
+  )
+  await captureWorkbench(control, screenshot)
+
+  await control.command('click', bottomPanelToggleSelector)
+  await control.command('click', rightPanelToggleSelector)
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
   homePath,
@@ -362,6 +440,13 @@ export async function createDesktopScenario({
         !harnessSnapshot.testIds.includes('desktop-empty-composer-frame'),
         'The empty message area remained visible behind OpenCode'
       )
+      await verifyHarnessWorkbenchChrome({
+        control,
+        title: 'Inspect the current project',
+        timeoutMs: uiTimeoutMs,
+        captureWorkbench: capturePage,
+        screenshot: 'local-harness-08-opencode-workbench-panels.png',
+      })
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
         '--model\nwework-messages/wework-selected\n--prompt\nInspect the current project\n',
@@ -372,10 +457,7 @@ export async function createDesktopScenario({
       )
       const openCodeBaseUrl = openCodeConfig.provider?.['wework-messages']?.options?.baseURL
       assert.equal(typeof openCodeBaseUrl, 'string', 'OpenCode did not receive its Messages URL')
-      await probeMessagesProxy(
-        `${openCodeBaseUrl}/messages`,
-        'WEWORK_HARNESS_OPENCODE_CHAT_PROXY'
-      )
+      await probeMessagesProxy(`${openCodeBaseUrl}/messages`, 'WEWORK_HARNESS_OPENCODE_CHAT_PROXY')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
@@ -386,7 +468,7 @@ export async function createDesktopScenario({
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await captureWorkbench(control, 'local-harness-08-opencode-restored.png')
+      await captureWorkbench(control, 'local-harness-09-opencode-restored.png')
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
@@ -398,11 +480,18 @@ export async function createDesktopScenario({
         prompt: 'Review the current project',
         timeoutMs: uiTimeoutMs,
         capturePage,
-        runtimeMenuScreenshot: 'local-harness-09-claude-code-runtime-menu.png',
-        modelMenuScreenshot: 'local-harness-10-claude-code-model-menu.png',
-        readyScreenshot: 'local-harness-11-claude-code-ready.png',
+        runtimeMenuScreenshot: 'local-harness-10-claude-code-runtime-menu.png',
+        modelMenuScreenshot: 'local-harness-11-claude-code-model-menu.png',
+        readyScreenshot: 'local-harness-12-claude-code-ready.png',
       })
-      await captureWorkbench(control, 'local-harness-12-claude-code-running.png')
+      await captureWorkbench(control, 'local-harness-13-claude-code-running.png')
+      await verifyHarnessWorkbenchChrome({
+        control,
+        title: 'Review the current project',
+        timeoutMs: uiTimeoutMs,
+        captureWorkbench: capturePage,
+        screenshot: 'local-harness-14-claude-code-workbench-panels.png',
+      })
       await waitForFile(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
         '--permission-mode\nplan\n--verbose\n--model\nwework-selected\nReview the current project\n',
@@ -425,7 +514,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await captureWorkbench(control, 'local-harness-13-session-closed.png')
+      await captureWorkbench(control, 'local-harness-15-session-closed.png')
     },
 
     diagnostics() {
