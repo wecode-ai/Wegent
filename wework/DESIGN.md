@@ -599,6 +599,8 @@ a preferred shape.
 Dialogs use:
 
 - a centered elevated surface with `20px` radius;
+- semantic theme surfaces such as `bg-background` or `bg-popover`; never
+  hardcode a light-only background for a theme-aware dialog;
 - `0.5px` semantic ring, light `lg` shadow, and subtle translucent blur;
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;
