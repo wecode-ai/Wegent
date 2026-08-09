@@ -239,6 +239,7 @@ impl RuntimeWorkRpcHandler {
                 message_count: 0,
                 running: local_execution_running,
             });
+            let pagination = transcript_pagination(&runtime, limit, before_cursor, after_cursor);
             return Ok(transcript_response(TranscriptResponseInput {
                 local_task_id,
                 workspace_path,
@@ -246,11 +247,7 @@ impl RuntimeWorkRpcHandler {
                 messages: Vec::new(),
                 context_usage: None,
                 running: local_execution_running,
-                pagination: TranscriptPagination::Offset {
-                    limit,
-                    before_cursor,
-                    after_cursor,
-                },
+                pagination,
                 full_content: include_full_content,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));

@@ -4622,23 +4622,21 @@ async function openMarketplacePluginActions(control, { pluginId, marketplaceName
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
-    if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
-      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
-    } else if (snapshot.testIds.includes('plugins-search-input')) {
-      await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
-    }
-    await control.command('waitFor', marketplaceTabSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', marketplaceTabSelector)
-    await control.command('fill', '[data-testid="plugins-search-input"]', {
-      value: displayName,
-    })
-    await control.command('waitFor', actionsSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
+  if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+  } else if (snapshot.testIds.includes('plugins-search-input')) {
+    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
   }
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: displayName,
+  })
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const actionsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!actionsSnapshot.testIds.includes(`plugin-marketplace-try-${pluginId}`)) {
     await control.command('click', actionsSelector)

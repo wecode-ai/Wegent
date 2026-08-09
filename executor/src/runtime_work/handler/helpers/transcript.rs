@@ -15,11 +15,12 @@ fn cached_transcript_response(
         messages,
         context_usage,
         running,
-        pagination: TranscriptPagination::Offset {
+        pagination: transcript_pagination(
+            &link.runtime,
             limit,
-            before_cursor: before_cursor.map(ToOwned::to_owned),
-            after_cursor: after_cursor.map(ToOwned::to_owned),
-        },
+            before_cursor.map(ToOwned::to_owned),
+            after_cursor.map(ToOwned::to_owned),
+        ),
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
     })
@@ -81,6 +82,25 @@ enum TranscriptPagination {
         before_cursor: Option<String>,
         after_cursor: Option<String>,
     },
+}
+
+fn transcript_pagination(
+    runtime: &str,
+    limit: Option<usize>,
+    before_cursor: Option<String>,
+    after_cursor: Option<String>,
+) -> TranscriptPagination {
+    if runtime_has_provider_transcript_reader(runtime) {
+        return TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        };
+    }
+    TranscriptPagination::Offset {
+        limit,
+        before_cursor,
+        after_cursor,
+    }
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {

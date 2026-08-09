@@ -79,6 +79,24 @@ fn skips_backend_connection_without_a_configured_connection() {
 }
 
 #[test]
+fn codex_cached_transcripts_never_expose_offset_pagination() {
+    let pagination = transcript_pagination(
+        "codex",
+        Some(25),
+        Some("offset:25".to_owned()),
+        Some("offset:50".to_owned()),
+    );
+
+    assert!(matches!(
+        pagination,
+        TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None
+        }
+    ));
+}
+
+#[test]
 fn active_codex_items_replace_stale_paginated_items() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "turn-1");

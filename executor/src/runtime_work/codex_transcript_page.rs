@@ -41,7 +41,6 @@ pub(crate) async fn load_codex_transcript(
         .get("thread")
         .unwrap_or(&metadata_response)
         .clone();
-    let paginated = string_field(&thread, "historyMode").as_deref() == Some("paginated");
     let mut cursor = request.cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;
@@ -51,14 +50,8 @@ pub(crate) async fn load_codex_transcript(
     }
 
     loop {
-        let page = load_turn_page(
-            client,
-            request.thread_id,
-            cursor.as_deref(),
-            request.limit,
-            paginated,
-        )
-        .await?;
+        let page =
+            load_turn_page(client, request.thread_id, cursor.as_deref(), request.limit).await?;
         if backwards_cursor.is_none() {
             backwards_cursor = string_field(&page, "backwardsCursor");
         }
@@ -67,9 +60,7 @@ pub(crate) async fn load_codex_transcript(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if paginated {
-            page_turns = load_full_turn_items(client, request.thread_id, page_turns).await?;
-        }
+        page_turns = load_full_turn_items(client, request.thread_id, page_turns).await?;
         turns.extend(page_turns);
 
         let next_cursor = string_field(&page, "nextCursor");
@@ -95,7 +86,6 @@ async fn load_turn_page(
     thread_id: &str,
     cursor: Option<&str>,
     limit: usize,
-    paginated: bool,
 ) -> Result<Value, String> {
     client
         .request(
@@ -105,7 +95,7 @@ async fn load_turn_page(
                 "cursor": cursor,
                 "limit": limit,
                 "sortDirection": "desc",
-                "itemsView": if paginated { "notLoaded" } else { "full" },
+                "itemsView": "notLoaded",
             }),
         )
         .await

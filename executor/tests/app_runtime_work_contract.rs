@@ -842,10 +842,13 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","historyMode":"legacy","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"full","items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
