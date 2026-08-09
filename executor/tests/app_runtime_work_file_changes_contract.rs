@@ -114,8 +114,9 @@ async fn runtime_transcript_normalizes_codex_file_change_items_without_backend_s
     assert_eq!(assistant["fileChanges"]["workspace_path"], "/tmp/project");
     assert_eq!(
         assistant["fileChanges"]["artifact_id"],
-        "codex-turn-file-change-call-1"
+        "turn-file-changes/codex/turn-file-change"
     );
+    assert_eq!(assistant["fileChanges"]["revertible"], true);
     assert_eq!(assistant["blocks"].as_array().unwrap().len(), 2);
     assert_eq!(assistant["blocks"][0]["type"], "text");
     assert_eq!(assistant["blocks"][0]["content"], "Editing.");
@@ -135,6 +136,10 @@ async fn runtime_transcript_normalizes_codex_file_change_items_without_backend_s
         .as_str()
         .unwrap()
         .starts_with("diff --git a/references/github-pr-flow.md b/references/github-pr-flow.md"));
+    assert!(assistant["fileChanges"]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("--- a/references/github-pr-flow.md\n+++ b/references/github-pr-flow.md\n@@"));
 }
 
 #[tokio::test]
@@ -183,7 +188,11 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
     assert_eq!(assistant["fileChanges"]["file_count"], 1);
     assert_eq!(assistant["fileChanges"]["additions"], 1);
     assert_eq!(assistant["fileChanges"]["deletions"], 1);
-    assert_eq!(assistant["fileChanges"]["revertible"], false);
+    assert_eq!(assistant["fileChanges"]["revertible"], true);
+    assert_eq!(
+        assistant["fileChanges"]["artifact_id"],
+        "turn-file-changes/codex/turn-rich"
+    );
     assert_eq!(assistant["fileChanges"]["files"][0]["path"], "src/lib.rs");
     assert!(assistant["fileChanges"]["diff"]
         .as_str()
