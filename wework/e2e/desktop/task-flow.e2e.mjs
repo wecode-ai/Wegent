@@ -1673,7 +1673,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
 
 async function verifyTurnNavigationTracksVisibleUserMessages(
   control,
-  turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN
+  turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1
 ) {
   const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
   const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
@@ -1686,6 +1686,7 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     value: 'data-turn-index',
   })
   assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
+  const anchorResponseText = `Virtualized navigation response ${turnNumber}.1`
   const targetResponseText = `Virtualized navigation response ${turnNumber}.6`
   await control.command(
     'scrollToRatioAsUser',
@@ -1693,27 +1694,25 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     { value: '0' }
   )
   await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      text: targetResponseText,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    'scrollIntoViewAsUser',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
+    { text: anchorResponseText }
   )
 
+  const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
     { text: promptText }
   )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"][data-active="true"]`,
-    {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${markerSelector}[data-active="true"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'turn-navigation-01-user-visible-active.png')
 
   const assistantText = await control.command(
@@ -1727,14 +1726,10 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
   assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
 
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"][data-active="false"]`,
-    {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-inactive.png')
 }
 
