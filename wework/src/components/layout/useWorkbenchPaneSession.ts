@@ -1333,6 +1333,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
           let sendError: string | null = null
           const sent = await sendRuntimeMessage(queuedMessage, {
+            initialGoal: queuedMessage.initialGoal,
             onError: error => {
               sendError = error
             },
@@ -1384,15 +1385,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     if (queuedMessagesPaused) return
-    if (!paneStatus.canSendQueuedMessage) return
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    const canStartQueuedGoal =
+      Boolean(queuedMessage.initialGoal) &&
+      Boolean(currentRuntimeTask) &&
+      paneStatus.taskExecution.continuable &&
+      !paneStatus.isResponseActive
+    if (!paneStatus.canSendQueuedMessage && !canStartQueuedGoal) return
 
-    // This advances the next queued message once the pane becomes idle.
+    // Goal activation intentionally keeps the task busy between turns. Its initial turn must
+    // advance when the current response settles instead of waiting for the task to become idle.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Queue advancement is triggered by the idle-state transition.
     void sendQueuedMessage(queuedMessage)
-  }, [paneStatus.canSendQueuedMessage, queuedMessages, queuedMessagesPaused, sendQueuedMessage])
+  }, [
+    currentRuntimeTask,
+    paneStatus.canSendQueuedMessage,
+    paneStatus.isResponseActive,
+    paneStatus.taskExecution.continuable,
+    queuedMessages,
+    queuedMessagesPaused,
+    sendQueuedMessage,
+  ])
 
   const loadFullTranscriptForExport = useCallback(async () => {
     if (!runtimeTaskLoadTarget) return messagesRef.current
@@ -1585,6 +1600,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               createdAt: new Date().toISOString(),
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
+              initialGoal,
               additionalContext: options.additionalContext,
               ...getRuntimeModelFields(),
             }

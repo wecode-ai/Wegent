@@ -129,6 +129,12 @@ const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
+const GOAL_BUSY_PLAN_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN: keep this planning turn open while Goal is enabled.'
+const GOAL_BUSY_PLAN_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN_COMPLETE'
+const GOAL_BUSY_OBJECTIVE =
+  'WEWORK_DESKTOP_E2E_GOAL_BUSY_OBJECTIVE: start automatically after the planning turn.'
+const GOAL_BUSY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_COMPLETE'
 const GOAL_RESTART_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_RESTART: keep this active goal running until Wework restarts.'
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
@@ -429,6 +435,7 @@ const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
 const COMPLETED_FORK_ONLY = process.argv.includes('--completed-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
+const GOAL_BUSY_ONLY = process.argv.includes('--goal-busy-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
@@ -526,6 +533,7 @@ function getActiveOnlyModes() {
     ['--completed-fork-only', COMPLETED_FORK_ONLY],
     ['--side-chat-only', SIDE_CHAT_ONLY],
     ['--goal-idle-only', GOAL_IDLE_ONLY],
+    ['--goal-busy-only', GOAL_BUSY_ONLY],
     ['--goal-restart-only', GOAL_RESTART_ONLY],
     ['--turn-navigation-only', TURN_NAVIGATION_ONLY],
     ['--attachment-only', ATTACHMENT_ONLY],
@@ -8426,6 +8434,102 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
 }
 
+async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
+  control.setScenario('goal_busy_handoff')
+  const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await ensurePlanMode(control)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_BUSY_PLAN_PROMPT,
+    'goal_busy_handoff'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('pause-response-button') && snapshotHasAssistantActivity(snapshot),
+    'The planning turn did not remain active before Goal submission'
+  )
+
+  const runningDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const goalTaskId = runningDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(goalTaskId, 'The busy Goal handoff did not expose its runtime task ID')
+  const goalTaskRowTestId = `runtime-local-task-row-${goalTaskId}`
+  const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', composerSelector, { value: GOAL_BUSY_OBJECTIVE })
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: GOAL_BUSY_OBJECTIVE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button'),
+    'Submitting Goal during a planning turn did not preserve the running state'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: GOAL_BUSY_OBJECTIVE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  control.releaseGoalBusyPlanResponse()
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_busy_handoff', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The queued Goal did not start after the planning turn completed'
+  )
+  const handoffExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  assert.equal(
+    (handoffExecutorLog.match(/codex shared turn request started/g) ?? []).length,
+    1,
+    `The busy Goal handoff did not keep exactly one ordinary planning turn:\n${handoffExecutorLog}`
+  )
+  assert.equal(
+    (handoffExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
+    1,
+    `The queued Goal did not use the Codex initial Goal protocol:\n${handoffExecutorLog}`
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_BUSY_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(GOAL_BUSY_PLAN_TEXT) &&
+      snapshot.text.includes(GOAL_BUSY_COMPLETION_TEXT) &&
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes('goal-status-bar') &&
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.testIds.includes('assistant-error-card'),
+    'The automatically started Goal did not complete cleanly'
+  )
+}
+
 async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
@@ -9269,6 +9373,9 @@ class DesktopE2EServer {
     this.goalIdleContinuationRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleContinuation = resolvePromise
     })
+    this.goalBusyPlanRelease = new Promise(resolvePromise => {
+      this.releaseGoalBusyPlan = resolvePromise
+    })
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
@@ -9297,6 +9404,7 @@ class DesktopE2EServer {
       this.releaseCloudFollowUp = resolvePromise
     })
     this.goalIdleStage = 'initial'
+    this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
     this.scenarioRequests = new Map()
@@ -9474,6 +9582,7 @@ class DesktopE2EServer {
         'background_completion_restore',
         'background_follow_up_restore',
         'goal_idle',
+        'goal_busy_handoff',
         'goal_restart',
         'turn_navigation',
         'cancellation',
@@ -9669,6 +9778,10 @@ class DesktopE2EServer {
 
   releaseGoalIdleResponse() {
     this.releaseGoalIdleContinuation()
+  }
+
+  releaseGoalBusyPlanResponse() {
+    this.releaseGoalBusyPlan()
   }
 
   releaseGoalRestartResponse() {
@@ -10970,6 +11083,60 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(GOAL_IDLE_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'goal_busy_handoff') {
+      this.recordScenarioRequest('goal_busy_handoff', modelRequest)
+      if (this.goalBusyStage === 'plan') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_BUSY_PLAN_PROMPT),
+          'The real Codex request did not contain the busy Goal planning prompt'
+        )
+        this.goalBusyStage = 'goal'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.goalBusyPlanRelease
+        response.end(
+          createSse([assistantMessage(GOAL_BUSY_PLAN_TEXT), responseCompleted(responseId)])
+        )
+        return
+      }
+      if (this.goalBusyStage === 'goal') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_BUSY_OBJECTIVE),
+          'The automatically started Goal request did not contain its objective'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalBusyStage = 'awaiting_update_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-goal-busy-complete', updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.goalBusyStage,
+        'awaiting_update_output',
+        `Unexpected busy Goal handoff model stage: ${this.goalBusyStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The busy Goal handoff did not return its update_goal output'
+      )
+      this.goalBusyStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_BUSY_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -14254,6 +14421,17 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (GOAL_BUSY_ONLY) {
+      phase = 'goal-busy-handoff'
+      await verifyBusyTurnGoalHandoff({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorLogPath,
+      })
+      console.log(`Wework desktop busy Goal handoff E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (GOAL_RESTART_ONLY) {
       phase = 'goal-restart-recovery'
       await verifyGoalRestartRecoveryLifecycle({
@@ -15500,6 +15678,13 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
+      phase = 'goal-busy-handoff'
+      await verifyBusyTurnGoalHandoff({
+        composerSelector,
+        control,
+        executorLogPath,
+      })
+
       phase = 'goal-idle-unread'
       await verifyActiveGoalIdleUnreadLifecycle({
         composerSelector,
