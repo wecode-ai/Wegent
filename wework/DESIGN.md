@@ -468,10 +468,10 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
-- The compact turn-navigation rail reflects visible user messages, not the
-  assistant response currently being read. Every user message intersecting the
-  conversation viewport has a dark marker, so multiple markers may be active;
-  assistant-only viewport content does not activate its preceding turn.
+- The compact turn-navigation rail reflects every conversation turn intersecting
+  the viewport. A turn includes its user messages and assistant responses, so
+  assistant-only viewport content still activates the corresponding marker and
+  multiple markers may be active when content from multiple turns is visible.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
 - When opening, closing, or resizing a side panel reflows conversation content,

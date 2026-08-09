@@ -45,12 +45,18 @@ interface UserTurn {
 
 interface MessageTurnMarker extends UserTurn {
   targetTop: number | null
-  targetBottom: number | null
+  visibleTop: number | null
+  visibleBottom: number | null
 }
 
 interface PendingScrollTarget {
   navigationId: string
   messageIndex: number
+}
+
+interface TurnVisibilityBounds {
+  top: number
+  bottom: number
 }
 
 export function MessageTurnNavigation({
@@ -163,10 +169,10 @@ export function MessageTurnNavigation({
       const nextActiveMarkerIds = nextMarkers
         .filter(
           marker =>
-            marker.targetTop !== null &&
-            marker.targetBottom !== null &&
-            marker.targetBottom > viewportTop &&
-            marker.targetTop < viewportBottom
+            marker.visibleTop !== null &&
+            marker.visibleBottom !== null &&
+            marker.visibleBottom > viewportTop &&
+            marker.visibleTop < viewportBottom
         )
         .map(marker => marker.id)
       setActiveMarkerIds(current =>
@@ -190,14 +196,23 @@ export function MessageTurnNavigation({
 
       const scrollerRect = scroller.getBoundingClientRect()
       const anchorByMessageId = getMessageAnchorById(content)
+      const visibilityByTurnId = getTurnVisibilityBounds(
+        userTurns,
+        messagesRef.current,
+        anchorByMessageId,
+        scroller,
+        scrollerRect
+      )
       const nextMarkers = userTurns.map(turn => {
         const anchor = anchorByMessageId.get(turn.id)
+        const visibleBounds = visibilityByTurnId.get(turn.id)
         if (!anchor) {
           return {
             ...turn,
             loaded: false,
             targetTop: null,
-            targetBottom: null,
+            visibleTop: visibleBounds?.top ?? null,
+            visibleBottom: visibleBounds?.bottom ?? null,
           }
         }
 
@@ -207,7 +222,9 @@ export function MessageTurnNavigation({
           ...turn,
           loaded: true,
           targetTop,
-          targetBottom: scroller.scrollTop + anchorRect.bottom - scrollerRect.top,
+          visibleTop: visibleBounds?.top ?? targetTop,
+          visibleBottom:
+            visibleBounds?.bottom ?? scroller.scrollTop + anchorRect.bottom - scrollerRect.top,
         }
       })
 
@@ -261,7 +278,7 @@ export function MessageTurnNavigation({
     if (!scroller || !content) return
 
     // Mounted anchors are recalculated by observers; raw scroll events reuse
-    // their measured bounds to update which user messages intersect the viewport.
+    // their measured bounds to update which conversation turns intersect the viewport.
     const handleScroll = () => updateActiveMarkers(markersRef.current, 'scroll')
     const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
@@ -772,6 +789,90 @@ function getMessageAnchorById(content: HTMLElement) {
     }
   })
   return anchors
+}
+
+function getTurnVisibilityBounds(
+  turns: UserTurn[],
+  messages: WorkbenchMessage[],
+  anchorByMessageId: ReadonlyMap<string, HTMLElement>,
+  scroller: HTMLDivElement,
+  scrollerRect: DOMRect
+): Map<string, TurnVisibilityBounds> {
+  const boundsByTurnId = new Map<string, TurnVisibilityBounds>()
+  const messagePositionById = buildMessageTimelinePositions(messages)
+
+  anchorByMessageId.forEach((anchor, messageId) => {
+    const messagePosition = messagePositionById.get(messageId)
+    if (messagePosition === undefined) return
+    const turn = findTurnForMessagePosition(turns, messagePosition)
+    if (!turn) return
+
+    const anchorRect = anchor.getBoundingClientRect()
+    const top = scroller.scrollTop + anchorRect.top - scrollerRect.top
+    const bottom = scroller.scrollTop + anchorRect.bottom - scrollerRect.top
+    const current = boundsByTurnId.get(turn.id)
+    boundsByTurnId.set(turn.id, {
+      top: current ? Math.min(current.top, top) : top,
+      bottom: current ? Math.max(current.bottom, bottom) : bottom,
+    })
+  })
+
+  return boundsByTurnId
+}
+
+function buildMessageTimelinePositions(messages: WorkbenchMessage[]): Map<string, number> {
+  const positions = messages.map(message =>
+    Number.isFinite(message.runtimeMessageIndex) ? (message.runtimeMessageIndex as number) : null
+  )
+  if (positions.every(position => position === null)) {
+    return new Map(messages.map((message, index) => [message.id, index]))
+  }
+
+  let segmentStart = 0
+  while (segmentStart < positions.length) {
+    if (positions[segmentStart] !== null) {
+      segmentStart += 1
+      continue
+    }
+
+    let segmentEnd = segmentStart + 1
+    while (segmentEnd < positions.length && positions[segmentEnd] === null) {
+      segmentEnd += 1
+    }
+    const previousPosition = segmentStart > 0 ? positions[segmentStart - 1] : null
+    const nextPosition = segmentEnd < positions.length ? positions[segmentEnd] : null
+    const segmentLength = segmentEnd - segmentStart
+
+    for (let offset = 0; offset < segmentLength; offset += 1) {
+      if (previousPosition !== null && nextPosition !== null) {
+        positions[segmentStart + offset] =
+          previousPosition +
+          ((nextPosition - previousPosition) * (offset + 1)) / (segmentLength + 1)
+      } else if (previousPosition !== null) {
+        positions[segmentStart + offset] = previousPosition + (offset + 1) / (segmentLength + 1)
+      } else if (nextPosition !== null) {
+        positions[segmentStart + offset] =
+          nextPosition - (segmentLength - offset) / (segmentLength + 1)
+      }
+    }
+    segmentStart = segmentEnd
+  }
+
+  return new Map(
+    messages.flatMap((message, index) => {
+      const position = positions[index]
+      return position === null ? [] : [[message.id, position] as const]
+    })
+  )
+}
+
+function findTurnForMessagePosition(turns: UserTurn[], messagePosition: number): UserTurn | null {
+  let currentTurn: UserTurn | null = null
+  for (const turn of turns) {
+    if (turn.messageIndex > messagePosition) break
+    currentTurn = turn
+  }
+  return currentTurn
 }
 
 function equalStringArrays(left: string[], right: string[]) {
