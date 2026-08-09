@@ -37,7 +37,7 @@ const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
 const BROWSER_DATA_COOKIE_PATH = '/embedded-browser-data-cookie-fixture'
 const BROWSER_DATA_CACHE_PATH = '/embedded-browser-data-cache-fixture'
 const BROWSER_DATA_CACHE_RESOURCE_PATH = '/embedded-browser-data-cache-resource.js'
-const BROWSER_MORE_BUTTON_SELECTOR = '[data-testid="workspace-browser-more-button"]'
+const BROWSER_MORE_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-more-button"]`
 const BROWSER_CLEAR_DATA_SELECTOR = '[data-testid="workspace-browser-clear-data-item"]'
 const BROWSER_CLEAR_COOKIES_SELECTOR = '[data-testid="workspace-browser-clear-cookies-item"]'
 const BROWSER_CLEAR_CACHE_SELECTOR = '[data-testid="workspace-browser-clear-cache-item"]'
@@ -449,29 +449,98 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, { label: browserLabel, ...payload })
-      const firstOpenStartedAt = Date.now()
-      const firstOpenPromise = bridgeCall({
-        action: 'open',
-        url: fixtureUrl,
-        timeoutMs: 8_000,
+      const firstTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(firstTaskTabTestId, 'The browser task did not expose its workspace tab identity')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('click', '[data-testid="workspace-tab-add-task"]')
+      await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+        timeoutMs: uiTimeoutMs,
       })
-      const [firstOpenResult] = await Promise.all([
-        firstOpenPromise,
-        waitForVisibleSingleElement(
-          control,
-          BROWSER_NATIVE_VIEW_SELECTOR,
-          8_000,
-          'The first bridge open did not make exactly one active host visible'
-        ),
-      ])
+      const secondTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.notEqual(
+        secondTaskTabTestId,
+        firstTaskTabTestId,
+        'Opening another task tab did not make the browser-owning task inactive'
+      )
+      const secondTaskTabId = secondTaskTabTestId.replace('workspace-tab-select-', '')
+      const activeBrowserLabel = await control.command(
+        'getAttribute',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.notEqual(
+        activeBrowserLabel,
+        browserLabel,
+        'The second task tab reused the inactive task browser label'
+      )
+      const firstOpenStartedAt = Date.now()
+      const firstOpenResult = await withTimeout(
+        bridgeCall({
+          action: 'open',
+          url: fixtureUrl,
+          timeoutMs: 8_000,
+        }),
+        8_000,
+        'The inactive task did not bootstrap its task-scoped browser'
+      )
       assert.equal(
         firstOpenResult.ok,
         true,
-        `The first bridge open from a fresh task failed: ${JSON.stringify(firstOpenResult)}`
+        `The first bridge open from an inactive task failed: ${JSON.stringify(firstOpenResult)}`
       )
       assert.ok(
         Date.now() - firstOpenStartedAt < 8_000,
         'The first bridge open only completed after its tool timeout'
+      )
+      const inactiveWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: READY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        inactiveWait.ok,
+        true,
+        `The inactive task browser did not finish loading: ${JSON.stringify(inactiveWait)}`
+      )
+      const inactiveInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        inactiveInspect.inspectText.includes(READY_TEXT),
+        'The inactive task browser did not load the requested page'
+      )
+      await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
+      await control.command(
+        'click',
+        `[data-testid="${secondTaskTabTestId.replace('workspace-tab-select-', 'workspace-tab-close-')}"]`
+      )
+      const closedTaskContentCount = await control.command(
+        'getElementCount',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"]`
+      )
+      assert.equal(
+        closedTaskContentCount,
+        '0',
+        'Closing the second task left its workbench mounted'
+      )
+      const browserMenuButtonCount = await control.command(
+        'getElementCount',
+        BROWSER_MORE_BUTTON_SELECTOR
+      )
+      assert.equal(
+        browserMenuButtonCount,
+        '1',
+        'The active task did not retain a unique browser action menu'
       )
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForControlValue(

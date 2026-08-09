@@ -253,13 +253,17 @@ function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
+  // Task-scoped browser routing is owned by workbench effects and must remain
+  // available while another workspace tab is active.
+  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
           className="h-full"
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
+          hidden={!active && keepTaskRuntimeActive}
         >
           {renderProvider ? (
             <WorkbenchProvider

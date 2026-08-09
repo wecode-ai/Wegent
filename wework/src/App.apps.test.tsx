@@ -329,10 +329,18 @@ describe('App center route', () => {
       target: { value: 'second task draft' },
     })
 
+    const taskContents = screen.getAllByTestId(/^workspace-tab-content-task-/)
+    expect(taskContents).toHaveLength(2)
+    expect(taskContents.filter(content => content.hidden)).toHaveLength(1)
+
     fireEvent.click(taskTabs[0])
     await waitFor(() => expect(firstInput).toHaveValue('first task draft'))
+    expect(taskContents[0]).not.toHaveAttribute('hidden')
+    expect(taskContents[1]).toHaveAttribute('hidden')
     fireEvent.click(taskTabs[1])
     await waitFor(() => expect(secondInput).toHaveValue('second task draft'))
+    expect(taskContents[0]).toHaveAttribute('hidden')
+    expect(taskContents[1]).not.toHaveAttribute('hidden')
     expect(firstInput).toHaveValue('first task draft')
   })
 
