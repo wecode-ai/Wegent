@@ -73,6 +73,7 @@ import {
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
+import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import {
   inferRuntimeName,
@@ -130,6 +131,13 @@ interface UseWorkbenchRuntimeMessagingOptions {
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
   rememberExecutionDevice: (deviceId: string) => void
+}
+
+function runtimeSendError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback
+  return isRuntimeTaskBusyError(message)
+    ? i18n.t('workbench.runtime_task_running_message')
+    : message
 }
 
 export function runtimeThreadId(address?: RuntimeTaskAddress | null): string | null {
@@ -221,7 +229,10 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: request.address.deviceId,
           modelId: request.modelId,
         })
-        if (!prepared) return false
+        if (!prepared) {
+          reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+          return false
+        }
         lifecycleStore.sendRequested(request.address)
         sendRequested = true
         const response = await executorClient.runtime.sendRuntimeMessage(request)
@@ -247,7 +258,7 @@ export function useWorkbenchRuntimeMessaging({
           addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
           error: error instanceof Error ? error.message : String(error),
         })
-        reportError(error instanceof Error ? error.message : '发送失败', options)
+        reportError(runtimeSendError(error, '发送失败'), options)
         return false
       }
     },
@@ -262,7 +273,10 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: request.address.deviceId,
           modelId: request.modelId,
         })
-        if (!prepared) return false
+        if (!prepared) {
+          reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+          return false
+        }
         lifecycleStore.sendRequested(request.address)
         sendRequested = true
         const response = await executorClient.runtime.interruptAndSendRuntimeMessage(request)
@@ -277,7 +291,7 @@ export function useWorkbenchRuntimeMessaging({
         return true
       } catch (error) {
         if (sendRequested) lifecycleStore.sendRejected(request.address)
-        reportError(error instanceof Error ? error.message : '打断并发送失败', options)
+        reportError(runtimeSendError(error, '打断并发送失败'), options)
         return false
       }
     },
