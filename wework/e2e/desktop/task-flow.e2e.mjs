@@ -5507,20 +5507,23 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
-  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!initialSnapshot.testIds.includes('automation-button')) {
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="settings-menu-button"]')
-    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
-    await control.command('click', '[data-testid="settings-back-button"]')
-    await control.command('waitFor', '[data-testid="automation-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+  const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if ((await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true') {
+    await control.command('click', toggleSelector)
+    await waitForAttribute(
+      control,
+      toggleSelector,
+      'aria-checked',
+      'true',
+      'Enabling experimental features was not persisted'
+    )
   }
-  return initialSnapshot
+  await control.command('click', '[data-testid="settings-back-button"]')
 }
 
 async function verifyAutomationLifecycle(control, executorHome, homePath) {
