@@ -205,6 +205,14 @@ export function useWorkbenchProjectActions({
         clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
       )
       await refreshWorkLists()
+      dispatch({
+        type: 'runtime_project_updated',
+        deviceId: response.deviceId,
+        projectKey: response.projectKey,
+        name: response.name,
+        roots: response.roots,
+        defaultProjectSpace: response.defaultProjectSpace ?? null,
+      })
     },
     [clearRuntimeProjectRemoval, dispatch, executorClient, refreshWorkLists]
   )
