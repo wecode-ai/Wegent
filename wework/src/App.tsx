@@ -40,7 +40,6 @@ import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnec
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { cn } from '@/lib/utils'
-import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
@@ -186,17 +185,13 @@ function workspaceTabIframe(
   return src ? { src, title: app.label } : null
 }
 
-function workspaceTabAuxiliaryPage(
-  path: string,
-  search: string,
-  experimentalFeaturesEnabled: boolean
-) {
+function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/plugins/manage') return <PluginManagementPage />
   if (path === '/plugins/create') return <PluginCreatePage />
   if (path === '/plugins') return <PluginsPage routeSearch={search} />
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
-  if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
+  if (path === '/automations') return <AutomationsPage />
   if (path === '/apps') return <AppsPage />
   return null
 }
@@ -204,7 +199,6 @@ function workspaceTabAuxiliaryPage(
 interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
-  experimentalFeaturesEnabled: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   tab: WorkspaceTab
@@ -214,7 +208,6 @@ interface WorkspaceTabSurfaceProps {
 function WorkspaceTabSurface({
   active,
   cloudWebUrl,
-  experimentalFeaturesEnabled,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   tab,
@@ -223,7 +216,7 @@ function WorkspaceTabSurface({
   const tabPath = workspaceTabPath(tab)
   const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch, experimentalFeaturesEnabled)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
   const auxiliaryActive = Boolean(auxiliaryPage)
   const nativeWorkbenchActive = !iframe && !auxiliaryActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
@@ -331,12 +324,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     setActiveWorkspaceTabPortalOwner(workspaceTabs?.activeTabId ?? null)
   }, [workspaceTabs?.activeTabId])
 
-  useEffect(() => {
-    if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
-      navigateTo('/')
-    }
-  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, path])
-
   if (path === '/login') {
     return <LoginPage />
   }
@@ -382,7 +369,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
             : cloudConnection.webUrl
         }
-        experimentalFeaturesEnabled={experimentalFeatures.enabled}
         onOpenWeworkForAppshot={onOpenWeworkForAppshot}
         onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
         tab={tab}

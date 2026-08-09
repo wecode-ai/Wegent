@@ -1697,14 +1697,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
-  test('shows Automations only while experimental features are enabled', () => {
+  test('shows Automations when experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
     expect(screen.getByTestId('automation-button')).toBeInTheDocument()

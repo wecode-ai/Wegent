@@ -3415,15 +3415,13 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={AlarmClock}
-                  label={t('workbench.automation', '已安排')}
-                  testId="automation-button"
-                  selected={activeItem === 'automation'}
-                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-                />
-              )}
+              <DesktopSidebarNavItem
+                icon={AlarmClock}
+                label={t('workbench.automation', '已安排')}
+                testId="automation-button"
+                selected={activeItem === 'automation'}
+                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+              />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
                   icon={Sparkles}
