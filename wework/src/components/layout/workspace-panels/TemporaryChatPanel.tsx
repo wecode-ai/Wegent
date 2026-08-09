@@ -533,6 +533,7 @@ export function TemporaryChatPanel({
           <BufferedChatInput
             value={input}
             onChange={setInput}
+            onDraftEdit={() => setError(null)}
             onSubmit={send}
             disabled={false}
             pluginPickerIconOnly

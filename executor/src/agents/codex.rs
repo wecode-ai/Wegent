@@ -1162,6 +1162,100 @@ pub async fn run_codex_app_server_turn(
     .await
 }
 
+enum CodexThreadStart {
+    Direct(String),
+    Request {
+        operation: &'static str,
+        params: Value,
+    },
+}
+
+struct CodexThreadPlan {
+    start: CodexThreadStart,
+    resume_requested: bool,
+    fork_requested: bool,
+}
+
+fn codex_thread_plan(
+    direct_thread_id: Option<&str>,
+    fork_thread_id: Option<&str>,
+    fork_thread_path: Option<&str>,
+    resume_thread_id: Option<&str>,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> CodexThreadPlan {
+    let direct_thread_id = direct_thread_id
+        .map(str::trim)
+        .filter(|thread_id| !thread_id.is_empty());
+    let start = if let Some(thread_id) = direct_thread_id {
+        CodexThreadStart::Direct(thread_id.to_owned())
+    } else if let Some(thread_id) = fork_thread_id {
+        CodexThreadStart::Request {
+            operation: "thread/fork",
+            params: thread_fork_params(thread_id, fork_thread_path, request, launch_config),
+        }
+    } else if let Some(thread_id) = resume_thread_id {
+        CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: thread_resume_params(thread_id, request, launch_config),
+        }
+    } else {
+        CodexThreadStart::Request {
+            operation: "thread/start",
+            params: thread_start_params(request, launch_config),
+        }
+    };
+    CodexThreadPlan {
+        start,
+        resume_requested: resume_thread_id.is_some(),
+        fork_requested: fork_thread_id.is_some(),
+    }
+}
+
+fn thread_id_from_response(
+    operation: &str,
+    response: &Value,
+    expected_model_provider: Option<&str>,
+) -> Result<String, String> {
+    validate_codex_model_provider(operation, response, expected_model_provider)?;
+    response
+        .get("thread")
+        .and_then(|thread| thread.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("codex app-server {operation} did not return thread.id"))
+}
+
+fn notify_thread_started(notifications: Option<&CodexNotificationSender>, thread_id: &str) {
+    if let Some(sender) = notifications {
+        let _ = sender.send(json!({
+            "method": "thread/started",
+            "params": {
+                "thread": {
+                    "id": thread_id
+                }
+            }
+        }));
+    }
+}
+
+fn normalized_thread_name(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|name| !name.is_empty())
+}
+
+fn codex_turn_fields(request: &ExecutionRequest, thread_id: &str) -> Vec<(&'static str, String)> {
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("thread_id", thread_id.to_owned()));
+    fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+    if let Some(cwd) = request.cwd() {
+        fields.push(("cwd", cwd.to_owned()));
+    }
+    if let Some(model) = codex_request_model(request) {
+        fields.push(("model", model));
+    }
+    fields
+}
+
 async fn run_codex_app_server_turn_on_shared_client(
     client: &CodexAppServerClient,
     request: ExecutionRequest,
@@ -1198,84 +1292,52 @@ async fn run_codex_app_server_turn_on_shared_client(
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
         let mut state = CodexRunState::default();
-        let direct_thread_id = direct_thread_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|thread_id| !thread_id.is_empty())
-            .map(str::to_owned);
-        let resuming_thread = resume_thread_id.is_some();
-        let forking_thread = fork_thread_id.is_some();
-        if direct_thread_id.is_none() {
+        let thread_plan = codex_thread_plan(
+            direct_thread_id.as_deref(),
+            fork_thread_id.as_deref(),
+            fork_thread_path.as_deref(),
+            resume_thread_id.as_deref(),
+            request,
+            &launch_config,
+        );
+        if !matches!(thread_plan.start, CodexThreadStart::Direct(_)) {
             if let Some(thread_id) = resume_thread_id.as_deref() {
                 // An idle thread is unsubscribed after its previous turn. Resume establishes the
                 // next owner subscription and loads the latest materialized snapshot.
                 client.unsubscribe_thread(thread_id).await;
             }
         }
-        let thread_id = if let Some(thread_id) = direct_thread_id {
-            state.set_root_thread_id(thread_id.clone());
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", "thread/direct".to_owned()));
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex shared thread request skipped", &thread_fields);
-            thread_id
-        } else {
-            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
-                (
-                    "thread/fork",
-                    thread_fork_params(
-                        &thread_id,
-                        fork_thread_path.as_deref(),
-                        request,
-                        &launch_config,
-                    ),
-                )
-            } else if let Some(thread_id) = resume_thread_id {
-                (
-                    "thread/resume",
-                    thread_resume_params(&thread_id, request, &launch_config),
-                )
-            } else {
-                ("thread/start", thread_start_params(request, &launch_config))
-            };
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", thread_operation.to_owned()));
-            log_executor_event("codex shared thread request started", &thread_fields);
-            let thread = client.request(thread_operation, thread_params).await?;
-            validate_codex_model_provider(
-                thread_operation,
-                &thread,
-                launch_config.model_provider.as_deref(),
-            )?;
-            let thread_id = thread
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    format!("codex app-server {thread_operation} did not return thread.id")
-                })?
-                .to_owned();
-            state.set_root_thread_id(thread_id.clone());
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex shared thread request finished", &thread_fields);
-            thread_id
+        let thread_id = match thread_plan.start {
+            CodexThreadStart::Direct(thread_id) => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", "thread/direct".to_owned()));
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex shared thread request skipped", &thread_fields);
+                thread_id
+            }
+            CodexThreadStart::Request { operation, params } => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", operation.to_owned()));
+                log_executor_event("codex shared thread request started", &thread_fields);
+                let response = client.request(operation, params).await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex shared thread request finished", &thread_fields);
+                thread_id
+            }
         };
+        state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
-        if let Some(sender) = &notifications {
-            let _ = sender.send(json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": thread_id.clone()
-                    }
-                }
-            }));
-        }
-        if forking_thread && request.ephemeral {
+        notify_thread_started(notifications.as_ref(), &thread_id);
+        if thread_plan.fork_requested && request.ephemeral {
             client
                 .request(
                     "thread/inject_items",
@@ -1285,11 +1347,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if !request.ephemeral {
-            if let Some(name) = initial_thread_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
                 client
                     .request(
                         "thread/name/set",
@@ -1306,7 +1364,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             let goal_params = thread_goal_set_params(&thread_id, goal)?;
             let goal_response = client.request("thread/goal/set", goal_params).await?;
             sync_goal_status_from_response(&mut state, &goal_response);
-        } else if !request.ephemeral && resuming_thread {
+        } else if !request.ephemeral && thread_plan.resume_requested {
             if let Ok(goal_response) = client
                 .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
                 .await
@@ -1315,15 +1373,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
 
-        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
-        turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
-        if let Some(cwd) = request.cwd() {
-            turn_fields.push(("cwd", cwd.to_owned()));
-        }
-        if let Some(model) = codex_request_model(request) {
-            turn_fields.push(("model", model));
-        }
+        let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
@@ -1492,77 +1542,46 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
 
         let request = &prepared.request;
-        let direct_thread_id = direct_thread_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|thread_id| !thread_id.is_empty())
-            .map(str::to_owned);
-        let forking_thread = fork_thread_id.is_some();
-        let thread_id = if let Some(thread_id) = direct_thread_id {
-            state.set_root_thread_id(thread_id.clone());
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", "thread/direct".to_owned()));
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex thread request skipped", &thread_fields);
-            thread_id
-        } else {
-            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
-                (
-                    "thread/fork",
-                    thread_fork_params(
-                        &thread_id,
-                        fork_thread_path.as_deref(),
-                        request,
-                        &launch_config,
-                    ),
+        let thread_plan = codex_thread_plan(
+            direct_thread_id.as_deref(),
+            fork_thread_id.as_deref(),
+            fork_thread_path.as_deref(),
+            resume_thread_id.as_deref(),
+            request,
+            &launch_config,
+        );
+        let thread_id = match thread_plan.start {
+            CodexThreadStart::Direct(thread_id) => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", "thread/direct".to_owned()));
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex thread request skipped", &thread_fields);
+                thread_id
+            }
+            CodexThreadStart::Request { operation, params } => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", operation.to_owned()));
+                log_executor_event("codex thread request started", &thread_fields);
+                let response = with_rpc_timeout(
+                    operation,
+                    timeout_seconds,
+                    rpc.request(operation, params, &mut state),
                 )
-            } else if let Some(thread_id) = resume_thread_id {
-                (
-                    "thread/resume",
-                    thread_resume_params(&thread_id, request, &launch_config),
-                )
-            } else {
-                ("thread/start", thread_start_params(request, &launch_config))
-            };
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", thread_operation.to_owned()));
-            log_executor_event("codex thread request started", &thread_fields);
-            let thread = with_rpc_timeout(
-                thread_operation,
-                timeout_seconds,
-                rpc.request(thread_operation, thread_params, &mut state),
-            )
-            .await?;
-            validate_codex_model_provider(
-                thread_operation,
-                &thread,
-                launch_config.model_provider.as_deref(),
-            )?;
-            let thread_id = thread
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    format!("codex app-server {thread_operation} did not return thread.id")
-                })?
-                .to_owned();
-            state.set_root_thread_id(thread_id.clone());
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex thread request finished", &thread_fields);
-            thread_id
+                .await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex thread request finished", &thread_fields);
+                thread_id
+            }
         };
+        state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        if let Some(sender) = &notifications {
-            let _ = sender.send(json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": thread_id.clone()
-                    }
-                }
-            }));
-        }
-        if forking_thread && request.ephemeral {
+        notify_thread_started(notifications.as_ref(), &thread_id);
+        if thread_plan.fork_requested && request.ephemeral {
             with_rpc_timeout(
                 "thread/inject_items",
                 timeout_seconds,
@@ -1585,11 +1604,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 .await?;
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
-            if let Some(name) = initial_thread_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
                 with_rpc_timeout(
                     "thread/name/set",
                     timeout_seconds,
@@ -1604,16 +1619,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
-        turn_fields.push(("thread_id", thread_id.clone()));
+        let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
-        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
-        if let Some(cwd) = request.cwd() {
-            turn_fields.push(("cwd", cwd.to_owned()));
-        }
-        if let Some(model) = codex_request_model(request) {
-            turn_fields.push(("model", model));
-        }
         log_executor_event("codex turn request started", &turn_fields);
         let turn_request_id = with_rpc_timeout(
             "turn/start",

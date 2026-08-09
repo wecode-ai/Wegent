@@ -291,7 +291,7 @@ impl RuntimeWorkRpcHandler {
             attach_user_message_presentations(&mut messages, user_message_presentations(link));
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
-        let running = local_execution_running;
+        let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,

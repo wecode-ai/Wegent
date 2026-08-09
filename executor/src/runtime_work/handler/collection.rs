@@ -617,6 +617,20 @@ impl RuntimeWorkRpcHandler {
         self.store.find_summary_by_thread_id(thread_id)
     }
 
+    pub(super) fn task_send_gate(&self, local_task_id: &str) -> Arc<AsyncMutex<()>> {
+        let mut gates = self
+            .task_send_gates
+            .lock()
+            .expect("task send gate map lock should not be poisoned");
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = gates.get(local_task_id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(AsyncMutex::new(()));
+        gates.insert(local_task_id.to_owned(), Arc::downgrade(&gate));
+        gate
+    }
+
     pub(super) fn upsert_local_task(&self, link: RuntimeTaskLink) {
         self.store.upsert_task(link);
     }

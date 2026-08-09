@@ -90,6 +90,10 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'send_rejected' })
   }
 
+  sendBlockedByActiveTurn(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'send_blocked_by_active_turn' })
+  }
+
   stopRequested(address: RuntimeTaskAddress): void {
     this.dispatch(address, { type: 'stop_requested' })
   }

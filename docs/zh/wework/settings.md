@@ -59,7 +59,7 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 
 ## 自定义 Codex 模型
 
-在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek 和 GLM profile；填写对应平台的 API Key 后，可以从提供商的 `/models` 接口读取可用模型。连接地址、接口协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
+在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek、GLM 和 MiniMax profile；填写对应平台的 API Key 后，可以从提供商的模型列表接口读取可用模型。连接地址、接口协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点，MiniMax 使用官方推荐的 Anthropic 兼容接口并通过 `X-Api-Key` 读取模型列表。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
 
 DeepSeek profile 使用原生 Responses API，展示当前可用于 Codex 的 `deepseek-v4-flash` 和 `deepseek-v4-pro`。两者均使用 1,048,576 tokens 上下文、默认 `high` 推理等级、实时 Web Search 和 freeform `apply_patch`；连接测试也会要求模型真实返回 `apply_patch` custom tool call。旧版由 Wework 管理的 DeepSeek Chat Completions 配置会自动迁移到 Responses API。当前模型目录声明文本输入且关闭图片生成，因此图片生成和图片理解不会在该 profile 下显示为可用能力。
 

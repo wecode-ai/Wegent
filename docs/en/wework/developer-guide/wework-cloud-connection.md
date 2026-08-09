@@ -36,6 +36,8 @@ The desktop sidebar provides two cloud entry points with distinct responsibiliti
 - After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
 - Expired or failed cloud connections do not block local features.
 
+The Cloud Work status in the workspace entry comes from a complete background probe of teams, devices, and cloud runtime work, not from cached historical data. The first probe shows `Syncing`. After that probe completes, later refreshes keep showing the most recent `Available`, `No devices`, or `Unavailable` result until the full refresh finishes. If any cloud read fails, the latest result is `Unavailable`, even when the UI continues using the last successful snapshot to retain historical devices or task data. An overlapping refresh cancels the older request and replaces it with a new complete probe; it must not refresh only devices or fall back to a historical `Available` result.
+
 Settings are grouped by capability:
 
 - Default features: local Codex, local model configs, local executor, local workspaces, and local conversations.
