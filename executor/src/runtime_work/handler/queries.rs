@@ -5,6 +5,20 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
+        load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id,
+                cursor: None,
+                limit: 1,
+                full_content: false,
+            },
+        )
+        .await
+        .map(|page| page.thread)
+    }
+
     pub(super) async fn read_codex_thread_history(&self, thread_id: &str) -> Result<Value, String> {
         load_codex_transcript(
             &self.codex_app_server,
@@ -308,7 +322,7 @@ impl RuntimeWorkRpcHandler {
             attach_user_message_presentations(&mut messages, user_message_presentations(link));
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
-        let running = local_execution_running;
+        let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,

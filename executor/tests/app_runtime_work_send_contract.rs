@@ -82,6 +82,36 @@ fn execution_request_with_model_config(
     })
 }
 
+fn seed_persisted_runtime_task(executor_home: &Path, local_task_id: &str, thread_id: &str) {
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                local_task_id: {
+                    "local_task_id": local_task_id,
+                    "thread_id": thread_id,
+                    "workspace_path": "/tmp/project",
+                    "title": "Persisted runtime task",
+                    "runtime": "codex",
+                    "status": "active",
+                    "running": false,
+                    "continuable": true,
+                    "created_at": 1780000000000_i64,
+                    "updated_at": 1780000060000_i64,
+                    "runtime_handle": {"threadId": thread_id},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
 #[tokio::test]
 async fn runtime_task_forwards_all_local_project_roots_to_codex() {
     let _lock = env_lock().await;
@@ -898,6 +928,13 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
         calls
             .iter()
             .filter(|call| call["method"] == "thread/resume")
+            .count(),
+        0
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/read")
             .count(),
         0
     );
@@ -1966,6 +2003,143 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_settles() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-send-provider-active-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-provider-active-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-task-1", "thread-1");
+    let log_path = temp_path("runtime-send-provider-active-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1"
+            }
+        }))
+        .await
+        .expect("provider-active transcript should load");
+    assert_eq!(transcript["running"], true);
+
+    let rejected = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "second turn",
+                "executionRequest": codex_execution_request(
+                    "second turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("provider-active send should return a contract response");
+
+    assert_eq!(
+        rejected,
+        json!({
+            "success": false,
+            "error": "runtime task is already running",
+            "code": "bad_request"
+        })
+    );
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| call["method"] == "thread/read"));
+    assert!(
+        calls.iter().all(|call| call["method"] != "turn/start"),
+        "send must not create an overlapping Codex turn: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_runtime_task_sends_start_only_one_turn() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-concurrent-send-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-concurrent-send-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-task-1", "thread-1");
+    let log_path = temp_path("runtime-concurrent-send-log", "jsonl");
+    let fake_codex = write_fake_codex_concurrent_send(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let payload = json!({
+        "workspacePath": "/tmp/project",
+        "taskId": "local-task-1",
+        "message": "next turn",
+        "executionRequest": codex_execution_request("next turn", "/tmp/project", "gpt-5.5")
+    });
+    let first_handler = handler.clone();
+    let second_handler = handler.clone();
+    let first_payload = payload.clone();
+    let second_payload = payload;
+
+    let (first, second) = tokio::join!(
+        first_handler.handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": first_payload
+        })),
+        second_handler.handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": second_payload
+        }))
+    );
+    let responses = [
+        first.expect("first concurrent send should return a contract response"),
+        second.expect("second concurrent send should return a contract response"),
+    ];
+
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response["accepted"] == true)
+            .count(),
+        1
+    );
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response["code"] == "bad_request")
+            .count(),
+        1
+    );
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        1
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1"
+            }
+        }))
+        .await
+        .expect("cleanup cancel should succeed");
+}
+
+#[tokio::test]
 async fn runtime_tasks_guidance_steers_running_codex_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2300,6 +2474,56 @@ async fn runtime_tasks_interrupt_and_send_starts_a_new_turn_after_interrupting()
         .map(|(index, _)| index)
         .expect("a second turn should start");
     assert!(interrupt_index < second_start_index);
+}
+
+#[tokio::test]
+async fn runtime_tasks_interrupt_and_send_interrupts_a_provider_only_active_turn() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-provider-interrupt-send-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-provider-interrupt-send-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-task-1", "thread-1");
+    let log_path = temp_path("runtime-provider-interrupt-send-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.interrupt_and_send",
+            "payload": {
+                "taskId": "local-task-1",
+                "workspacePath": "/tmp/project",
+                "message": "replace the recovered provider turn",
+                "executionRequest": codex_execution_request(
+                    "replace the recovered provider turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("provider-only interrupt-and-send should return a contract response");
+
+    assert_eq!(response["accepted"], true);
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    let methods = read_json_lines(&log_path)
+        .into_iter()
+        .filter_map(|call| call["method"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let interrupt_index = methods
+        .iter()
+        .position(|method| method == "turn/interrupt")
+        .expect("the persisted provider turn should be interrupted");
+    let start_index = methods
+        .iter()
+        .position(|method| method == "turn/start")
+        .expect("the replacement turn should start");
+    assert!(interrupt_index < start_index);
 }
 
 #[tokio::test]
@@ -2820,6 +3044,9 @@ while IFS= read -r line; do
     *'"method":"thread/inject_items"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral threads do not support includeTurns"}}}}'
+      ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread should not resume"}}}}'
       ;;
@@ -2916,6 +3143,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -3094,6 +3324,7 @@ fn write_fake_codex_request_user_input(log_path: &Path) -> PathBuf {
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+turn_active=true
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -3107,11 +3338,18 @@ while IFS= read -r line; do
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/read"'; then
+    if [ "$turn_active" = "true" ]; then
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input","cwd":"/tmp/project","turns":[{{"id":"turn-input","status":"inProgress","items":[]}}]}}}}}}'
+    else
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input","cwd":"/tmp/project","turns":[{{"id":"turn-input","status":"interrupted","items":[]}}]}}}}}}'
+    fi
   elif printf '%s\n' "$line" | grep -q '"method":"thread/goal/get"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/name/set"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
+    turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
     sleep 0.1
@@ -3125,8 +3363,10 @@ while IFS= read -r line; do
     done
     printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"flood-sentinel","type":"commandExecution","status":"inProgress","command":"sentinel"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"turn/interrupt"'; then
+    turn_active=false
     printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
+    turn_active=false
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
   fi
@@ -3168,6 +3408,9 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"interrupted","items":[]}}]}}}}}}'
+      ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
@@ -3203,6 +3446,55 @@ fn write_fake_codex_hanging_turn_with_steer_mismatch(log_path: &Path) -> PathBuf
     write_fake_codex_hanging_turn_inner(log_path, true)
 }
 
+fn write_fake_codex_concurrent_send(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-concurrent-send", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      (
+        sleep 0.1
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-0","status":"completed","items":[]}}]}}}}}}'
+      ) &
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/interrupt"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
 fn write_fake_codex_hanging_turn_inner(log_path: &Path, steer_mismatch: bool) -> PathBuf {
     let path = temp_path("fake-codex-send-hang", "sh");
     let _ = fs::remove_file(log_path);
@@ -3211,6 +3503,7 @@ fn write_fake_codex_hanging_turn_inner(log_path: &Path, steer_mismatch: bool) ->
 LOG_PATH='{}'
 STEER_MISMATCH='{}'
 steer_count=0
+turn_active=true
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -3236,7 +3529,14 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"inProgress","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      if [ "$turn_active" = "true" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"inProgress","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"interrupted","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      fi
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -3245,6 +3545,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
+      turn_active=true
       if [ "$STEER_MISMATCH" = "true" ]; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-stale","status":"inProgress"}}}}}}'
       else
@@ -3260,6 +3561,7 @@ while IFS= read -r line; do
       fi
       ;;
     *'"method":"turn/interrupt"'*)
+      turn_active=false
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       ;;

@@ -174,6 +174,11 @@ const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
+const SEND_REJECTION_RUNNING_PROMPT =
+  'WEWORK_DESKTOP_E2E_SEND_REJECTION_RUNNING: keep this turn active.'
+const SEND_REJECTION_RETRY_PROMPT =
+  'WEWORK_DESKTOP_E2E_SEND_REJECTION_RETRY: queue this send after stale idle state.'
+const SEND_REJECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SEND_REJECTION_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
 const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
 const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
@@ -441,6 +446,7 @@ const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-on
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
+const SEND_REJECTION_ONLY = process.argv.includes('--send-rejection-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const BUILD_ONLY = process.argv.includes('--build-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
@@ -537,6 +543,7 @@ function getActiveOnlyModes() {
     ['--guidance-scroll-only', GUIDANCE_SCROLL_ONLY],
     ['--message-restoration-only', MESSAGE_RESTORATION_ONLY],
     ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
+    ['--send-rejection-only', SEND_REJECTION_ONLY],
     ['--task-plan-only', TASK_PLAN_ONLY],
     ['--build-only', BUILD_ONLY],
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
@@ -6106,9 +6113,34 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
   )
 }
 
-async function revealGroupedModelOption(control, targetOptionId) {
+async function visibleModelOptionId(control, targetOptionIds) {
+  for (const targetOptionId of targetOptionIds) {
+    const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+    await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+    const metrics = await control
+      .command('getElementMetrics', targetSelector)
+      .then(value => JSON.parse(value))
+      .catch(() => [])
+    if (
+      metrics.some(
+        metric =>
+          metric.width > 0 &&
+          metric.height > 0 &&
+          metric.bottom > 0 &&
+          metric.right > 0 &&
+          metric.top < 720 &&
+          metric.left < 1280
+      )
+    ) {
+      return targetOptionId
+    }
+  }
+  return null
+}
+
+async function revealGroupedModelOption(control, targetOptionIds) {
   const menu = JSON.parse(await control.command('snapshot', 'body'))
-  if (menu.testIds.includes(targetOptionId)) return true
+  if (await visibleModelOptionId(control, targetOptionIds)) return true
   const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
 
   for (const familyTestId of familyTestIds) {
@@ -6116,8 +6148,7 @@ async function revealGroupedModelOption(control, targetOptionId) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
-    const familyMenu = JSON.parse(await control.command('snapshot', 'body'))
-    if (familyMenu.testIds.includes(targetOptionId)) return true
+    if (await visibleModelOptionId(control, targetOptionIds)) return true
   }
 
   return false
@@ -6161,10 +6192,8 @@ async function ensureModelOptionVisible(control, modelIds) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     if (hasModelOption(menu, targetOptionIds)) return menu
-    for (const targetOptionId of targetOptionIds) {
-      if (await revealGroupedModelOption(control, targetOptionId)) {
-        return JSON.parse(await control.command('snapshot', 'body'))
-      }
+    if (await revealGroupedModelOption(control, targetOptionIds)) {
+      return JSON.parse(await control.command('snapshot', 'body'))
     }
   }
 
@@ -6222,15 +6251,26 @@ async function selectE2EModel(
   )
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
-  const selectionMenu = await ensureModelOptionVisible(control, modelIds)
-  const targetOptionId = modelOptionIdCandidates(modelIds).find(optionId =>
-    selectionMenu.testIds.includes(optionId)
-  )
+  await ensureModelOptionVisible(control, modelIds)
+  const targetOptionIds = modelOptionIdCandidates(modelIds)
+  let targetOptionId = await visibleModelOptionId(control, targetOptionIds)
+  if (!targetOptionId) {
+    const menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (!menu.testIds.includes('model-selector-menu')) {
+      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+        stableMs: 100,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
+    await revealGroupedModelOption(control, targetOptionIds)
+    targetOptionId = await visibleModelOptionId(control, targetOptionIds)
+  }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  await control.command('waitFor', `[data-testid="${targetOptionId}"]`, {
+  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+  await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `[data-testid="${targetOptionId}"]`)
+  await control.command('click', targetSelector)
   const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
     await control.command(
@@ -7387,6 +7427,111 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
 }
 
+async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) {
+  control.setScenario('send_rejection')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    SEND_REJECTION_RUNNING_PROMPT,
+    'send_rejection'
+  )
+  await control.command('waitFor', '[data-testid="pause-response-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    'send-rejection-01-running.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  const runningSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.ok(
+    runningSnapshot.workbench?.currentRuntimeTask,
+    'The send-rejection task did not expose its runtime address'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: runningSnapshot.workbench.currentRuntimeTask,
+      type: 'turn_settled',
+    }),
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.status?.isBusy === false,
+    'The send-rejection fixture did not make the composer available'
+  )
+
+  await control.command('fill', composerSelector, { value: SEND_REJECTION_RETRY_PROMPT })
+  await captureVerificationScreenshot(
+    control,
+    'send-rejection-02-retry-ready.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: SEND_REJECTION_RETRY_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    stableMs: 300,
+  })
+  const queuedSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    queuedSnapshot.testIds.includes('chat-input-error'),
+    false,
+    'The stale busy rejection surfaced as an error instead of queueing the follow-up'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'The queued follow-up remained in the composer'
+  )
+  const userMessages = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(
+    userMessages.includes(SEND_REJECTION_RETRY_PROMPT),
+    false,
+    'The rejected follow-up remained in the conversation'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'send-rejection-03-queued.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  assert.equal(
+    control.scenarioRequests.get('send_rejection')?.length,
+    1,
+    'The rejected follow-up unexpectedly reached the model service'
+  )
+
+  control.releaseSendRejectionResponse()
+  await withTimeout(
+    control.awaitScenarioRequestCount('send_rejection', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The queued follow-up was not sent after the active turn settled'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    {
+      text: SEND_REJECTION_RETRY_PROMPT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The queued follow-up remained after it was sent'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'send-rejection-04-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 async function verifyRateLimitRecovery({ composerSelector, control }) {
   control.setScenario('rate_limit')
   await sendPromptUntilScenarioRequest(control, composerSelector, RATE_LIMIT_PROMPT, 'rate_limit')
@@ -8138,6 +8283,41 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
   await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
+  const readyCountBeforeContinuationReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeContinuationReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The reloaded Wework WebView did not reconnect during the active Goal continuation'
+  )
+  await control.command('waitFor', `[data-testid="${goalRunningTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'Reloading lost the provider-confirmed running state during Goal continuation',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const reloadedContinuationDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.taskExecution?.running === true,
+    'Reloading did not restore the provider-confirmed active Goal turn'
+  )
+  assert.equal(
+    reloadedContinuationDebugSnapshot.pane?.status?.isBusy,
+    true,
+    'Reloading exposed a direct send path while the provider turn was still active'
+  )
+  await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
+
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
   await waitForSnapshot(
@@ -8148,13 +8328,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       snapshot.testIds.includes(goalRunningTestId),
     'The background Goal continuation stopped running or became unread'
   )
-  await captureVerificationScreenshot(control, 'goal-idle-03-background-unread-free.png')
+  await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
 
   control.releaseGoalIdleResponse()
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'goal-idle-04-settled-unread.png')
+  await captureVerificationScreenshot(control, 'goal-idle-05-settled-unread.png')
   await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -8999,6 +9179,9 @@ class DesktopE2EServer {
     this.cancellationCompletionRelease = new Promise(resolvePromise => {
       this.releaseCancellationCompletion = resolvePromise
     })
+    this.sendRejectionCompletionRelease = new Promise(resolvePromise => {
+      this.releaseSendRejectionCompletion = resolvePromise
+    })
     this.sideChatQueueRelease = new Promise(resolvePromise => {
       this.resolveSideChatQueueRelease = resolvePromise
     })
@@ -9246,6 +9429,7 @@ class DesktopE2EServer {
         'goal_restart',
         'turn_navigation',
         'cancellation',
+        'send_rejection',
         'guidance_scroll',
         'queue_management',
         'retry',
@@ -9365,6 +9549,10 @@ class DesktopE2EServer {
 
   releaseCancellationResponse() {
     this.releaseCancellationCompletion()
+  }
+
+  releaseSendRejectionResponse() {
+    this.releaseSendRejectionCompletion()
   }
 
   releaseSideChatQueueResponse() {
@@ -11353,6 +11541,27 @@ class DesktopE2EServer {
       if (response.destroyed || response.writableEnded) return
       response.end(
         createSse([assistantMessage(CANCELLATION_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
+      return
+    }
+
+    if (this.scenario === 'send_rejection') {
+      this.recordScenarioRequest('send_rejection', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(SEND_REJECTION_RUNNING_PROMPT),
+        'The real Codex request did not contain the send-rejection prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.sendRejectionCompletionRelease
+      if (response.destroyed || response.writableEnded) return
+      response.end(
+        createSse([assistantMessage(SEND_REJECTION_COMPLETION_TEXT), responseCompleted(responseId)])
       )
       return
     }
@@ -14180,6 +14389,20 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (SEND_REJECTION_ONLY) {
+      phase = 'send-rejection-project'
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
+      const composerSelector = ACTIVE_COMPOSER_SELECTOR
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      phase = 'send-rejection-notice'
+      await verifyFollowUpSendRejectionNotice({ composerSelector, control })
+      console.log(`Wework desktop send-rejection E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
@@ -15219,6 +15442,9 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('resilience')) {
+      phase = 'send-rejection-notice'
+      await verifyFollowUpSendRejectionNotice({ composerSelector, control })
+
       phase = 'queue-management'
       await verifyPausedQueueLifecycle({ composerSelector, control })
 

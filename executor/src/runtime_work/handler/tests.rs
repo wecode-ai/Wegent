@@ -1621,11 +1621,11 @@ fn runtime_model_switch_marker_is_only_added_when_the_selection_changes() {
 }
 
 #[test]
-fn task_list_running_state_comes_from_executor_memory() {
+fn task_list_running_state_uses_local_execution_or_provider_turn() {
     let index_path = temp_runtime_work_index_path("authoritative-running-state");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    let thread = json!({
+    let provider_running_thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
         "status": {"type": "active"},
@@ -1639,26 +1639,47 @@ fn task_list_running_state_comes_from_executor_memory() {
         ..RuntimeTaskLink::default()
     });
 
-    let idle_link = handler
-        .link_from_thread(&thread)
+    let provider_running_link = handler
+        .link_from_thread(&provider_running_thread)
         .expect("active Codex thread should produce a task link");
 
+    assert!(provider_running_link.running);
+    assert_eq!(provider_running_link.goal_status.as_deref(), Some("active"));
+    assert_eq!(provider_running_link.status, "running");
+    assert_eq!(provider_running_link.thread_status, "active");
+    assert_eq!(
+        provider_running_link.turn_status.as_deref(),
+        Some("inProgress")
+    );
+
+    let thread_status_only = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "status": {"type": "active"},
+        "turns": [{"status": "completed"}]
+    });
+    let idle_link = handler
+        .link_from_thread(&thread_status_only)
+        .expect("idle Codex thread should produce a task link");
+
     assert!(!idle_link.running);
-    assert_eq!(idle_link.goal_status.as_deref(), Some("active"));
     assert_eq!(idle_link.status, "active");
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
     start_test_execution(&handler, "task-1");
 
-    let running_link = handler
-        .link_from_thread(&thread)
+    let local_running_link = handler
+        .link_from_thread(&thread_status_only)
         .expect("executor-owned task should produce a task link");
 
-    assert!(running_link.running);
-    assert_eq!(running_link.status, "running");
-    assert_eq!(running_link.thread_status, "active");
-    assert_eq!(running_link.turn_status.as_deref(), Some("inProgress"));
+    assert!(local_running_link.running);
+    assert_eq!(local_running_link.status, "running");
+    assert_eq!(local_running_link.thread_status, "active");
+    assert_eq!(
+        local_running_link.turn_status.as_deref(),
+        Some("inProgress")
+    );
 
     let _ = fs::remove_file(index_path);
 }

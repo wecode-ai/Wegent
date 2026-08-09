@@ -1,5 +1,6 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
+import i18n from '@/i18n'
 import type { RuntimeTaskLifecycleSnapshot } from './runtimeTaskLifecycle'
 
 export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
@@ -23,7 +24,11 @@ export interface RuntimePaneStatus {
 }
 
 export function isRuntimeTaskBusyError(error: string | null): boolean {
-  return error?.toLowerCase().includes('runtime task is already running') === true
+  const normalizedError = error?.trim().toLowerCase()
+  return (
+    normalizedError?.includes('runtime task is already running') === true ||
+    normalizedError === i18n.t('workbench.runtime_task_running_message').trim().toLowerCase()
+  )
 }
 
 export function deriveRuntimePaneStatus({

@@ -73,7 +73,7 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
-executor 当前进程维护的活跃任务集合是 `running` 的唯一权威来源。Codex 的 thread 列表、transcript、已持久化的任务摘要和 Wework 本地提醒都只能提供内容或历史元数据，不能自行推断任务仍在运行。任务列表、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 重启后不在新进程活跃集合中的旧 thread 应视为空闲，即使 Codex 元数据仍短暂显示 `active` 或 `inProgress`。
+`running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
 
 任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
 
@@ -83,7 +83,9 @@ executor 当前进程维护的活跃任务集合是 `running` 的唯一权威来
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 
-前端运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要 executor 仍把任务保留在当前进程的活跃集合中，两轮之间仍显示任务运行中，但回合状态为 `idle`，因此不显示“正在思考”也不产生未读；Wework 或 executor 重启后，新进程若返回 `running=false`，任务立即显示为空闲，即使 Goal 仍为 `active`，并且不会自动恢复执行。只有未读完成提醒会持久化，且不能反向推断运行状态。
+前端运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要本地执行仍活跃或 provider 仍返回 `inProgress` turn，两轮之间和页面重载后都保持任务运行中；回合没有流式内容时可以为 `idle`，因此不显示“正在思考”也不产生未读。只有未读完成提醒会持久化，且不能反向推断运行状态。
+
+普通持久线程续聊在调用 `turn/start` 前必须通过 `thread/read` 确认当前没有活跃 turn。ephemeral 临时线程不支持 `thread/read(includeTurns)`，因此必须在按任务串行化的发送临界区内检查 executor 本地活跃执行；新 turn 必须先登记为本地运行中，后一个并发发送才能离开临界区。若 provider 拒绝重叠发送，Wework 将任务状态立即恢复为运行中、刷新任务列表，并把用户输入保留在队列；provider 收敛为空闲后复用同一个客户端消息 ID 自动发送，避免丢消息或重复消息。完成或中断事件会清除活跃 turn 并使界面恢复为空闲。“打断并发送”只有在旧 turn 已确认中断后才创建新 turn；持久线程还要确认 provider turn 已停止，ephemeral 临时线程则以本地执行中断为准。
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
