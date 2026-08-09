@@ -130,6 +130,7 @@ export interface ChatInputProps {
   onCompositionEnd?: () => void
   onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
   disabled: boolean
+  pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   error?: string | null
   disabledReason?: string
@@ -515,6 +516,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onCompositionEnd,
     onSubmit,
     disabled,
+    pluginPickerIconOnly = false,
     submitDisabled = false,
     error,
     disabledReason,
@@ -818,6 +820,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         <ProjectChatComposer
           ref={composerRef}
           {...composerProps}
+          pluginPickerIconOnly={pluginPickerIconOnly}
           models={controls.models}
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}

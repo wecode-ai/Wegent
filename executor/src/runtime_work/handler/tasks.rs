@@ -438,6 +438,34 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    pub(super) fn record_superseded_runtime_transcript_turn(
+        &self,
+        local_task_id: &str,
+        turn_id: &str,
+    ) {
+        self.store.update_task(local_task_id, |link| {
+            let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
+                link.runtime_handle = json!({
+                    "supersededTranscriptTurnIds": [turn_id],
+                });
+                return;
+            };
+            let turn_ids = runtime_handle
+                .entry("supersededTranscriptTurnIds")
+                .or_insert_with(|| json!([]));
+            let Some(turn_ids) = turn_ids.as_array_mut() else {
+                *turn_ids = json!([turn_id]);
+                return;
+            };
+            if !turn_ids
+                .iter()
+                .any(|existing| existing.as_str() == Some(turn_id))
+            {
+                turn_ids.push(Value::String(turn_id.to_owned()));
+            }
+        });
+    }
+
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -549,6 +577,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        if let Some(turn_id) = retry_source_turn_id(&payload) {
+            self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
+        }
         self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
@@ -1142,6 +1173,12 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+fn retry_source_turn_id(payload: &Value) -> Option<String> {
+    string_field(payload, "retrySourceTurnId")
+        .or_else(|| string_field(payload, "retry_source_turn_id"))
+        .filter(|turn_id| !turn_id.trim().is_empty())
 }
 
 #[cfg(test)]

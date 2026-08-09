@@ -52,6 +52,11 @@ def claim_repository(
         source_type=source.source_type,
         source_url=source.source_url,
         source_domain=source.source_domain,
+        # Empty rather than left out. `wiki_tables.sql` declares this NOT NULL with
+        # an empty default, and an omitted column is sent as an explicit NULL, which
+        # overrides that default and fails the insert. A repository resolved from its
+        # URL has no platform id to record, and "" is how the legacy rows say so.
+        source_id="",
         description="",
         ext={},
         kind_id=kind_id,

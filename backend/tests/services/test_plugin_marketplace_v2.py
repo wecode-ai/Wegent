@@ -16,6 +16,7 @@ from app.api.endpoints.installed_plugins import (
     _can_publish,
     _sync_global_capabilities,
     install_marketplace_plugin,
+    sync_installed_plugins_to_device,
     uninstall_installed_plugin,
 )
 from app.core.config import settings
@@ -55,7 +56,10 @@ from app.services.plugin_device_installation_service import (
 from app.services.plugin_marketplace_migration_service import (
     PluginMarketplaceMigrationService,
 )
-from app.services.plugin_marketplace_service import PluginMarketplaceService
+from app.services.plugin_marketplace_service import (
+    PluginMarketplaceService,
+    plugin_marketplace_service,
+)
 from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
@@ -1282,7 +1286,7 @@ async def test_all_devices_receive_pending_rows(test_db, test_user, monkeypatch)
     ]
 
 
-def test_device_sync_requires_a_result_for_each_desired_plugin(test_db, test_user):
+def test_device_sync_omitted_plugin_result_stays_pending(test_db, test_user):
     installed, release = _device_install(test_db, test_user.id)
     service = PluginDeviceInstallationService()
 
@@ -1300,8 +1304,158 @@ def test_device_sync_requires_a_result_for_each_desired_plugin(test_db, test_use
     assert row.installed_kind_id == installed.id
     assert row.desired_release_id == release.id
     assert row.actual_release_id == 0
-    assert row.state == "failed"
-    assert row.error_message == "Device response omitted plugin result"
+    assert row.state == "pending"
+    assert row.error_message == ""
+
+
+def test_device_sync_omitted_result_keeps_confirmed_install(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    service = PluginDeviceInstallationService()
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=release.id,
+            actual_release_id=release.id,
+            state="installed",
+        )
+    )
+    test_db.commit()
+
+    service.record_device_sync_result(
+        test_db,
+        user_id=test_user.id,
+        result=DeviceCapabilitySyncResult(
+            device_id="current-device",
+            success=True,
+            plugins=[],
+        ),
+    )
+
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "installed"
+    assert row.actual_release_id == release.id
+    assert row.desired_release_id == release.id
+
+
+def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    service = PluginDeviceInstallationService()
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="new-device",
+            desired_release_id=release.id,
+            actual_release_id=0,
+            state="failed",
+            error_code="PLUGIN_SYNC_FAILED",
+            error_message="Device response omitted plugin result",
+        )
+    )
+    test_db.commit()
+
+    changed = service.ensure_pending_for_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="new-device",
+        reset_failed=True,
+    )
+
+    assert changed == 1
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.device_id == "new-device"
+    assert row.state == "pending"
+    assert row.error_message == ""
+    assert row.desired_release_id == release.id
+
+
+def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    service = PluginDeviceInstallationService()
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="new-device",
+            desired_release_id=release.id,
+            actual_release_id=release.id,
+            state="uninstalling",
+        )
+    )
+    test_db.commit()
+
+    changed = service.ensure_pending_for_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="new-device",
+        reset_failed=True,
+    )
+
+    assert changed == 0
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "uninstalling"
+    assert row.actual_release_id == release.id
+
+
+@pytest.mark.asyncio
+async def test_sync_installed_plugins_to_device_materializes_account_install(
+    test_db, test_user, monkeypatch
+):
+    from contextlib import contextmanager
+
+    installed, release = _device_install(test_db, test_user.id)
+    reconcile_calls: list[int] = []
+
+    def reconcile(_db, *, user_id):
+        reconcile_calls.append(user_id)
+
+    async def sync_device_payload(*, user_id, device_id, payload, timeout_seconds=180):
+        assert user_id == test_user.id
+        assert device_id == "new-device"
+        assert payload.get("plugins")
+        return DeviceCapabilitySyncResult(
+            device_id=device_id,
+            success=True,
+            plugins=[DeviceCapabilityItemResult(id=str(installed.id), status="synced")],
+        )
+
+    @contextmanager
+    def reuse_test_db():
+        yield test_db
+
+    monkeypatch.setattr(
+        plugin_marketplace_service,
+        "reconcile_stale_installed_catalog_refs",
+        reconcile,
+    )
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_device_payload",
+        sync_device_payload,
+    )
+    # Nested test transactions are connection-bound; reuse the fixture session.
+    monkeypatch.setattr(test_db, "close", lambda: None)
+    monkeypatch.setattr(
+        "app.api.endpoints.installed_plugins.get_db_session",
+        reuse_test_db,
+    )
+
+    response = await sync_installed_plugins_to_device(
+        device_id="new-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert reconcile_calls == [test_user.id]
+    assert response.deviceId == "new-device"
+    assert response.pendingCount >= 1
+    assert response.sync.synced == 1
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.device_id == "new-device"
+    assert row.state == "installed"
+    assert row.actual_release_id == release.id
 
 
 def test_device_sync_keeps_disabled_plugin_materialized(test_db, test_user):
@@ -1352,11 +1506,8 @@ def test_catalog_uses_current_device_materialization_state(test_db, test_user):
     assert item.installedPluginId == installed.id
     assert item.latestReleaseId == release.id
     assert item.currentDeviceInstallation is not None
-    assert item.currentDeviceInstallation.state == "failed"
-    assert (
-        item.currentDeviceInstallation.errorMessage
-        == "Device response omitted plugin result"
-    )
+    assert item.currentDeviceInstallation.state == "pending"
+    assert not item.currentDeviceInstallation.errorMessage
 
 
 def test_publish_capability_supports_admin_flag_and_user_allowlist(
@@ -1456,8 +1607,8 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
     assert exc_info.value.status_code == 502
 
     row = test_db.query(PluginDeviceInstallation).one()
-    assert row.state == "failed"
-    assert row.error_message == "Device response omitted plugin result"
+    assert row.state == "pending"
+    assert row.error_message == ""
 
 
 @pytest.mark.asyncio

@@ -180,6 +180,29 @@ def test_a_rejected_write_leaves_the_version_unchanged(
     assert {page_path_of(page) for page in _pages(test_db, generation.id)} == {"index"}
 
 
+def test_a_path_less_write_never_leaves_ext_null(
+    test_db: Session, generation: WikiGeneration
+):
+    """`wiki_tables.sql` declares ``ext`` NOT NULL, and both branches here used to
+    write ``None`` when a section carried no ext of its own.
+
+    A page with a path is rescued by ``set_page_path``, which rewrites ``ext`` as a
+    dict -- so a path-less write is the only shape that reaches the column unrescued.
+    Covered on both branches: the insert, and the update that rewrites a row which
+    already exists. The second is the likelier one, because it meets a constraint the
+    row was already stored under.
+    """
+    _write(test_db, generation, _section(None, "Overview", "v1"))
+    (created,) = _pages(test_db, generation.id)
+    assert created.ext is not None
+
+    _write(test_db, generation, _section(None, "Overview", "v2"))
+
+    (updated,) = _pages(test_db, generation.id)
+    assert updated.content == "v2"
+    assert updated.ext is not None
+
+
 def test_writes_without_a_path_still_match_on_title(
     test_db: Session, generation: WikiGeneration
 ):

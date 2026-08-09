@@ -34,6 +34,7 @@ interface DesktopSidebarNavItemProps {
   onClick: () => void
   selected?: boolean
   testId?: string
+  onPointerEnter?: () => void
 }
 
 export function DesktopSidebarNavItem({
@@ -42,6 +43,7 @@ export function DesktopSidebarNavItem({
   onClick,
   selected,
   testId,
+  onPointerEnter,
 }: DesktopSidebarNavItemProps) {
   return (
     <button
@@ -49,6 +51,7 @@ export function DesktopSidebarNavItem({
       data-testid={testId}
       aria-current={selected ? 'page' : undefined}
       onClick={onClick}
+      onPointerEnter={onPointerEnter}
       className={cn(
         'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
         selected

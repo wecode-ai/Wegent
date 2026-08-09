@@ -4,6 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
+import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
@@ -220,22 +221,28 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
 
   return (
     <div ref={rootRef} className="relative shrink-0">
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid="quick-phrase-button"
-        disabled={disabled}
-        onClick={() => setOpen(value => !value)}
-        className={
-          compact
-            ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
-            : 'flex h-8 w-8 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
-        }
-        aria-label={t('workbench.quick_phrases', '快捷短语')}
-        aria-expanded={open}
+      <Tooltip
+        label={t('workbench.quick_phrases', '快捷短语')}
+        align="start"
+        testId="composer-quick-phrase-tooltip"
       >
-        <MessageSquareText className="h-4 w-4 text-text-primary" strokeWidth={1.5} />
-      </button>
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid="quick-phrase-button"
+          disabled={disabled}
+          onClick={() => setOpen(value => !value)}
+          className={
+            compact
+              ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
+              : 'flex h-8 w-8 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
+          }
+          aria-label={t('workbench.quick_phrases', '快捷短语')}
+          aria-expanded={open}
+        >
+          <MessageSquareText className="h-4 w-4 text-text-primary" strokeWidth={1.5} />
+        </button>
+      </Tooltip>
       {open &&
         typeof document !== 'undefined' &&
         createPortal(

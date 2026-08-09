@@ -35,10 +35,14 @@ class WikiProject(WikiBase):
     project_type = Column(String(50), nullable=False, default="git", index=True)
     source_type = Column(String(50), nullable=False, default="github", index=True)
     source_url = Column(String(500), nullable=False)
-    source_id = Column(String(100), nullable=True)
-    source_domain = Column(String(100), nullable=True)
-    description = Column(Text)
-    ext = Column(JSON, comment="Project extension data")
+    # NOT NULL with an empty default, matching `wiki_tables.sql`, which every
+    # deployment is built from. Declared nullable here, the ORM-created schema used by
+    # tests accepted a NULL that production refuses -- so an insert that omitted one
+    # of these passed every test and failed on the first real database.
+    source_id = Column(String(100), nullable=False, default="", server_default="")
+    source_domain = Column(String(100), nullable=False, default="", server_default="")
+    description = Column(Text, nullable=False, default="")
+    ext = Column(JSON, nullable=False, default=dict, comment="Project extension data")
     # The code wiki this row registers, or 0 for a legacy wiki project. One row per
     # (repository, wiki): a code wiki belongs to its creator, so a repository may
     # have several, one per person who built one.
@@ -122,7 +126,7 @@ class WikiGeneration(WikiBase):
         default=WikiGenerationStatus.PENDING,
         index=True,
     )
-    ext = Column(JSON, comment="Extension fields")
+    ext = Column(JSON, nullable=False, default=dict, comment="Extension fields")
     created_at = Column(DateTime, default=func.now(), index=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime, nullable=False, default="1970-01-01 00:00:00")
@@ -154,7 +158,7 @@ class WikiContent(WikiBase):
     title = Column(String(500), nullable=False)
     content = Column(Text, nullable=False)
     parent_id = Column(Integer, nullable=False, default=0)
-    ext = Column(JSON, comment="Content extension data")
+    ext = Column(JSON, nullable=False, default=dict, comment="Content extension data")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

@@ -53,6 +53,7 @@ interface ProjectChatComposerProps {
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
@@ -122,6 +123,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCompositionEnd,
       onSubmit,
       disabled,
+      pluginPickerIconOnly = false,
       submitDisabled = false,
       disabledReason,
       placeholder,
@@ -413,6 +415,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             canSend={canSend}
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
+            pluginPickerIconOnly={pluginPickerIconOnly}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}

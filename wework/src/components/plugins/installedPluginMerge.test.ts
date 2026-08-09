@@ -130,6 +130,35 @@ describe('mergeInstalledPlugins', () => {
     expect(merged[0]?.spec.pluginId).toBe(4)
   })
 
+  test('prefers a locally created plugin linked to the same published cloud plugin', () => {
+    const local = localCodexPlugin({
+      id: 'dev-tools-local',
+      name: 'dev-tools',
+      pluginKey: 'dev-tools',
+      marketplace: 'wework-personal',
+    })
+    local.spec.origin = 'created'
+    local.spec.sourcePayload = {
+      ...local.spec.sourcePayload,
+      cloudPluginId: 4,
+      cloudReleaseId: 6,
+    }
+
+    const merged = mergeInstalledPlugins(
+      [cloudPlugin({ displayName: 'Dev Tools' })],
+      [local],
+      'current-device'
+    )
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.metadata.labels).toMatchObject({ id: 'dev-tools-local' })
+    expect(merged[0]?.spec.origin).toBe('created')
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      cloudPluginId: 4,
+      cloudInstalledPluginId: '4',
+    })
+  })
+
   test('keeps local Codex installs when there are no cloud installs', () => {
     const merged = mergeInstalledPlugins([], [localCodexPlugin()], 'current-device')
     expect(merged).toHaveLength(1)

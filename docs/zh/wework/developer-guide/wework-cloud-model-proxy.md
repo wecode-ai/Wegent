@@ -70,6 +70,17 @@ Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"
 
 这个映射属于单次模型请求的协议上下文，不写入模型配置，也不依赖根据工具名猜测 namespace。不同 namespace 中的同名工具仍能准确路由到各自的执行器。
 
+### App 工具按需展开
+
+Wework 不应在新会话的第一次模型请求中注入所有 App 和浏览器子工具的完整 schema。Codex 启动配置只启用 Remote Apps 和 `tool_search`，由模型先搜索需要的 namespace，再把搜索结果中的子工具加入后续模型请求：
+
+- 原生支持 Codex `tool_search` 和 namespace tools 的 Responses 模型直接使用原协议，executor 不重复转换。
+- OpenAI Chat Completions、Anthropic Messages 等不支持 namespace tools 的模型由 executor 在协议边界展开本次 `tool_search` 已命中的 namespace。未命中的 App 工具不能出现在请求中。
+- executor 必须同时转换当前工具列表、历史 tool call、tool result 和显式 `tool_choice`，并在返回 Codex 前恢复原 namespace 身份。
+- 普通消息只携带精简的 `tool_search` 入口；新增 App 或浏览器工具时，不得让首次请求大小随全部工具 schema 线性增长。
+
+协议转换 E2E 必须覆盖 Responses、Chat Completions 和 Anthropic Messages，验证首次请求未展开 namespace、搜索后只出现命中的工具、工具调用与结果可以往返，并对首次工具 JSON 大小设置上限。
+
 ## 安全收益
 
 - Wework 桌面端和本地 executor 永远不会拿到真实 provider `api_key`。

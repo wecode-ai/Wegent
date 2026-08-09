@@ -97,6 +97,9 @@ const GUIDANCE_SCROLL_RESPONSE = [
 const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
 const GUIDANCE_SCROLL_PRE_TOOL_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_PRE_TOOL_TEXT'
 const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
+const EMBEDDED_BROWSER_SETUP_PROMPT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
+const EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
 const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
@@ -183,8 +186,14 @@ const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const CONCURRENT_MEMORY_TASK_COUNT = 10
-const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
-  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 1280 * 1024
+const CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
+)
+const CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+)
+const CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB ?? 64 * 1024
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
@@ -380,7 +389,9 @@ const TOOL_BLOCK_ORDER_PROMPT =
   'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER: run the four requested tools in order.'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
 const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
+const NODE_REPL_TOOL_SEARCH_ID = 'wework-e2e-search-node-repl'
 const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
+const GENERIC_MCP_TOOL_SEARCH_ID = 'wework-e2e-search-generic-mcp'
 const GENERIC_MCP_TOOL_BLOCK_ID = 'wework-e2e-tool-generic-mcp'
 const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
@@ -457,6 +468,7 @@ const OFFICIAL_PLUGIN_SKILL_NAME = 'openai-platform-api-key'
 const OFFICIAL_PLUGIN_SKILL_MARKER = '# OpenAI API Key'
 const OFFICIAL_PLUGIN_MCP_NAMESPACE = 'openai_api_key_local_confirmation'
 const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
+const OFFICIAL_PLUGIN_MCP_SEARCH_ID = 'wework-e2e-search-official-plugin-mcp'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
@@ -2562,6 +2574,14 @@ async function waitForProcessingBlock(
 async function verifyViewImageProcessingBlock(control) {
   const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
   await waitForProcessingBlock(control, viewImageBlockSelector, 'The view_image processing block')
+  const generatedImageGalleryCount = Number(
+    await control.command('getElementCount', '[data-testid="generated-image-gallery"]')
+  )
+  assert.equal(
+    generatedImageGalleryCount,
+    0,
+    'The view_image result incorrectly rendered as a final generated-image artifact'
+  )
   await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
   await control.command(
     'waitFor',
@@ -3450,6 +3470,9 @@ async function waitForBlankConversation(control, composerSelector) {
 async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
   control.setScenario('concurrent_memory')
+  const baselineSamples = await captureStableTotalMemorySamples(control, 'baseline')
+  const baseline = medianMemorySample(baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE))
+  assert.ok(baseline, 'The concurrent memory E2E did not capture a baseline')
   const taskRows = []
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const knownTaskRows = new Set(
@@ -3499,6 +3522,12 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
+  const settledWindow = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const settled = medianMemorySample(settledWindow)
+  assert.ok(settled, 'The concurrent memory E2E did not capture a settled sample window')
+  const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledSampleRangeKiB = memorySampleRangeKiB(settledWindow)
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
@@ -3526,8 +3555,20 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     `${JSON.stringify(
       {
         taskCount: CONCURRENT_MEMORY_TASK_COUNT,
-        limitPhysicalFootprintKiB: CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
-        peak,
+        limits: {
+          maxPeakGrowthKiB: CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
+          maxSettledGrowthKiB: CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+          maxSettledSampleRangeKiB: CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
+        },
+        summary: {
+          baseline,
+          peak,
+          settled,
+          peakGrowthKiB,
+          settledGrowthKiB,
+          settledSampleRangeKiB,
+        },
+        baselineSamples,
         samples,
       },
       null,
@@ -3536,8 +3577,16 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     'utf8'
   )
   assert.ok(
-    peak.physicalFootprintKiB < CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
-    `Wework physical footprint reached ${peak.physicalFootprintKiB} KiB with ten concurrent tasks`
+    peakGrowthKiB <= CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
+    `Wework physical footprint grew by ${peakGrowthKiB} KiB with ten concurrent tasks`
+  )
+  assert.ok(
+    settledGrowthKiB <= CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+    `Wework physical footprint settled ${settledGrowthKiB} KiB above baseline with ten concurrent tasks`
+  )
+  assert.ok(
+    settledSampleRangeKiB <= CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
+    `Wework concurrent memory sample range reached ${settledSampleRangeKiB} KiB`
   )
   control.releaseConcurrentMemoryResponses()
 }
@@ -3658,6 +3707,20 @@ async function captureStableMemorySamples(control, phase, minimumSamples, maximu
     }
     samples.push(await captureMemorySample(control, phase))
     if (samples.length < minimumSamples) continue
+    const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
+  }
+  return samples
+}
+
+async function captureStableTotalMemorySamples(control, phase) {
+  const samples = []
+  while (samples.length < MEMORY_MAX_BASELINE_SAMPLES) {
+    if (samples.length > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+    samples.push(await captureTotalMemorySample(control, phase))
+    if (samples.length < MEMORY_MIN_BASELINE_SAMPLES) continue
     const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
     if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
   }
@@ -4746,11 +4809,11 @@ async function verifyPluginLifecycle({ control, fixture }) {
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('official_plugin', 4, WORKBENCH_READY_TIMEOUT_MS)
+  await control.awaitScenarioRequestCount('official_plugin', 5, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(
     control.scenarioRequests.get('official_plugin')?.length,
-    4,
-    'The official plugin flow did not execute the expected skill-read and direct MCP-call turns'
+    5,
+    'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
@@ -4979,6 +5042,28 @@ async function verifyMarketplacePluginLifecycle({
     /Start chat|立即对话/,
     'The installed plugin did not expose its chat action'
   )
+  const manageSelector = `[data-testid="plugin-marketplace-manage-${pluginId}"]`
+  await control.command('waitFor', manageSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', manageSelector)
+  await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const manageOpenedDetail = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    manageOpenedDetail.testIds.includes('plugin-management-page-content'),
+    false,
+    'Marketplace manage opened the management list instead of the plugin detail'
+  )
+  await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', actionsSelector)
+  await control.command('waitFor', trySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'marketplace-plugins-03-installed.png')
 
   await control.command('click', actionsSelector)
@@ -7091,18 +7176,11 @@ async function verifySideChatAttachmentIsolation({
   await control.command('click', '[data-testid="right-workspace-chat-option"]')
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
-  const workbenchWidth = Number.parseFloat(
-    await control.command('getStyle', ACTIVE_WORKBENCH_SELECTOR, { value: 'width' })
-  )
-  const panelWidthStyle = await control.command('getInlineStyle', rightPanelShellSelector, {
-    value: 'width',
-  })
-  const chatWidthMatch = panelWidthStyle.match(/^calc\(100% - ([\d.]+)px\)$/)
-  assert.ok(chatWidthMatch, `Unexpected right-panel width style: ${panelWidthStyle}`)
-  const panelWidth = workbenchWidth - Number.parseFloat(chatWidthMatch[1])
-  assert.ok(
-    panelWidth >= 400 && panelWidth <= 440,
-    `The temporary-chat-only right panel was ${panelWidth}px wide instead of about 420px`
+  await waitForElementWidth(
+    control,
+    rightPanelShellSelector,
+    width => width >= 400 && width <= 440,
+    'The temporary-chat-only right panel'
   )
   await captureVerificationScreenshot(control, '01-side-chat-compact-width.png')
 
@@ -7452,6 +7530,18 @@ function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
   }))
 }
 
+function toolSearchCall(callId, argumentsValue) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'tool_search_call',
+      call_id: callId,
+      execution: 'client',
+      arguments: argumentsValue,
+    },
+  }
+}
+
 function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
@@ -7726,18 +7816,13 @@ function selectTool(request, name, argumentsValue) {
 }
 
 function selectOfficialPluginMcpTool(request, argumentsValue) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
-  assert.ok(
-    !tools.some(tool => tool?.type === 'tool_search'),
-    'Real Codex still advertised the removed tool_search surface'
-  )
-  const namespaces = tools.filter(
+  const namespaces = requestToolSearchResults(request).filter(
     candidate => candidate?.type === 'namespace' && candidate.name === OFFICIAL_PLUGIN_MCP_NAMESPACE
   )
   assert.equal(
     namespaces.length,
     1,
-    'Real Codex did not directly advertise exactly one official plugin MCP namespace'
+    'tool_search did not return exactly one official plugin MCP namespace'
   )
   const namespace = namespaces[0]
   const matchingTools = namespace.tools?.filter(
@@ -7748,32 +7833,94 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
   assert.equal(
     matchingTools?.length,
     1,
-    'The official plugin MCP namespace did not expose exactly one destination confirmation tool'
+    'The searched official plugin MCP namespace did not expose exactly one destination confirmation tool'
   )
   const tool = matchingTools[0]
   assert.ok(
     tool.description.includes(`plugin \`${OFFICIAL_PLUGIN_DISPLAY_NAME}\``),
-    'The direct MCP tool did not retain official plugin provenance'
+    'The searched MCP tool did not retain official plugin provenance'
   )
   assert.deepEqual(
     new Set(tool.parameters?.required),
     new Set(['workspacePath', 'targetPath']),
-    'The direct MCP tool did not require both workspace confinement inputs'
+    'The searched MCP tool did not require both workspace confinement inputs'
   )
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
-  const namespace = tools.find(
+  const namespace = requestToolSearchResults(request).find(
     candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
   )
-  assert.ok(namespace, `Real Codex did not advertise MCP namespace ${namespaceName}`)
+  assert.ok(namespace, `tool_search did not return MCP namespace ${namespaceName}`)
   const tool = namespace.tools?.find(
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
-  assert.ok(tool, `MCP namespace ${namespaceName} did not advertise ${toolName}`)
+  assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
+}
+
+function selectConvertedTool(request, toolName, argumentsValue) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const name = names.find(
+    candidate => candidate === toolName || candidate.endsWith(`__${toolName}`)
+  )
+  assert.ok(name, `Converted request did not expose ${toolName}: ${names.join(', ')}`)
+  return { name, arguments: argumentsValue }
+}
+
+function selectToolSearch(request, query) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const searchTools = tools.filter(
+    tool =>
+      tool?.type === 'tool_search' ||
+      (tool?.type === 'function' &&
+        (tool?.name === 'tool_search' || tool?.function?.name === 'tool_search'))
+  )
+  assert.equal(searchTools.length, 1, 'Real Codex did not advertise exactly one tool_search tool')
+  assert.equal(
+    tools.some(tool => tool?.type === 'namespace'),
+    false,
+    'Real Codex eagerly advertised namespace tools before tool_search'
+  )
+  assert.equal(
+    toolNames.some(name => /(^|__)browser_/.test(name)),
+    false,
+    `Real Codex eagerly advertised Wework browser tools before tool_search: ${toolNames.join(', ')}`
+  )
+  const encodedTools = Buffer.byteLength(JSON.stringify(tools))
+  assert.ok(
+    encodedTools < 32 * 1024,
+    `Real Codex first-turn tool payload exceeded 32 KiB: ${encodedTools} bytes`
+  )
+  return { query, limit: 8 }
+}
+
+function requestToolSearchResults(request) {
+  const outputs = []
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (typeof value === 'string') {
+      try {
+        visit(JSON.parse(value))
+      } catch {
+        // Non-JSON strings cannot contain tool search results.
+      }
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value.tools)) {
+      outputs.push(...value.tools)
+    }
+    Object.values(value).forEach(visit)
+  }
+  visit(request.input ?? [])
+  return outputs
 }
 
 function selectShellTool(request, workspacePath) {
@@ -8788,6 +8935,7 @@ class DesktopE2EServer {
     this.matrixCase = null
     this.matrixState = null
     this.toolLessPrewarmHandled = false
+    this.embeddedBrowserSetupToolLessPrewarmHandled = false
     this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
@@ -9062,6 +9210,7 @@ class DesktopE2EServer {
     assert.ok(
       [
         'initial',
+        'embedded_browser_setup',
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
@@ -9953,6 +10102,16 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'embedded_browser_setup' &&
+      !this.embeddedBrowserSetupToolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.embeddedBrowserSetupToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'view_image' &&
       this.viewImageStage === 'initial' &&
       !this.viewImageToolLessPrewarmHandled &&
@@ -10025,6 +10184,16 @@ class DesktopE2EServer {
           true,
           'The earlier command output did not return through the real Codex tool loop'
         )
+        const argumentsValue = selectToolSearch(body, 'node_repl js')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          toolSearchCall(NODE_REPL_TOOL_SEARCH_ID, argumentsValue),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
         const tool = selectMcpTool(body, 'node_repl', 'js', {
           code: "nodeRepl.write({ status: 'ready', value: 42 })",
         })
@@ -10041,7 +10210,7 @@ class DesktopE2EServer {
         return
       }
 
-      if (requestNumber === 3) {
+      if (requestNumber === 4) {
         assert.equal(
           requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
           true,
@@ -10053,6 +10222,16 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
+        const argumentsValue = selectToolSearch(body, 'github issue details')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          toolSearchCall(GENERIC_MCP_TOOL_SEARCH_ID, argumentsValue),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 5) {
         const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
           owner: 'wecode-ai',
           repo: 'Wegent',
@@ -10071,7 +10250,7 @@ class DesktopE2EServer {
         return
       }
 
-      if (requestNumber === 4) {
+      if (requestNumber === 6) {
         assert.equal(
           requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
           true,
@@ -10092,7 +10271,7 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(requestNumber, 5, `Unexpected tool-block-order request ${requestNumber}`)
+      assert.equal(requestNumber, 7, `Unexpected tool-block-order request ${requestNumber}`)
       assert.equal(
         requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
         true,
@@ -10122,6 +10301,20 @@ class DesktopE2EServer {
         ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
         ...functionCall('wework-e2e-view-image', image.name, image.arguments),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'embedded_browser_setup') {
+      this.recordScenarioRequest('embedded_browser_setup', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(EMBEDDED_BROWSER_SETUP_PROMPT),
+        'The embedded-browser setup request lost its local-task prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -10796,6 +10989,19 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
+        const argumentsValue = selectToolSearch(
+          body,
+          `${OFFICIAL_PLUGIN_DISPLAY_NAME} ${OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION}`
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          toolSearchCall(OFFICIAL_PLUGIN_MCP_SEARCH_ID, argumentsValue),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
         const mcpTool = selectOfficialPluginMcpTool(body, {
           workspacePath: this.workspacePath,
           targetPath: '../outside.env',
@@ -10814,7 +11020,7 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(requestNumber, 4, `Unexpected official plugin request ${requestNumber}`)
+      assert.equal(requestNumber, 5, `Unexpected official plugin request ${requestNumber}`)
       assert.ok(
         requestText.includes('The env file must be inside the selected workspace.'),
         'The official plugin MCP server did not execute and return its validation result'
@@ -11586,14 +11792,23 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
+      const argumentsValue = selectToolSearch(body, 'Wework browser open')
+      state.stage = 'awaiting_browser_search_output'
+      this.writeLocalToolSearchCall(response, model, argumentsValue)
+      return
+    }
+    if (state.stage === 'awaiting_browser_search_output') {
+      this.assertLocalConversation(model, body, {
+        includes: [],
+        excludes: [followUpPrompt],
+      })
+      this.assertLocalApplyPatchTool(model, body)
+      const browserArguments = { url: this.url }
+      selectMcpTool(body, 'wework_browser', 'browser_open', browserArguments)
+      const browserTool = selectConvertedTool(body, 'browser_open', browserArguments)
       this.assertLocalNamespaceTools(model, body)
-      if (model.protocol !== 'responses') {
-        state.stage = 'awaiting_namespace_tool_output'
-        this.writeLocalNamespaceToolCall(response, model)
-        return
-      }
-      state.stage = 'awaiting_tool_output'
-      this.writeLocalToolCall(response, model, localProtocolPatch(model))
+      state.stage = 'awaiting_namespace_tool_output'
+      this.writeLocalNamespaceToolCall(response, model, browserTool)
       return
     }
     if (state.stage === 'awaiting_namespace_tool_output') {
@@ -11803,14 +12018,13 @@ class DesktopE2EServer {
   }
 
   assertLocalNamespaceTools(model, body) {
-    if (model.protocol === 'responses') return
     const tools = Array.isArray(body.tools) ? body.tools : []
     const names = tools
       .map(candidate => candidate?.name ?? candidate?.function?.name)
       .filter(Boolean)
 
     assert.ok(
-      names.includes('browser_snapshot'),
+      names.some(name => name === 'browser_open' || name.endsWith('__browser_open')),
       `${model.protocol} did not flatten the wework_browser namespace: ${names.join(', ')}`
     )
     assert.equal(
@@ -11823,33 +12037,54 @@ class DesktopE2EServer {
   assertLocalNamespaceToolOutput(model, body) {
     const serialized = JSON.stringify(body)
     assert.equal(
-      serialized.includes('unsupported function call: browser_snapshot'),
+      serialized.includes('unsupported function call: browser_open'),
       false,
       `${model.protocol} did not restore the wework_browser namespace on the tool call`
     )
 
+    if (model.protocol === 'responses') {
+      const call = body.input?.find(
+        item =>
+          item?.type === 'function_call' &&
+          (item?.name === 'browser_open' || item?.name?.endsWith('__browser_open'))
+      )
+      assert.ok(call, 'Responses lost the flattened browser_open call history')
+      assert.ok(
+        body.input?.some(
+          item => item?.type === 'function_call_output' && item?.call_id === call?.call_id
+        ),
+        'Responses lost the namespaced browser_open result'
+      )
+      return
+    }
     if (model.protocol === 'chat') {
       const call = body.messages
         ?.flatMap(message => message?.tool_calls ?? [])
-        .find(candidate => candidate?.function?.name === 'browser_snapshot')
-      assert.ok(call, 'Chat lost the flattened browser_snapshot call history')
+        .find(
+          candidate =>
+            candidate?.function?.name === 'browser_open' ||
+            candidate?.function?.name?.endsWith('__browser_open')
+        )
+      assert.ok(call, 'Chat lost the flattened browser_open call history')
       assert.ok(
         body.messages?.some(
           message => message?.role === 'tool' && message?.tool_call_id === call?.id
         ),
-        'Chat lost the namespaced browser_snapshot result'
+        'Chat lost the namespaced browser_open result'
       )
       return
     }
 
     const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
     const call = blocks.find(
-      block => block?.type === 'tool_use' && block?.name === 'browser_snapshot'
+      block =>
+        block?.type === 'tool_use' &&
+        (block?.name === 'browser_open' || block?.name?.endsWith('__browser_open'))
     )
-    assert.ok(call, 'Anthropic lost the flattened browser_snapshot call history')
+    assert.ok(call, 'Anthropic lost the flattened browser_open call history')
     assert.ok(
       blocks.some(block => block?.type === 'tool_result' && block?.tool_use_id === call?.id),
-      'Anthropic lost the namespaced browser_snapshot result'
+      'Anthropic lost the namespaced browser_open result'
     )
   }
 
@@ -12045,13 +12280,40 @@ class DesktopE2EServer {
     this.writeAnthropicToolCall(response, patch)
   }
 
-  writeLocalNamespaceToolCall(response, model) {
-    const callId = `${model.protocol}-local-browser-snapshot`
-    if (model.protocol === 'chat') {
-      this.writeChatToolCall(response, {}, callId, 'browser_snapshot')
+  writeLocalToolSearchCall(response, model, argumentsValue) {
+    const callId = `${model.protocol}-local-browser-search`
+    if (model.protocol === 'responses') {
+      const id = `local-${model.protocol}-browser-search`
+      this.writeSse(response, [
+        responseCreated(id),
+        ...functionCall(callId, 'tool_search', argumentsValue),
+        responseCompleted(id),
+      ])
       return
     }
-    this.writeAnthropicToolCall(response, {}, callId, 'browser_snapshot')
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, argumentsValue, callId, 'tool_search')
+      return
+    }
+    this.writeAnthropicToolCall(response, argumentsValue, callId, 'tool_search')
+  }
+
+  writeLocalNamespaceToolCall(response, model, tool) {
+    const callId = `${model.protocol}-local-browser-open`
+    if (model.protocol === 'responses') {
+      const id = `local-${model.protocol}-browser-open`
+      this.writeSse(response, [
+        responseCreated(id),
+        ...functionCall(callId, tool.name, tool.arguments),
+        responseCompleted(id),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, tool.arguments, callId, tool.name)
+      return
+    }
+    this.writeAnthropicToolCall(response, tool.arguments, callId, tool.name)
   }
 
   writeLocalAssistantMessage(response, model, text) {
@@ -13877,6 +14139,24 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (MEMORY_ONLY) {
+      phase = 'memory-project'
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
+      const composerSelector = ACTIVE_COMPOSER_SELECTOR
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      phase = 'memory-growth'
+      await selectE2EModel(control)
+      await verifyMemoryGrowth({ composerSelector, control })
+      phase = 'concurrent-memory'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+      await verifyConcurrentTaskMemory({ composerSelector, control })
+      console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
@@ -14254,18 +14534,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'background-task-plan'
       await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
       console.log(`Wework background task-plan E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (MEMORY_ONLY) {
-      phase = 'memory-growth'
-      await selectE2EModel(control)
-      await verifyMemoryGrowth({ composerSelector, control })
-      phase = 'concurrent-memory'
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-      await verifyConcurrentTaskMemory({ composerSelector, control })
-      console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
       return
     }
 
