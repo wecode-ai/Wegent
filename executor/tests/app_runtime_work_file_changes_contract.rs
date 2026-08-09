@@ -899,10 +899,45 @@ fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value)
         .as_object_mut()
         .and_then(|object| object.remove("turns"))
         .unwrap_or_else(|| json!([]));
-    turns
+    let turns = turns
         .as_array_mut()
-        .expect("fake transcript turns should be an array")
-        .reverse();
+        .expect("fake transcript turns should be an array");
+    let item_response_cases = turns
+        .iter_mut()
+        .map(|turn| {
+            let turn_id = turn["id"]
+                .as_str()
+                .expect("fake transcript turn should have an id")
+                .to_owned();
+            let items = turn
+                .as_object_mut()
+                .and_then(|object| object.remove("items"))
+                .unwrap_or_else(|| json!([]));
+            turn["itemsView"] = json!("notLoaded");
+            let data = items
+                .as_array()
+                .expect("fake transcript items should be an array")
+                .iter()
+                .map(|item| json!({"turnId": turn_id, "item": item}))
+                .collect::<Vec<_>>();
+            let response = json!({
+                "id": "__REQUEST_ID__",
+                "result": {
+                    "data": data,
+                    "nextCursor": null,
+                },
+            });
+            format!(
+                r#"        *'"turnId":"{}"'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;"#,
+                turn_id,
+                shell_single_quote(&response.to_string()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    turns.reverse();
     thread["turns"] = json!([]);
     let read_response = json!({"id": "__REQUEST_ID__", "result": {"thread": thread}});
     let turns_response = json!({
@@ -932,7 +967,12 @@ while IFS= read -r line; do
     *'"method":"thread/turns/list"'*)
       request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
       printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
-      exit 0
+      ;;
+    *'"method":"thread/items/list"'*)
+      request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+      case "$line" in
+{}
+      esac
       ;;
   esac
 done
@@ -940,6 +980,7 @@ done
         log_path.display(),
         shell_single_quote(&read_response.to_string()),
         shell_single_quote(&turns_response.to_string()),
+        item_response_cases,
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
