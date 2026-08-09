@@ -643,6 +643,33 @@ pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     ))
 }
 
+pub(crate) fn managed_codex_home_paths() -> Result<Vec<PathBuf>, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let storage_root = home.join(WEWORK_HOME_DIR);
+    let legacy_codex_home = storage_root.join("codex");
+    let current_codex_home =
+        default_local_executor_home_path(&home, LOCAL_EXECUTOR_NAMESPACE).join("codex");
+    let mut paths = vec![legacy_codex_home];
+    if !paths.contains(&current_codex_home) {
+        paths.push(current_codex_home);
+    }
+    if let Ok(namespaces) = fs::read_dir(storage_root.join("apps")) {
+        for namespace in namespaces.filter_map(Result::ok) {
+            let Ok(metadata) = fs::symlink_metadata(namespace.path()) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let codex_home = namespace.path().join("codex");
+            if !paths.contains(&codex_home) {
+                paths.push(codex_home);
+            }
+        }
+    }
+    Ok(paths)
+}
+
 fn default_local_executor_home_path(home: &Path, namespace: Option<&str>) -> PathBuf {
     let root = home.join(WEWORK_HOME_DIR);
     namespace
