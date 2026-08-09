@@ -1643,6 +1643,7 @@ function FollowUpProbe() {
   return (
     <div>
       <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
           .map(message => `${message.status}:${message.content}`)
@@ -7806,6 +7807,91 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('shows the runtime rejection in the active pane when a follow-up send fails', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: false,
+      taskId: 'runtime-a',
+      error: 'runtime task is already running',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pane-session-error')).toHaveTextContent(
+        '当前回复仍在进行中，请稍后再发送'
+      )
+    )
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
+  })
+
+  test('shows model preparation cancellation in the active pane', async () => {
+    const prepareRuntimeModel = vi.fn().mockResolvedValue(false)
+    const sendRuntimeMessage = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      prepareRuntimeModel,
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pane-session-error')).toHaveTextContent('已取消模型配置同步')
+    )
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
   })
 
   test('marks an existing runtime task running while a follow-up send is pending', async () => {

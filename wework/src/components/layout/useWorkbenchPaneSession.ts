@@ -199,11 +199,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const input = projectChat.input ?? ''
   const scopedSetInput = projectChat.setInput ?? noopSetInput
-  const [error, setError] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<string | null>(null)
+  const error = projectChat.setComposerError ? (projectChat.composerError ?? null) : localError
+  const setError = projectChat.setComposerError ?? setLocalError
+  const clearError = useCallback(() => setError(null), [setError])
   const setInput = useCallback(
     (value: string) => {
       scopedSetInput(value)
-      setError(null)
+    },
+    [scopedSetInput]
+  )
+  const restoreInputAfterFailure = useCallback(
+    (value: string) => {
+      scopedSetInput(value)
     },
     [scopedSetInput]
   )
@@ -903,23 +911,30 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      lastSubmittedRetryMessageRef.current = createLocalUserMessage(
-        message.content,
-        message.attachments,
-        {
-          id: message.id,
-          createdAt: message.createdAt,
-          runtimeGoalRequest: message.runtimeGoalRequest,
-          codeComments: message.codeComments,
-        }
-      )
-      if (options.appendLocalMessage !== false) {
-        appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
-          id: message.id,
-          createdAt: message.createdAt,
-          runtimeGoalRequest: message.runtimeGoalRequest,
-          codeComments: message.codeComments,
-        })
+      const retryMessage = createLocalUserMessage(message.content, message.attachments, {
+        id: message.id,
+        createdAt: message.createdAt,
+        runtimeGoalRequest: message.runtimeGoalRequest,
+        codeComments: message.codeComments,
+      })
+      lastSubmittedRetryMessageRef.current = retryMessage
+      const appendedLocalMessage = options.appendLocalMessage !== false
+      if (appendedLocalMessage) {
+        const visibleMessage =
+          message.displayContent === undefined
+            ? retryMessage
+            : createLocalUserMessage(message.displayContent, message.attachments, {
+                id: message.id,
+                createdAt: message.createdAt,
+                runtimeGoalRequest: message.runtimeGoalRequest,
+                codeComments: message.codeComments,
+              })
+        setMessages(
+          applyRuntimeConversationAction(currentRuntimeTask, {
+            type: 'user_added',
+            message: visibleMessage,
+          })
+        )
       }
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
@@ -943,14 +958,20 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
         },
-        { onError: options.onError }
+        { onError: options.onError ?? setError }
       )
       if (sent) {
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
+      } else if (appendedLocalMessage) {
+        setMessages(
+          removeRuntimeConversationTurn(currentRuntimeTask, {
+            clientUserMessageId: message.id,
+          })
+        )
       }
       return sent
     },
-    [appendLocalUserMessage, currentRuntimeTask, sendRuntimePaneMessage]
+    [currentRuntimeTask, sendRuntimePaneMessage, setError]
   )
 
   const interruptAndSendQueuedMessage = useCallback(
@@ -1038,6 +1059,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       currentRuntimeTask,
       interruptAndSendRuntimePaneMessage,
       queuedMessages,
+      setError,
       setQueuedMessages,
     ]
   )
@@ -1101,7 +1123,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         retryInFlightRef.current = false
       }
     },
-    [currentRuntimeTask, retryRuntimeFailedMessage]
+    [currentRuntimeTask, retryRuntimeFailedMessage, setError]
   )
 
   const sendRequestUserInputResponse = useCallback(
@@ -1251,7 +1273,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return false
       }
     },
-    [currentRuntimeTask, editLastUserMessage, getRuntimeModelFields, paneStatus.isBusy]
+    [currentRuntimeTask, editLastUserMessage, getRuntimeModelFields, paneStatus.isBusy, setError]
   )
 
   const ignoreRequestUserInput = useCallback(
@@ -1505,11 +1527,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       paneStatus.isBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
+      setError,
       setQueuedMessages,
     ]
   )
 
-  const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<void> =
+  const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<boolean> =
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
@@ -1533,16 +1556,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (goalDraftActive) {
           if (!submittedInput) {
             setError(i18n.t('workbench.goal_objective_required'))
-            return
+            return false
           }
           if (hasCodeComments) {
             setError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
-            return
+            return false
           }
 
           // Errors belong to the previous action; a new goal submission starts fresh.
           setError(null)
-          setInput('')
           if (currentRuntimeTask) {
             const draftGoal = createPendingRuntimeGoal(submittedInput)
             const initialGoal = runtimeGoalCreateInput(draftGoal)
@@ -1565,10 +1587,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 status: 'active',
               })
               if (!response.accepted) {
-                setInput(submittedInput)
+                currentAttachments.forEach(projectChat.addExistingAttachment)
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
-                return
+                return false
               }
+              setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, response.goal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
@@ -1576,23 +1599,32 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               if (options.guideWhenBusy) {
                 await sendQueuedMessageAsGuidance(queuedMessage)
               }
-              return
+              return true
             }
 
-            const sent = await sendRuntimeMessage(queuedMessage, { initialGoal })
+            let sendError: string | null = null
+            const sent = await sendRuntimeMessage(queuedMessage, {
+              initialGoal,
+              onError: nextError => {
+                sendError = nextError
+              },
+            })
             if (sent) {
+              setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
               setGoalDraftActive(false)
               setCodeCommentContexts([])
             } else {
-              setInput(submittedInput)
+              currentAttachments.forEach(projectChat.addExistingAttachment)
+              setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
             }
-            return
+            return sent
           }
 
           const draftGoal = createPendingRuntimeGoal(submittedInput)
           const initialGoal = runtimeGoalCreateInput(draftGoal)
+          setInput('')
           setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
           setGoalDraftActive(false)
           const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
@@ -1605,6 +1637,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
             initialSupervisor: options.initialSupervisor,
+            onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
@@ -1635,6 +1668,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             },
           })
           if (sent) {
+            setInput('')
             if (!isRuntimeTaskAddress(sent)) {
               appendLocalUserMessage(submittedInput, currentAttachments, {
                 runtimeGoalRequest: true,
@@ -1655,28 +1689,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (seededGoalAddress) {
               clearRuntimePaneGoalSeed(seededGoalAddress)
             }
+            restoreInputAfterFailure(submittedInput)
             setGoalDraftActive(true)
             setPendingGoalState(null)
           }
-          return
+          return Boolean(sent)
         }
 
         if (submittedInput === '/compact') {
           if (!currentRuntimeTask) {
             setError('当前对话还没有可压缩的 Codex 线程')
-            return
+            return false
           }
           if (paneStatus.isBusy) {
             setError('当前回复进行中，完成后再压缩上下文')
-            return
+            return false
           }
           if (currentAttachments.length > 0 || hasCodeComments) {
             setError('/compact 不能和附件或代码评论一起发送')
-            return
+            return false
           }
-          setInput('')
-          await compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-          return
+          const compacted = await compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
+          if (compacted) setInput('')
+          return compacted
         }
 
         const pendingInitialGoal =
@@ -1690,7 +1725,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
           })
-          return
+          return true
         }
 
         let resolvedAdditionalContext: RuntimeAdditionalContext | undefined
@@ -1703,16 +1738,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         } catch (cause) {
           console.warn('[Wework composer] failed to load referenced conversation', cause)
           setError(i18n.t('workbench.mention_conversation_load_failed'))
-          return
+          return false
         }
 
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
-        setInput('')
         const visibleSubmittedInput =
           effectiveSubmittedInput ||
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
+          setInput('')
           const optimisticMessage = createLocalUserMessage(
             visibleSubmittedInput,
             currentAttachments,
@@ -1787,11 +1822,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             projectChat.resetAttachments()
             setCodeCommentContexts([])
           } else {
-            // Restore the draft when send is blocked so the user can retry.
-            // Use scoped setter so we do not clear the pane error reported via onError.
-            scopedSetInput(visibleSubmittedInput)
+            restoreInputAfterFailure(visibleSubmittedInput)
           }
-          return
+          return Boolean(sent)
         }
 
         if (hasCodeComments) {
@@ -1813,22 +1846,32 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
-                scopedSetInput(visibleSubmittedInput)
                 currentAttachments.forEach(projectChat.addExistingAttachment)
                 setCodeCommentContexts(codeCommentContexts)
+              } else {
+                setInput('')
               }
-              return
+              return sent
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
-            return
+            setInput('')
+            return true
           }
 
-          const sent = await sendRuntimeMessage(queuedMessage)
+          let sendError: string | null = null
+          const sent = await sendRuntimeMessage(queuedMessage, {
+            onError: nextError => {
+              sendError = nextError
+            },
+          })
           if (sent) {
+            setInput('')
             projectChat.resetAttachments()
             setCodeCommentContexts([])
+          } else {
+            setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }
-          return
+          return sent
         }
 
         const queuedMessage: RuntimePaneQueuedMessage = {
@@ -1846,22 +1889,34 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
-              scopedSetInput(submittedInput)
               currentAttachments.forEach(projectChat.addExistingAttachment)
+            } else {
+              setInput('')
             }
-            return
+            return sent
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
+          setInput('')
           if (options.guideWhenBusy) {
             await sendQueuedMessageAsGuidance(queuedMessage)
           }
-          return
+          return true
         }
 
-        const sent = await sendRuntimeMessage(queuedMessage)
+        let sendError: string | null = null
+        const sent = await sendRuntimeMessage(queuedMessage, {
+          onError: nextError => {
+            sendError = nextError
+          },
+        })
         if (sent) {
+          setInput('')
           setCodeCommentContexts([])
+        } else {
+          currentAttachments.forEach(projectChat.addExistingAttachment)
+          setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
         }
+        return sent
       },
       [
         appendLocalUserMessage,
@@ -1879,10 +1934,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         paneStatus.isBusy,
         projectChat,
         queuedMessages.length,
+        restoreInputAfterFailure,
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
         sendRuntimeMessage,
-        scopedSetInput,
+        setError,
         setInput,
         setQueuedMessages,
         setRuntimeGoal,
@@ -2001,13 +2057,20 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       projectChat.resetAttachments()
       const sent = await interruptAndSendQueuedMessage(combinedMessage)
       if (sent) return
-      scopedSetInput(combinedMessage.displayContent ?? combinedMessage.content)
+      restoreInputAfterFailure(combinedMessage.displayContent ?? combinedMessage.content)
       combinedMessage.attachments?.forEach(projectChat.addExistingAttachment)
       if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
         setCodeCommentContexts(combinedMessage.codeComments)
       }
     },
-    [input, interruptAndSendQueuedMessage, projectChat, queuedMessages, scopedSetInput, setInput]
+    [
+      input,
+      interruptAndSendQueuedMessage,
+      projectChat,
+      queuedMessages,
+      restoreInputAfterFailure,
+      setInput,
+    ]
   )
 
   const compactContext = useCallback(async () => {
@@ -2020,7 +2083,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return false
     }
     return compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy])
+  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, setError])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')
@@ -2231,6 +2294,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     input,
     setInput,
     error,
+    clearError,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
     waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,
