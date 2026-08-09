@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import create_access_token, get_password_hash, pwd_context
 from app.db.base import Base
 
 # Import all models to ensure they are registered with same Base instance
@@ -28,6 +28,16 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+
+
+@pytest.fixture(scope="session", autouse=True)
+def use_fast_test_password_hashing() -> Generator[None, None, None]:
+    """Use the minimum bcrypt work factor while exercising password behavior."""
+
+    original_rounds = pwd_context.handler("bcrypt").default_rounds
+    pwd_context.update(bcrypt__rounds=4)
+    yield
+    pwd_context.update(bcrypt__rounds=original_rounds)
 
 
 class FakeIMSessionRedisClient:
