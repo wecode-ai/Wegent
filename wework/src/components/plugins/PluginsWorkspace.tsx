@@ -1,13 +1,4 @@
-import {
-  Boxes,
-  ChevronDown,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-  Settings,
-  Settings2,
-  X,
-} from 'lucide-react'
+import { Boxes, ChevronDown, MoreHorizontal, RefreshCw, Search, Settings2, X } from 'lucide-react'
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -37,6 +28,11 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { isWegentCloudMarketplace, type PluginReference } from '@/features/plugins/pluginNavigation'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
+import {
+  marketplaceSearchScore,
+  normalizeMarketplaceSearchQuery,
+  rankMarketplaceSearchResults,
+} from '@/features/plugins/marketplaceSearch'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
   InstalledPlugin,
@@ -51,6 +47,7 @@ import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginShareDialog } from './PluginShareDialog'
+import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { resolvePluginLogo } from './plugin-assets'
@@ -71,6 +68,7 @@ import {
 type MarketplaceKind = 'local' | 'cloud'
 
 const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const MARKETPLACE_SEARCH_DEBOUNCE_MS = 300
 const INSTALLED_STRIP_VISIBLE_COUNT = 12
 const INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT = 4
 
@@ -242,9 +240,41 @@ function marketplaceComponentCount(item: PluginMarketplaceItem): number {
     (components.apps?.length ?? 0) +
     components.agents.length +
     components.mcps.length +
-    (components.connectors?.length ?? 0) +
     components.hooks.length
   )
+}
+
+function withMarketplaceDetailComponents(
+  item: PluginMarketplaceItem,
+  detail: InstalledPluginItem | null
+): PluginMarketplaceItem {
+  if (!detail) return item
+  return {
+    ...item,
+    components: detail.raw.spec.components,
+  }
+}
+
+const CONNECTOR_DISPLAY_NAMES: Record<string, string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+}
+
+function connectorDisplayName(slug: string): string {
+  const normalized = slug.trim().toLowerCase()
+  if (CONNECTOR_DISPLAY_NAMES[normalized]) return CONNECTOR_DISPLAY_NAMES[normalized]
+  return slug
+    .trim()
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
+    .join(' ')
+}
+
+function requiredConnectionNames(item: PluginMarketplaceItem): string[] {
+  return (item.components.connectors ?? [])
+    .filter(connector => connector.authPolicy === 'on_install')
+    .map(connector => connectorDisplayName(connector.slug))
 }
 
 function marketplaceRowMetaItems(
@@ -329,6 +359,17 @@ function mergeMarketplaceCatalog(
     }
   }
   return Array.from(merged.values())
+}
+
+function mergeMarketplaceSearchResults(
+  cachedItems: PluginMarketplaceItem[],
+  cloudItems: PluginMarketplaceItem[],
+  localItems: PluginMarketplaceItem[]
+): PluginMarketplaceItem[] {
+  return mergeMarketplaceCatalog(
+    [...cachedItems.filter(item => !isLocalMarketplaceItem(item)), ...cloudItems],
+    [...cachedItems.filter(isLocalMarketplaceItem), ...localItems]
+  )
 }
 
 const SELECTED_MARKETPLACE_KEY_STORAGE = 'wework.plugins.selectedMarketplaceKey'
@@ -695,14 +736,17 @@ function PluginMarketplaceRow({
           onOpen()
         }}
       >
-        <div
+        <PluginSourceAvatar
           className={[
             'plugin-market-card-logo',
             logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
           ].join(' ')}
-        >
-          {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-5 w-5 text-violet-600" />}
-        </div>
+          distribution={marketplacePluginDistribution(item)}
+          invertLogoInDark={logo.invertInDark}
+          logoUrl={logo.url}
+          name={item.displayName || item.name}
+          useInitial={logo.isGenericFallback}
+        />
         <div className="plugin-market-card-copy">
           <strong>{item.displayName || item.name}</strong>
           <p>{item.interface?.shortDescription || item.description}</p>
@@ -840,19 +884,18 @@ function PluginMarketplaceRevealButton({
             composerIcon: item.interface?.composerIcon,
           })
           return (
-            <span
+            <PluginSourceAvatar
               key={item.id}
               className={[
                 'plugin-market-reveal-logo',
                 logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
               ].join(' ')}
-            >
-              {logo.url ? (
-                <img src={logo.url} alt="" />
-              ) : (
-                <Boxes className="h-3 w-3 text-violet-600" />
-              )}
-            </span>
+              distribution={marketplacePluginDistribution(item)}
+              invertLogoInDark={logo.invertInDark}
+              logoUrl={logo.url}
+              name={item.displayName || item.name}
+              useInitial={logo.isGenericFallback}
+            />
           )
         })}
       </span>
@@ -907,9 +950,13 @@ interface PluginsWorkspaceProps {
   cloudMarketplaceAvailable?: boolean
   cloudApiBaseUrl?: string
   cloudToken?: string | null
-  projectName?: string | null
-  hasConversationContext?: boolean
   pluginReference?: PluginReference | null
+}
+
+interface PendingMarketplaceInstall {
+  item: PluginMarketplaceItem
+  requiredConnectionNames: string[]
+  promptAfterInstall?: string
 }
 
 export function PluginsWorkspace({
@@ -918,12 +965,11 @@ export function PluginsWorkspace({
   cloudMarketplaceAvailable = true,
   cloudApiBaseUrl,
   cloudToken,
-  projectName,
-  hasConversationContext = false,
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
+  const [isMarketplaceSearchUpdating, setIsMarketplaceSearchUpdating] = useState(false)
   const [marketplaceDistributionFilter, setMarketplaceDistributionFilter] = useState<
     'all' | PluginDistribution
   >('all')
@@ -943,10 +989,7 @@ export function PluginsWorkspace({
   )
   const [pluginOperationNotice, setPluginOperationNotice] =
     useState<PluginOperationNoticeState | null>(null)
-  const [pendingInstall, setPendingInstall] = useState<{
-    item: PluginMarketplaceItem
-    promptAfterInstall?: string
-  } | null>(null)
+  const [pendingInstall, setPendingInstall] = useState<PendingMarketplaceInstall | null>(null)
   const [pendingPluginUninstall, setPendingPluginUninstall] = useState<{
     id: string | number
     name: string
@@ -960,6 +1003,9 @@ export function PluginsWorkspace({
   const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
     Record<string, 'connected' | 'disconnected'>
   >({})
+  const [selectedRequiredConnectionNames, setSelectedRequiredConnectionNames] = useState<
+    string[] | null
+  >(null)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [marketplaceLoadingMessage, setMarketplaceLoadingMessage] = useState('')
   const [marketplaceRefreshTick, setMarketplaceRefreshTick] = useState(0)
@@ -976,6 +1022,10 @@ export function PluginsWorkspace({
   )
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
+  const marketplaceSearchInputRef = useRef<HTMLInputElement>(null)
+  const marketplaceScrollRegionRef = useRef<HTMLDivElement>(null)
+  const marketplaceReturnScrollTopRef = useRef<number | null>(null)
+  const preparingInstallPluginIdsRef = useRef(new Set<string | number>())
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(rememberedMarketplaceKey)
@@ -1013,7 +1063,7 @@ export function PluginsWorkspace({
   )
   const hasMarketplace = selectedMarketplace !== null
 
-  const normalizedQuery = query.trim().toLowerCase()
+  const normalizedQuery = normalizeMarketplaceSearchQuery(query)
 
   const applyLocalMarketplaceState = useCallback(
     (state: Awaited<ReturnType<typeof localPluginApi.readState>>) => {
@@ -1512,11 +1562,15 @@ export function PluginsWorkspace({
       })
   }
 
-  const tryLocalInstalledPluginInChat = (pluginId: string | number) => {
+  const tryLocalInstalledPluginInChat = (pluginId: string | number, prompt?: string) => {
     localPluginApi
       .readInstalledPluginForTrial(pluginId)
       .then(plugin => {
-        if (!tryPluginInChat(plugin)) {
+        const queued = prompt
+          ? queuePluginPromptTrial(plugin, prompt, { openInNewChat: true })
+          : tryPluginInChat(plugin)
+        if (prompt && queued) navigateTo('/')
+        if (!queued) {
           setPluginMarketplaceState(previous => ({
             ...previous,
             error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
@@ -1552,6 +1606,79 @@ export function PluginsWorkspace({
       }))
     }
   }
+
+  const prepareMarketplaceInstallItem = async (
+    item: PluginMarketplaceItem
+  ): Promise<PluginMarketplaceItem> => {
+    const selectedDetail =
+      selectedMarketplacePlugin?.id === item.id ? selectedMarketplacePluginDetail : null
+    const detailedItem = withMarketplaceDetailComponents(item, selectedDetail)
+    const requiresConnection =
+      String(detailedItem.manifest?.authPolicy || '').toLowerCase() === 'on_install'
+    const hasUsefulDetail =
+      marketplaceComponentCount(detailedItem) > 0 &&
+      (!requiresConnection || requiredConnectionNames(detailedItem).length > 0)
+    if (hasUsefulDetail || !isLocalMarketplaceItem(item)) return detailedItem
+
+    const marketplaceId = localMarketplaceIdFromItem(item)
+    if (!marketplaceId) return detailedItem
+    try {
+      const detail = await localPluginApi.readMarketplacePluginDetail(marketplaceId, item.name)
+      return withMarketplaceDetailComponents(item, toInstalledPluginItem(detail))
+    } catch {
+      return detailedItem
+    }
+  }
+
+  const connectionNamesRequiredForInstall = useCallback(
+    async (item: PluginMarketplaceItem): Promise<string[]> => {
+      const requiredConnectors = (item.components.connectors ?? []).filter(
+        connector => connector.authPolicy === 'on_install'
+      )
+      if (requiredConnectors.length === 0) return []
+
+      let connectedCloudSlugs = new Set<string>()
+      if (
+        cloudApiBaseUrl &&
+        cloudToken &&
+        requiredConnectors.some(connector => !isLocalConnector(connector))
+      ) {
+        try {
+          const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
+          connectedCloudSlugs = new Set(
+            apps
+              .filter(app => app.connection.status === 'connected')
+              .map(app => app.slug.trim().toLowerCase())
+          )
+        } catch {
+          // Treat unavailable connection state as requiring authorization.
+        }
+      }
+
+      const pending = await Promise.all(
+        requiredConnectors.map(async connector => {
+          if (!isLocalConnector(connector)) {
+            return connectedCloudSlugs.has(connector.slug.trim().toLowerCase())
+              ? null
+              : connector.slug
+          }
+          try {
+            const health = await localConnectorAuthHealth({
+              pluginKey: item.name,
+              connectorSlug: connector.slug,
+              localAuth: connector.localAuth ?? null,
+            })
+            return localQrManageActionFromHealth(health) === 'logout' ? null : connector.slug
+          } catch {
+            return connector.slug
+          }
+        })
+      )
+
+      return pending.filter((slug): slug is string => Boolean(slug)).map(connectorDisplayName)
+    },
+    [cloudApiBaseUrl, cloudToken]
+  )
 
   const installMarketplacePlugin = (item: PluginMarketplaceItem, promptAfterInstall?: string) => {
     const installFromLocal = isLocalMarketplaceItem(item)
@@ -1619,11 +1746,16 @@ export function PluginsWorkspace({
       const marketplaceId = localMarketplaceIdFromItem(item)
       if (marketplaceId) {
         void localPluginApi.selectMarketplace(marketplaceId).then(() => {
-          tryLocalInstalledPluginInChat(trialPluginId)
+          tryLocalInstalledPluginInChat(trialPluginId, promptAfterInstall)
         })
         return
       }
-      if (!tryPluginInChat((installed ?? toMarketplaceInstalledPluginItem(item)).raw)) {
+      const trialPlugin = (installed ?? toMarketplaceInstalledPluginItem(item)).raw
+      const queued = promptAfterInstall
+        ? queuePluginPromptTrial(trialPlugin, promptAfterInstall, { openInNewChat: true })
+        : tryPluginInChat(trialPlugin)
+      if (promptAfterInstall && queued) navigateTo('/')
+      if (!queued) {
         setPluginMarketplaceState(previous => ({
           ...previous,
           error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
@@ -1635,12 +1767,31 @@ export function PluginsWorkspace({
       return
     }
 
-    setPendingInstall({ item, promptAfterInstall })
+    if (preparingInstallPluginIdsRef.current.has(item.id)) return
+    preparingInstallPluginIdsRef.current.add(item.id)
+    void prepareMarketplaceInstallItem(item)
+      .then(async preparedItem => {
+        if (promptAfterInstall) {
+          executeMarketplaceInstall({
+            item: preparedItem,
+            requiredConnectionNames: [],
+            promptAfterInstall,
+          })
+          return
+        }
+        setPendingInstall({
+          item: preparedItem,
+          requiredConnectionNames: await connectionNamesRequiredForInstall(preparedItem),
+        })
+      })
+      .finally(() => {
+        preparingInstallPluginIdsRef.current.delete(item.id)
+      })
   }
 
-  const executePendingInstall = () => {
-    if (!pendingInstall) return
-    const { item, promptAfterInstall } = pendingInstall
+  function executeMarketplaceInstall(install: PendingMarketplaceInstall | null = pendingInstall) {
+    if (!install) return
+    const { item, promptAfterInstall } = install
     if (installingMarketplacePluginIds.has(item.id)) return
 
     const localMarketplaceId = localMarketplaceIdFromItem(item)
@@ -1743,7 +1894,10 @@ export function PluginsWorkspace({
                   defaultValue: `${item.displayName || item.name} 已安装`,
                 }),
         })
-        if (promptAfterInstall && queuePluginPromptTrial(installed.raw, promptAfterInstall)) {
+        if (
+          promptAfterInstall &&
+          queuePluginPromptTrial(installed.raw, promptAfterInstall, { openInNewChat: true })
+        ) {
           navigateTo('/')
         }
       })
@@ -2157,14 +2311,12 @@ export function PluginsWorkspace({
 
     const cloudRequest = cloudMarketplaceAvailable
       ? pluginApi.listMarketplacePlugins({
-          q: normalizedQuery || undefined,
           deviceId: currentDeviceId,
         })
       : Promise.resolve({ items: [] as PluginMarketplaceItem[] })
 
     const localRequest = localPluginApi
       .readState({
-        q: normalizedQuery || undefined,
         mergeAllMarketplaces: true,
         refresh: isExplicitRefresh,
       })
@@ -2202,9 +2354,50 @@ export function PluginsWorkspace({
     localPluginApi,
     marketplaces,
     marketplaceRefreshTick,
-    normalizedQuery,
     pluginApi,
     t,
+  ])
+
+  useEffect(() => {
+    if (!normalizedQuery || isMarketplaceConfigLoading || marketplaces.length === 0) {
+      setIsMarketplaceSearchUpdating(false)
+      return
+    }
+
+    let disposed = false
+    const timeoutId = window.setTimeout(() => {
+      setIsMarketplaceSearchUpdating(true)
+      const cloudRequest = cloudMarketplaceAvailable
+        ? pluginApi.listMarketplacePlugins({ q: normalizedQuery, deviceId: currentDeviceId })
+        : Promise.resolve({ items: [] as PluginMarketplaceItem[] })
+      const localRequest = localPluginApi
+        .readState({ q: normalizedQuery, mergeAllMarketplaces: true })
+        .then(state => state.marketplaceItems)
+
+      void Promise.allSettled([cloudRequest, localRequest]).then(([cloudResult, localResult]) => {
+        if (disposed) return
+        const cloudItems = cloudResult.status === 'fulfilled' ? cloudResult.value.items : []
+        const localItems = localResult.status === 'fulfilled' ? localResult.value : []
+        setPluginMarketplaceState(previous => ({
+          ...previous,
+          items: mergeMarketplaceSearchResults(previous.items, cloudItems, localItems),
+        }))
+        setIsMarketplaceSearchUpdating(false)
+      })
+    }, MARKETPLACE_SEARCH_DEBOUNCE_MS)
+
+    return () => {
+      disposed = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    cloudMarketplaceAvailable,
+    currentDeviceId,
+    isMarketplaceConfigLoading,
+    localPluginApi,
+    marketplaces.length,
+    normalizedQuery,
+    pluginApi,
   ])
 
   useEffect(() => {
@@ -2216,7 +2409,6 @@ export function PluginsWorkspace({
     const revalidateCloudMarketplace = () => {
       void pluginApi
         .listMarketplacePlugins({
-          q: normalizedQuery || undefined,
           deviceId: currentDeviceId,
         })
         .then(response => {
@@ -2251,13 +2443,7 @@ export function PluginsWorkspace({
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.clearInterval(intervalId)
     }
-  }, [
-    cloudMarketplaceAvailable,
-    currentDeviceId,
-    isMarketplaceConfigLoading,
-    normalizedQuery,
-    pluginApi,
-  ])
+  }, [cloudMarketplaceAvailable, currentDeviceId, isMarketplaceConfigLoading, pluginApi])
 
   const selectedPlugin = useMemo(
     () =>
@@ -2400,6 +2586,30 @@ export function PluginsWorkspace({
       disposed = true
     }
   }, [installedPlugins, localPluginApi, selectedMarketplacePlugin])
+
+  useEffect(() => {
+    if (!selectedMarketplacePlugin) {
+      setSelectedRequiredConnectionNames(null)
+      return
+    }
+
+    const detailedItem = withMarketplaceDetailComponents(
+      selectedMarketplacePlugin,
+      selectedMarketplacePluginDetail
+    )
+    let disposed = false
+    setSelectedRequiredConnectionNames(null)
+    void connectionNamesRequiredForInstall(detailedItem).then(names => {
+      if (!disposed) setSelectedRequiredConnectionNames(names)
+    })
+    return () => {
+      disposed = true
+    }
+  }, [
+    connectionNamesRequiredForInstall,
+    selectedMarketplacePlugin,
+    selectedMarketplacePluginDetail,
+  ])
   const marketplaceDistributionLabels = useMemo<Record<PluginDistribution, string>>(
     () => ({
       official: t('workbench.plugins_distribution_official', 'OpenAI官方'),
@@ -2414,20 +2624,24 @@ export function PluginsWorkspace({
     () => marketplaces.filter(isUserAddedMarketplace),
     [marketplaces]
   )
-  const visibleMarketplaceItems = useMemo(
-    () =>
-      pluginMarketplaceState.items.filter(item => {
-        if (marketplaceSourceFilterKey) {
-          const marketplaceId = marketplaceSourceFilterKey.slice('local:'.length)
-          return localMarketplaceIdFromItem(item) === marketplaceId
-        }
-        return (
-          marketplaceDistributionFilter === 'all' ||
-          marketplacePluginDistribution(item) === marketplaceDistributionFilter
-        )
-      }),
-    [marketplaceDistributionFilter, marketplaceSourceFilterKey, pluginMarketplaceState.items]
-  )
+  const visibleMarketplaceItems = useMemo(() => {
+    const filteredItems = pluginMarketplaceState.items.filter(item => {
+      if (marketplaceSourceFilterKey) {
+        const marketplaceId = marketplaceSourceFilterKey.slice('local:'.length)
+        return localMarketplaceIdFromItem(item) === marketplaceId
+      }
+      return (
+        marketplaceDistributionFilter === 'all' ||
+        marketplacePluginDistribution(item) === marketplaceDistributionFilter
+      )
+    })
+    return rankMarketplaceSearchResults(filteredItems, normalizedQuery)
+  }, [
+    marketplaceDistributionFilter,
+    marketplaceSourceFilterKey,
+    normalizedQuery,
+    pluginMarketplaceState.items,
+  ])
   const displayedMarketplaceItems = visibleMarketplaceItems.slice(0, marketplaceVisibleCount)
   const hiddenMarketplaceItems = visibleMarketplaceItems.slice(marketplaceVisibleCount)
   const marketplaceRevealNames = hiddenMarketplaceItems
@@ -2457,20 +2671,49 @@ export function PluginsWorkspace({
           return false
         }
         if (!normalizedQuery) return true
-        return `${plugin.name} ${plugin.description} ${plugin.sourceLabel} ${Object.keys(
-          plugin.componentCounts
-        ).join(' ')}`
-          .toLowerCase()
-          .includes(normalizedQuery)
+        return (
+          marketplaceSearchScore(
+            {
+              name: plugin.raw.spec.source.pluginKey,
+              displayName: plugin.name,
+              author: plugin.raw.spec.author,
+              manifest: plugin.raw.spec.manifest,
+              interface: plugin.raw.spec.interface,
+            },
+            normalizedQuery
+          ) !== null
+        )
       }),
     [installedPlugins, marketplaceDistributionFilter, marketplaceSourceFilterKey, normalizedQuery]
   )
   const installedStripPlugins = visibleInstalledPlugins.slice(0, INSTALLED_STRIP_VISIBLE_COUNT)
   const hiddenInstalledPlugins = visibleInstalledPlugins.slice(INSTALLED_STRIP_VISIBLE_COUNT)
+  const showInstalledStrip =
+    hasMarketplace && (!normalizedQuery || visibleInstalledPlugins.length > 0)
 
   useEffect(() => {
     setMarketplaceVisibleCount(MARKETPLACE_INITIAL_VISIBLE_COUNT)
   }, [marketplaceDistributionFilter, marketplaceRefreshTick, normalizedQuery])
+
+  useEffect(() => {
+    marketplaceReturnScrollTopRef.current = null
+    if (marketplaceScrollRegionRef.current) {
+      marketplaceScrollRegionRef.current.scrollTop = 0
+    }
+  }, [marketplaceDistributionFilter, marketplaceSourceFilterKey, normalizedQuery])
+
+  useEffect(() => {
+    if (selectedMarketplacePluginId !== null) return
+    const returnScrollTop = marketplaceReturnScrollTopRef.current
+    if (returnScrollTop === null) return
+    const frameId = window.requestAnimationFrame(() => {
+      if (marketplaceScrollRegionRef.current) {
+        marketplaceScrollRegionRef.current.scrollTop = returnScrollTop
+        marketplaceReturnScrollTopRef.current = null
+      }
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [selectedMarketplacePluginId])
 
   useEffect(() => {
     if (pluginOperationNotice?.kind !== 'success') return
@@ -2519,6 +2762,14 @@ export function PluginsWorkspace({
     />
   ) : null
 
+  const pendingInstallLogo = pendingInstall
+    ? resolvePluginLogo({
+        pluginKey: pendingInstall.item.name,
+        logo: pendingInstall.item.interface?.logo,
+        composerIcon: pendingInstall.item.interface?.composerIcon,
+      })
+    : null
+
   const pluginOverlayDialogs = (
     <>
       {pendingInstall && (
@@ -2528,15 +2779,15 @@ export function PluginsWorkspace({
             name: pendingInstall.item.displayName || pendingInstall.item.name,
             publisher: pendingInstall.item.author || pendingInstall.item.sourceLabel,
             version: pendingInstall.item.version,
-            logoUrl: resolvePluginLogo({
-              pluginKey: pendingInstall.item.name,
-              logo: pendingInstall.item.interface?.logo,
-              composerIcon: pendingInstall.item.interface?.composerIcon,
-            }).url,
+            logoUrl: pendingInstallLogo?.url,
+            logoDistribution: marketplacePluginDistribution(pendingInstall.item),
+            invertLogoInDark: pendingInstallLogo?.invertInDark,
+            useLogoInitial: pendingInstallLogo?.isGenericFallback,
             componentCount: marketplaceComponentCount(pendingInstall.item),
+            requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
           onCancel={() => setPendingInstall(null)}
-          onConfirm={() => executePendingInstall()}
+          onConfirm={() => executeMarketplaceInstall()}
         />
       )}
       {pendingPluginUninstall && (
@@ -2590,8 +2841,6 @@ export function PluginsWorkspace({
       <>
         <PluginDetailView
           plugin={selectedPlugin}
-          projectName={projectName}
-          hasConversationContext={hasConversationContext}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           actionError={pluginMarketplaceState.error}
           primaryActionLabel={t('workbench.plugins_try_now', '立即对话')}
@@ -2676,6 +2925,13 @@ export function PluginsWorkspace({
       ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
     const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    const detailedMarketplacePlugin = withMarketplaceDetailComponents(
+      selectedMarketplacePlugin,
+      detailPlugin
+    )
+    const declaredConnectionNames = requiredConnectionNames(detailedMarketplacePlugin)
+    const detailRequiredConnectionNames = selectedRequiredConnectionNames ?? declaredConnectionNames
+    const detailRequiresConnection = detailRequiredConnectionNames.length > 0
     const deviceState = selectedMarketplacePlugin.currentDeviceInstallation?.state
     const isInstalled =
       selectedMarketplacePlugin.installed &&
@@ -2711,8 +2967,6 @@ export function PluginsWorkspace({
       <>
         <PluginDetailView
           plugin={detailPlugin}
-          projectName={projectName}
-          hasConversationContext={hasConversationContext}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           accessRole={selectedMarketplacePlugin.accessRole}
           pluginVisibility={selectedMarketplacePlugin.visibility}
@@ -2746,7 +3000,14 @@ export function PluginsWorkspace({
                   ? t('workbench.plugins_try_now', '立即对话')
                   : isFailed
                     ? t('workbench.plugins_retry_install', '重试安装')
-                    : t('workbench.plugins_install_plugin', '安装插件')
+                    : detailRequiresConnection
+                      ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
+                          name:
+                            detailRequiredConnectionNames[0] ||
+                            selectedMarketplacePlugin.displayName ||
+                            selectedMarketplacePlugin.name,
+                        })
+                      : t('workbench.plugins_install_plugin', '安装插件')
           }
           primaryActionIcon={marketplacePrimaryIcon}
           actionMenuBeforePrimary={showDetailActionMenu}
@@ -2790,7 +3051,7 @@ export function PluginsWorkspace({
               }
               return
             }
-            installMarketplacePlugin(selectedMarketplacePlugin)
+            installMarketplacePlugin(detailedMarketplacePlugin)
           }}
           onComponentToggle={(componentKey, enabled) => {
             if (installedDetail) {
@@ -2832,7 +3093,7 @@ export function PluginsWorkspace({
               }
               return
             }
-            installMarketplacePlugin(selectedMarketplacePlugin, prompt)
+            installMarketplacePlugin(detailedMarketplacePlugin, prompt)
           }}
           onManageConnector={slug =>
             void managePluginConnector(slug, installedDetail ?? selectedMarketplacePlugin)
@@ -3026,16 +3287,39 @@ export function PluginsWorkspace({
                   <span className="sr-only">
                     {t('workbench.plugins_search_plugins', '搜索插件')}
                   </span>
-                  <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
                   <input
+                    ref={marketplaceSearchInputRef}
                     value={query}
                     onChange={event => {
                       setQuery(event.target.value)
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Escape' && query) {
+                        event.preventDefault()
+                        setQuery('')
+                      }
                     }}
                     placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
                     data-testid="plugins-search-input"
                     className="plugin-market-search-input"
                   />
+                  {query ? (
+                    <button
+                      type="button"
+                      data-testid="plugins-search-clear-button"
+                      className="plugin-market-search-clear"
+                      aria-label={t('workbench.plugins_clear_search', '清空搜索')}
+                      title={t('workbench.plugins_clear_search', '清空搜索')}
+                      onClick={() => {
+                        setQuery('')
+                        marketplaceSearchInputRef.current?.focus()
+                      }}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+                  )}
                 </label>
               </div>
             </div>
@@ -3043,23 +3327,14 @@ export function PluginsWorkspace({
         )}
 
         <div
+          ref={marketplaceScrollRegionRef}
           data-testid="plugins-market-scroll-region"
           className="plugin-market-scroll-region min-h-0 flex-1 overflow-y-auto pb-14"
         >
-          {hasMarketplace && (
+          {showInstalledStrip && (
             <section className="plugin-installed-strip" data-testid="plugins-installed-strip">
               <div className="plugin-installed-strip-head">
                 <h2>{t('workbench.plugins_installed', '已安装')}</h2>
-                <button
-                  type="button"
-                  data-testid="plugins-installed-manage-button"
-                  className="plugin-installed-settings-button"
-                  data-tooltip={t('workbench.plugins_manage_plugins', '管理插件')}
-                  aria-label={t('workbench.plugins_manage_plugins', '管理插件')}
-                  onClick={() => navigateTo('/plugins/manage')}
-                >
-                  <Settings className="h-[15px] w-[15px]" aria-hidden="true" />
-                </button>
               </div>
               <div
                 className={['-mx-5 md:-mr-10', sidebarCollapsed ? 'md:-ml-6' : 'md:-ml-7'].join(
@@ -3098,20 +3373,19 @@ export function PluginsWorkspace({
                           className="plugin-installed-strip-item"
                           onClick={() => setSelectedPluginId(plugin.id)}
                         >
-                          <span
+                          <PluginSourceAvatar
                             className={[
                               'plugin-installed-strip-logo',
                               logo.source === 'provided'
                                 ? 'plugin-logo-provided'
                                 : 'plugin-logo-fallback',
                             ].join(' ')}
-                          >
-                            {logo.url ? (
-                              <img src={logo.url} alt="" />
-                            ) : (
-                              <Boxes className="h-5 w-5 text-text-secondary" />
-                            )}
-                          </span>
+                            distribution={plugin.distribution}
+                            invertLogoInDark={logo.invertInDark}
+                            logoUrl={logo.url}
+                            name={plugin.name}
+                            useInitial={logo.isGenericFallback}
+                          />
                         </button>
                       )
                     })}
@@ -3144,12 +3418,15 @@ export function PluginsWorkspace({
                                   plugin.raw.spec.interface?.composerIcon,
                               })
                               return (
-                                <span
+                                <PluginSourceAvatar
                                   key={plugin.id}
                                   className="plugin-installed-overflow-preview-logo"
-                                >
-                                  {logo.url ? <img src={logo.url} alt="" /> : <Boxes />}
-                                </span>
+                                  distribution={plugin.distribution}
+                                  invertLogoInDark={logo.invertInDark}
+                                  logoUrl={logo.url}
+                                  name={plugin.name}
+                                  useInitial={logo.isGenericFallback}
+                                />
                               )
                             })}
                         </span>
@@ -3177,10 +3454,10 @@ export function PluginsWorkspace({
           <section
             className={[
               'plugin-market-catalog',
-              hasMarketplace ? 'plugin-market-catalog-after-strip' : '',
+              showInstalledStrip ? 'plugin-market-catalog-after-strip' : '',
             ].join(' ')}
           >
-            {pluginMarketplaceState.isLoading ? (
+            {pluginMarketplaceState.isLoading && pluginMarketplaceState.items.length === 0 ? (
               <PluginMarketplaceLoadingSkeleton
                 message={
                   marketplaceLoadingMessage ||
@@ -3223,9 +3500,26 @@ export function PluginsWorkspace({
               </div>
             ) : visibleMarketplaceItems.length === 0 ? (
               <div className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm">
-                <h2 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.plugins_no_marketplace_results', '没有匹配的插件')}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.plugins_no_marketplace_results', '没有匹配的插件')}
+                  </h2>
+                  {normalizedQuery && (
+                    <span
+                      className="plugin-market-search-status"
+                      role="status"
+                      aria-live="polite"
+                      data-testid="plugins-search-result-count"
+                    >
+                      {isMarketplaceSearchUpdating && (
+                        <RefreshCw className="animate-spin" aria-hidden="true" />
+                      )}
+                      {t('workbench.plugins_search_results_count', '{{count}} 个匹配结果', {
+                        count: 0,
+                      })}
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.plugins_no_marketplace_results_hint',
@@ -3238,6 +3532,9 @@ export function PluginsWorkspace({
                   className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
                   onClick={() => {
                     setQuery('')
+                    rememberMarketplaceKey('')
+                    setSelectedMarketplaceKey(cloudMarketplaceKey())
+                    setMarketplaceSourceFilterKey('')
                     setMarketplaceDistributionFilter('all')
                   }}
                 >
@@ -3247,7 +3544,26 @@ export function PluginsWorkspace({
             ) : (
               <section data-testid="plugins-all-section">
                 <div className="plugin-market-section-head">
-                  <h2>{t('workbench.plugins_all', '全部插件')}</h2>
+                  <h2>
+                    {normalizedQuery
+                      ? t('workbench.plugins_search_results_title', '搜索结果')
+                      : t('workbench.plugins_all', '全部插件')}
+                  </h2>
+                  {normalizedQuery && (
+                    <span
+                      className="plugin-market-search-status"
+                      role="status"
+                      aria-live="polite"
+                      data-testid="plugins-search-result-count"
+                    >
+                      {isMarketplaceSearchUpdating && (
+                        <RefreshCw className="animate-spin" aria-hidden="true" />
+                      )}
+                      {t('workbench.plugins_search_results_count', '{{count}} 个匹配结果', {
+                        count: visibleMarketplaceItems.length,
+                      })}
+                    </span>
+                  )}
                 </div>
                 <div className="plugin-market-card-grid">
                   {displayedMarketplaceItems.map(item => (
@@ -3265,7 +3581,11 @@ export function PluginsWorkspace({
                       tryLabel={t('workbench.plugins_try_now', '立即对话')}
                       manageLabel={t('workbench.plugins_manage', '管理')}
                       uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
-                      onOpen={() => setSelectedMarketplacePluginId(item.id)}
+                      onOpen={() => {
+                        const scrollTop = marketplaceScrollRegionRef.current?.scrollTop ?? 0
+                        marketplaceReturnScrollTopRef.current = scrollTop
+                        setSelectedMarketplacePluginId(item.id)
+                      }}
                       onInstall={() => installMarketplacePlugin(item)}
                       onTry={() => tryMarketplacePluginInChat(item)}
                       onManage={() => navigateTo('/plugins/manage')}

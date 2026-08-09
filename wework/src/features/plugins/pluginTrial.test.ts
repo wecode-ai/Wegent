@@ -236,7 +236,7 @@ describe('plugin trial state', () => {
     ])
   })
 
-  test('keeps the selected detail scenario first in the chat guide', () => {
+  test('queues an explicit detail scenario without a secondary chat guide', () => {
     const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
     plugin.spec.components.templates = []
     plugin.spec.components.commands = []
@@ -244,11 +244,7 @@ describe('plugin trial state', () => {
     expect(queuePluginPromptTrial(plugin, 'Review the quarterly report for inconsistencies')).toBe(
       true
     )
-    expect(consumePluginTrial()?.templates[0]).toEqual({
-      name: 'Review the quarterly report for inconsistencies',
-      path: 'selected-use-case',
-      description: 'Review the quarterly report for inconsistencies',
-    })
+    expect(consumePluginTrial()?.templates).toEqual([])
   })
 
   test('keeps a refined detail task concise and removes the duplicate base scenario', () => {

@@ -30,6 +30,7 @@ import {
   isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
+import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSearch'
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 
 export interface LocalCodexPluginsState {
@@ -231,7 +232,13 @@ interface CodexPluginDetail {
     enabled: boolean
   }>
   hooks?: Array<{ key: string; eventName?: string }>
-  apps?: Array<{ id: string; name: string; description?: string | null }>
+  apps?: Array<{
+    id: string
+    name: string
+    slug?: string | null
+    required?: boolean | null
+    description?: string | null
+  }>
   appTemplates?: Array<{
     templateId: string
     name: string
@@ -592,7 +599,25 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     })),
   ]
   components.templates = components.commands
-  components.connectors = (detail.connectors ?? []).map(connector => {
+  const declaredConnectors = detail.connectors ?? []
+  const inferredConnectors: CodexPluginConnector[] =
+    declaredConnectors.length === 0 &&
+    detail.summary.authPolicy?.trim().toLowerCase() === 'on_install'
+      ? (detail.apps ?? [])
+          .filter(app => app.required !== false)
+          .map(app => ({
+            slug:
+              app.slug?.trim() ||
+              app.name
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '') ||
+              detail.summary.name,
+            authPolicy: 'on_install' as const,
+          }))
+      : []
+  components.connectors = [...declaredConnectors, ...inferredConnectors].map(connector => {
     const localAuth = connector.localAuth
     return {
       slug: connector.slug,
@@ -677,6 +702,14 @@ function toMarketplaceItem(
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
   const source = localMarketplaceSource(marketplace)
+  const pluginInterface = plugin.interface as
+    | (PluginInterface & {
+        tags?: string[]
+        keywords?: string[]
+        categories?: string[]
+      })
+    | null
+    | undefined
   return {
     id: catalogItemId(marketplace, plugin),
     remotePluginId: plugin.remotePluginId ?? plugin.id,
@@ -701,6 +734,9 @@ function toMarketplaceItem(
       installPolicy: plugin.installPolicy ?? null,
       authPolicy: plugin.authPolicy ?? null,
       availability: plugin.availability ?? null,
+      tags: pluginInterface?.tags ?? [],
+      keywords: [...(plugin.keywords ?? []), ...(pluginInterface?.keywords ?? [])],
+      categories: pluginInterface?.categories ?? [],
     },
     ownerUserId: 0,
     sourceProvider: source.sourceProvider,
@@ -880,11 +916,7 @@ function filterPluginItems(
   items: PluginMarketplaceItem[],
   query?: string
 ): PluginMarketplaceItem[] {
-  const normalizedQuery = query?.trim().toLowerCase()
-  if (!normalizedQuery) return items
-  return items.filter(item =>
-    `${item.name} ${item.displayName} ${item.description}`.toLowerCase().includes(normalizedQuery)
-  )
+  return rankMarketplaceSearchResults(items, query ?? '')
 }
 
 async function readState(

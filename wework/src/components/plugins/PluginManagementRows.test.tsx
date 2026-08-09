@@ -81,7 +81,7 @@ describe('InstalledPluginRow', () => {
     expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
   })
 
-  test('uses the Wework fallback icon when no logo metadata and no known plugin key', () => {
+  test('uses the plugin initial when no logo metadata and no known plugin key', () => {
     render(
       <InstalledPluginRow
         plugin={createPlugin({ pluginKey: 'unknown-plugin' })}
@@ -90,10 +90,23 @@ describe('InstalledPluginRow', () => {
       />
     )
 
-    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
-      'src',
-      '/plugin-icons/wework.svg'
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveTextContent('G')
+    expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveAttribute(
+      'data-plugin-distribution',
+      'workspace'
     )
+  })
+
+  test('treats the bundled Wework lightning asset as a missing logo', () => {
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin({ logo: '/plugin-icons/wework.svg', pluginKey: 'review' })}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveTextContent('G')
   })
 
   test('uses the switch only for enablement and keeps uninstall in the more menu', () => {

@@ -1,6 +1,8 @@
 import { Boxes } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { PluginDistribution } from '../pluginDistribution'
+import { PluginSourceAvatar } from '../PluginSourceAvatar'
 
 export interface InstallPluginDialogTarget {
   id: string | number
@@ -8,7 +10,11 @@ export interface InstallPluginDialogTarget {
   publisher?: string | null
   version?: string | null
   logoUrl?: string | null
+  logoDistribution?: PluginDistribution
+  invertLogoInDark?: boolean
+  useLogoInitial?: boolean
   componentCount: number
+  requiredConnectionNames?: string[]
 }
 
 interface InstallPluginDialogProps {
@@ -21,6 +27,9 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
   const { t } = useTranslation('common')
   const confirmRef = useRef<HTMLButtonElement>(null)
   const logo = plugin.logoUrl?.trim() || ''
+  const requiredConnectionNames = plugin.requiredConnectionNames ?? []
+  const requiredConnectionName =
+    requiredConnectionNames.length === 1 ? requiredConnectionNames[0] : null
 
   useEffect(() => {
     confirmRef.current?.focus()
@@ -36,18 +45,35 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
         aria-modal="true"
         aria-labelledby="install-plugin-dialog-title"
         data-testid="install-plugin-dialog"
-        className="plugin-dialog-surface w-full max-w-[600px] overflow-hidden"
+        className="plugin-dialog-surface w-full max-w-[480px] overflow-hidden"
         onClick={event => event.stopPropagation()}
       >
         <div className="plugin-dialog-divider border-b px-6 py-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background">
-              {logo ? (
-                <img src={logo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Boxes className="h-5 w-5 text-text-muted" />
-              )}
-            </div>
+            {plugin.useLogoInitial && plugin.logoDistribution ? (
+              <PluginSourceAvatar
+                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
+                distribution={plugin.logoDistribution}
+                logoUrl={logo}
+                name={plugin.name}
+                useInitial
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background">
+                {logo ? (
+                  <img
+                    src={logo}
+                    alt=""
+                    className={[
+                      'h-full w-full object-cover',
+                      plugin.invertLogoInDark ? 'plugin-source-avatar-logo-invert-dark' : '',
+                    ].join(' ')}
+                  />
+                ) : (
+                  <Boxes className="h-5 w-5 text-text-muted" />
+                )}
+              </div>
+            )}
             <div>
               <h2 id="install-plugin-dialog-title" className="heading-subsection">
                 {t('workbench.plugins_install_plugin', '安装插件')}
@@ -72,14 +98,25 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
             )}
           </p>
           <ul className="list-disc space-y-1 pl-5">
-            <li>
-              {t('workbench.plugins_install_gain_components', {
-                count: plugin.componentCount,
-                defaultValue: `获得 ${plugin.componentCount} 项内部能力`,
-              })}
-            </li>
+            {plugin.componentCount > 0 && (
+              <li>
+                {t('workbench.plugins_install_gain_components', {
+                  count: plugin.componentCount,
+                  defaultValue: `包含 ${plugin.componentCount} 项能力`,
+                })}
+              </li>
+            )}
             <li>{t('workbench.plugins_install_gain_all_chats', '所有对话可用')}</li>
-            <li>{t('workbench.plugins_install_gain_auth_separate', '外部账号按需另行授权')}</li>
+            {requiredConnectionNames.length > 0 && (
+              <li>
+                {requiredConnectionName
+                  ? t('workbench.plugins_install_connection_required_named', {
+                      name: requiredConnectionName,
+                      defaultValue: `需要连接 ${requiredConnectionName}`,
+                    })
+                  : t('workbench.plugins_install_connection_required', '需要连接所需应用')}
+              </li>
+            )}
           </ul>
         </div>
         <div className="plugin-dialog-divider flex justify-end gap-2 border-t px-6 py-4">
@@ -98,7 +135,14 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
             className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90"
             onClick={onConfirm}
           >
-            {t('workbench.plugins_install_plugin', '安装插件')}
+            {requiredConnectionNames.length > 0
+              ? requiredConnectionName
+                ? t('workbench.plugins_install_and_connect_named', {
+                    name: requiredConnectionName,
+                    defaultValue: `安装并连接 ${requiredConnectionName}`,
+                  })
+                : t('workbench.plugins_install_and_connect', '安装并连接')
+              : t('workbench.plugins_install_plugin', '安装插件')}
           </button>
         </div>
       </section>

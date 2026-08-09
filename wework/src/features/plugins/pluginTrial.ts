@@ -253,7 +253,7 @@ export function queuePluginPromptTrial(
   return queuePendingPluginTrial({
     input: `${reference} ${normalizedPrompt}`,
     pluginName,
-    templates: pluginTrialTemplates(plugin, normalizedPrompt),
+    templates: [],
     openInNewChat,
   })
 }

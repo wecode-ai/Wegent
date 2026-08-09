@@ -4877,7 +4877,6 @@ async function verifyMarketplacePluginLifecycle({
     text: PLUGIN_DISPLAY_NAME,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'marketplace-plugins-01-marketplace.png')
 
@@ -4886,64 +4885,49 @@ async function verifyMarketplacePluginLifecycle({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="plugin-prompt-0"]')
-  const useCaseGuideSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('plugin-use-case-guide') &&
-      snapshot.testIds.includes('plugin-use-case-confirmation') &&
-      snapshot.testIds.includes('plugin-use-case-goal-input') &&
-      snapshot.testIds.includes('plugin-use-case-context-toggle') &&
-      snapshot.testIds.includes('plugin-use-case-draft-input') &&
-      snapshot.testIds.includes('plugin-use-case-start-button') &&
-      snapshot.text.includes('Verify the Wework desktop plugin lifecycle.'),
-    'The plugin use-case guide dialog did not show the editable task-draft flow'
-  )
-  assert.match(
-    useCaseGuideSnapshot.text,
-    /AI plugin usage guide|AI 插件使用向导/,
-    'The plugin use-case guide was not clearly identified as guidance'
-  )
-  await control.command('click', '[data-testid="plugin-use-case-context-suggestion"]')
-  await control.command('click', '[data-testid="plugin-use-case-option-complete-steps"]')
-  await control.command('click', '[data-testid="plugin-use-case-context-toggle"]')
-  await control.command('fill', '[data-testid="plugin-use-case-context-input"]', {
-    value: 'Only inspect changed files.',
-  })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      /Complete reversible actions and confirm before submitting or deleting|自动完成场景中的可逆操作，遇到提交或删除时先确认/.test(
-        snapshot.text
-      ) &&
-      /recent conversation|当前对话/.test(snapshot.text) &&
-      snapshot.text.includes('Only inspect changed files.'),
-    'The plugin task preview did not react to the selected preference and added context'
-  )
-  await captureVerificationScreenshot(control, 'marketplace-plugins-02-use-case-guide.png')
-  await control.command('press', 'body', { key: 'Escape' })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('plugin-use-case-guide'),
-    'Escape did not close the plugin use-case guide dialog'
-  )
-  await control.command('click', '[data-testid="plugin-detail-back-button"]')
-  await control.command('waitFor', installSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-
-  await control.command('click', installSelector)
-  await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const automaticInstallSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    automaticInstallSnapshot.testIds.includes('install-plugin-dialog'),
+    false,
+    'Selecting a task example still required a separate install confirmation'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-02-example-auth.png')
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForControlValueIncludes(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    'Verify the Wework desktop plugin lifecycle.',
+    'Installing from a task example did not restore the selected task in chat'
+  )
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask === null &&
+      snapshot.workbench?.currentProject?.id === activeProjectId,
+    'Installing from a task example did not open an unsent new conversation'
+  )
+  const exampleChatSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    exampleChatSnapshot.testIds.includes('plugin-trial-template-strip'),
+    false,
+    'An explicitly selected task still opened the secondary plugin guide'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-03-example-in-chat.png')
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const installedSnapshot = await waitForSnapshot(
     control,
@@ -4979,7 +4963,7 @@ async function verifyMarketplacePluginLifecycle({
     /Start chat|立即对话/,
     'The installed plugin did not expose its chat action'
   )
-  await captureVerificationScreenshot(control, 'marketplace-plugins-03-installed.png')
+  await captureVerificationScreenshot(control, 'marketplace-plugins-04-installed.png')
 
   await control.command('click', actionsSelector)
   await control.command('click', rowSelector)
@@ -5034,7 +5018,7 @@ async function verifyMarketplacePluginLifecycle({
     refinedPluginSuggestion,
     'The AI-refined plugin task was not applied to the composer'
   )
-  await captureVerificationScreenshot(control, 'marketplace-plugins-04-used-in-chat.png')
+  await captureVerificationScreenshot(control, 'marketplace-plugins-05-used-in-chat.png')
 
   await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
   await waitForSnapshot(
@@ -5095,7 +5079,7 @@ async function verifyMarketplacePluginLifecycle({
   )
   await captureVerificationScreenshot(
     control,
-    'marketplace-plugins-05b-unmatched-resume-no-auth-card.png'
+    'marketplace-plugins-06-unmatched-resume-no-auth-card.png'
   )
 
   await control.command('click', '[data-testid="plugins-button"]')
@@ -5123,7 +5107,7 @@ async function verifyMarketplacePluginLifecycle({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForMarketplaceInstallStateAfterUninstall(control, pluginId)
-  await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
+  await captureVerificationScreenshot(control, 'marketplace-plugins-07-uninstalled.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
@@ -5140,7 +5124,7 @@ async function verifyMarketplacePluginLifecycle({
   )
   await captureVerificationScreenshot(
     control,
-    'marketplace-plugins-06-composer-after-uninstall.png'
+    'marketplace-plugins-08-composer-after-uninstall.png'
   )
 }
 

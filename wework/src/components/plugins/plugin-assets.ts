@@ -15,6 +15,8 @@ const PLUGIN_ICON_FALLBACKS: Record<string, string> = {
   'release-check': '/plugin-icons/wework.svg',
 }
 
+const GENERIC_PLUGIN_ICON_URL = '/plugin-icons/wework.svg'
+
 function isLocalAssetPath(value: string): boolean {
   if (value.startsWith('file://')) return true
   if (/^[a-zA-Z]:[\\/]/.test(value)) return true
@@ -51,25 +53,24 @@ function isRenderablePluginLogoUrl(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value)
 }
 
-function fallbackPluginIconUrl(pluginKey?: string | null): string {
+function isGenericPluginIconUrl(value?: string | null): boolean {
+  const normalized = value?.trim().split(/[?#]/, 1)[0]?.replace(/\\/g, '/') ?? ''
+  return normalized.endsWith(GENERIC_PLUGIN_ICON_URL)
+}
+
+function fallbackPluginIcon(pluginKey?: string | null): {
+  url: string
+  isGeneric: boolean
+} {
   const normalized = (pluginKey || '').trim().toLowerCase()
-  if (!normalized) return '/plugin-icons/wework.svg'
+  if (!normalized) return { url: GENERIC_PLUGIN_ICON_URL, isGeneric: true }
 
   if (PLUGIN_ICON_FALLBACKS[normalized]) {
-    return PLUGIN_ICON_FALLBACKS[normalized]
+    const url = PLUGIN_ICON_FALLBACKS[normalized]
+    return { url, isGeneric: isGenericPluginIconUrl(url) }
   }
 
-  if (normalized.includes('github')) return '/plugin-icons/github.svg'
-  if (normalized.includes('gitlab')) return '/plugin-icons/gitlab.svg'
-  if (normalized.includes('weibo')) return '/plugin-icons/weibo.svg'
-  if (normalized.includes('analytics') || normalized.includes('data')) {
-    return '/plugin-icons/data-analytics.svg'
-  }
-  if (normalized.includes('openai') || normalized.includes('design')) {
-    return '/plugin-icons/openai.svg'
-  }
-
-  return '/plugin-icons/wework.svg'
+  return { url: GENERIC_PLUGIN_ICON_URL, isGeneric: true }
 }
 
 export function resolvePluginLogoUrl(options: {
@@ -87,16 +88,29 @@ export function resolvePluginLogo(options: {
 }): {
   url: string
   source: 'provided' | 'fallback'
+  isGenericFallback: boolean
+  invertInDark: boolean
 } {
-  const resolved = resolvePluginAssetUrl(options.logo || options.composerIcon)
+  const declaredLogo = options.logo || options.composerIcon
+  const resolved = resolvePluginAssetUrl(declaredLogo)
   if (resolved && isRenderablePluginLogoUrl(resolved)) {
+    const isGenericFallback =
+      isGenericPluginIconUrl(declaredLogo) || isGenericPluginIconUrl(resolved)
     return {
       url: resolved,
-      source: 'provided',
+      source: isGenericFallback ? 'fallback' : 'provided',
+      isGenericFallback,
+      invertInDark: false,
     }
   }
+  const fallback = fallbackPluginIcon(options.pluginKey)
   return {
-    url: fallbackPluginIconUrl(options.pluginKey),
+    url: fallback.url,
     source: 'fallback',
+    isGenericFallback: fallback.isGeneric,
+    invertInDark:
+      fallback.url === '/plugin-icons/github.svg' ||
+      fallback.url === '/plugin-icons/openai.svg' ||
+      fallback.url === '/plugin-icons/data-analytics.svg',
   }
 }

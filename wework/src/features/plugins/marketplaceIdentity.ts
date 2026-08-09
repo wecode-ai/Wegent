@@ -5,6 +5,7 @@ export const INTERNAL_DEVICE_MARKETPLACE_ID = 'wegent'
 const OPENAI_OFFICIAL_MARKETPLACE_IDS = new Set([
   'openai-api-curated',
   'openai-bundled',
+  'openai-curated-remote',
   'openai-primary-runtime',
 ])
 

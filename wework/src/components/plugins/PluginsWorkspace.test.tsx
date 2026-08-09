@@ -1142,14 +1142,24 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
 
-    await userEvent.type(screen.getByTestId('plugins-search-input'), 'missing')
+    const searchInput = screen.getByTestId('plugins-search-input')
+    await userEvent.type(searchInput, 'missing')
 
     expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
     expect(screen.queryByText('Documents')).not.toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/marketplace?q=missing',
-      expect.objectContaining({ method: 'GET' })
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace?q=missing',
+        expect.objectContaining({ method: 'GET' })
+      )
     )
+
+    await userEvent.click(screen.getByTestId('plugins-search-clear-button'))
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(searchInput).toHaveFocus()
+
+    await userEvent.type(searchInput, 'cument')
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
   test('filters marketplace plugins by the prototype distribution tabs', async () => {
@@ -1280,7 +1290,10 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
-    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    const confirmInstall = await screen.findByTestId('install-plugin-dialog-confirm')
+    expect(confirmInstall).toHaveTextContent('安装并连接 GitHub')
+    expect(screen.getByTestId('install-plugin-dialog')).toHaveTextContent('需要连接 GitHub')
+    await userEvent.click(confirmInstall)
 
     const notice = await screen.findByTestId('plugin-operation-notice')
     expect(notice).toHaveAttribute('data-notice-kind', 'authorization')
@@ -1295,6 +1308,46 @@ describe('PluginsWorkspace', () => {
         'success'
       )
     )
+  })
+
+  test('does not request authorization when the required connector is already connected', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({ marketplaceConnectorSlug: 'github' })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    vi.mocked(listWegentConnectorApps).mockResolvedValue([
+      {
+        id: 1,
+        slug: 'github',
+        name: 'GitHub',
+        description: 'Connect GitHub',
+        icon_url: 'https://example.com/github.png',
+        auth_type: 'oauth2',
+        connection: {
+          status: 'connected',
+          external_account_name: 'octocat',
+          granted_scopes: [],
+          expires_at: null,
+        },
+      },
+    ])
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+    const confirmInstall = await screen.findByTestId('install-plugin-dialog-confirm')
+    expect(confirmInstall).toHaveTextContent('安装插件')
+    expect(screen.getByTestId('install-plugin-dialog')).not.toHaveTextContent('需要连接 GitHub')
+    await userEvent.click(confirmInstall)
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    )
+    expect(authorizeWegentConnector).not.toHaveBeenCalled()
   })
 
   test('does not report an account install as installed when this device failed', async () => {
@@ -1503,7 +1556,7 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('tries an installed cloud marketplace plugin from the installed-strip detail page', async () => {
+  test('adds an installed plugin example to a new chat from the detail page', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1520,12 +1573,13 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
-    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    await userEvent.click(screen.getByTestId('plugin-prompt-0'))
 
     expect(window.location.pathname).toBe('/')
     expect(screen.queryByText('Codex plugin is not installed')).not.toBeInTheDocument()
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
+        input: '[$Documents](plugin://documents@wework) Draft a document outline from this chat',
         pluginName: 'Documents',
         openInNewChat: true,
       }
@@ -1624,14 +1678,18 @@ describe('PluginsWorkspace', () => {
               name: 'code-review',
               displayName: 'Code Review',
               logo: '',
-              defaultPrompt: 'Review my current working-tree changes.',
+              defaultPrompt: [
+                'Review my current working-tree changes.',
+                'Compare this branch with its merge base.',
+                'Inspect the latest commit for high-risk issues.',
+              ],
             },
           ],
         },
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} projectName="Wegent" />)
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
 
     expect(await screen.findByText('Code Review')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
@@ -1640,17 +1698,15 @@ describe('PluginsWorkspace', () => {
     await userEvent.click((await screen.findAllByTestId(/^plugin-marketplace-row-/))[0])
 
     expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-fallback')
-    expect(screen.getByText('AI 使用向导')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('plugin-prompt-0'))
-
-    expect(screen.queryByTestId('plugin-use-case-plugin-source')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
-      'Review my current working-tree changes.'
+    expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^plugin-prompt-/)).toHaveLength(3)
+    expect(screen.getByTestId('plugin-prompt-1')).toHaveTextContent(
+      'Code Review Compare this branch with its merge base.'
     )
-    expect(screen.getByTestId('plugin-use-case-confirmation')).toHaveTextContent('这次最关注什么')
-    expect(screen.getByTestId('plugin-use-case-option-test-quality')).toBeChecked()
-    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveTextContent('带入聊天框')
+    expect(screen.getByTestId('plugin-prompt-1')).toHaveAttribute(
+      'data-plugin-distribution',
+      'personal'
+    )
   })
 
   test('opens marketplace plugin detail from the plugin row', async () => {
@@ -1669,37 +1725,11 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('documents-app')).toBeInTheDocument()
     expect(screen.getByText('OpenAI官方')).toBeInTheDocument()
     expect(screen.queryByText('OpenAI官方 · Codex 官方')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
 
     const promptCard = screen.getByTestId('plugin-prompt-0')
-    await userEvent.click(promptCard)
-
-    expect(screen.getByRole('dialog', { name: 'AI 插件使用向导' })).toHaveClass(
-      'plugin-dialog-surface',
-      'max-w-[600px]'
-    )
-    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugin-use-case-plugin-source')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
-      'Draft a document outline from this chat'
-    )
-    expect(screen.getByTestId('plugin-use-case-confirmation')).toHaveTextContent('先生成到什么程度')
-    expect(screen.getByTestId('plugin-use-case-option-draft')).toBeChecked()
-    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveTextContent('安装并带入聊天框')
-    await waitFor(() =>
-      expect(screen.getByTestId('plugin-use-case-guide-initial-focus')).toHaveFocus()
-    )
-
-    await userEvent.tab()
-    expect(screen.getByTestId('plugin-use-case-guide-collapse')).toHaveFocus()
-
-    await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
-    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveFocus()
-    await userEvent.tab()
-    expect(screen.getByTestId('plugin-use-case-guide-collapse')).toHaveFocus()
-
-    await userEvent.keyboard('{Escape}')
-    expect(screen.queryByTestId('plugin-use-case-guide')).not.toBeInTheDocument()
-    await waitFor(() => expect(promptCard).toHaveFocus())
+    expect(promptCard).toHaveTextContent('Documents Draft a document outline from this chat')
+    expect(promptCard).not.toHaveTextContent('安装并试用')
   })
 
   test('opens cloud marketplace plugin detail from a plugin route', async () => {
@@ -1734,11 +1764,11 @@ describe('PluginsWorkspace', () => {
     expect(detailImages.length).toBeGreaterThan(0)
     detailImages.forEach(image => expect(image).toHaveAttribute('src', marketplaceLogo))
     expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-provided')
-    expect(screen.getByText('AI 使用向导')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
 
-  test('installs a marketplace plugin from the detail page with visible progress', async () => {
+  test('automatically installs from a detail example and restores it in a new chat', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1749,21 +1779,18 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
-    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
-    const installDialog = await screen.findByTestId('install-plugin-dialog')
-    expect(installDialog).toHaveClass('plugin-dialog-surface', 'max-w-[600px]')
-    expect(installDialog.querySelector('img')).toHaveAttribute(
-      'src',
-      'asset://localhost/Users/test/plugins/documents/assets/logo.png'
-    )
-    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    await userEvent.click(screen.getByTestId('plugin-prompt-0'))
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
     await waitFor(() =>
-      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      expect(
+        JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')
+      ).toMatchObject({
+        input: expect.stringContaining('Draft a document outline from this chat'),
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
     )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
-    )
+    expect(window.location.pathname).toBe('/')
   })
 
   test('shows marketplace installation errors on the plugin detail page', async () => {
@@ -1866,7 +1893,7 @@ describe('PluginsWorkspace', () => {
     expectCodexAppServerRequest('plugin/list', { cwds: null })
   })
 
-  test('renders Codex upstream marketplaces after the cloud marketplace', async () => {
+  test('treats the OpenAI curated marketplace as a built-in source', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1886,9 +1913,9 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
-    expect(screen.getByTestId('plugins-marketplace-tab-openai-curated-remote')).toHaveTextContent(
-      'OpenAI 官方市场'
-    )
+    expect(
+      screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')
+    ).not.toBeInTheDocument()
     expectCodexAppServerRequest('plugin/list', {
       cwds: null,
     })

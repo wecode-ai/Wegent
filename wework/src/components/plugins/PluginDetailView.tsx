@@ -18,13 +18,11 @@ import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { resolvePluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
-import { buildPluginGuidePresentation, inferPluginGuideKind } from './plugin-guide-presentation'
-import { PluginUseCaseGuideDialog } from './plugin-dialogs/PluginUseCaseGuideDialog'
+import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
-  projectName?: string | null
   onBack: () => void
   backLabel?: string
   onToggle: () => void
@@ -64,7 +62,6 @@ interface PluginDetailViewProps {
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
   actionMenuBeforePrimary?: boolean
-  hasConversationContext?: boolean
 }
 
 interface DetailComponentItem {
@@ -202,10 +199,33 @@ function pluginDisplayDescription(plugin: InstalledPluginItem): string {
 
 interface PluginGuideExample {
   id: string
-  title: string
   prompt: string
-  description: string
-  logoUrl?: string | null
+}
+
+function escapeGuidePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function pluginGuideDisplayPrompt(pluginName: string, prompt: string): string {
+  const normalizedPrompt = prompt.trim()
+  const normalizedName = pluginName.trim()
+  if (!normalizedPrompt || !normalizedName) return normalizedPrompt
+
+  const pluginPattern = escapeGuidePattern(normalizedName)
+  const prefixes = [
+    new RegExp(`^use\\s+${pluginPattern}\\s+to\\s+`, 'i'),
+    new RegExp(`^use\\s+${pluginPattern}\\s+`, 'i'),
+    new RegExp(`^使用\\s*${pluginPattern}\\s*`, 'i'),
+    new RegExp(`^用\\s*${pluginPattern}\\s*`, 'i'),
+  ]
+  const stripped = prefixes.reduce(
+    (value, pattern) => (value === normalizedPrompt ? value.replace(pattern, '') : value),
+    normalizedPrompt
+  )
+  if (!stripped || stripped === normalizedPrompt) return normalizedPrompt
+
+  const [first = '', ...rest] = Array.from(stripped)
+  return `${first.toLocaleUpperCase()}${rest.join('')}`
 }
 
 function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] {
@@ -215,10 +235,7 @@ function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] 
   if (templates.length > 0) {
     return templates.map((template, index) => ({
       id: template.path || `template-${index}`,
-      title: template.name,
       prompt: template.description?.trim() || template.name,
-      description: template.description?.trim() || '',
-      logoUrl: template.logoUrl || template.logoUrlDark,
     }))
   }
 
@@ -234,9 +251,7 @@ function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] 
 
   return examples.map((prompt, index) => ({
     id: `prompt-${index}`,
-    title: prompt,
     prompt,
-    description: '',
   }))
 }
 
@@ -399,7 +414,6 @@ function detailRows(
 
 export function PluginDetailView({
   plugin,
-  projectName,
   onBack,
   backLabel,
   onToggle,
@@ -432,15 +446,10 @@ export function PluginDetailView({
   shareRecipient = false,
   primaryActionIcon = 'try',
   actionMenuBeforePrimary = true,
-  hasConversationContext = false,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
-  const [guideSelection, setGuideSelection] = useState<{
-    pluginId: string
-    guideId: string
-  } | null>(null)
   const raw = plugin.raw
   const isInstalled = raw.spec.installState === 'installed'
   const distributionLabel =
@@ -522,28 +531,6 @@ export function PluginDetailView({
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
   const guideExamples = pluginGuideExamples(plugin)
-  const selectedGuideId =
-    guideSelection?.pluginId === String(plugin.id) ? guideSelection.guideId : null
-  const selectedGuide = guideExamples.find(example => example.id === selectedGuideId) ?? null
-  const selectedGuideInputKind = selectedGuide
-    ? inferPluginGuideKind(selectedGuide.prompt)
-    : 'general'
-  const selectedGuidePresentation = selectedGuide
-    ? buildPluginGuidePresentation({
-        kind: selectedGuideInputKind,
-        prompt: selectedGuide.prompt,
-        title: selectedGuide.title,
-        pluginName: plugin.name,
-        pluginDescription: description,
-        capabilities: componentItems.map(item => ({
-          name: item.name,
-          description: item.description,
-          type: item.type,
-        })),
-        projectName,
-        t,
-      })
-    : null
   const deviceSummary = pluginDeviceSummary(plugin)
   const PrimaryActionIcon =
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
@@ -635,63 +622,65 @@ export function PluginDetailView({
 
   const connectorItems = componentItems.filter(item => item.type === 'connector')
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
-  const primaryGuide = guideExamples[0]
-  const guideTemplateSection = primaryGuide && (
+  const guideTemplateSection = guideExamples.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
         <h2 className="text-base font-medium leading-5 text-text-primary">
-          {t('workbench.plugin_detail_get_started', '开始使用')}
+          {t('workbench.plugin_detail_get_started', '试试这些任务')}
         </h2>
         <p className="text-xs leading-4 text-text-muted">
           {isInstalled
             ? t(
                 'workbench.plugin_detail_get_started_installed_hint',
-                '选择模板打开新对话，可继续修改且不会自动发送'
+                '选择一个示例，带入聊天框后仍可修改且不会自动发送'
               )
             : t(
                 'workbench.plugin_detail_get_started_uninstalled_hint',
-                '先预览使用方式；选择模板后将引导安装'
+                '点击示例后将自动安装并带入聊天框，不会自动发送'
               )}
         </p>
       </div>
-      <button
-        type="button"
-        data-testid="plugin-prompt-0"
-        aria-haspopup="dialog"
-        aria-controls="plugin-use-case-guide-dialog"
-        className="group flex w-full items-center gap-3 rounded-xl bg-surface/60 px-4 py-3 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-        onClick={() =>
-          setGuideSelection({
-            pluginId: String(plugin.id),
-            guideId: primaryGuide.id,
-          })
-        }
-      >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-text-secondary shadow-sm">
-          <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <strong className="block text-sm font-medium leading-5 text-text-primary">
-            {t('workbench.plugin_detail_ai_guide', 'AI 使用向导')}
-          </strong>
-          <span className="block text-xs leading-4 text-text-muted">
-            {t(
-              'workbench.plugin_detail_ai_guide_hint',
-              '回答一个关键问题，生成可编辑、可直接使用的任务'
-            )}
-          </span>
-          <span className="mt-1 block truncate text-xs leading-4 text-text-secondary">
-            {t('workbench.plugin_detail_ai_guide_example', {
-              example: primaryGuide.title,
-              defaultValue: `推荐起点：${primaryGuide.title}`,
-            })}
-          </span>
-        </span>
-        <ArrowRight
-          className="h-4 w-4 shrink-0 text-text-muted transition-colors group-hover:text-text-primary"
-          aria-hidden="true"
-        />
-      </button>
+      <div className="plugin-task-examples" data-plugin-distribution={plugin.distribution}>
+        {guideExamples.map((guide, index) => {
+          const displayPrompt = pluginGuideDisplayPrompt(plugin.name, guide.prompt)
+          return (
+            <button
+              key={guide.id}
+              type="button"
+              data-testid={`plugin-prompt-${index}`}
+              data-plugin-distribution={plugin.distribution}
+              aria-label={t('workbench.plugin_detail_try_example', {
+                example: `${plugin.name} ${displayPrompt}`,
+                defaultValue: `使用示例：${plugin.name} ${displayPrompt}`,
+              })}
+              className="plugin-task-example group"
+              onClick={() => {
+                if (onPromptSelect) {
+                  onPromptSelect(guide.prompt)
+                  return
+                }
+                onToggle()
+              }}
+            >
+              <PluginSourceAvatar
+                className="plugin-task-example-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-border/30 bg-background"
+                distribution={plugin.distribution}
+                invertLogoInDark={logo.invertInDark}
+                logoUrl={logo.url}
+                name={plugin.name}
+                useInitial={logo.isGenericFallback}
+              />
+              <span className="min-w-0 flex-1 text-base font-medium leading-6 text-text-primary">
+                <strong className="plugin-task-example-name">{plugin.name}</strong>{' '}
+                <span>{displayPrompt}</span>
+              </span>
+              <span className="plugin-task-example-arrow" aria-hidden="true">
+                <ArrowRight className="h-[18px] w-[18px]" />
+              </span>
+            </button>
+          )
+        })}
+      </div>
     </section>
   )
 
@@ -714,15 +703,18 @@ export function PluginDetailView({
       />
       <div className="mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-14 pt-7 sm:px-8">
         <header className="grid gap-4 sm:grid-cols-[60px_minmax(0,1fr)_auto] sm:items-center">
-          <div
-            data-testid="plugin-detail-logo"
+          <PluginSourceAvatar
             className={[
               'plugin-detail-header-logo',
               logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
             ].join(' ')}
-          >
-            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-7 w-7" />}
-          </div>
+            distribution={plugin.distribution}
+            invertLogoInDark={logo.invertInDark}
+            logoUrl={logo.url}
+            name={plugin.name}
+            testId="plugin-detail-logo"
+            useInitial={logo.isGenericFallback}
+          />
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
             <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
@@ -968,7 +960,7 @@ export function PluginDetailView({
           skill={{
             name: selectedSkill.name,
             pluginName: plugin.name,
-            pluginLogoUrl: logo.url,
+            pluginLogoUrl: logo.isGenericFallback ? '' : logo.url,
             description: selectedSkill.description,
             invocation: `/${selectedSkill.name}`,
             installed: isInstalled,
@@ -985,25 +977,6 @@ export function PluginDetailView({
             onToggle()
           }}
           onToggle={enabled => onComponentToggle(selectedSkill.componentKey, enabled)}
-        />
-      )}
-      {selectedGuide && selectedGuidePresentation && (
-        <PluginUseCaseGuideDialog
-          pluginName={plugin.name}
-          title={selectedGuidePresentation.displayTitle}
-          generatedPrompt={selectedGuidePresentation.generatedPrompt}
-          confirmation={selectedGuidePresentation.confirmation}
-          hasConversationContext={hasConversationContext}
-          installed={isInstalled}
-          onClose={() => setGuideSelection(null)}
-          onConfirm={prompt => {
-            setGuideSelection(null)
-            if (onPromptSelect) {
-              onPromptSelect(prompt)
-              return
-            }
-            onToggle()
-          }}
         />
       )}
     </main>
