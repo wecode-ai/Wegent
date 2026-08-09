@@ -260,7 +260,7 @@ function WorkspaceTabSurface({
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
-          className="h-full"
+          className="absolute inset-0"
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
           hidden={!active && keepTaskRuntimeActive}

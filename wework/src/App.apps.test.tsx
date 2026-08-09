@@ -331,6 +331,9 @@ describe('App center route', () => {
 
     const taskContents = screen.getAllByTestId(/^workspace-tab-content-task-/)
     expect(taskContents).toHaveLength(2)
+    taskContents.forEach(content => {
+      expect(content).toHaveClass('absolute', 'inset-0')
+    })
     expect(taskContents.filter(content => content.hidden)).toHaveLength(1)
 
     fireEvent.click(taskTabs[0])
