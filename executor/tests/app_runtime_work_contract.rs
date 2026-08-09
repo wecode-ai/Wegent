@@ -210,6 +210,90 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
 }
 
 #[tokio::test]
+async fn app_runtime_restores_filtered_legacy_initial_user_message() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-legacy-preview-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-legacy-preview-codex-home");
+    let fake_codex = write_fake_legacy_codex(
+        &temp_path("wegent-app-runtime-legacy-preview-log", "jsonl"),
+        false,
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-legacy",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-legacy"},
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("legacy runtime transcript should succeed");
+
+    assert_eq!(response["success"], true);
+    assert_eq!(response["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(response["messages"][0]["role"], "user");
+    assert_eq!(
+        response["messages"][0]["content"],
+        "Legacy initial task request"
+    );
+    assert_eq!(response["messages"][1]["role"], "assistant");
+    assert_eq!(response["messages"][1]["content"], "Legacy answer");
+}
+
+#[tokio::test]
+async fn app_runtime_does_not_duplicate_legacy_multimodal_user_message() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-legacy-user-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-legacy-user-codex-home");
+    let fake_codex = write_fake_legacy_codex(
+        &temp_path("wegent-app-runtime-legacy-user-log", "jsonl"),
+        true,
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-legacy",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-legacy"},
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("legacy multimodal runtime transcript should succeed");
+
+    let messages = response["messages"].as_array().unwrap();
+    let user_messages = messages
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .collect::<Vec<_>>();
+    assert_eq!(user_messages.len(), 1);
+    assert_eq!(user_messages[0]["content"], "Legacy initial task request");
+    assert_eq!(
+        user_messages[0]["attachments"][0]["local_preview_url"],
+        "/tmp/legacy-image.png"
+    );
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["content"], "Legacy answer");
+}
+
+#[tokio::test]
 async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -902,6 +986,93 @@ done
     path
 }
 
+fn write_fake_legacy_codex(log_path: &Path, include_user_message: bool) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-legacy", "sh");
+    let _ = fs::remove_file(log_path);
+    let mut items = Vec::new();
+    if include_user_message {
+        items.push(json!({
+            "id": "user-legacy",
+            "type": "userMessage",
+            "content": [
+                {"type": "text", "text": "Legacy initial task request"},
+                {"type": "localImage", "path": "/tmp/legacy-image.png"}
+            ]
+        }));
+    }
+    items.push(json!({
+        "id": "agent-legacy",
+        "type": "agentMessage",
+        "text": "Legacy answer",
+        "phase": "final_answer"
+    }));
+    let read_response = json!({
+        "id": "__REQUEST_ID__",
+        "result": {
+            "thread": {
+                "id": "thread-legacy",
+                "cwd": "/tmp/project",
+                "name": "Legacy task",
+                "preview": "Legacy initial task request",
+                "path": "/tmp/codex/thread-legacy.jsonl",
+                "historyMode": "legacy",
+                "createdAt": 1780000000_i64,
+                "updatedAt": 1780000060_i64,
+                "status": "idle",
+                "turns": []
+            }
+        }
+    });
+    let turns_response = json!({
+        "id": "__REQUEST_ID__",
+        "result": {
+            "data": [{
+                "id": "turn-legacy",
+                "startedAt": 1780000000_i64,
+                "completedAt": 1780000060_i64,
+                "status": "completed",
+                "itemsView": "full",
+                "items": items
+            }],
+            "nextCursor": null,
+            "backwardsCursor": null
+        }
+    });
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        shell_single_quote(&read_response.to_string()),
+        shell_single_quote(&turns_response.to_string()),
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn write_fake_paginated_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-app-runtime-pagination", "sh");
     let _ = fs::remove_file(log_path);
@@ -1028,6 +1199,10 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 struct CodexStateDbThread<'a> {

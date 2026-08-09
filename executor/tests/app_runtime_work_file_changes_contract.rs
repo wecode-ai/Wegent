@@ -911,6 +911,7 @@ fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value)
     let _ = fs::remove_file(log_path);
     let (turns, item_response_cases) = take_fake_transcript_turns(&mut thread);
     let turn_page_response_cases = fake_turn_page_response_cases(&turns);
+    thread["historyMode"] = json!("paginated");
     thread["turns"] = json!([]);
     let read_response = json!({"id": "__REQUEST_ID__", "result": {"thread": thread}});
     let content = fake_transcript_codex_script(
