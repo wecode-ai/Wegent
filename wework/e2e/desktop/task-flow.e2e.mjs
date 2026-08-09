@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from './checkpoints.mjs'
@@ -3987,6 +3987,7 @@ async function verifyWorkspaceDocumentTabs(control) {
 }
 
 async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
+  await ensureExperimentalFeaturesEnabled(control)
   const taskTabTestId = await control.command(
     'getAttribute',
     '[data-tab-kind="task"][aria-selected="true"]',
@@ -5520,24 +5521,31 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
-  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!initialSnapshot.testIds.includes('automation-button')) {
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="settings-menu-button"]')
-    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
-    await control.command('click', '[data-testid="settings-back-button"]')
-    await control.command('waitFor', '[data-testid="automation-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+  const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if ((await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true') {
+    await control.command('click', toggleSelector)
+    await waitForAttribute(
+      control,
+      toggleSelector,
+      'aria-checked',
+      'true',
+      'Enabling experimental features was not persisted'
+    )
   }
-  return initialSnapshot
+  await control.command('click', '[data-testid="settings-back-button"]')
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
-  const initialSnapshot = await ensureExperimentalFeaturesEnabled(control)
+async function verifyAutomationLifecycle(control, executorHome, homePath) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('automation-button'),
+    'Automations remained hidden behind the experimental-features preference'
+  )
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5552,6 +5560,8 @@ async function verifyAutomationLifecycle(control, workspacePath) {
   await control.command('fill', '[data-testid="automation-prompt-input"]', {
     value: AUTOMATION_PROMPT,
   })
+  await control.command('click', '[data-testid="automation-project-select"]')
+  await control.command('click', '[data-testid="automation-project-select-option-"]')
   const draftSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     !draftSnapshot.testIds.includes('automation-workspace-input'),
@@ -5648,6 +5658,34 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     )
     assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
     const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
+    const runtimeIndex = JSON.parse(
+      await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+    )
+    const standaloneWorkspacePath = runtimeIndex.tasks[manualTaskId]?.workspace_path
+    assert.equal(
+      typeof standaloneWorkspacePath,
+      'string',
+      'The projectless automation task was grouped under a project workspace'
+    )
+    const standaloneWorkspaceSegments = relative(
+      join(homePath, 'Documents', 'Codex'),
+      standaloneWorkspacePath
+    ).split(/[/\\]/)
+    assert.match(
+      standaloneWorkspaceSegments[0],
+      /^\d{4}-\d{2}-\d{2}$/,
+      'The standalone automation workspace did not use a dated directory'
+    )
+    assert.deepEqual(
+      standaloneWorkspaceSegments.slice(1),
+      [manualTaskId],
+      'The projectless automation task was grouped under a project workspace'
+    )
+    assert.equal(
+      await pathExists(standaloneWorkspacePath),
+      true,
+      `The projectless automation did not create a standalone workspace: ${standaloneWorkspacePath}`
+    )
     if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
       await control.command('click', `[data-testid="${manualTaskRow}"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -14338,7 +14376,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (AUTOMATION_ONLY) {
       phase = 'automation-lifecycle'
-      await verifyAutomationLifecycle(control, workspacePath)
+      await verifyAutomationLifecycle(control, executorHome, homePath)
       console.log(`Wework desktop automation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -14469,7 +14507,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         await verifyWorkspaceDocumentTabs(control)
 
         phase = 'automation-lifecycle'
-        await verifyAutomationLifecycle(control, workspacePath)
+        await verifyAutomationLifecycle(control, executorHome, homePath)
 
         phase = 'cloud-work-page'
         await verifyCloudWorkPage(control)
