@@ -412,12 +412,15 @@ describe('ToolBlocksDisplay', () => {
 
   test('renders file changes inside completed processing details', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
       configurable: true,
     })
 
-    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+    const { unmount } = render(
+      <ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />
+    )
 
     expect(screen.getByRole('button', { name: /编辑 1 个文件 已处理/ })).toBeInTheDocument()
     expect(screen.getByLabelText('编辑 1')).toBeInTheDocument()
@@ -451,6 +454,11 @@ describe('ToolBlocksDisplay', () => {
     expect(
       await screen.findByTestId('process-file-change-diff-copy-success-icon')
     ).toBeInTheDocument()
+
+    unmount()
+
+    expect(clearTimeoutSpy).toHaveBeenCalled()
+    clearTimeoutSpy.mockRestore()
   })
 
   test('renders reversed diff lines for a created file as additions', () => {
