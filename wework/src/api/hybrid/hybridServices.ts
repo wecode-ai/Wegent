@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { withAITableNotifications } from '@/api/aitable'
 import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
@@ -939,10 +940,21 @@ export function createHybridWorkbenchServices(
     },
   }
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const aitableApi = localServices.aitableApi
+    ? withAITableNotifications(localServices.aitableApi, event =>
+        cloudServices.deliveryApi!.reportExternalTaskNotification(event.projectId, {
+          operation_id: event.operationId,
+          event_type: event.eventType,
+          task_id: event.taskId,
+          title: event.title,
+          summary: event.summary,
+        })
+      )
+    : undefined
 
   return {
     ...cloudServices,
-    aitableApi: localServices.aitableApi,
+    aitableApi,
     dwsApi: localServices.dwsApi,
     localProjectChatAgentApi: localServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,

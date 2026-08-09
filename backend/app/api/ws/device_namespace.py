@@ -58,6 +58,7 @@ from app.core.constants import get_wework_task_room, get_wework_user_room
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
+from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import (
@@ -85,6 +86,7 @@ from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.im.cloud_task_notifications import cloud_task_notification_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
@@ -672,7 +674,45 @@ def _project_chat_runtime_event_sync(
             message.message_id,
             message.status,
         )
-        return {"message": message.model_dump(mode="json", by_alias=True), "mode": mode}
+        result = {
+            "message": message.model_dump(mode="json", by_alias=True),
+            "mode": mode,
+        }
+        if (
+            mode == "snapshot"
+            and message.status in {"completed", "failed"}
+            and message.task_id
+        ):
+            item = db.get(LoopItem, message.task_id)
+            project = db.get(CloudProject, message.project_id)
+            agent = db.get(ProjectChatAgent, message.sender_id)
+            if item is not None and project is not None:
+                actor_user_id = (
+                    int(agent.created_by_user_id)
+                    if agent is not None and agent.created_by_user_id
+                    else int(item.created_by_user_id or 0)
+                )
+                if actor_user_id > 0:
+                    snapshot = cloud_task_notification_service.snapshot(
+                        db, project=project, values=item
+                    )
+                    result["notification"] = (
+                        cloud_task_notification_service.event_for_actor(
+                            event_id=(
+                                f"task:{item.id}:ai:{message.message_id}:{message.status}"
+                            ),
+                            event_type=(
+                                "ai_completed"
+                                if message.status == "completed"
+                                else "ai_failed"
+                            ),
+                            actor_user_id=actor_user_id,
+                            actor_name=message.sender_name or "AI",
+                            after=snapshot,
+                            summary=(message.content or "")[:500],
+                        )
+                    )
+        return result
 
 
 def _execution_runtime_event_sync(
@@ -1944,6 +1984,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 },
             )
             if projected:
+                cloud_notification = projected.get("notification")
+                if cloud_notification is not None:
+                    await cloud_task_notification_service.dispatch(cloud_notification)
                 message = projected["message"]
                 project_id = str(message["projectId"])
                 project_task_id = message.get("taskId")
@@ -2036,6 +2079,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             _project_chat_runtime_event_sync, device_id, payload
         )
         if projected:
+            cloud_notification = projected.get("notification")
+            if cloud_notification is not None:
+                await cloud_task_notification_service.dispatch(cloud_notification)
             message = projected["message"]
             project_id = str(message["projectId"])
             task_id = message.get("taskId")

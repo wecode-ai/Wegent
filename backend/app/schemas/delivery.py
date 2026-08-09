@@ -195,6 +195,18 @@ class LoopItemCommentResponse(BaseModel):
     updated_at: datetime
 
 
+class ExternalTaskNotificationReport(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=128)
+    event_type: Literal[
+        "external_record_created",
+        "external_record_updated",
+        "external_record_deleted",
+    ]
+    task_id: str = Field(min_length=1, max_length=255)
+    title: str = Field(min_length=1, max_length=255)
+    summary: str = Field(default="", max_length=1000)
+
+
 class LoopItemAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

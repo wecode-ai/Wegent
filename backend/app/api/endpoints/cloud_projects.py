@@ -10,6 +10,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    HTTPException,
     Query,
     UploadFile,
     status,
@@ -37,7 +38,7 @@ from app.schemas.cloud_project import (
     CloudProjectResponse,
     CloudProjectUpdate,
 )
-from app.schemas.delivery import LoopItemResponse
+from app.schemas.delivery import ExternalTaskNotificationReport, LoopItemResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -47,6 +48,10 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
+from app.services.im.cloud_task_notifications import (
+    CloudTaskSnapshot,
+    cloud_task_notification_service,
+)
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_chat.service import project_chat_service
@@ -99,6 +104,42 @@ def get_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     return _project_response(db, project, current_user)
+
+
+@router.post(
+    "/{project_id}/external-task-notifications", status_code=status.HTTP_202_ACCEPTED
+)
+def report_external_task_notification(
+    project_id: int,
+    values: ExternalTaskNotificationReport,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Accept a committed Wework-side external record change for IM delivery."""
+
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    if project.task_provider != "dingtalk_aitable":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "External task notification reports are only supported for DingTalk AI Table",
+        )
+    snapshot = CloudTaskSnapshot(
+        project_id=str(project.id),
+        project_name=str(project.name or project.project_key or project.id),
+        task_id=values.task_id,
+        title=values.title,
+        created_by_user_id=project.created_by_user_id,
+    )
+    event = cloud_task_notification_service.event(
+        event_id=f"aitable:{project.id}:{values.operation_id}",
+        event_type=values.event_type,
+        actor=current_user,
+        after=snapshot,
+        summary=values.summary,
+        recipient_user_ids=(project.created_by_user_id,),
+    )
+    background_tasks.add_task(cloud_task_notification_service.dispatch, event)
 
 
 @router.patch("/{project_id}", response_model=CloudProjectResponse)
@@ -176,14 +217,36 @@ def assign_loop_item(
     there is no separate queue storage.
     """
 
+    project = cloud_project_service.get(db, project_id, current_user.id)
     if external_loop_item_provider.is_external_item(db, item_id):
+        before_values = external_loop_item_provider.get(db, item_id, current_user.id)
+        before = cloud_task_notification_service.snapshot(
+            db, project=project, values=before_values
+        )
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values
         )
+        after = cloud_task_notification_service.snapshot(
+            db, project=project, values=response
+        )
+        if cloud_task_notification_service.change_summary(before, after):
+            event = cloud_task_notification_service.event(
+                event_id=f"task:{item_id}:assigned:{response['version']}",
+                event_type="updated",
+                actor=current_user,
+                before=before,
+                after=after,
+                summary="负责人已变更",
+            )
+            background_tasks.add_task(cloud_task_notification_service.dispatch, event)
         from app.tasks.robot_queue_tasks import dispatch_queues_background
 
         background_tasks.add_task(dispatch_queues_background)
         return LoopItemResponse.model_validate(response)
+    current_item = loop_item_service.get(db, item_id, current_user.id)
+    before = cloud_task_notification_service.snapshot(
+        db, project=project, values=current_item
+    )
     item = loop_item_service.assign(
         db,
         project_id=project_id,
@@ -194,6 +257,17 @@ def assign_loop_item(
     from app.tasks.robot_queue_tasks import dispatch_queues_background
 
     background_tasks.add_task(dispatch_queues_background)
+    after = cloud_task_notification_service.snapshot(db, project=project, values=item)
+    if cloud_task_notification_service.change_summary(before, after):
+        event = cloud_task_notification_service.event(
+            event_id=f"task:{item_id}:assigned:{item.version}",
+            event_type="updated",
+            actor=current_user,
+            before=before,
+            after=after,
+            summary="负责人已变更",
+        )
+        background_tasks.add_task(cloud_task_notification_service.dispatch, event)
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)

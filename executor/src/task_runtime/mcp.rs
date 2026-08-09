@@ -428,6 +428,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
+        "report_external_task_notification" => Err(super::TaskRuntimeError::Invalid(
+            "external task notifications require the WeWork Backend connection".to_owned(),
+        )),
         "describe_space_table" => match string_argument(&arguments, "space_id") {
             Ok(project_id) => runtime
                 .aitable_describe(project_id)
@@ -732,6 +735,17 @@ async fn call_backend_tool(
         "update_space" => client
             .patch(format!("{base}/cloud-projects/{project_id}"))
             .json(arguments.get("project").unwrap_or(arguments)),
+        "report_external_task_notification" => client
+            .post(format!(
+                "{base}/cloud-projects/{project_id}/external-task-notifications"
+            ))
+            .json(&json!({
+                "operation_id": arguments.get("operation_id").cloned().unwrap_or(Value::Null),
+                "event_type": arguments.get("event_type").cloned().unwrap_or(Value::Null),
+                "task_id": arguments.get("item_id").cloned().unwrap_or(Value::Null),
+                "title": arguments.get("title").cloned().unwrap_or(Value::Null),
+                "summary": arguments.get("summary").cloned().unwrap_or(Value::Null),
+            })),
         "describe_space_table" => {
             client.get(format!("{base}/cloud-projects/{project_id}/aitable/table"))
         }
@@ -1050,6 +1064,38 @@ fn tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {"space_id": {"type": "string"}},
                 "required": ["space_id"]
+            }),
+        ),
+        tool(
+            "report_external_task_notification",
+            "Report a successfully committed external task record change so Wework can notify related people. Call this exactly once after a successful dws create, update, or delete operation; never call it when the provider operation failed.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "operation_id": {
+                        "type": "string",
+                        "description": "A unique stable identifier for this committed provider operation"
+                    },
+                    "event_type": {
+                        "enum": [
+                            "external_record_created",
+                            "external_record_updated",
+                            "external_record_deleted"
+                        ]
+                    },
+                    "item_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "summary": {"type": "string"}
+                },
+                "required": [
+                    "space_id",
+                    "operation_id",
+                    "event_type",
+                    "item_id",
+                    "title",
+                    "summary"
+                ]
             }),
         ),
         tool(
@@ -1723,6 +1769,9 @@ mod tests {
         }
         assert!(names.iter().any(|name| name == "list_space_files"));
         assert!(names.iter().any(|name| name == "list_deliveries"));
+        assert!(names
+            .iter()
+            .any(|name| name == "report_external_task_notification"));
 
         let redirect: Value =
             serde_json::from_str(&dingtalk_route_redirect(&runtime, "cloud-aitable")).unwrap();

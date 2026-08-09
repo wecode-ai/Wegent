@@ -391,6 +391,21 @@ export function createDeliveryApi(client: HttpClient) {
     archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
     },
+    reportExternalTaskNotification(
+      projectId: CloudProjectIdInput,
+      data: {
+        operation_id: string
+        event_type:
+          | 'external_record_created'
+          | 'external_record_updated'
+          | 'external_record_deleted'
+        task_id: string
+        title: string
+        summary: string
+      }
+    ): Promise<void> {
+      return client.post(`/v1/cloud-projects/${projectId}/external-task-notifications`, data)
+    },
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
     },

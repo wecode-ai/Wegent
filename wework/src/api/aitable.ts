@@ -70,6 +70,15 @@ export interface AITableApi {
   ): Promise<Record<string, unknown>>
 }
 
+export interface ExternalTaskNotificationReport {
+  projectId: string
+  operationId: string
+  eventType: 'external_record_created' | 'external_record_updated' | 'external_record_deleted'
+  taskId: string
+  title: string
+  summary: string
+}
+
 type LocalRequest = <T>(
   method: string,
   params?: Record<string, unknown>,
@@ -147,4 +156,80 @@ export function createLocalAITableApi(request: LocalRequest): AITableApi {
       })
     },
   }
+}
+
+export function withAITableNotifications(
+  api: AITableApi,
+  report: (event: ExternalTaskNotificationReport) => Promise<void>
+): AITableApi {
+  const notify = async (
+    projectId: string,
+    eventType: ExternalTaskNotificationReport['eventType'],
+    record: AITableRecord,
+    summary: string
+  ) => {
+    try {
+      await report({
+        projectId,
+        operationId: operationId(),
+        eventType,
+        taskId: record.id,
+        title: recordTitle(record),
+        summary,
+      })
+    } catch (error) {
+      console.warn('[Wework AI Table] Failed to report task notification', {
+        projectId,
+        recordId: record.id,
+        eventType,
+        error,
+      })
+    }
+  }
+
+  return {
+    ...api,
+    async createRecord(projectId, cells) {
+      const record = await api.createRecord(projectId, cells)
+      await notify(projectId, 'external_record_created', record, '创建了表格任务')
+      return record
+    },
+    async updateRecord(projectId, recordId, cells) {
+      const record = await api.updateRecord(projectId, recordId, cells)
+      await notify(projectId, 'external_record_updated', record, '更新了表格任务')
+      return record
+    },
+    async deleteRecord(projectId, recordId) {
+      const existing = api.getRecord
+        ? await api.getRecord(projectId, recordId)
+        : { id: recordId, cells: {}, raw: {} }
+      await api.deleteRecord(projectId, recordId)
+      await notify(projectId, 'external_record_deleted', existing, '删除了表格任务')
+    },
+  }
+}
+
+function operationId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+}
+
+function recordTitle(record: AITableRecord): string {
+  for (const value of Object.values(record.cells)) {
+    const text = notificationCellText(value).trim()
+    if (text) return text.slice(0, 255)
+  }
+  return record.id
+}
+
+function notificationCellText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (Array.isArray(value)) return value.map(notificationCellText).filter(Boolean).join(', ')
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return notificationCellText(record.name ?? record.title ?? record.text)
+  }
+  return ''
 }

@@ -127,6 +127,7 @@ export function dingtalkAITableRuntimeContext(
     'Only search DingTalk bases when the user explicitly asks to find an arbitrary DingTalk resource outside the bound Wework project.',
     'Inspect the live table schema before referring to fields. Never guess identifiers or field names.',
     'Do not use wework_space board-item or table CRUD tools for DingTalk AI Table data.',
+    'After every successful dws record create, update, or delete, call wework_space report_external_task_notification exactly once with a unique operation_id and a concise change summary. Do not report failed operations or field/schema changes.',
     'If the bound resource cannot be accessed, report that error and do not silently switch to another table.',
     'Follow dws confirmation requirements for destructive operations.',
   ]

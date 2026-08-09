@@ -79,6 +79,50 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_reports_dingtalk_aitable_task_notification(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "DINGTASK",
+            "name": "DingTalk tasks",
+            "task_provider": "dingtalk_aitable",
+            "provider_config": {"base_id": "base-1", "table_id": "table-1"},
+        },
+    ).json()
+    events = []
+
+    async def fake_dispatch(event):
+        events.append(event)
+        return {"sent": 1, "results": []}
+
+    monkeypatch.setattr(
+        "app.api.endpoints.cloud_projects.cloud_task_notification_service.dispatch",
+        fake_dispatch,
+    )
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{created['id']}/external-task-notifications",
+        headers=_auth(test_token),
+        json={
+            "operation_id": "operation-1",
+            "event_type": "external_record_updated",
+            "task_id": "record-1",
+            "title": "发布新版本",
+            "summary": "更新了表格任务",
+        },
+    )
+
+    assert response.status_code == 202
+    assert len(events) == 1
+    assert events[0].event_id == f"aitable:{created['id']}:operation-1"
+    assert events[0].snapshot.title == "发布新版本"
+
+
 def test_cloud_project_tag_registry(
     test_client: TestClient,
     test_db: Session,

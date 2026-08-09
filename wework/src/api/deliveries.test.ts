@@ -4,6 +4,29 @@ import { ApiError } from './http'
 import { createDeliveryApi, type CloudLoopItem, type CloudTaskContext } from './deliveries'
 
 describe('createDeliveryApi queue and assignment routes', () => {
+  it('reports committed external task changes', async () => {
+    const client = {
+      post: vi.fn(async () => undefined),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.reportExternalTaskNotification('123', {
+      operation_id: 'operation-1',
+      event_type: 'external_record_updated',
+      task_id: 'record-1',
+      title: '发布新版本',
+      summary: '更新了表格任务',
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/external-task-notifications', {
+      operation_id: 'operation-1',
+      event_type: 'external_record_updated',
+      task_id: 'record-1',
+      title: '发布新版本',
+      summary: '更新了表格任务',
+    })
+  })
+
   it('lists loop items with queue filters', async () => {
     const client = {
       get: vi.fn(async () => ({ items: [] })),

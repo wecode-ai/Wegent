@@ -1,6 +1,6 @@
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
-import type { AITableApi } from '@/api/aitable'
+import { withAITableNotifications, type AITableApi } from '@/api/aitable'
 import type { DwsApi } from '@/api/dws'
 import {
   createExecutorClientFromApis,
@@ -205,9 +205,20 @@ export function createDefaultWorkbenchServices(
 
   const localServices = createLocalAppServices({ user: cloudConnection?.user })
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const aitableApi = localServices.aitableApi
+    ? withAITableNotifications(localServices.aitableApi, event =>
+        cloudServices.deliveryApi!.reportExternalTaskNotification(event.projectId, {
+          operation_id: event.operationId,
+          event_type: event.eventType,
+          task_id: event.taskId,
+          title: event.title,
+          summary: event.summary,
+        })
+      )
+    : undefined
   return {
     ...cloudServices,
-    aitableApi: localServices.aitableApi,
+    aitableApi,
     dwsApi: localServices.dwsApi,
     externalIssueApi: localServices.externalIssueApi,
     projectSpaceApis: {

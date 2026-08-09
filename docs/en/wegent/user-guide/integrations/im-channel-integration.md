@@ -16,6 +16,7 @@ IM Channel Integration allows you to connect Wegent agents to instant messaging 
 - [Management Features](#-management-features)
 - [User Mapping Mechanism](#-user-mapping-mechanism)
 - [Platform Integration Guides](#-platform-integration-guides)
+- [Cloud Board Task Notifications](#cloud-board-task-notifications)
 - [Troubleshooting](#-troubleshooting)
 - [Related Resources](#-related-resources)
 
@@ -279,6 +280,26 @@ The following platforms have detailed integration configuration guides:
 | Platform | Link |
 |----------|------|
 | **DingTalk** | [DingTalk Integration Guide](./dingtalk-integration.md) |
+
+---
+
+## Cloud Board Task Notifications
+
+When a cloud-board task changes in Wework, Wegent sends an IM notification to
+each related user's most recently used private chat. Notifications cover task
+creation and archival, assignee, status, priority and due-date changes, new
+comments, and completed or failed AI runs. Title, description, tag, and
+ordering-only changes do not trigger notifications.
+
+Recipients include the actor, task creator, previous and current human
+assignees, task collaborators, and the creator of a robot assignee. Each user
+receives at most one copy. Users without an available private IM session are
+skipped without affecting the task operation.
+
+GitHub and GitLab tasks are notified for changes initiated from Wework.
+DingTalk AI Table records currently notify only the project creator and the
+actor because table assignee text cannot be mapped reliably to a Wegent user.
+Changes made directly on an external platform do not trigger notifications.
 
 ---
 
