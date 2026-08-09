@@ -549,9 +549,7 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
         typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${
-        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
-      }`,
+      cursor: null,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -577,7 +575,7 @@ function buildUserTurnsFromNavigation(
       messageIndex: item.messageIndex,
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
       responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
-      cursor: item.cursor ?? `offset:${item.messageIndex}`,
+      cursor: item.cursor ?? null,
       loaded: Boolean(loadedTurn),
     }
   })

@@ -168,7 +168,7 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
-const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
+const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
@@ -1687,7 +1687,7 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
   await control.command(
     'scrollToRatioAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
-    { value: '0' }
+    { value: String((turnNumber - 1) / TURN_NAVIGATION_REGRESSION_TURN_COUNT) }
   )
   await control.command(
     'waitFor',
@@ -1698,10 +1698,11 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
     }
   )
 
+  const assistantAnchorText = `Virtualized navigation response ${turnNumber}.6`
   const assistantText = await control.command(
     'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    { text: targetResponseText }
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`,
+    { text: assistantAnchorText }
   )
   const turnMatch = assistantText.match(/Virtualized navigation response (\d+)\.\d+/)
   assert.ok(turnMatch, `Unable to identify the virtualized navigation turn from "${assistantText}"`)
@@ -1713,9 +1714,10 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
     'getText',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
+  const virtualizedOutPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_1`
   assert.ok(
-    !mountedUserMessages.includes(promptText),
-    `Turn ${turnNumber} user row remained mounted, so the active-marker regression was not reproduced`
+    !mountedUserMessages.includes(virtualizedOutPrompt),
+    'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
   )
 
   await control.command(
@@ -1753,6 +1755,14 @@ async function reopenCurrentTurnNavigationTask(control, composerSelector, restar
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+  await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
+    text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {

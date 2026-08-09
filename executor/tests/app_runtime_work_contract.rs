@@ -220,7 +220,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-page-codex-home");
     let log_path = temp_path("wegent-app-runtime-transcript-page-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_paginated_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let latest = handler
@@ -243,26 +243,122 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1,
-                "beforeCursor": "offset:1"
+                "beforeCursor": "older-turns"
             }
         }))
         .await
         .expect("older transcript page should succeed");
+    let newer = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "afterCursor": "newer-from-old"
+            }
+        }))
+        .await
+        .expect("newer transcript page should succeed");
 
-    assert_eq!(latest["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(latest["messages"][0]["role"], "assistant");
+    assert_eq!(latest["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(latest["messages"][0]["content"], "new prompt");
     assert_eq!(latest["hasMoreBefore"], true);
-    assert_eq!(latest["beforeCursor"], "offset:1");
-    assert_eq!(older["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(older["messages"][0]["role"], "user");
+    assert_eq!(latest["beforeCursor"], "older-turns");
+    assert_eq!(latest["hasMoreAfter"], false);
+    assert_eq!(latest["afterCursor"], Value::Null);
+    assert_eq!(latest["rangeStart"], Value::Null);
+    assert_eq!(latest["rangeEnd"], Value::Null);
+    assert_eq!(latest["turnNavigation"], json!([]));
+    assert_eq!(older["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(older["messages"][0]["content"], "old prompt");
     assert_eq!(older["hasMoreBefore"], false);
     assert_eq!(older["beforeCursor"], Value::Null);
+    assert_eq!(older["hasMoreAfter"], true);
+    assert_eq!(older["afterCursor"], "newer-from-old");
+    assert_eq!(newer["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(newer["messages"][0]["content"], "new prompt");
 
-    let read_count = read_json_lines(&log_path)
-        .into_iter()
+    let calls = read_json_lines(&log_path);
+    let read_count = calls
+        .iter()
         .filter(|line| line["method"] == "thread/read")
         .count();
-    assert_eq!(read_count, 2);
+    let turns_list_count = calls
+        .iter()
+        .filter(|line| line["method"] == "thread/turns/list")
+        .count();
+    let items_list_count = calls
+        .iter()
+        .filter(|line| line["method"] == "thread/items/list")
+        .count();
+    assert_eq!(read_count, 3);
+    assert_eq!(turns_list_count, 3);
+    assert_eq!(items_list_count, 3);
+    assert!(calls.iter().all(|call| {
+        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
+    }));
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/turns/list" && call["params"]["cursor"] == "newer-from-old"
+    }));
+}
+
+#[tokio::test]
+async fn app_runtime_loads_full_codex_transcript_across_opaque_pages() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-full-transcript-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-full-transcript-codex-home");
+    let log_path = temp_path("wegent-app-runtime-full-transcript-log", "jsonl");
+    let fake_codex = write_fake_paginated_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "includeFullContent": true
+            }
+        }))
+        .await
+        .expect("full transcript should succeed");
+
+    let messages = transcript["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["content"], "old prompt");
+    assert_eq!(messages[1]["content"], "old answer");
+    assert_eq!(messages[2]["content"], "new prompt");
+    assert_eq!(messages[3]["content"], "new answer");
+    assert_eq!(transcript["fullContent"], true);
+    assert_eq!(transcript["hasMoreBefore"], false);
+    assert_eq!(transcript["beforeCursor"], Value::Null);
+    assert_eq!(transcript["hasMoreAfter"], false);
+    assert_eq!(transcript["afterCursor"], Value::Null);
+
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/turns/list")
+            .count(),
+        2
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/items/list")
+            .count(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -746,7 +842,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","historyMode":"legacy","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"full","items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -776,6 +875,51 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_paginated_codex(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-pagination", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"cursor":"older-turns"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*'"turnId":"turn-old"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}},{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
+      ;;
+    *'"method":"thread/items/list"'*'"turnId":"turn-new"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}},{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
       ;;
   esac
 done

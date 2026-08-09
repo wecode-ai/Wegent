@@ -15,9 +15,11 @@ fn cached_transcript_response(
         messages,
         context_usage,
         running,
-        limit,
-        before_cursor: before_cursor.map(ToOwned::to_owned),
-        after_cursor: after_cursor.map(ToOwned::to_owned),
+        pagination: TranscriptPagination::Offset {
+            limit,
+            before_cursor: before_cursor.map(ToOwned::to_owned),
+            after_cursor: after_cursor.map(ToOwned::to_owned),
+        },
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
     })
@@ -64,11 +66,21 @@ struct TranscriptResponseInput {
     messages: Vec<Value>,
     context_usage: Option<Value>,
     running: bool,
-    limit: Option<usize>,
-    before_cursor: Option<String>,
-    after_cursor: Option<String>,
+    pagination: TranscriptPagination,
     full_content: bool,
     turn_item_source: TranscriptTurnItemSource,
+}
+
+enum TranscriptPagination {
+    Offset {
+        limit: Option<usize>,
+        before_cursor: Option<String>,
+        after_cursor: Option<String>,
+    },
+    Opaque {
+        before_cursor: Option<String>,
+        after_cursor: Option<String>,
+    },
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -79,41 +91,81 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         messages,
         context_usage,
         running,
-        limit,
-        before_cursor,
-        after_cursor,
+        pagination,
         full_content,
         turn_item_source,
     } = input;
-    let turn_navigation = transcript_turn_navigation(&messages);
-    let page = transcript_page(
+    let (
         messages,
-        limit,
-        before_cursor.as_deref(),
-        after_cursor.as_deref(),
-    );
-    let turns = transcript_canonical_turns(&page.messages, turn_item_source);
+        range_start,
+        range_end,
+        has_more_before,
+        before_cursor,
+        has_more_after,
+        after_cursor,
+        opaque_cursor,
+    ) = match pagination {
+        TranscriptPagination::Offset {
+            limit,
+            before_cursor,
+            after_cursor,
+        } => {
+            let page = transcript_page(
+                messages,
+                limit,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            );
+            (
+                page.messages,
+                Some(page.range_start),
+                Some(page.range_end),
+                page.has_more_before,
+                page.before_cursor,
+                page.has_more_after,
+                page.after_cursor,
+                false,
+            )
+        }
+        TranscriptPagination::Opaque {
+            before_cursor,
+            after_cursor,
+        } => {
+            let has_more_before = before_cursor.is_some();
+            let has_more_after = after_cursor.is_some();
+            (
+                messages,
+                None,
+                None,
+                has_more_before,
+                before_cursor,
+                has_more_after,
+                after_cursor,
+                true,
+            )
+        }
+    };
+    let turn_navigation = transcript_turn_navigation(&messages, opaque_cursor);
+    let turns = transcript_canonical_turns(&messages, turn_item_source);
     json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "running": running,
-        "messages": page.messages,
+        "messages": messages,
         "turns": turns,
         "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
-        "rangeStart": page.range_start,
-        "rangeEnd": page.range_end,
-        "hasMoreBefore": page.has_more_before,
-        "beforeCursor": page
-            .before_cursor
+        "rangeStart": range_start,
+        "rangeEnd": range_end,
+        "hasMoreBefore": has_more_before,
+        "beforeCursor": before_cursor
             .map(Value::String)
             .unwrap_or(Value::Null),
-        "hasMoreAfter": page.has_more_after,
-        "afterCursor": page
-            .after_cursor
+        "hasMoreAfter": has_more_after,
+        "afterCursor": after_cursor
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
@@ -258,7 +310,10 @@ fn transcript_context_usage(thread: &Value) -> Option<Value> {
     rollout_context_usage(thread)
 }
 
-fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
+fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Value> {
+    if opaque_cursor {
+        return Vec::new();
+    }
     let mut turns: Vec<Value> = Vec::new();
     let mut pending_response_turn_indexes: Vec<usize> = Vec::new();
 
@@ -279,14 +334,17 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
             continue;
         }
 
-        turns.push(json!({
+        let mut item = json!({
             "id": transcript_navigation_message_id(message, message_index),
             "turnIndex": turns.len(),
             "messageIndex": message_index,
-            "cursor": format!("offset:{message_index}"),
             "promptPreview": transcript_message_preview(message),
             "responsePreview": "",
-        }));
+        });
+        if !opaque_cursor {
+            item["cursor"] = Value::String(format!("offset:{message_index}"));
+        }
+        turns.push(item);
         pending_response_turn_indexes.push(turns.len() - 1);
     }
 

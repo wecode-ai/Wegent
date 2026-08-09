@@ -965,12 +965,15 @@ fn transcript_presentation_matches_a_complete_reference_token() {
 
 #[test]
 fn transcript_navigation_uses_client_user_message_id_for_live_message_matching() {
-    let navigation = transcript_turn_navigation(&[json!({
-        "id": "provider-user",
-        "clientUserMessageId": "runtime-local-pane-1",
-        "role": "user",
-        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
-    })]);
+    let navigation = transcript_turn_navigation(
+        &[json!({
+            "id": "provider-user",
+            "clientUserMessageId": "runtime-local-pane-1",
+            "role": "user",
+            "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+        })],
+        false,
+    );
 
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");

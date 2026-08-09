@@ -5,18 +5,18 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn read_codex_thread_with_turns(
-        &self,
-        thread_id: &str,
-    ) -> Result<Value, String> {
-        let response = self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": true}),
-            )
-            .await?;
-        Ok(response.get("thread").unwrap_or(&response).clone())
+    pub(super) async fn read_codex_thread_history(&self, thread_id: &str) -> Result<Value, String> {
+        load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id,
+                cursor: None,
+                limit: CODEX_TRANSCRIPT_PAGE_SIZE,
+                full_content: true,
+            },
+        )
+        .await
+        .map(|page| page.thread)
     }
 
     pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
@@ -246,9 +246,11 @@ impl RuntimeWorkRpcHandler {
                 messages: Vec::new(),
                 context_usage: None,
                 running: local_execution_running,
-                limit,
-                before_cursor,
-                after_cursor,
+                pagination: TranscriptPagination::Offset {
+                    limit,
+                    before_cursor,
+                    after_cursor,
+                },
                 full_content: include_full_content,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
@@ -270,10 +272,27 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let thread = self
-            .read_codex_thread_with_turns(&thread_id)
-            .await
-            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        if before_cursor.is_some() && after_cursor.is_some() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Codex transcript pagination accepts only one cursor at a time",
+            ));
+        }
+        let CodexTranscriptPage {
+            thread,
+            next_cursor,
+            backwards_cursor,
+        } = load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id: &thread_id,
+                cursor: before_cursor.as_deref().or(after_cursor.as_deref()),
+                limit: limit.unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE),
+                full_content: include_full_content,
+            },
+        )
+        .await
+        .map_err(|error| AppIpcError::new("codex_error", error))?;
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
@@ -297,7 +316,7 @@ impl RuntimeWorkRpcHandler {
             started_at,
             local_task_id: &local_task_id,
             thread_id: &thread_id,
-            source: "thread_read",
+            source: "thread_pagination",
             refresh,
             running_hint,
             limit,
@@ -314,16 +333,17 @@ impl RuntimeWorkRpcHandler {
             messages,
             context_usage,
             running,
-            limit: if include_full_content { None } else { limit },
-            before_cursor: if include_full_content {
-                None
-            } else {
-                before_cursor
-            },
-            after_cursor: if include_full_content {
-                None
-            } else {
-                after_cursor
+            pagination: TranscriptPagination::Opaque {
+                before_cursor: if include_full_content {
+                    None
+                } else {
+                    next_cursor
+                },
+                after_cursor: if include_full_content {
+                    None
+                } else {
+                    backwards_cursor
+                },
             },
             full_content: include_full_content,
             turn_item_source: TranscriptTurnItemSource::CodexItems,

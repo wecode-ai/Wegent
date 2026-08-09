@@ -168,7 +168,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| "supervisor is disabled".to_owned())?;
         let parent_thread_id = runtime_session_id_from_link(&link)
             .ok_or_else(|| "runtime task session is not ready".to_owned())?;
-        let thread = self.read_codex_thread_with_turns(&parent_thread_id).await?;
+        let thread = self.read_codex_thread_history(&parent_thread_id).await?;
         let current_configuration = self
             .local_task_link(local_task_id)
             .and_then(|task| task.supervisor);

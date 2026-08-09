@@ -149,6 +149,11 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
             json!([first_root, second_root])
         );
     }
+    let thread_start = calls
+        .iter()
+        .find(|call| call["method"] == "thread/start")
+        .expect("thread/start should be recorded");
+    assert_eq!(thread_start["params"]["historyMode"], "paginated");
 
     let listed = handler
         .handle_runtime_rpc(json!({
@@ -2155,17 +2160,17 @@ async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
 
     assert_eq!(transcript["success"], true);
     wait_for_method_count(&log_path, "thread/resume", 1).await;
-    wait_for_method_count(&log_path, "thread/read", 1).await;
+    wait_for_method_count(&log_path, "thread/turns/list", 1).await;
     let calls = read_json_lines(&log_path);
     let resume_index = calls
         .iter()
         .rposition(|call| call["method"] == "thread/resume")
         .expect("refresh should resume the thread");
-    let read_index = calls
+    let list_index = calls
         .iter()
-        .rposition(|call| call["method"] == "thread/read")
-        .expect("refresh should read the thread snapshot");
-    assert!(resume_index < read_index);
+        .rposition(|call| call["method"] == "thread/turns/list")
+        .expect("refresh should list the thread turns");
+    assert!(resume_index < list_index);
 }
 
 #[tokio::test]
@@ -2215,7 +2220,7 @@ async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
         .expect("refresh should read the active thread");
 
     assert_eq!(transcript["success"], true);
-    wait_for_method_count(&log_path, "thread/read", 1).await;
+    wait_for_method_count(&log_path, "thread/turns/list", 1).await;
     let calls = read_json_lines(&log_path);
     assert_eq!(
         calls
@@ -2711,7 +2716,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -3225,7 +3233,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"inProgress","items":[]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","status":"inProgress","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'

@@ -3961,6 +3961,10 @@ fn validate_codex_model_provider(
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
+    params.insert(
+        "historyMode".to_owned(),
+        Value::String("paginated".to_owned()),
+    );
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
