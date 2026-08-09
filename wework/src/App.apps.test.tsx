@@ -294,7 +294,8 @@ describe('App center route', () => {
 
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('app-route-host')).toHaveClass('h-0', 'flex-1', 'min-h-0')
+    expect(screen.getByTestId('app-route-host')).toHaveClass('flex-1', 'min-h-0')
+    expect(screen.getByTestId('app-route-host')).not.toHaveClass('h-0')
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-surface')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-workbench-surface')).not.toHaveClass('app-view-surface')
@@ -332,9 +333,6 @@ describe('App center route', () => {
 
     const taskContents = screen.getAllByTestId(/^workspace-tab-content-task-/)
     expect(taskContents).toHaveLength(2)
-    taskContents.forEach(content => {
-      expect(content).toHaveClass('absolute', 'inset-0', 'min-h-0')
-    })
     expect(
       taskContents.filter(content => content.getAttribute('aria-hidden') === 'true')
     ).toHaveLength(1)
@@ -342,15 +340,17 @@ describe('App center route', () => {
     fireEvent.click(taskTabs[0])
     await waitFor(() => expect(firstInput).toHaveValue('first task draft'))
     expect(taskContents[0]).toHaveAttribute('aria-hidden', 'false')
-    expect(taskContents[0]).not.toHaveClass('invisible')
+    expect(taskContents[0]).toHaveClass('relative', 'h-full')
+    expect(taskContents[0]).not.toHaveClass('absolute', 'invisible')
     expect(taskContents[1]).toHaveAttribute('aria-hidden', 'true')
-    expect(taskContents[1]).toHaveClass('invisible', 'pointer-events-none')
+    expect(taskContents[1]).toHaveClass('absolute', 'inset-0', 'invisible', 'pointer-events-none')
     fireEvent.click(taskTabs[1])
     await waitFor(() => expect(secondInput).toHaveValue('second task draft'))
     expect(taskContents[0]).toHaveAttribute('aria-hidden', 'true')
-    expect(taskContents[0]).toHaveClass('invisible', 'pointer-events-none')
+    expect(taskContents[0]).toHaveClass('absolute', 'inset-0', 'invisible', 'pointer-events-none')
     expect(taskContents[1]).toHaveAttribute('aria-hidden', 'false')
-    expect(taskContents[1]).not.toHaveClass('invisible')
+    expect(taskContents[1]).toHaveClass('relative', 'h-full')
+    expect(taskContents[1]).not.toHaveClass('absolute', 'invisible')
     expect(firstInput).toHaveValue('first task draft')
   })
 

@@ -261,7 +261,8 @@ function WorkspaceTabSurface({
       <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
-            'absolute inset-0 min-h-0 min-w-0 overflow-hidden',
+            'min-h-0 min-w-0 overflow-hidden',
+            active ? 'relative h-full' : 'absolute inset-0',
             !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
@@ -710,7 +711,7 @@ function AppShell() {
           className={cn(
             'relative min-h-0',
             isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-            titlebarOverlaysContent ? 'h-full' : 'h-0 flex-1'
+            titlebarOverlaysContent ? 'h-full' : 'flex-1'
           )}
         >
           <AppRoutes

@@ -229,6 +229,21 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   const diagnostics = {
+    routeHost: JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="app-route-host"]')
+    ),
+    activeTaskSurface: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[data-workspace-tab-content][aria-hidden="false"]'
+      )
+    ),
+    desktopWorkbenchSurface: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-surface"]'
+      )
+    ),
     activeWorkbench: JSON.parse(
       await control.command('getElementMetrics', ACTIVE_WORKBENCH_SELECTOR)
     ),
