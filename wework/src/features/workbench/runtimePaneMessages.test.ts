@@ -787,6 +787,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'subtask-9',
       deviceId: 'device-1',
       result: {
+        itemId: 'assistant-item-9',
         value: '最终回答。',
       },
     })
@@ -795,6 +796,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       expect.objectContaining({
         type: 'assistant_done',
         subtaskId: 'subtask-9',
+        itemId: 'assistant-item-9',
         content: '最终回答。',
       }),
     ])

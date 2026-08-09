@@ -7324,7 +7324,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('loads older runtime transcript messages before the current page', async () => {
     const getRuntimeTranscript = vi.fn(request => {
-      if (request.beforeCursor === 'offset:120') {
+      if (request.beforeCursor === 'opaque-older-page') {
         return Promise.resolve({
           taskId: 'runtime-a',
           workspacePath: '/workspace/project-alpha',
@@ -7354,7 +7354,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           },
         ],
         hasMoreBefore: true,
-        beforeCursor: 'offset:120',
+        beforeCursor: 'opaque-older-page',
       } satisfies RuntimeTranscriptResponse)
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
@@ -7382,7 +7382,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-a',
       limit: 50,
-      beforeCursor: 'offset:120',
+      beforeCursor: 'opaque-older-page',
     })
     expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('done')
   })

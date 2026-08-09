@@ -29,7 +29,7 @@ Rust executor keeps a device-side JSON LocalTask index for runtime work:
 $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 ```
 
-Codex tasks are discovered and controlled through the `codex app-server --stdio` JSON-RPC protocol. The executor stores the Wegent `localTaskId`, workspace, title, status, and real Codex `threadId` mapping in its local index so app-mode task creation can recover after a restart. The full transcript remains authoritative in the Codex app-server `thread/read` metadata plus the local rollout JSONL and is not synced to the central database.
+Codex tasks are discovered and controlled through the `codex app-server --stdio` JSON-RPC protocol. The executor stores the Wegent `localTaskId`, workspace, title, status, and real Codex `threadId` mapping in its local index so app-mode task creation can recover after a restart. The full transcript remains authoritative in Codex app-server `thread/turns/list` plus `thread/items/list` responses and is not synced to the central database.
 
 `localTaskId` is the Wegent-side local task identity, not the provider runtime's session id. When the frontend, Backend, and executor need to pass provider session identity, they must use the opaque `runtimeHandle`, such as a Codex `threadId`, Claude Code `sessionId`, or OpenCode `sessionId`, or an explicit `providerSessionId`. `runtime.tasks.transcript` must not treat `localTaskId` as a provider session id when there is no LocalTask index mapping and no `runtimeHandle`; optimistic tasks that are still being created should return an empty local transcript until create/link completes.
 
@@ -87,37 +87,16 @@ Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tas
 Wework uses one primary read path for local Codex conversations so list, open, and refresh do not each implement separate transcript logic:
 
 1. The list path calls persistent Codex app-server `thread/list` with `recency_at` descending sort, the `archived` filter, and `useStateDbOnly` to read thread metadata without scanning JSONL transcripts. The executor keeps a small-window cache for repeated list requests, invalidates it after thread-management operations or local task state changes, then merges the device-side LocalTask index.
-2. The first open path calls `thread/read` with `includeTurns: false`, which returns thread metadata and the rollout path only. The executor then parses that JSONL once, builds normalized messages, tool blocks, thinking blocks, file changes, and raw rollout turns, and stores them in memory with the rollout length/mtime signature.
-3. Switching to an already loaded conversation no longer calls Codex app-server or rereads the file. The executor serves the full message array from memory and applies the requested `limit`/`beforeCursor` page.
-4. When a switch needs fresh data, the executor first reads the current rollout file signature. If the file only appended bytes, it reads from the previous length, applies those events to the cached rollout turns, regenerates messages only from the first affected turn, and replaces the cached tail by `turnId`. Tool items, thinking, running status, and new text all come from that single append result.
-5. The only recovery path is a non-append file change: truncation, same-length mtime changes, or an old cache without raw turns. In that case the executor discards the cache and runs the first-open path again.
+2. Open and refresh first call `thread/read(includeTurns=false)` for thread metadata, then call `thread/turns/list(itemsView=notLoaded, sortDirection=desc)` for one turn page. The executor neither reads nor parses rollout JSONL and never calls `thread/read(includeTurns=true)`.
+3. Every returned turn is hydrated through `thread/items/list(sortDirection=asc)`. The executor reconciles active snapshots by provider item ID, then produces messages, tool blocks, thinking blocks, and file changes through the shared normalization path.
+4. `nextCursor` and `backwardsCursor` are opaque Codex cursors. Ordinary opens load only the requested page; older and newer requests return the corresponding cursor unchanged. Search, Supervisor, fork, and other full-history consumers follow `nextCursor` until exhausted.
+5. The executor has no local offset pagination or `itemsView=full` compatibility path for Codex. If Codex app-server does not support `thread/turns/list` or `thread/items/list`, the request fails instead of falling back to rollout files or `thread/read(includeTurns=true)`.
 
-The list, read, and thread-management paths share one persistent Codex app-server connection, avoiding per-RPC child process startup. Wework still does not use Codex app-server `thread/turns/list` for long transcript paging because the current Codex implementation still replays the whole rollout file on each request. That has the same cost as a full read and cannot reuse the executor's normalized tool/message cache. Opening with `includeTurns: true` is also avoided because large transcripts would be serialized through app-server before the executor normalizes them, increasing IPC and frontend pressure.
+The list, read, and thread-management paths share one persistent Codex app-server connection, avoiding per-RPC child process startup. New threads explicitly set `historyMode=paginated`; the Codex version bundled with Wework must support `thread/turns/list` and `thread/items/list`, otherwise it is an unsupported runtime version.
 
 The local-device proxy is process-level configuration for this shared Codex app-server, not per-task configuration. After the local executor starts, Wework synchronizes the current proxy through `runtime.codex.runtime_config.update` before plugin listing, model listing, rate-limit reads, or task RPCs can start the app-server for the first time. Whichever RPC triggers startup must launch the single app-server with that proxy environment, and later tasks reuse the same process. When the user changes or disables the proxy, Wework includes the new configuration in the app-server restart request. An auxiliary RPC without task context must never start the shared process with a default environment that bypasses the configured proxy.
 
-Paging or turn navigation can leave the frontend holding non-contiguous transcript ranges. Wework shows a missing-range marker between adjacent message indexes and automatically requests that range once when the marker first enters the viewport. If the runtime still cannot fill the same range, the frontend must stop automatic retries and keep only explicit user-triggered retry. Loading a missing range only updates that marker's state; it must not take ownership of turn-navigation scrolling, disable browser scroll anchoring, or switch message virtualization modes, because an unfillable range would otherwise create a request and layout-jitter loop.
-
-`loadedTranscriptRanges` is authoritative when deciding whether transcript history has been loaded; visible `messageIndex` continuity alone is insufficient. Flows such as transparent model retries can collapse failed attempts that are already loaded, leaving intentional gaps between visible message indexes without any missing history. Wework shows a missing-range marker only when indexes between adjacent visible messages are not covered by any loaded range, and the requested range must be trimmed to the actually uncovered portion.
-
-Turn navigation identifies user messages by stable client message ID. Retry or recovery can temporarily leave transcript navigation metadata with multiple entries for the same client message; the frontend must merge those duplicates and prefer the entry whose index matches the currently loaded message, preventing duplicate markers, overlapping previews, and incorrect jumps.
-
-Use this manual benchmark to recheck a local rollout:
-
-```bash
-cd executor
-WEGENT_MANUAL_ROLLOUT=/path/to/rollout.jsonl \
-WEGENT_MANUAL_APPEND=1 \
-cargo test --test manual_runtime_perf -- --ignored --nocapture
-```
-
-Current local measurements:
-
-| Sample                                  | File size   |  List | First open | Loaded switch | Append refresh |
-| --------------------------------------- | ----------- | ----: | ---------: | ------------: | -------------: |
-| "Fix running task tool calls not shown" | about 61 MB | 13 ms |     2.09 s |         33 ms |          53 ms |
-
-The current target is therefore met: list under 1 second, first open under 3 seconds, and loaded switch plus fresh-data refresh under 500 ms. The first cold parse for even larger extreme histories is still bounded by JSONL size, but loaded switching and append refresh no longer grow with total history length.
+Transcript pages are merged only by stable message ID. Provider cursors do not encode global message offsets, so the frontend must not derive `messageIndex`, missing ranges, or full-conversation navigation from them. Turn navigation covers only loaded messages and is rebuilt after an older page is merged.
 
 When a user continues a LocalTask, Wework calls:
 
@@ -151,7 +130,7 @@ Backend only validates the user, device, and LocalTask ownership, then forwards 
 
 The frontend must insert the local guidance user message at the current streaming assistant position immediately when guidance sending starts, not after `runtime.tasks.guidance` returns. That insertion splits the active assistant into a frozen "before guidance" message and a continuing "after guidance" message. The continuing assistant keeps the original `subtaskId` so later stream events land after the guidance message. Later `chat:chunk` or `chat:done` events may still carry full text, so the frontend trims the text prefix recorded at split time. This keeps live streaming order consistent with the refreshed transcript order.
 
-Persisted messages for a native Codex task have one source: the Codex rollout exposed by `thread/read`. The executor must not merge `runtimeHandle.messages` or another LocalTask cache into the Provider transcript; missing persisted messages must be fixed in the Codex event-recording or transcript-parsing path. The frontend may maintain an unpersisted in-memory live projection. When guidance is applied in the background, it must settle the guidance queue and add the confirmed user message to the source conversation's live projection so reopening before `thread/read` covers the running turn does not lose the message. Once the Provider covers the same turn, `thread/read` takes over as a whole; the live projection must neither persist nor merge into Provider transcript pages.
+Persisted messages for a native Codex task have one source: `thread/turns/list` plus `thread/items/list`. The executor must not merge `runtimeHandle.messages` or another LocalTask cache into the Provider transcript; missing persisted messages must be fixed in the Codex event-recording or paginated-read path. The frontend may maintain an unpersisted in-memory live projection. When guidance is applied in the background, it must settle the guidance queue and add the confirmed user message to the source conversation's live projection so reopening before the Provider covers the running turn does not lose the message. Once the Provider covers the same turn, the paginated transcript takes over as a whole; the live projection must neither persist nor merge into Provider transcript pages.
 
 Users can also manually compact a local Codex LocalTask from the composer's context-usage control:
 
@@ -250,7 +229,7 @@ The runtime owns persistence for newly created tasks:
 
 - Claude Code creates an executor JSON LocalTask and stores the transcript and runtime handle in that index.
 - Codex creation first returns the Wegent-side `localTaskId` so the frontend can open the task and receive stream events immediately. After app-server `thread/start` and `turn/start` create the real Codex thread, the executor writes the `localTaskId -> threadId` mapping into the JSON LocalTask index for later send/resume calls.
-- Codex creation and continuation do not cache the full transcript in the executor JSON index. After an executor restart, the executor recovers task links through `thread/list` plus the local index, then reads transcripts from `thread/read` metadata plus rollout JSONL.
+- Codex creation and continuation do not cache the full transcript in the executor JSON index. After an executor restart, the executor recovers task links through `thread/list` plus the local index, then reads transcripts through `thread/turns/list` and `thread/items/list`.
 - Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
 - Codex app-server input supports `input_text`, `input_image`, and `localImage` prompt blocks. Backend attachment-id download and sandbox-path rewriting remain separate from local-first attachments: local App mode sends same-device attachment records through executor IPC, while cloud/Backend paths continue to use uploaded attachment ids.
 - If Codex response completion includes `file_changes` or `fileChanges`, the executor stores it on the current assistant message's `fileChanges` field, and later transcript refreshes continue to show the same file changes card.

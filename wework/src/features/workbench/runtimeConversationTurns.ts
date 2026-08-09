@@ -104,6 +104,7 @@ export function reduceRuntimeConversationTurns(
         const items = applyCompletedAssistantContent(
           settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
           turn.id,
+          action.itemId,
           action.content
         )
         return {
@@ -324,22 +325,30 @@ function mergeRuntimeConversationItems(
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item)
   )
-  if (localItems.length <= snapshotItems.length) return mergedSnapshotItems
-
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
   const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
-  for (let index = mergedSnapshotItems.length - 1; index >= 0; index -= 1) {
-    const snapshotItem = mergedSnapshotItems[index]
-    if (snapshotItem?.type !== 'assistant_text') continue
-    const localMatch = mergedLocalItems.find(
-      item =>
-        item.type === 'assistant_text' &&
-        (item.id === snapshotItem.id || item.content === snapshotItem.content)
-    )
-    if (!localMatch) return [...mergedLocalItems, snapshotItem]
-    return mergedLocalItems.map(item =>
-      item === localMatch ? { ...snapshotItem, id: localMatch.id } : item
-    )
+  for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
+    const snapshotItem = mergedSnapshotItems[snapshotIndex]
+    if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
+      continue
+    }
+
+    const nextSnapshotItem = mergedSnapshotItems
+      .slice(snapshotIndex + 1)
+      .find(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    if (nextSnapshotItem) {
+      const insertionIndex = mergedLocalItems.findIndex(item => item.id === nextSnapshotItem.id)
+      mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+      continue
+    }
+
+    const previousSnapshotItem = mergedSnapshotItems
+      .slice(0, snapshotIndex)
+      .findLast(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    const insertionIndex = previousSnapshotItem
+      ? mergedLocalItems.findIndex(item => item.id === previousSnapshotItem.id) + 1
+      : mergedLocalItems.length
+    mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
   }
   return mergedLocalItems
 }
@@ -519,6 +528,7 @@ function upsertAssistantText(
 function applyCompletedAssistantContent(
   items: RuntimeConversationItem[],
   turnId: string | null,
+  itemId: string | undefined,
   content: string | undefined
 ): RuntimeConversationItem[] {
   if (!content) return items
@@ -532,7 +542,7 @@ function applyCompletedAssistantContent(
   )
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
@@ -544,7 +554,7 @@ function applyCompletedAssistantContent(
   return [
     ...retained,
     {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),

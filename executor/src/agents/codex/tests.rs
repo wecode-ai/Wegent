@@ -1845,10 +1845,10 @@ fn turn_start_params_includes_output_schema() {
 }
 
 #[test]
-fn thread_start_uses_codex_default_history_mode() {
+fn thread_start_uses_paginated_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
-    assert!(params.get("historyMode").is_none());
+    assert_eq!(params["historyMode"], "paginated");
 }
 
 #[test]
