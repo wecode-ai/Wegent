@@ -4526,4 +4526,42 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('project-item-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-standalone-task')).toBeInTheDocument()
   })
+
+  test('does not render a standalone project row when the path is already represented on another device', () => {
+    const workspacePath = '/Users/alice/repo'
+
+    renderSidebar({
+      projects: [],
+      devices: [localDevice({ device_id: 'device-1', name: 'Local Mac' })],
+      standaloneDeviceId: 'device-1',
+      standaloneWorkspacePath: workspacePath,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'cloud-project', name: 'Repo' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 10,
+                projectId: 7,
+                deviceId: 'device-cloud',
+                deviceName: 'Cloud Device',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath,
+                workspaceKind: 'workspace',
+                mapped: true,
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(screen.getAllByTestId('project-item-button')).toHaveLength(1)
+    expect(screen.getByTestId('project-item-button')).toHaveTextContent('Repo')
+  })
 })

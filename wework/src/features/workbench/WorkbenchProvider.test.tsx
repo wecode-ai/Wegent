@@ -847,6 +847,9 @@ function ProjectSendProbe() {
           .map(projectWork => projectWork.project.name)
           .join('|') ?? ''}
       </span>
+      <span data-testid="runtime-project-count">
+        {workbench.state.runtimeWork?.projects.length ?? 0}
+      </span>
       <span data-testid="runtime-chat-workspaces">
         {workbench.state.runtimeWork?.chats.map(workspace => workspace.workspacePath).join('|') ??
           ''}
@@ -994,6 +997,14 @@ function ProjectSendProbe() {
         }
       >
         open cloud standalone workspace
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace('device-local', '/workspace/cloud', 'Cloud Repo')
+        }
+      >
+        open local workspace over cloud path
       </button>
       <button type="button" onClick={() => paneSession.setInput('修复 CI')}>
         set input
@@ -6093,6 +6104,115 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1))
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-cloud')
     expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('/workspace/cloud')
+  })
+
+  test('deduplicates a fresh local project over an aliased cloud workspace after refresh', async () => {
+    const localDevice = createDevice({
+      id: 31,
+      device_id: 'device-local',
+      name: 'This Mac',
+      device_type: 'local',
+    })
+    const cloudDevice = createDevice({
+      id: 32,
+      device_id: 'device-cloud',
+      name: 'Cloud Device',
+      device_type: 'cloud',
+    })
+    const localRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local-project', name: 'Cloud Repo' },
+          deviceWorkspaces: [
+            {
+              id: null,
+              projectId: null,
+              deviceId: 'device-local',
+              deviceName: 'This Mac',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/cloud',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'local-task-1',
+                  workspacePath: '/workspace/cloud',
+                  title: 'Local task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const cloudRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 50, key: 'cloud-project', name: 'Cloud Repo' },
+          deviceWorkspaces: [
+            {
+              id: 51,
+              projectId: 50,
+              deviceId: 'device-cloud',
+              deviceName: 'Cloud Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/cloud',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudListDevices = vi
+      .fn()
+      .mockResolvedValueOnce([cloudDevice])
+      .mockResolvedValue([{ ...cloudDevice, app_device_id: 'device-local' }])
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(localRuntimeWork),
+      openRuntimeWorkspace: vi.fn().mockImplementation(async ({ deviceId, workspacePath }) => ({
+        accepted: true,
+        deviceId,
+        workspacePath,
+        runtime: 'codex',
+      })),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([localDevice, cloudDevice]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: cloudListDevices,
+        listRuntimeWork: vi.fn().mockResolvedValue(cloudRuntimeWork),
+      },
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(screen.getByText('open cloud standalone workspace'))
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-cloud')
+
+    await userEvent.click(screen.getByText('open local workspace over cloud path'))
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(2))
+
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1))
+    await waitFor(() => expect(cloudListDevices.mock.calls.length).toBeGreaterThan(1))
+
+    // The local and cloud copies of the same workspace must collapse into one project.
+    expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-local')
   })
 
   test('opens a standalone runtime project first without refreshing the runtime list', async () => {
