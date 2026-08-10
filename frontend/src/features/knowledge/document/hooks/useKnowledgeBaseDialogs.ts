@@ -33,7 +33,8 @@ interface SidebarLike {
 
 interface UseKnowledgeBaseDialogsParams {
   sidebar: SidebarLike
-  saveSummaryModelToPreference: (summaryModelRef: SummaryModelRef | null | undefined) => void
+  /** Remember a model choice for this team, whatever it was chosen for. */
+  saveModelToPreference: (modelRef: SummaryModelRef | null | undefined) => void
   reloadGroupKbs: () => void
 }
 
@@ -84,7 +85,7 @@ export interface UseKnowledgeBaseDialogsReturn {
 
 export function useKnowledgeBaseDialogs({
   sidebar,
-  saveSummaryModelToPreference,
+  saveModelToPreference,
   reloadGroupKbs,
 }: UseKnowledgeBaseDialogsParams): UseKnowledgeBaseDialogsReturn {
   const router = useRouter()
@@ -166,6 +167,10 @@ export function useKnowledgeBaseDialogs({
             source_url: data.source_url!,
             execution_model_ref: data.execution_model_ref!,
           })
+          // Remembered like any other model choice, so the next wiki opens on it.
+          // This branch returns before the save further down, which is why every
+          // code wiki forgot its model the moment it was created.
+          saveModelToPreference(data.execution_model_ref)
           setShowCreateDialog(false)
           resetCreateDialogState()
           await sidebar.refreshAll()
@@ -200,7 +205,7 @@ export function useKnowledgeBaseDialogs({
         })
 
         if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
+          saveModelToPreference(data.summary_model_ref)
         }
         setShowCreateDialog(false)
         resetCreateDialogState()
@@ -222,7 +227,7 @@ export function useKnowledgeBaseDialogs({
       createGroupName,
       createKbType,
       sidebar,
-      saveSummaryModelToPreference,
+      saveModelToPreference,
       reloadGroupKbs,
       resetCreateDialogState,
       router,
@@ -238,7 +243,12 @@ export function useKnowledgeBaseDialogs({
         await updateKnowledgeBase(editingKb.id, data)
 
         if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
+          saveModelToPreference(data.summary_model_ref)
+        }
+        // A code wiki's own model, changed here. Saved after the summary one so the
+        // more specific choice is what the next dialog opens on.
+        if (data.execution_model_ref) {
+          saveModelToPreference(data.execution_model_ref)
         }
 
         await sidebar.refreshAll()
@@ -247,7 +257,7 @@ export function useKnowledgeBaseDialogs({
         setIsUpdating(false)
       }
     },
-    [editingKb, sidebar, saveSummaryModelToPreference]
+    [editingKb, sidebar, saveModelToPreference]
   )
 
   const handleDelete = useCallback(async () => {

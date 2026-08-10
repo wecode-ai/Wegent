@@ -1119,7 +1119,7 @@
       "showGenerationTask": "Show generation runs",
       "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id.",
       "modelLabel": "Generation model",
-      "modelDescription": "Generating hands this repository's code to the model to read. Assess for yourself whether exposing this codebase to it is acceptable.",
+      "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with"
     },

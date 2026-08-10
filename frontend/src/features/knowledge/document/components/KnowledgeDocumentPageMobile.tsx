@@ -193,7 +193,7 @@ export function KnowledgeDocumentPageMobile({
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
   // Helper: save summary model to knowledge team's preference
-  const saveSummaryModelToPreference = useCallback(
+  const saveModelToPreference = useCallback(
     (summaryModelRef: SummaryModelRef | null | undefined) => {
       if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
 
@@ -272,7 +272,7 @@ export function KnowledgeDocumentPageMobile({
 
         // Save model preference when summary is enabled and model is selected
         if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
+          saveModelToPreference(data.summary_model_ref)
         }
 
         setShowCreateDialog(false)
@@ -292,7 +292,7 @@ export function KnowledgeDocumentPageMobile({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, tree, saveSummaryModelToPreference]
+    [createScope, createGroupName, createKbType, tree, saveModelToPreference]
   )
 
   // Handle open group settings

@@ -50,6 +50,11 @@ export function ModelRefSelector({
   // preselection before team info was loaded, allowing re-attempt when team info arrives
   const ATTEMPTED_WITHOUT_TEAM = -1
   const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
+  // Whether the current value is this effect's own guess rather than a real choice.
+  // A guess made before the team id arrived could not consult the cache, so it has
+  // to stay replaceable -- otherwise the re-attempt below can never happen and the
+  // remembered model loses to whatever sorted first.
+  const guessedRef = useRef(false)
 
   // Fetch models on mount
   useEffect(() => {
@@ -87,8 +92,12 @@ export function ModelRefSelector({
   // - Valid knowledgeDefaultTeamId is provided (for cache and tracking)
   // - Haven't attempted preselection for this team ID yet
   useEffect(() => {
-    // Skip if value exists, still loading
-    if (value || loading || models.length === 0) {
+    if (loading || models.length === 0) {
+      return
+    }
+    // A value the caller loaded or the user picked is never second-guessed. One this
+    // effect guessed is provisional until the team id has had its turn.
+    if (value && !guessedRef.current) {
       return
     }
 
@@ -127,6 +136,8 @@ export function ModelRefSelector({
         })
 
         if (matchedModel) {
+          // Remembered, so no longer a guess: this is what was chosen last time.
+          guessedRef.current = false
           onChange({
             name: matchedModel.name,
             namespace: matchedModel.namespace || 'default',
@@ -143,6 +154,7 @@ export function ModelRefSelector({
         model => model.name === bindModel || model.displayName === bindModel
       )
       if (matchedModel) {
+        guessedRef.current = true
         onChange({
           name: matchedModel.name,
           namespace: matchedModel.namespace || 'default',
@@ -155,6 +167,7 @@ export function ModelRefSelector({
     // Priority 3: Select the first available model
     const firstModel = models[0]
     if (firstModel) {
+      guessedRef.current = true
       onChange({
         name: firstModel.name,
         namespace: firstModel.namespace || 'default',
@@ -194,6 +207,8 @@ export function ModelRefSelector({
   }, [selectedModel, value, placeholder])
 
   const handleSelect = (model: UnifiedModel) => {
+    // Picked deliberately, so nothing may overwrite it.
+    guessedRef.current = false
     onChange({
       name: model.name,
       namespace: model.namespace || 'default',

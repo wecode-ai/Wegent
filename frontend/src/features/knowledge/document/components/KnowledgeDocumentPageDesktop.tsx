@@ -193,7 +193,7 @@ export function KnowledgeDocumentPageDesktop({
   const knowledgeDefaultTeamId = knowledgeTeamInfo.id
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
-  const saveSummaryModelToPreference = useCallback(
+  const saveModelToPreference = useCallback(
     (summaryModelRef: SummaryModelRef | null | undefined) => {
       if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
 
@@ -239,7 +239,7 @@ export function KnowledgeDocumentPageDesktop({
   // Dialog management
   const dialogs = useKnowledgeBaseDialogs({
     sidebar,
-    saveSummaryModelToPreference,
+    saveModelToPreference,
     reloadGroupKbs,
   })
 
