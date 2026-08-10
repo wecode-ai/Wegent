@@ -144,7 +144,8 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/tasks/components/sidebar/HistoryManageDialog', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ open, initialTaskId }: { open: boolean; initialTaskId?: number | null }) =>
+    open ? <div data-testid="history-manage-dialog" data-initial-task-id={initialTaskId} /> : null,
 }))
 
 jest.mock('@/features/tasks/components/sidebar/TaskListSection', () => ({
@@ -155,12 +156,14 @@ jest.mock('@/features/tasks/components/sidebar/TaskListSection', () => ({
     titleClassName,
     initialVisibleCount,
     tasks,
+    onSelectMultiple,
   }: {
     title?: string
     titleIcon?: React.ReactNode
     titleClassName?: string
     initialVisibleCount?: number
     tasks: Task[]
+    onSelectMultiple?: (taskId: number) => void
   }) => (
     <section
       data-testid="task-list-section"
@@ -174,7 +177,18 @@ jest.mock('@/features/tasks/components/sidebar/TaskListSection', () => ({
         </h4>
       )}
       {tasks.map(task => (
-        <div key={task.id}>{task.title}</div>
+        <div key={task.id}>
+          {task.title}
+          {onSelectMultiple && (
+            <button
+              type="button"
+              data-testid={`mock-select-multiple-${task.id}`}
+              onClick={() => onSelectMultiple(task.id)}
+            >
+              select multiple
+            </button>
+          )}
+        </div>
       ))}
     </section>
   ),
@@ -617,6 +631,18 @@ describe('TaskSidebar scroll structure', () => {
     expect(mockTaskSessionContext.loadAllGroupTasks).toHaveBeenCalledTimes(1)
     expect(mockTaskSessionContext.loadMoreGroupTasks).not.toHaveBeenCalled()
     expect(within(groupDock).getByText('Group chat message')).toBeInTheDocument()
+  })
+
+  it('opens history management with the source task selected', () => {
+    mockTaskSessionContext.personalTasks = [createTask({ id: 1, title: 'Personal message' })]
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    fireEvent.click(screen.getAllByTestId('mock-select-multiple-1')[0])
+
+    expect(screen.getByTestId('history-manage-dialog')).toHaveAttribute('data-initial-task-id', '1')
   })
 
   it('keeps the group chat toggle visible after loading an empty group chat list', () => {

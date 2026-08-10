@@ -450,6 +450,8 @@ class TaskStore(Protocol):
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]: ...
 
     def list_archived_task_ids(
