@@ -5888,6 +5888,11 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('creates a conversation workspace when sending without a selected project', async () => {
     vi.setSystemTime(new Date('2026-06-25T09:30:00.000Z'))
+    const localDevice = createDevice({
+      device_id: 'device-1',
+      device_type: 'local',
+      is_default: true,
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [], chats: [] })),
       createRuntimeTask: vi.fn().mockResolvedValue({
@@ -5900,6 +5905,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([localDevice]),
         getHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
         createDirectory: vi.fn().mockResolvedValue(undefined),
       } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
