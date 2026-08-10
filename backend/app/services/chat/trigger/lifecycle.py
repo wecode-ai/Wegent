@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,39 @@ from app.services.task_status import mark_task_pending_payload
 from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
+E2E_LOG_ENV = "PROVIDER_NATIVE_E2E_LOGGING"
+
+
+def _e2e_logging_enabled() -> bool:
+    raw = os.getenv(E2E_LOG_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _log_e2e_terminal_result(
+    *,
+    task_id: int,
+    subtask_id: int,
+    status: str,
+    result: Optional[Dict[str, Any]],
+    error: Optional[str],
+) -> None:
+    if not _e2e_logging_enabled():
+        return
+
+    result_payload = result if isinstance(result, dict) else {}
+    payload = {
+        "event": "answer_completed",
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "status": status,
+        "answer_text": result_payload.get("value", ""),
+        "error": error,
+        "result": result_payload,
+    }
+    logger.info(
+        "[PROVIDER_NATIVE_E2E] %s",
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+    )
 
 
 @dataclass
@@ -582,6 +616,13 @@ async def persist_completed_result(
         subtask_id,
         normalized_status,
         **update_kwargs,
+    )
+    _log_e2e_terminal_result(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        status=normalized_status,
+        result=result,
+        error=error,
     )
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)

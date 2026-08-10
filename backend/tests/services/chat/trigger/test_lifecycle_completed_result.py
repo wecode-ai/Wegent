@@ -2,9 +2,51 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+import logging
+
 import pytest
 
 from app.services.chat.trigger import lifecycle
+
+
+def test_log_e2e_terminal_result_includes_full_answer_and_result(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("PROVIDER_NATIVE_E2E_LOGGING", "true")
+    caplog.set_level(logging.INFO, logger=lifecycle.__name__)
+
+    lifecycle._log_e2e_terminal_result(
+        task_id=101,
+        subtask_id=202,
+        status="COMPLETED",
+        result={
+            "value": "最终回答\nWEGENT-A1-NEW-2026",
+            "sources": [{"document_id": "Doc-A1"}],
+        },
+        error=None,
+    )
+
+    record = next(
+        item
+        for item in caplog.records
+        if item.getMessage().startswith("[PROVIDER_NATIVE_E2E]")
+    )
+    payload = json.loads(record.getMessage().split("] ", 1)[1])
+
+    assert payload == {
+        "event": "answer_completed",
+        "task_id": 101,
+        "subtask_id": 202,
+        "status": "COMPLETED",
+        "answer_text": "最终回答\nWEGENT-A1-NEW-2026",
+        "error": None,
+        "result": {
+            "value": "最终回答\nWEGENT-A1-NEW-2026",
+            "sources": [{"document_id": "Doc-A1"}],
+        },
+    }
 
 
 class _SessionManager:
