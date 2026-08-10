@@ -26,6 +26,7 @@ type ClearCompletionSender = Arc<Mutex<Option<oneshot::Sender<Result<(), String>
 pub enum EmbeddedBrowserDataKind {
     Cookies,
     Cache,
+    Storage,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -33,6 +34,7 @@ struct DataKindSet {
     all: bool,
     cookies: bool,
     cache: bool,
+    storage: bool,
 }
 
 impl DataKindSet {
@@ -42,6 +44,7 @@ impl DataKindSet {
                 all: true,
                 cookies: true,
                 cache: true,
+                storage: true,
             };
         };
         if kinds.is_empty() {
@@ -49,6 +52,7 @@ impl DataKindSet {
                 all: true,
                 cookies: true,
                 cache: true,
+                storage: true,
             };
         }
 
@@ -58,6 +62,7 @@ impl DataKindSet {
                 match kind {
                     EmbeddedBrowserDataKind::Cookies => data_kinds.cookies = true,
                     EmbeddedBrowserDataKind::Cache => data_kinds.cache = true,
+                    EmbeddedBrowserDataKind::Storage => data_kinds.storage = true,
                 }
                 data_kinds
             })
@@ -168,7 +173,12 @@ async fn clear_platform_webview_data(
 ) -> Result<(), String> {
     use block2::RcBlock;
     use objc2_foundation::{NSDate, NSSet, NSString, NSURLCache};
-    use objc2_web_kit::{WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache};
+    use objc2_web_kit::{
+        WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
+        WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeIndexedDBDatabases,
+        WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeMemoryCache,
+        WKWebsiteDataTypeOfflineWebApplicationCache, WKWebsiteDataTypeSessionStorage,
+    };
 
     let (sender, receiver) = oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
@@ -183,12 +193,20 @@ async fn clear_platform_webview_data(
                 );
                 return;
             };
-            let mut data_types: Vec<&NSString> = Vec::with_capacity(2);
+            let mut data_types: Vec<&NSString> = Vec::with_capacity(8);
             if data_kinds.cookies {
                 data_types.push(unsafe { WKWebsiteDataTypeCookies });
             }
             if data_kinds.cache {
                 data_types.push(unsafe { WKWebsiteDataTypeDiskCache });
+                data_types.push(unsafe { WKWebsiteDataTypeFetchCache });
+                data_types.push(unsafe { WKWebsiteDataTypeMemoryCache });
+                data_types.push(unsafe { WKWebsiteDataTypeOfflineWebApplicationCache });
+            }
+            if data_kinds.storage {
+                data_types.push(unsafe { WKWebsiteDataTypeLocalStorage });
+                data_types.push(unsafe { WKWebsiteDataTypeSessionStorage });
+                data_types.push(unsafe { WKWebsiteDataTypeIndexedDBDatabases });
             }
             let data_types = NSSet::from_slice(&data_types);
             let date = NSDate::dateWithTimeIntervalSince1970(0.0);
@@ -272,6 +290,10 @@ fn windows_data_kinds(data_kinds: DataKindSet) -> COREWEBVIEW2_BROWSING_DATA_KIN
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0;
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0;
     }
+    if data_kinds.storage {
+        kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_LOCAL_STORAGE.0;
+        kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_INDEXED_DB.0;
+    }
     COREWEBVIEW2_BROWSING_DATA_KINDS(kinds)
 }
 
@@ -331,6 +353,11 @@ fn linux_data_kinds(data_kinds: DataKindSet) -> webkit2gtk::WebsiteDataTypes {
         kinds |= webkit2gtk::WebsiteDataTypes::MEMORY_CACHE;
         kinds |= webkit2gtk::WebsiteDataTypes::OFFLINE_APPLICATION_CACHE;
     }
+    if data_kinds.storage {
+        kinds |= webkit2gtk::WebsiteDataTypes::LOCAL_STORAGE;
+        kinds |= webkit2gtk::WebsiteDataTypes::SESSION_STORAGE;
+        kinds |= webkit2gtk::WebsiteDataTypes::INDEXEDDB_DATABASES;
+    }
     kinds
 }
 
@@ -354,6 +381,7 @@ mod tests {
                 all: true,
                 cookies: true,
                 cache: true,
+                storage: true,
             }
         );
         assert_eq!(
@@ -362,6 +390,7 @@ mod tests {
                 all: true,
                 cookies: true,
                 cache: true,
+                storage: true,
             }
         );
     }
@@ -374,6 +403,7 @@ mod tests {
                 all: false,
                 cookies: true,
                 cache: false,
+                storage: false,
             }
         );
         assert_eq!(
@@ -382,6 +412,16 @@ mod tests {
                 all: false,
                 cookies: false,
                 cache: true,
+                storage: false,
+            }
+        );
+        assert_eq!(
+            DataKindSet::from_requested(Some(vec![EmbeddedBrowserDataKind::Storage])),
+            DataKindSet {
+                all: false,
+                cookies: false,
+                cache: false,
+                storage: true,
             }
         );
     }
@@ -398,6 +438,7 @@ mod tests {
                 all: false,
                 cookies: true,
                 cache: true,
+                storage: false,
             }
         );
     }
