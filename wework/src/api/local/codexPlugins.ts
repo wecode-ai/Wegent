@@ -1722,16 +1722,28 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     },
     async listInstalledPlugins() {
       if (!isTauriRuntime()) return { items: [] }
-      const peeked =
-        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ||
-        peekLocalCodexPluginsReadState()
-      // Durable readState can exist with an empty installedPlugins list (e.g. warm
-      // catalog before installs, or a stale localStorage snapshot). Never treat that
-      // as authoritative for composer — plugin/installed is cheap (~50–150ms).
-      if (peeked && peeked.installedPlugins.length > 0) {
+      const mergeParams = { mergeAllMarketplaces: true as const }
+      const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
+      // Only trust a non-empty install list while the readState snapshot is still
+      // fresh. Durable localStorage can keep installs for days after uninstall.
+      const peekedIsFresh =
+        Boolean(peeked) &&
+        (isLocalCodexPluginsReadStateFresh(mergeParams) || isLocalCodexPluginsReadStateFresh())
+      if (peeked && peeked.installedPlugins.length > 0 && peekedIsFresh) {
         return { items: peeked.installedPlugins }
       }
       const loaded = await loadInstalledPluginsOnly()
+      if (cachedState) {
+        cachedState = {
+          ...cachedState,
+          installedPlugins: loaded.installedPlugins,
+          deviceId: loaded.deviceId || cachedState.deviceId,
+        }
+        cachedStateAt = Date.now()
+        if (cachedStateParamsKey) {
+          persistReadStateSnapshot(cachedStateParamsKey, cachedState, cachedStateAt)
+        }
+      }
       return { items: loaded.installedPlugins }
     },
     async listSkills(params = {}) {

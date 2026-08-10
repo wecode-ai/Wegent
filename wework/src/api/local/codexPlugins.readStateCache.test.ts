@@ -530,4 +530,93 @@ describe('local codex plugin readState cache', () => {
       )
     ).toHaveLength(1)
   })
+
+  test('listInstalledPlugins refreshes via plugin/installed when peek is stale', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+
+    const installedResponse = (pluginName: string) => ({
+      marketplaces: [
+        {
+          ...personalMarketplace,
+          plugins: [
+            {
+              name: pluginName,
+              id: pluginName,
+              installed: true,
+              enabled: true,
+              interface: { displayName: pluginName },
+            },
+          ],
+        },
+      ],
+    })
+
+    mocks.requestLocalExecutor.mockClear()
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return installedResponse('dingtalk')
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const first = await api.listInstalledPlugins()
+    expect(first.items.map(item => item.metadata.name)).toEqual(['dingtalk'])
+
+    mocks.requestLocalExecutor.mockClear()
+    const second = await api.listInstalledPlugins()
+    expect(second.items.map(item => item.metadata.name)).toEqual(['dingtalk'])
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      )
+    ).toHaveLength(0)
+
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 61_000)
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return installedResponse('lark')
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const third = await api.listInstalledPlugins()
+    expect(third.items.map(item => item.metadata.name)).toEqual(['lark'])
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      )
+    ).toHaveLength(1)
+  })
 })

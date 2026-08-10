@@ -91,10 +91,17 @@ export function mergeMarketplaceCatalog(
   installedPlugins: InstalledPlugin[]
 ): PluginMarketplaceItem[] {
   const localPublishedInstalls = new Map<string, InstalledPlugin>()
+  const cloudManagedInstalls = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const cloudPluginId = linkedCloudPluginId(plugin)
     if (cloudPluginId !== null && localPluginId(plugin) !== null) {
       localPublishedInstalls.set(String(cloudPluginId), plugin)
+    }
+    // Account installs from /installed-plugins carry spec.pluginId == catalog id.
+    // After install, a marketplace refresh can still return installed:false on the
+    // cloud row; overlay from the installed list so the card shows "..." immediately.
+    if (typeof plugin.spec.pluginId === 'number') {
+      cloudManagedInstalls.set(String(plugin.spec.pluginId), plugin)
     }
   }
 
@@ -102,17 +109,20 @@ export function mergeMarketplaceCatalog(
   const cloudNames = new Set<string>()
   for (const item of cloudItems) {
     const localInstall = localPublishedInstalls.get(String(item.id))
+    const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
+    const matchedInstall = localInstall ?? cloudInstall
     // Cloud catalog ids are unique; never collapse distinct plugins by display name.
     merged.set(`cloud:${item.id}`, {
       ...item,
-      ...(localInstall
+      ...(matchedInstall
         ? {
             installed: true,
-            installedPluginId: localPluginId(localInstall),
-            installedLocally: true,
-            enabled: localInstall.spec.enabled,
-            updateAvailable: false,
-            currentDeviceInstallation: null,
+            installedPluginId: localPluginId(matchedInstall) ?? item.installedPluginId,
+            installedLocally: Boolean(localInstall) || Boolean(item.installedLocally),
+            enabled: matchedInstall.spec.enabled,
+            updateAvailable:
+              item.updateAvailable || matchedInstall.spec.installState === 'update_available',
+            currentDeviceInstallation: localInstall ? null : item.currentDeviceInstallation,
           }
         : {}),
     })

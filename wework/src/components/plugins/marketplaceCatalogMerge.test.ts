@@ -128,6 +128,44 @@ describe('mergeMarketplaceCatalog', () => {
     expect(shouldShowInstalledMarketplaceActions(localCatalogPlugin(), false)).toBe(true)
     expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)
   })
+
+  test('marks a cloud row installed from account InstalledPlugin when catalog lags', () => {
+    const cloudInstalled: InstalledPlugin = {
+      apiVersion: 'wegent.ai/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'weibo-api-wiki', namespace: 'default', labels: { id: '267433' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'weibo-api-wiki',
+          marketplace: 'wegent',
+        },
+        pluginId: 4,
+        releaseId: 6,
+        installState: 'installed',
+        enabled: true,
+        displayName: '微博小程序H5开发助手',
+        description: '',
+        componentStates: {},
+        components,
+        interface: null,
+        packageRef: null,
+        sourcePayload: {},
+      },
+      status: { state: 'enabled' },
+    }
+
+    const merged = mergeMarketplaceCatalog([cloudPlugin()], [], [cloudInstalled])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 4,
+      installed: true,
+      installedPluginId: '267433',
+      enabled: true,
+    })
+    expect(shouldShowInstalledMarketplaceActions(merged[0], true)).toBe(true)
+  })
 })
 
 describe('mergeDiskPersonalIntoLocalRows', () => {

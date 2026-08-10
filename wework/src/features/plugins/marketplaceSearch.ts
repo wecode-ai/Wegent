@@ -8,12 +8,15 @@ const AUTHOR_OR_TAG_SCORE = 100
 interface MarketplaceSearchablePlugin {
   name: string
   displayName?: string | null
+  description?: string | null
   author?: string | null
   ownerDisplayName?: string | null
   manifest?: Record<string, unknown> | null
   interface?: {
     developerName?: string | null
     category?: string | null
+    shortDescription?: string | null
+    longDescription?: string | null
   } | null
 }
 
@@ -62,6 +65,15 @@ export function marketplaceSearchScore(
   if (names.some(name => name === normalizedQuery)) return EXACT_NAME_SCORE
   if (names.some(name => name.startsWith(normalizedQuery))) return NAME_PREFIX_SCORE
   if (names.some(name => valueContainsQuery(name, normalizedQuery))) return NAME_CONTAINS_SCORE
+
+  const descriptions = normalizedValues([
+    item.description,
+    item.interface?.shortDescription,
+    item.interface?.longDescription,
+  ])
+  if (descriptions.some(value => valueContainsQuery(value, normalizedQuery))) {
+    return AUTHOR_OR_TAG_SCORE
+  }
 
   const authorAndTags = normalizedValues([
     item.author,

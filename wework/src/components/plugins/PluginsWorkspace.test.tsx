@@ -1701,6 +1701,10 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+    // Prefer the marketplace-enriched detail path (same as list → detail).
+    expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
+    expect(screen.getByText('AI 使用向导')).toBeInTheDocument()
+    expect(screen.getByText('Documents App')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
 
     expect(window.location.pathname).toBe('/')
@@ -2969,6 +2973,50 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('plugins-installed-strip-empty')).not.toBeInTheDocument()
     })
+  })
+
+  test('paints cloud installed strip before Codex plugin/list finishes', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    clearPluginMarketplaceCache()
+    clearLocalCodexPluginsReadStateCache()
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'local-device' })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    // Wework/cloud installs must not wait on Codex plugin/list (~10s) or the strip flashes.
+    expect(await screen.findByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+
+    resolveLocalList?.({ marketplaces: [] })
+    expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
   })
 
   test('sends remote plugin id for remote marketplace install', async () => {

@@ -58,6 +58,32 @@ describe('marketplaceSearch', () => {
     ).toBeNull()
   })
 
+  test('marketplaceSearchScore matches description and interface blurbs', () => {
+    expect(
+      marketplaceSearchScore(
+        marketplaceItem({
+          id: 1,
+          name: 'office',
+          displayName: 'Office Kit',
+          description: 'Manage DingTalk documents and calendars',
+        }),
+        'dingtalk'
+      )
+    ).toBe(100)
+
+    expect(
+      marketplaceSearchScore(
+        marketplaceItem({
+          id: 2,
+          name: 'notes',
+          displayName: 'Notes',
+          interface: { shortDescription: 'Capture meeting notes in Feishu' },
+        }),
+        'feishu'
+      )
+    ).toBe(100)
+  })
+
   test('rankMarketplaceSearchResults returns all items for empty query', () => {
     const items = [marketplaceItem({ id: 1, name: 'a' }), marketplaceItem({ id: 2, name: 'b' })]
     expect(rankMarketplaceSearchResults(items, '  ')).toEqual(items)

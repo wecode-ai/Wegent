@@ -84,6 +84,7 @@ import {
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
 } from './installedPluginMerge'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
   isLocalMarketplaceItem,
   mergeDiskPersonalIntoLocalRows,
@@ -2468,11 +2469,17 @@ export function PluginsWorkspace({
           ),
         diskPersonalItemsForMerge
       )
-      const cloudInstalled = cloudInstalledForMerge ?? []
+      const previousInstalledRaw = installedPluginsRef.current.map(plugin => plugin.raw)
+      // Local-first paint must not blank cloud installs already on the strip. Until
+      // listInstalledPlugins returns, keep prior cloud-managed rows (spec.pluginId).
+      const cloudInstalled =
+        cloudInstalledForMerge ??
+        (cloudMarketplaceAvailable
+          ? previousInstalledRaw.filter(plugin => typeof plugin.spec.pluginId === 'number')
+          : [])
       const nextInstalled = mergeInstalledPlugins(
         cloudInstalled,
-        localStateForMerge?.installedPlugins ??
-          installedPluginsRef.current.map(plugin => plugin.raw),
+        localStateForMerge?.installedPlugins ?? previousInstalledRaw,
         localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
       ).map(toInstalledPluginItem)
       const mergedItems = mergeMarketplaceCatalog(
@@ -2482,9 +2489,8 @@ export function PluginsWorkspace({
       )
       if (mergedItems.length === 0 && !hasCachedCatalog) return
 
-      // Always publish installed rows once either side has data. Previously we only
-      // updated when cloudInstalledForMerge was set, so a local-first paint left the
-      // installed strip empty until the final settle.
+      // Publish installed rows when either side has data. Preserving prior cloud rows
+      // above stops a Codex-only peek from flashing away Wework/official icons.
       if (localStateForMerge || cloudInstalledForMerge) {
         setInstalledPlugins(previous =>
           sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
@@ -2526,7 +2532,12 @@ export function PluginsWorkspace({
           diskPersonalItems
         )
         const nextInstalled = mergeInstalledPlugins(
-          cloudInstalledForMerge ?? [],
+          cloudInstalledForMerge ??
+            (cloudMarketplaceAvailable
+              ? installedPluginsRef.current
+                  .map(plugin => plugin.raw)
+                  .filter(plugin => typeof plugin.spec.pluginId === 'number')
+              : []),
           localStateForMerge?.installedPlugins ??
             installedPluginsRef.current.map(plugin => plugin.raw),
           localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
@@ -2570,6 +2581,19 @@ export function PluginsWorkspace({
         })
       })
       .catch(() => undefined)
+
+    // Paint the installed strip as soon as account installs arrive — do not wait on
+    // marketplace catalog or Codex plugin/list. That is what made Wework/official
+    // icons flash in after OpenAI/local peeks.
+    void installedPromise.then(installed => {
+      if (!isCurrent || catalogSettled) return
+      paintPartialCatalog({
+        cloudInstalled: installed.items,
+        localState: localStateForMerge,
+        diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
+        keepRefreshing: true,
+      })
+    })
 
     void Promise.allSettled([cloudPromise, installedPromise, capabilitiesPromise]).then(
       ([cloudResult, installedResult, capabilitiesResult]) => {
@@ -3180,6 +3204,16 @@ export function PluginsWorkspace({
     setSelectedMarketplacePluginId(item.id)
   }
 
+  const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
+    const marketplaceItem = findMarketplaceItemForInstalled(plugin, pluginMarketplaceState.items)
+    if (marketplaceItem) {
+      openMarketplacePluginDetail(marketplaceItem)
+      return
+    }
+    setSelectedMarketplacePluginId(null)
+    setSelectedPluginId(plugin.id)
+  }
+
   if (selectedPlugin) {
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
     const packableCreated =
@@ -3768,8 +3802,9 @@ export function PluginsWorkspace({
                 >
                   <div className="plugin-installed-icons-track">
                     {installedStripPlugins.map(plugin => {
-                      const marketplaceItem = pluginMarketplaceState.items.find(
-                        item => String(item.id) === String(plugin.id)
+                      const marketplaceItem = findMarketplaceItemForInstalled(
+                        plugin,
+                        pluginMarketplaceState.items
                       )
                       const logo = resolvePluginLogo({
                         pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
@@ -3790,7 +3825,7 @@ export function PluginsWorkspace({
                           data-tooltip={plugin.name}
                           aria-label={plugin.name}
                           className="plugin-installed-strip-item"
-                          onClick={() => setSelectedPluginId(plugin.id)}
+                          onClick={() => openInstalledPluginDetail(plugin)}
                         >
                           <span
                             className={[
@@ -3825,8 +3860,9 @@ export function PluginsWorkspace({
                           {hiddenInstalledPlugins
                             .slice(0, INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT)
                             .map(plugin => {
-                              const marketplaceItem = pluginMarketplaceState.items.find(
-                                item => String(item.id) === String(plugin.id)
+                              const marketplaceItem = findMarketplaceItemForInstalled(
+                                plugin,
+                                pluginMarketplaceState.items
                               )
                               const logo = resolvePluginLogo({
                                 pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
