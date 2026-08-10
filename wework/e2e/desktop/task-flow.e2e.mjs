@@ -6465,9 +6465,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     'Timed out waiting for the streaming response to start'
   )
   const sleepInhibitorEvidence = []
+  let runningAssertionIds = []
   if (process.platform === 'darwin') {
-    const assertionIds = await waitForMacosSleepAssertion(app.pid, true)
-    sleepInhibitorEvidence.push({ stage: 'task-running', assertionIds })
+    runningAssertionIds = await waitForMacosSleepAssertion(app.pid, true)
+    sleepInhibitorEvidence.push({
+      stage: 'task-running',
+      assertionIds: runningAssertionIds,
+    })
   }
   const runningTaskSnapshot = await waitForSnapshot(
     control,
@@ -6524,6 +6528,11 @@ async function verifyBackgroundTaskWindowLifecycle({
       'Closing to tray terminated the executor process'
     )
     const backgroundAssertionIds = await waitForMacosSleepAssertion(app.pid, true)
+    assert.deepEqual(
+      backgroundAssertionIds,
+      runningAssertionIds,
+      'The macOS sleep assertion changed while the task remained active'
+    )
     sleepInhibitorEvidence.push({
       stage: 'window-closed-to-tray',
       assertionIds: backgroundAssertionIds,
