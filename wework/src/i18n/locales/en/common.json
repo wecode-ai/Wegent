@@ -2023,6 +2023,8 @@
     "local_model_api_format_responses": "OpenAI Responses",
     "local_model_api_format_chat_completions": "OpenAI Chat Completions",
     "local_model_api_format_anthropic_messages": "Anthropic Messages",
+    "local_model_provider_minimax_cn": "MiniMax (China mainland)",
+    "local_model_provider_minimax_global": "MiniMax (Global)",
     "local_model_api_format_hint": "Responses endpoints are called directly. Chat Completions and Anthropic Messages are converted locally to the Responses format Codex requires, including streaming, reasoning, and tool calls.",
     "local_model_tool_profile_label": "Tool mode",
     "local_model_tool_profile_custom": "Native custom tools",
