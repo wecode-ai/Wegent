@@ -1137,7 +1137,14 @@
       "previousRunStalled": "上次运行已中断，可重新生成",
       "linkNotFound": "该链接指向的页面不存在",
       "backToChat": "回到对话",
-      "openNavigation": "页面导航"
+      "openNavigation": "页面导航",
+      "generateFirst": "开始生成",
+      "regenerateConfirmTitle": "重新生成这个 wiki？",
+      "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
+      "emptyGenerating": "正在生成这个 wiki",
+      "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
+      "emptyFailed": "上次生成没有完成",
+      "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
     },
     "history": {
       "title": "生成历史",
@@ -1158,7 +1165,9 @@
       "taskFailed": "执行任务失败",
       "republish": "恢复此版本",
       "republished": "已恢复该版本",
-      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复"
+      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
+      "republishConfirmTitle": "恢复这个版本？",
+      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",

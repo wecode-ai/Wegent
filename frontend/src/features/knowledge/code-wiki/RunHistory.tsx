@@ -8,6 +8,16 @@ import { useCallback, useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatRelativeTime } from '@/utils/dateTime'
@@ -85,8 +95,13 @@ function RunRow({
   const when = formatRelativeTime(run.started_at, t)
   const reason = failureText(run.failure_code, run.error_message, t)
   const [working, setWorking] = useState(false)
+  // Restoring replaces every page readers currently see. Asked for twice because
+  // the pages it overwrites keep their document ids only for as long as they exist
+  // -- links held elsewhere to the current pages do not survive being replaced.
+  const [confirming, setConfirming] = useState(false)
 
   const republish = async () => {
+    setConfirming(false)
     setWorking(true)
     try {
       await codeWikiApi.republish(knowledgeBaseId, run.generation_id)
@@ -148,7 +163,7 @@ function RunRow({
         {canRepublish(run) && (
           <button
             type="button"
-            onClick={republish}
+            onClick={() => setConfirming(true)}
             disabled={working}
             title={t('codeWiki.history.republishHint')}
             data-testid={`code-wiki-republish-${run.generation_id}`}
@@ -161,6 +176,25 @@ function RunRow({
             {t('codeWiki.history.republish')}
           </button>
         )}
+        <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          <AlertDialogContent data-testid="code-wiki-republish-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('codeWiki.history.republishConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('codeWiki.history.republishConfirmBody')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={republish}
+                data-testid={`code-wiki-republish-confirm-${run.generation_id}`}
+              >
+                {t('codeWiki.history.republish')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {reason && (
           <p
             className="mt-0.5 break-words text-[11px] text-amber-500"
