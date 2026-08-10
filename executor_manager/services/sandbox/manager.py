@@ -38,6 +38,7 @@ from executor_manager.services.sandbox.health_checker import (
 from executor_manager.services.sandbox.repository import get_sandbox_repository
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
+from shared.telemetry.decorators import trace_async
 
 if TYPE_CHECKING:
     from executor_manager.services.sandbox.scheduler import SandboxScheduler
@@ -160,6 +161,14 @@ class SandboxManager(metaclass=SingletonMeta):
                         existing_sandbox.base_url
                     )
                     if is_healthy:
+                        workspace_error = await self._ensure_sandbox_workspace(
+                            existing_sandbox
+                        )
+                        if workspace_error:
+                            existing_sandbox.set_failed(workspace_error)
+                            self._repository.save_sandbox(existing_sandbox)
+                            return existing_sandbox, workspace_error
+
                         logger.info(
                             f"[SandboxManager] Reusing existing sandbox {existing_sandbox.sandbox_id} "
                             f"for task {task_id} (health check passed)"
@@ -206,6 +215,12 @@ class SandboxManager(metaclass=SingletonMeta):
             sandbox.set_failed(error_msg)
             self._repository.save_sandbox(sandbox)
             return sandbox, error_msg
+
+        workspace_error = await self._ensure_sandbox_workspace(sandbox)
+        if workspace_error:
+            sandbox.set_failed(workspace_error)
+            self._repository.save_sandbox(sandbox)
+            return sandbox, workspace_error
 
         await self._restore_sandbox_after_create(sandbox)
 
@@ -716,6 +731,56 @@ class SandboxManager(metaclass=SingletonMeta):
             action="restore",
             sandbox=sandbox,
         )
+
+    @trace_async(
+        span_name="sandbox.ensure_workspace",
+        tracer_name="executor_manager.sandbox",
+        extract_attributes=lambda self, sandbox: {
+            "task.id": str(sandbox.sandbox_id),
+        },
+    )
+    async def _ensure_sandbox_workspace(self, sandbox: Sandbox) -> Optional[str]:
+        """Ensure required sandbox directories exist in the runtime."""
+        task_id = sandbox.metadata.get("task_id")
+        if task_id is None:
+            return "Failed to initialize sandbox workspace: task_id is missing"
+        if not sandbox.base_url:
+            return "Failed to initialize sandbox workspace: base_url is missing"
+
+        directory_paths = ("/home/user", f"/workspace/{task_id}")
+        directory_path = directory_paths[0]
+        url = f"{sandbox.base_url.rstrip('/')}/filesystem.Filesystem/MakeDir"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for directory_path in directory_paths:
+                    response = await client.post(
+                        url,
+                        json={"path": directory_path},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    if response.status_code == httpx.codes.CONFLICT:
+                        logger.info(
+                            "[SandboxManager] Sandbox directory already exists "
+                            "sandbox_id=%s path=%s",
+                            sandbox.sandbox_id,
+                            directory_path,
+                        )
+                        continue
+                    response.raise_for_status()
+                    logger.info(
+                        "[SandboxManager] Sandbox directory initialized "
+                        "sandbox_id=%s path=%s",
+                        sandbox.sandbox_id,
+                        directory_path,
+                    )
+            return None
+        except httpx.HTTPStatusError as exc:
+            return (
+                f"Failed to initialize sandbox directory {directory_path}: "
+                f"HTTP {exc.response.status_code}"
+            )
+        except Exception as exc:
+            return f"Failed to initialize sandbox directory {directory_path}: {exc}"
 
     def _build_sandbox_archive_payload(self, sandbox: Sandbox) -> Dict[str, str]:
         """Build backend archive/restore callback payload for a sandbox."""

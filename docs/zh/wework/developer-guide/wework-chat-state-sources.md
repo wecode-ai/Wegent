@@ -225,6 +225,13 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 当前 pane 的实时 turn 尚未被 transcript 覆盖时，可以继续整体展示该 pane 的 stream 投影；Provider 覆盖同一 turn 后应整体切换到 transcript，而不是对两组消息做并集。消息分页去重只使用 Provider 的稳定 message id，不根据内容、角色或 subtask 猜测身份。
 
+Codex 可能从 Provider transcript 的 `items` 中过滤初始用户输入，但 Wework 仍会在
+`RuntimeTaskLink.userMessagePresentations` 中保存用户实际提交的可见文本。executor
+补回这类消息时，必须把它归属到时间线上紧随其后的 Provider turn，并同时写入规范
+`turnId`/`subtaskId`；用户输入与首个 assistant 消息时间戳相同时，用户输入必须排在
+assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不能只把补回消息
+留在兼容 `messages` 数组中。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
