@@ -127,4 +127,21 @@ describe('mergeMarketplaceCatalog', () => {
     expect(shouldShowInstalledMarketplaceActions(localCatalogPlugin(), false)).toBe(true)
     expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)
   })
+
+  test('collapses legacy and canonical personal marketplace copies', () => {
+    const legacy = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools@personal',
+      manifest: { marketplaceId: 'personal' },
+    }
+    const canonical = localCatalogPlugin()
+
+    const merged = mergeMarketplaceCatalog([], [legacy, canonical], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'dev-tools@wework-personal',
+      manifest: { marketplaceId: 'wework-personal' },
+    })
+  })
 })

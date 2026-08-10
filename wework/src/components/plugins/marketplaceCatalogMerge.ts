@@ -1,4 +1,8 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import {
+  isPersonalMarketplaceId,
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+} from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
 import { linkedCloudPluginId, localPluginId } from './installedPluginMerge'
@@ -13,6 +17,17 @@ export function shouldShowInstalledMarketplaceActions(
   isLoggedIn: boolean
 ): boolean {
   return item.installed && (isLoggedIn || item.installedLocally || isLocalMarketplaceItem(item))
+}
+
+function normalizedLocalMarketplaceId(marketplaceId: string | null): string {
+  if (marketplaceId && isPersonalMarketplaceId(marketplaceId)) {
+    return WEWORK_PERSONAL_MARKETPLACE_ID
+  }
+  return (marketplaceId || 'unknown').toLowerCase()
+}
+
+function isCanonicalPersonalMarketplaceItem(item: PluginMarketplaceItem): boolean {
+  return marketplaceItemMarketplaceId(item) === WEWORK_PERSONAL_MARKETPLACE_ID
 }
 
 export function mergeMarketplaceCatalog(
@@ -57,8 +72,14 @@ export function mergeMarketplaceCatalog(
     }
     // Built-in local mirrors of a cloud listing are already represented above.
     if (cloudNames.has(item.name.toLowerCase())) continue
-    const key = `local-builtin:${(marketplaceId || 'unknown').toLowerCase()}:${item.name.toLowerCase()}`
-    if (!merged.has(key)) merged.set(key, item)
+    const key = `local-builtin:${normalizedLocalMarketplaceId(marketplaceId)}:${item.name.toLowerCase()}`
+    const existing = merged.get(key)
+    if (
+      !existing ||
+      (!isCanonicalPersonalMarketplaceItem(existing) && isCanonicalPersonalMarketplaceItem(item))
+    ) {
+      merged.set(key, item)
+    }
   }
   return Array.from(merged.values())
 }
