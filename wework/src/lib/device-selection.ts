@@ -1,3 +1,4 @@
+// Control run for the Wework desktop cloud E2E. No behavior change.
 import { isWeWorkExecutorVersionCompatible } from './device-capabilities'
 
 export interface SelectableDevice {
@@ -22,9 +23,11 @@ export function isCloudDevice(device: SelectableDevice): boolean {
 }
 
 export function isWeWorkSelectableStandaloneDevice(device: SelectableDevice): boolean {
-  return isClaudeCodeDevice(device) &&
+  return (
+    isClaudeCodeDevice(device) &&
     isOnlineDevice(device) &&
     isWeWorkExecutorVersionCompatible(device.executor_version)
+  )
 }
 
 export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]): T[] {
@@ -47,7 +50,7 @@ export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]):
 
 export function getPreferredStandaloneDeviceId(
   devices: SelectableDevice[],
-  currentDeviceId?: string | null,
+  currentDeviceId?: string | null
 ): string | null {
   const currentDevice = currentDeviceId
     ? devices.find(device => device.device_id === currentDeviceId)
