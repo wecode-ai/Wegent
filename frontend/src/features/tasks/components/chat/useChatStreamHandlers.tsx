@@ -676,7 +676,7 @@ export function useChatStreamHandlers({
           pendingContexts.push({
             id: -(pendingContexts.length + 1),
             context_type: 'external_knowledge',
-            name: ctx.name,
+            name: externalContext.ref.name ?? ctx.name,
             status: 'ready',
             external_provider: externalContext.ref.provider,
             external_mode: externalContext.ref.mode,

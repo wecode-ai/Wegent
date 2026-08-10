@@ -740,8 +740,9 @@ export function ChatInputCard({
         <InputBadgeDisplay
           contexts={selectedContexts}
           attachmentState={attachmentState}
-          onRemoveContext={contextId => {
-            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
+          onRemoveContexts={contextIds => {
+            const contextIdSet = new Set(contextIds)
+            setSelectedContexts(selectedContexts.filter(ctx => !contextIdSet.has(ctx.id)))
           }}
           onRemoveAttachment={onAttachmentRemove}
           disabled={isStreaming}

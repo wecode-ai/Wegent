@@ -8,7 +8,7 @@ import {
 } from '@/features/knowledge/externalKnowledgeSelection'
 
 describe('external knowledge selection identity', () => {
-  it('uses provider and knowledge base id as the canonical scope identity', () => {
+  it('uses provider, mode, and knowledge base id as the canonical scope identity', () => {
     const first = { provider: 'demo', mode: 'explicit' as const, id: 'kb-1' }
     const second = { provider: 'demo', mode: 'explicit' as const, id: 'kb-2' }
 

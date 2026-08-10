@@ -353,8 +353,16 @@ export function useDingTalkDocTrees({ enabled = true }: { enabled?: boolean } = 
   }
 }
 
-export function buildDingTalkDocContext(node: DingtalkDocNode): DingTalkDocContext {
-  const workspaceId = node.source === 'wikispace' ? node.workspace_id : undefined
+export function buildDingTalkDocContext(
+  node: DingtalkDocNode,
+  workspace?: DingtalkDocNode
+): DingTalkDocContext {
+  const workspaceId =
+    node.source === 'wikispace' ? workspace?.workspace_id || node.workspace_id : undefined
+  const workspaceName =
+    node.source === 'wikispace'
+      ? workspace?.name || (node.dingtalk_node_id === node.workspace_id ? node.name : undefined)
+      : undefined
   return {
     id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
     name: node.name,
@@ -364,7 +372,7 @@ export function buildDingTalkDocContext(node: DingtalkDocNode): DingTalkDocConte
     dingtalk_node_id: node.dingtalk_node_id,
     source: node.source,
     workspace_id: workspaceId,
-    workspace_name: workspaceId && node.dingtalk_node_id === workspaceId ? node.name : undefined,
+    workspace_name: workspaceName,
   }
 }
 
@@ -405,6 +413,14 @@ export function DingTalkDocContextSelector({
   const handleToggle = useCallback(
     (node: DingtalkDocNode) => {
       const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
+      const workspace =
+        node.source === 'wikispace'
+          ? wikispaceNodes.find(
+              root =>
+                root.workspace_id === node.workspace_id ||
+                root.dingtalk_node_id === node.workspace_id
+            )
+          : undefined
 
       if (node.node_type === 'folder') {
         // Collect all descendant IDs (including folder itself)
@@ -420,7 +436,7 @@ export function DingTalkDocContextSelector({
           const addNode = (n: DingtalkDocNode) => {
             const childSelectionKey = getDingTalkSelectionKey(n.source, n.dingtalk_node_id)
             if (!selectedContexts.has(childSelectionKey)) {
-              toAdd.push(buildDingTalkDocContext(n))
+              toAdd.push(buildDingTalkDocContext(n, workspace))
             }
             if (n.children) {
               n.children.forEach(addNode)
@@ -436,11 +452,11 @@ export function DingTalkDocContextSelector({
         if (selectedContexts.has(selectionKey)) {
           onDeselect(selectionKey)
         } else {
-          onSelect(buildDingTalkDocContext(node))
+          onSelect(buildDingTalkDocContext(node, workspace))
         }
       }
     },
-    [selectedContexts, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple]
+    [selectedContexts, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple, wikispaceNodes]
   )
 
   // Count of selected doc/file nodes across both sections

@@ -40,7 +40,7 @@ interface ContextSelectorProps {
   /** Batch deselection callback for deselecting multiple contexts at once */
   onDeselectMultiple?: (ids: (number | string)[]) => void
   /** Atomic replacement callback for updating scoped knowledge selections. */
-  onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
+  onReplaceContexts: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
   children: React.ReactNode
   /** Task ID for group chat mode - if provided, shows bound knowledge bases */
   taskId?: number

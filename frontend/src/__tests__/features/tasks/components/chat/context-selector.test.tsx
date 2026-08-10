@@ -4,9 +4,26 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
-import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
+import { useState, type ComponentProps } from 'react'
+import ContextSelectorBase from '@/features/tasks/components/chat/ContextSelector'
 import type { ContextItem } from '@/types/context'
+
+type ContextSelectorProps = ComponentProps<typeof ContextSelectorBase>
+
+function ContextSelector({
+  onReplaceContexts,
+  ...props
+}: Omit<ContextSelectorProps, 'onReplaceContexts'> & {
+  onReplaceContexts?: ContextSelectorProps['onReplaceContexts']
+}) {
+  const replaceContexts =
+    onReplaceContexts ??
+    ((idsToRemove, contextsToAdd) => {
+      idsToRemove.forEach(id => props.onDeselect(id))
+      contextsToAdd.forEach(context => props.onSelect(context))
+    })
+  return <ContextSelectorBase {...props} onReplaceContexts={replaceContexts} />
+}
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetAllGroupedKnowledgeBases = jest.fn()
@@ -250,7 +267,7 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 
-  it('selects an internal knowledge base on row click and uses the backend document limit', async () => {
+  it('opens an internal knowledge base without selecting it and uses a separate scope control', async () => {
     const onSelect = jest.fn()
 
     render(
@@ -278,6 +295,8 @@ describe('ContextSelector organization grouping', () => {
       await Promise.resolve()
     })
 
+    expect(onSelect).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 1,
@@ -443,10 +462,9 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(screen.getByTestId('knowledge-picker-kb-77')).toBeInTheDocument()
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
-      await Promise.resolve()
-    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
+    expect(onSelect).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-77'))
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 77,
@@ -655,7 +673,58 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('marks folder-covered child documents as inherited and non-toggleable', async () => {
+  it('clears a folder when all descendants were selected individually', async () => {
+    const onReplaceContexts = jest.fn()
+    mockGetFolderTree.mockResolvedValue([
+      {
+        id: 10,
+        name: 'Specs',
+        children: [],
+      },
+    ])
+    mockListDocuments.mockResolvedValue({
+      items: [
+        { id: 101, name: 'API.md', folder_id: 10 },
+        { id: 102, name: 'Guide.md', folder_id: 10 },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[
+          {
+            id: 1,
+            name: 'Org KB',
+            type: 'knowledge_base',
+            scope_restricted: true,
+            document_ids: [101, 102],
+            document_names: ['API.md', 'Guide.md'],
+          },
+        ]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
+
+    const folderSelection = await screen.findByTestId('knowledge-picker-folder-scope-10')
+    expect(folderSelection).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(folderSelection)
+
+    expect(onReplaceContexts).toHaveBeenCalledWith([1], [])
+  })
+
+  it('allows removing a child document from an inherited folder selection', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
       {
@@ -719,16 +788,11 @@ describe('ContextSelector organization grouping', () => {
     fireEvent.click(screen.getByTestId('knowledge-picker-folder-scope-10'))
 
     const childDocument = screen.getByTestId('knowledge-picker-document-node-document-101')
-    expect(childDocument).toBeDisabled()
+    expect(childDocument).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(childDocument)
 
     await waitFor(() => {
-      expect(contextChanges).toHaveBeenLastCalledWith([
-        expect.objectContaining({
-          folder_ids: [10],
-          document_ids: undefined,
-        }),
-      ])
+      expect(contextChanges).toHaveBeenLastCalledWith([])
     })
   })
 
@@ -993,7 +1057,7 @@ describe('ContextSelector organization grouping', () => {
   it('renders DingTalk docs inside the knowledge source picker with a virtual all-docs container', async () => {
     const onSelectMultiple = jest.fn()
     mockGetDingTalkDocs.mockResolvedValue({
-      total_count: 2,
+      total_count: 3,
       nodes: [
         {
           id: 1,
@@ -1028,6 +1092,22 @@ describe('ContextSelector organization grouping', () => {
             },
           ],
         },
+        {
+          id: 3,
+          dingtalk_node_id: 'file-2',
+          name: '预算说明',
+          doc_url: 'https://alidocs.dingtalk.com/i/nodes/file-2',
+          parent_node_id: '',
+          node_type: 'file',
+          workspace_id: 'workspace-1',
+          content_type: 'ALIDOC',
+          source: 'docs',
+          is_active: true,
+          last_synced_at: '',
+          created_at: '',
+          updated_at: '',
+          children: [],
+        },
       ],
     })
 
@@ -1059,17 +1139,18 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-folder-1'))
     expect(onSelectMultiple).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
       expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
     ])
 
     onSelectMultiple.mockClear()
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs-select'))
     expect(onSelectMultiple).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
       expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
+      expect.objectContaining({ id: 'docs:file-2', type: 'dingtalk_doc' }),
     ])
   })
 
@@ -1139,9 +1220,26 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-space-1'))
+    expect(onSelectMultiple).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-dingtalk-space-select-space-1')
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-select-space-1'))
     expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'wikispace:space-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'wikispace:wiki-file-1', type: 'dingtalk_doc' }),
+      expect.objectContaining({
+        id: 'wikispace:space-1',
+        type: 'dingtalk_doc',
+        workspace_id: 'space-1',
+        workspace_name: '视频业务研发',
+      }),
+      expect.objectContaining({
+        id: 'wikispace:wiki-file-1',
+        type: 'dingtalk_doc',
+        workspace_id: 'space-1',
+        workspace_name: '视频业务研发',
+      }),
     ])
 
     await waitFor(() => {
