@@ -23,6 +23,8 @@ import {
   getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
+  updateRuntimeWorkTask,
+  updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
@@ -131,6 +133,12 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
       title: string
     }
+  | {
+      type: 'runtime_task_execution_updated'
+      address: RuntimeTaskAddress
+      running: boolean
+      status: string
+    }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
@@ -167,35 +175,6 @@ function updateRuntimeWorkDeviceStatus(
       deviceStatus: status,
       available: status !== 'offline',
     }
-  }
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
-function updateRuntimeWorkTaskTitle(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress,
-  title: string
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    if (workspace.deviceId !== address.deviceId && workspace.remoteHostId !== address.deviceId) {
-      return workspace
-    }
-
-    const tasks = workspace.tasks.map(task =>
-      task.taskId === address.taskId ? { ...task, title } : task
-    )
-    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
-    return { ...workspace, tasks }
   }
 
   return {
@@ -1214,6 +1193,14 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
+      }
+    case 'runtime_task_execution_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          running: action.running,
+          status: action.status,
+        }),
       }
     case 'runtime_tasks_archived':
       return {

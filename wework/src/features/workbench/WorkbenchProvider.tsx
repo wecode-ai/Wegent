@@ -763,6 +763,8 @@ export function WorkbenchProvider({
     clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshDevices,
+    updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user,
@@ -1571,6 +1573,13 @@ export function WorkbenchProvider({
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
+            updateLocalRuntimeTaskExecution(address, true, 'active')
+            dispatch({
+              type: 'runtime_task_execution_updated',
+              address,
+              running: true,
+              status: 'active',
+            })
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1582,6 +1591,21 @@ export function WorkbenchProvider({
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)
+            const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
+            const status = running
+              ? 'active'
+              : outcome === 'succeeded'
+                ? 'done'
+                : outcome === 'failed'
+                  ? 'failed'
+                  : 'cancelled'
+            updateLocalRuntimeTaskExecution(address, running, status)
+            dispatch({
+              type: 'runtime_task_execution_updated',
+              address,
+              running,
+              status,
+            })
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -1591,6 +1615,7 @@ export function WorkbenchProvider({
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
           onRuntimeTaskTitleUpdated: (address, payload) => {
+            updateLocalRuntimeTaskTitle(address, payload.title)
             dispatch({
               type: 'runtime_task_title_updated',
               address,
@@ -1618,7 +1643,6 @@ export function WorkbenchProvider({
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
           onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
-          onRefreshWorkLists: refreshRuntimeWorkLists,
         })
       ),
     [
@@ -1630,6 +1654,8 @@ export function WorkbenchProvider({
       settleCanonicalRuntimeGuidance,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
+      updateLocalRuntimeTaskExecution,
+      updateLocalRuntimeTaskTitle,
     ]
   )
 
