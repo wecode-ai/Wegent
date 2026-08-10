@@ -18,9 +18,12 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Image from 'next/image'
-import { Download, X, ChevronLeft, ChevronRight, ImagePlus } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Download, X, ChevronLeft, ChevronRight, ImagePlus, Loader2 } from 'lucide-react'
+import { downloadAttachment } from '@/apis/attachments'
+import { useShareToken } from '@/contexts/ShareTokenContext'
+import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 
 export interface ImageItem {
@@ -37,6 +40,47 @@ export interface ImageGalleryProps {
   onUseAsReference?: (item: ImageItem) => void
 }
 
+interface GalleryThumbnailProps {
+  image: ImageItem
+  index: number
+  onLoad: (index: number, image: HTMLImageElement) => void
+}
+
+function GalleryThumbnail({ image, index, onLoad }: GalleryThumbnailProps) {
+  const { t } = useTranslation('chat')
+  const { shareToken } = useShareToken()
+  const hasAttachment = typeof image.attachmentId === 'number'
+  const { blobUrl, isLoading } = useAttachmentImage(
+    image.attachmentId ?? 0,
+    hasAttachment,
+    shareToken
+  )
+  const displayUrl = hasAttachment ? blobUrl : image.url
+
+  if (!displayUrl) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-muted">
+        {isLoading ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : null}
+      </div>
+    )
+  }
+
+  return (
+    <Image
+      src={displayUrl}
+      alt={`${t('image.generated_image', 'Generated image')} ${index + 1}`}
+      fill
+      sizes="220px"
+      className="object-cover transition-transform duration-200 group-hover:scale-105"
+      unoptimized
+      ref={element => {
+        if (element?.complete) onLoad(index, element)
+      }}
+      onLoad={event => onLoad(index, event.currentTarget)}
+    />
+  )
+}
+
 export function ImageGallery({
   images,
   imageSize,
@@ -44,10 +88,19 @@ export function ImageGallery({
   onUseAsReference,
 }: ImageGalleryProps) {
   const { t } = useTranslation('chat')
+  const { shareToken } = useShareToken()
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [naturalSizes, setNaturalSizes] = useState<Record<number, string>>({})
   const lightboxRef = useRef<HTMLDivElement>(null)
   const thumbnailRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const selectedImage = selectedIndex === null ? null : images[selectedIndex]
+  const selectedHasAttachment = typeof selectedImage?.attachmentId === 'number'
+  const { blobUrl: selectedBlobUrl, isLoading: isSelectedImageLoading } = useAttachmentImage(
+    selectedImage?.attachmentId ?? 0,
+    selectedHasAttachment,
+    shareToken
+  )
+  const selectedDisplayUrl = selectedHasAttachment ? selectedBlobUrl : selectedImage?.url
 
   const recordNaturalSize = useCallback((index: number, image: HTMLImageElement) => {
     const { naturalWidth, naturalHeight } = image
@@ -60,29 +113,36 @@ export function ImageGallery({
   }, [])
 
   // Handle image download
-  const handleDownload = useCallback(async (url: string, index: number, e?: React.MouseEvent) => {
-    e?.stopPropagation()
+  const handleDownload = useCallback(
+    async (image: ImageItem, index: number, e?: React.MouseEvent) => {
+      e?.stopPropagation()
 
-    try {
-      // Fetch the image as blob to handle CORS
-      const response = await fetch(url)
-      const blob = await response.blob()
-      const blobUrl = URL.createObjectURL(blob)
+      try {
+        if (typeof image.attachmentId === 'number') {
+          await downloadAttachment(
+            image.attachmentId,
+            `generated_image_${index + 1}.jpg`,
+            shareToken
+          )
+          return
+        }
 
-      const link = document.createElement('a')
-      link.href = blobUrl
-      link.download = `generated_image_${index + 1}.jpg`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-
-      // Clean up blob URL
-      URL.revokeObjectURL(blobUrl)
-    } catch {
-      // Fallback: open in new tab if download fails
-      window.open(url, '_blank')
-    }
-  }, [])
+        const response = await fetch(image.url)
+        const blob = await response.blob()
+        const blobUrl = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = `generated_image_${index + 1}.jpg`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(blobUrl)
+      } catch {
+        window.open(image.url, '_blank')
+      }
+    },
+    [shareToken]
+  )
 
   // Navigate to previous image in lightbox
   const handlePrevious = useCallback(
@@ -194,24 +254,13 @@ export function ImageGallery({
                 aria-label={`${t('image.lightbox', 'Image preview')} ${index + 1}`}
                 data-testid={`generated-image-open-${index}`}
               >
-                <Image
-                  src={image.url}
-                  alt={`${t('image.generated_image', 'Generated image')} ${index + 1}`}
-                  fill
-                  sizes="220px"
-                  className="object-cover transition-transform duration-200 group-hover:scale-105"
-                  unoptimized
-                  ref={element => {
-                    if (element?.complete) recordNaturalSize(index, element)
-                  }}
-                  onLoad={event => recordNaturalSize(index, event.currentTarget)}
-                />
+                <GalleryThumbnail image={image} index={index} onLoad={recordNaturalSize} />
               </button>
 
               {/* Actions */}
               <div className="absolute top-2 right-2 flex items-center overflow-hidden rounded-lg bg-black/55 backdrop-blur-md shadow-sm opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
                 {/* Use as reference button (shown only when callback provided) */}
-                {onUseAsReference && image.attachmentId && (
+                {onUseAsReference && typeof image.attachmentId === 'number' && (
                   <button
                     type="button"
                     onClick={e => {
@@ -228,7 +277,7 @@ export function ImageGallery({
 
                 <button
                   type="button"
-                  onClick={e => handleDownload(image.url, index, e)}
+                  onClick={e => handleDownload(image, index, e)}
                   className="h-11 w-11 sm:h-8 sm:w-8 flex items-center justify-center hover:bg-white/15 transition-colors"
                   title={t('image.download', 'Download image')}
                   data-testid={`generated-image-download-${index}`}
@@ -250,6 +299,7 @@ export function ImageGallery({
 
       {/* Lightbox Modal */}
       {selectedIndex !== null &&
+        selectedImage &&
         typeof document !== 'undefined' &&
         createPortal(
           <div
@@ -277,7 +327,7 @@ export function ImageGallery({
             <button
               type="button"
               className="absolute top-4 right-20 h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors z-10"
-              onClick={e => handleDownload(images[selectedIndex].url, selectedIndex, e)}
+              onClick={e => handleDownload(selectedImage, selectedIndex, e)}
               title={t('image.download', 'Download image')}
               data-testid="generated-image-lightbox-download"
             >
@@ -311,13 +361,17 @@ export function ImageGallery({
             )}
 
             {/* Main image in lightbox - using regular img for full-size preview */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={images[selectedIndex].url}
-              alt={`${t('image.generated_image', 'Generated image')} ${selectedIndex + 1}`}
-              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-              onClick={e => e.stopPropagation()}
-            />
+            {selectedDisplayUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={selectedDisplayUrl}
+                alt={`${t('image.generated_image', 'Generated image')} ${selectedIndex + 1}`}
+                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                onClick={e => e.stopPropagation()}
+              />
+            ) : isSelectedImageLoading ? (
+              <Loader2 className="h-8 w-8 animate-spin text-white" />
+            ) : null}
 
             {/* Image counter */}
             {images.length > 1 && (
