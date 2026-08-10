@@ -21,7 +21,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
-import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { canManageNamespace } from '@/utils/namespace-permissions'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
@@ -31,12 +30,7 @@ import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeViewState } from './KnowledgeDocumentPage'
-import type {
-  KnowledgeBase,
-  KnowledgeBaseCreate,
-  KnowledgeBaseType,
-  SummaryModelRef,
-} from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseType } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
@@ -193,21 +187,6 @@ export function KnowledgeDocumentPageMobile({
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
   // Helper: save summary model to knowledge team's preference
-  const saveModelToPreference = useCallback(
-    (summaryModelRef: SummaryModelRef | null | undefined) => {
-      if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
-
-      const preference: ModelPreference = {
-        modelName: summaryModelRef.name,
-        modelType: summaryModelRef.type,
-        forceOverride: true,
-        updatedAt: Date.now(),
-      }
-
-      saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
-    },
-    [knowledgeDefaultTeamId]
-  )
 
   // Handle KB selection - navigate to detail page (full screen on mobile)
   const handleSelectKb = useCallback(
@@ -271,9 +250,6 @@ export function KnowledgeDocumentPageMobile({
         })
 
         // Save model preference when summary is enabled and model is selected
-        if (data.summary_enabled && data.summary_model_ref) {
-          saveModelToPreference(data.summary_model_ref)
-        }
 
         setShowCreateDialog(false)
 
@@ -292,7 +268,7 @@ export function KnowledgeDocumentPageMobile({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, tree, saveModelToPreference]
+    [createScope, createGroupName, createKbType, tree]
   )
 
   // Handle open group settings

@@ -18,7 +18,6 @@ import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
-import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -44,7 +43,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { KnowledgeBase, KnowledgeBaseWithGroupInfo, SummaryModelRef } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -193,22 +192,6 @@ export function KnowledgeDocumentPageDesktop({
   const knowledgeDefaultTeamId = knowledgeTeamInfo.id
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
-  const saveModelToPreference = useCallback(
-    (summaryModelRef: SummaryModelRef | null | undefined) => {
-      if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
-
-      const preference: ModelPreference = {
-        modelName: summaryModelRef.name,
-        modelType: summaryModelRef.type,
-        forceOverride: true,
-        updatedAt: Date.now(),
-      }
-
-      saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
-    },
-    [knowledgeDefaultTeamId]
-  )
-
   // URL sync and navigation
   const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
     initialKbNamespace,
@@ -239,7 +222,6 @@ export function KnowledgeDocumentPageDesktop({
   // Dialog management
   const dialogs = useKnowledgeBaseDialogs({
     sidebar,
-    saveModelToPreference,
     reloadGroupKbs,
   })
 

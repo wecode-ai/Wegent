@@ -363,6 +363,7 @@ export function EditKnowledgeBaseDialog({
                         knowledgeDefaultTeamId={
                           !kb?.execution_model_ref ? knowledgeDefaultTeamId : undefined
                         }
+                        preferenceScope="wiki"
                         dataTestId="code-wiki-execution-model-select"
                       />
                     </SimpleConfigRow>

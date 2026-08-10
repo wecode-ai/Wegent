@@ -376,6 +376,7 @@ export function KnowledgeBaseForm({
                 placeholder={t('knowledge:document.summary.selectModel')}
                 knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                 bindModel={bindModel}
+                preferenceScope="summary"
                 dataTestId="summary-model-select"
               />
             </SimpleConfigRow>

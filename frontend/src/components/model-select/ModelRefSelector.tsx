@@ -9,7 +9,11 @@ import { Badge } from '@/components/ui/badge'
 import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
+import {
+  getGlobalModelPreference,
+  saveGlobalModelPreference,
+  type ModelPreferenceScope,
+} from '@/utils/modelPreferences'
 /** What a caller stores: enough to name one model among every scope. */
 export interface ModelRef {
   name: string
@@ -28,6 +32,12 @@ interface ModelRefSelectorProps {
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
+  /**
+   * What this choice is for. Summaries and wiki generation want different models,
+   * so they remember separately rather than overwriting one another. Omitted, the
+   * choice shares the conversation's slot.
+   */
+  preferenceScope?: ModelPreferenceScope
   dataTestId: string
 }
 
@@ -39,6 +49,7 @@ export function ModelRefSelector({
   placeholder,
   knowledgeDefaultTeamId,
   bindModel,
+  preferenceScope,
   dataTestId,
 }: ModelRefSelectorProps) {
   const { t } = useTranslation('common')
@@ -122,7 +133,13 @@ export function ModelRefSelector({
 
     // Priority 1: Try cached preference from localStorage
     if (knowledgeDefaultTeamId) {
-      const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
+      // Always an llm here -- this selector only ever fetches those -- so the
+      // category slot stays empty and the scope is what tells these keys apart.
+      const cachedPreference = getGlobalModelPreference(
+        knowledgeDefaultTeamId,
+        undefined,
+        preferenceScope
+      )
 
       if (cachedPreference?.modelName) {
         const matchedModel = models.find(model => {
@@ -174,7 +191,7 @@ export function ModelRefSelector({
         type: firstModel.type,
       })
     }
-  }, [models, value, loading, knowledgeDefaultTeamId, bindModel, onChange])
+  }, [models, value, loading, knowledgeDefaultTeamId, bindModel, preferenceScope, onChange])
 
   // Find selected model
   const selectedModel = useMemo(() => {
@@ -217,12 +234,17 @@ export function ModelRefSelector({
     // back its own guess, or the first model in the list would install itself as
     // the preference simply by being shown.
     if (knowledgeDefaultTeamId) {
-      saveGlobalModelPreference(knowledgeDefaultTeamId, {
-        modelName: model.name,
-        modelType: model.type,
-        forceOverride: true,
-        updatedAt: Date.now(),
-      })
+      saveGlobalModelPreference(
+        knowledgeDefaultTeamId,
+        {
+          modelName: model.name,
+          modelType: model.type,
+          forceOverride: true,
+          updatedAt: Date.now(),
+        },
+        undefined,
+        preferenceScope
+      )
     }
     onChange({
       name: model.name,

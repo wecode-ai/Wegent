@@ -417,6 +417,7 @@ export function CreateKnowledgeBaseDialog({
                         placeholder={t('knowledge:codeWiki.create.modelPlaceholder')}
                         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                         bindModel={bindModel}
+                        preferenceScope="wiki"
                         dataTestId="code-wiki-execution-model-select"
                       />
                     </SimpleConfigRow>

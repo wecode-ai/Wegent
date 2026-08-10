@@ -35,19 +35,20 @@ const MODELS = [
   { name: 'zzz-remembered', namespace: 'default', type: 'public', displayName: 'ZZZ' },
 ]
 
-function remember(modelName: string) {
-  saveGlobalModelPreference(TEAM_ID, {
-    modelName,
-    modelType: 'public',
-    forceOverride: true,
-    updatedAt: Date.now(),
-  })
+function remember(modelName: string, scope?: 'summary' | 'wiki') {
+  saveGlobalModelPreference(
+    TEAM_ID,
+    { modelName, modelType: 'public', forceOverride: true, updatedAt: Date.now() },
+    undefined,
+    scope
+  )
 }
 
 function renderSelector(props: {
   value: { name: string; namespace: string; type: 'public' } | null
   onChange: jest.Mock
   teamId?: number
+  scope?: 'summary' | 'wiki'
 }) {
   return render(
     <ModelRefSelector
@@ -55,6 +56,7 @@ function renderSelector(props: {
       onChange={props.onChange}
       placeholder="pick"
       knowledgeDefaultTeamId={props.teamId}
+      preferenceScope={props.scope}
       dataTestId="model-select"
     />
   )
@@ -148,6 +150,41 @@ describe('remembering a deliberate choice', () => {
     renderSelector({ value: null, onChange, teamId: TEAM_ID })
 
     await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(getGlobalModelPreference(TEAM_ID)).toBeNull()
+  })
+})
+
+describe('what each choice is remembered for', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    jest.clearAllMocks()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: MODELS })
+  })
+
+  it('does not let a wiki model become the summary model', async () => {
+    // One slot per team meant the last choice made anywhere replaced every other,
+    // so picking a strong model to read a repository silently became the model
+    // that writes one-paragraph summaries, and vice versa.
+    remember('zzz-remembered', 'wiki')
+    const onChange = jest.fn()
+
+    renderSelector({ value: null, onChange, teamId: TEAM_ID, scope: 'summary' })
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(onChange.mock.calls[0][0].name).toBe('aaa-default')
+  })
+
+  it('keeps the conversation slot to itself', async () => {
+    // The chat has always used the unscoped key and still does. A knowledge base
+    // choice must not overwrite the model someone is talking to.
+    const onChange = jest.fn()
+    renderSelector({ value: null, onChange, teamId: TEAM_ID, scope: 'wiki' })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('model-select'))
+    fireEvent.click(await screen.findByText('ZZZ'))
+
+    expect(getGlobalModelPreference(TEAM_ID, undefined, 'wiki')?.modelName).toBe('zzz-remembered')
     expect(getGlobalModelPreference(TEAM_ID)).toBeNull()
   })
 })
