@@ -22,6 +22,7 @@
       ],
       "context_window": 1048576,
       "max_context_window": 1048576,
+      "auto_compact_token_limit": 786432,
       "truncation_policy": {
         "mode": "tokens",
         "limit": 10000
