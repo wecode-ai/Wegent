@@ -291,7 +291,9 @@ fn windows_data_kinds(data_kinds: DataKindSet) -> COREWEBVIEW2_BROWSING_DATA_KIN
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0;
     }
     if data_kinds.storage {
-        kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_LOCAL_STORAGE.0;
+        // ALL_DOM_STORAGE covers both localStorage and sessionStorage, matching the
+        // macOS/Linux storage kinds.
+        kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE.0;
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_INDEXED_DB.0;
     }
     COREWEBVIEW2_BROWSING_DATA_KINDS(kinds)
