@@ -144,6 +144,8 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 
 用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
 
+updater manifest 中的 `notes` 会作为该版本的更新日志随安装流程保存。新版本第一次启动后，Wework 不会自动弹出更新日志，而是在桌面侧边栏底部、账户区域上方显示固定提示。用户点击提示后可以查看 Markdown 格式的更新内容；关闭详情不会移除提示，只有点击提示卡上的关闭按钮才会清除，并且清除状态在应用重载后保持。保存的版本号必须与当前运行版本一致，否则客户端会丢弃这份过期记录。
+
 GitHub Actions 需要配置这些 repository secrets：
 
 - `TAURI_SIGNING_PRIVATE_KEY`：Tauri updater 私钥。
