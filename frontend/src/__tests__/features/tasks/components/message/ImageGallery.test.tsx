@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type React from 'react'
 
+import { downloadAttachment } from '@/apis/attachments'
 import { ImageGallery } from '@/features/tasks/components/message/ImageGallery'
 
 jest.mock('next/image', () => ({
@@ -13,10 +14,11 @@ jest.mock('next/image', () => ({
   default: ({
     fill: _fill,
     unoptimized: _unoptimized,
+    alt,
     ...props
   }: React.ComponentProps<'img'> & { fill?: boolean; unoptimized?: boolean }) => (
     // eslint-disable-next-line @next/next/no-img-element
-    <img {...props} />
+    <img alt={alt} {...props} />
   ),
 }))
 
@@ -24,6 +26,18 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (_key: string, fallback?: string) => fallback ?? _key,
   }),
+}))
+
+jest.mock('@/hooks/useAttachmentImage', () => ({
+  useAttachmentImage: (attachmentId: number, enabled: boolean) => ({
+    blobUrl: enabled ? `blob:attachment-${attachmentId}` : null,
+    isLoading: false,
+    error: false,
+  }),
+}))
+
+jest.mock('@/apis/attachments', () => ({
+  downloadAttachment: jest.fn(),
 }))
 
 describe('ImageGallery', () => {
@@ -54,6 +68,22 @@ describe('ImageGallery', () => {
       attachmentId: 12,
     })
     expect(screen.queryByTestId('generated-image-lightbox')).not.toBeInTheDocument()
+  })
+
+  it('uses authenticated attachment URLs for previews and downloads', () => {
+    render(<ImageGallery images={[{ url: '/api/attachments/12/download', attachmentId: 12 }]} />)
+
+    const thumbnail = screen.getByAltText('Generated image 1')
+    expect(thumbnail).toHaveAttribute('src', 'blob:attachment-12')
+
+    fireEvent.click(thumbnail)
+
+    const previews = screen.getAllByAltText('Generated image 1')
+    expect(previews).toHaveLength(2)
+    expect(previews[1]).toHaveAttribute('src', 'blob:attachment-12')
+
+    fireEvent.click(screen.getByTestId('generated-image-lightbox-download'))
+    expect(downloadAttachment).toHaveBeenCalledWith(12, 'generated_image_1.jpg', undefined)
   })
 
   it('renders the lightbox in document.body and restores scrolling when closed', () => {
