@@ -160,6 +160,9 @@ def verify_jwt_token_with_db(db: Session, token: str) -> Optional[User]:
         payload = jose_jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
+        if payload.get("scope"):
+            logger.debug("[auth_utils] Scoped JWT is not a session token")
+            return None
         user_name = payload.get("sub")
         if not user_name:
             return None

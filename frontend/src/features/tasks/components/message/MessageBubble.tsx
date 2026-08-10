@@ -46,7 +46,6 @@ import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
-import VideoConfigBadge from './VideoConfigBadge'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
 import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation, RetrievalSummaryPayload } from '@/types/socket'
@@ -1526,6 +1525,7 @@ const MessageBubble = memo(
                 })()}
                 onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
                 shareToken={shareToken}
+                displayGeneratedMedia={!isUserTypeMessage}
               />
               {/* Show waiting indicator when streaming but no content yet */}
               {isWaiting || msg.isWaiting ? (
@@ -1699,10 +1699,6 @@ const MessageBubble = memo(
                 </div>
               )}
             </div>
-            {/* Video config badge - displayed outside the message bubble */}
-            {isUserTypeMessage && msg.result?.video_config && (
-              <VideoConfigBadge config={msg.result.video_config} />
-            )}
           </div>
         </div>
       </ShareTokenProvider>

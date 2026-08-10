@@ -4,7 +4,7 @@
 
 'use client'
 
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { nestMessageBlocks } from '@wegent/chat-core'
 import type {
   ThinkingStep,
@@ -33,6 +33,7 @@ import {
   type SubscriptionPreviewBlock,
 } from '../../subscription/SubscriptionPreviewCard'
 import { blockToToolPair } from './utils/blockToToolPair'
+import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -110,7 +111,7 @@ const getRenderableInteractiveFormPayload = (
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
   content: string
-  taskStatus?: string // For future use (e.g., showing pending states)
+  taskStatus?: string
   theme: 'light' | 'dark'
   blocks?: MessageBlock[] // NEW: Block-based rendering support
   annotations?: GeminiAnnotation[]
@@ -130,6 +131,60 @@ interface MixedContentViewProps {
   ) => void
   /** Optional override for the running processing indicator text */
   processingMessage?: string
+}
+
+const MEDIA_COMPLETION_MESSAGES = new Set([
+  'Image generation completed',
+  'Video generation completed',
+])
+
+function isMediaCompletionMessage(content: string): boolean {
+  return MEDIA_COMPLETION_MESSAGES.has(content.trim())
+}
+
+const IMAGE_GENERATION_PROGRESS_DURATION_MS = 120_000
+
+function ImageGenerationPlaceholder({ imageSize }: { imageSize?: string }) {
+  const { t } = useTranslation('chat')
+  const [progress, setProgress] = useState(0)
+  const layout = resolveGeneratedImageDisplayLayout(imageSize)
+
+  useEffect(() => {
+    const startedAt = Date.now()
+    const updateProgress = () => {
+      const elapsed = Date.now() - startedAt
+      setProgress(Math.min(99, Math.floor((elapsed / IMAGE_GENERATION_PROGRESS_DURATION_MS) * 99)))
+    }
+
+    updateProgress()
+    const timer = window.setInterval(updateProgress, 500)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div
+      className="image-generation-placeholder relative overflow-hidden rounded-2xl border border-primary/15 shadow-sm"
+      data-testid="image-generation-placeholder"
+      role="status"
+      aria-label={`${t('image.generating')} ${progress}%`}
+      style={layout}
+    >
+      <div className="image-generation-placeholder__blob-1 absolute" />
+      <div className="image-generation-placeholder__blob-2 absolute" />
+
+      <div className="image-generation-placeholder__stage" aria-hidden="true">
+        <div className="image-generation-placeholder__sheet image-generation-placeholder__sheet--back" />
+        <div className="image-generation-placeholder__sheet image-generation-placeholder__sheet--front" />
+        <div className="image-generation-placeholder__shine" />
+        <div className="image-generation-placeholder__particle image-generation-placeholder__particle--one" />
+        <div className="image-generation-placeholder__particle image-generation-placeholder__particle--two" />
+      </div>
+
+      <div className="absolute right-3 top-3 z-10 text-xs font-medium tabular-nums text-black">
+        {progress}%
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -155,6 +210,7 @@ const MixedContentView = memo(function MixedContentView({
   processingMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
+  const isTerminalFailure = ['FAILED', 'CANCELLED'].includes(taskStatus?.toUpperCase() || '')
   // Extract tools from thinking (legacy mode)
   const { toolGroups } = useToolExtraction(thinking)
 
@@ -174,6 +230,14 @@ const MixedContentView = memo(function MixedContentView({
     // NEW: Block-based rendering (preferred)
     if (blocks && blocks.length > 0) {
       const nestedBlocks = nestMessageBlocks(blocks)
+      const hasCompletedMediaResult = nestedBlocks.some(
+        block =>
+          (block.type === 'image' &&
+            !block.is_placeholder &&
+            Array.isArray(block.image_urls) &&
+            block.image_urls.length > 0) ||
+          (block.type === 'video' && !block.is_placeholder && Boolean(block.video_url))
+      )
       const mapped = nestedBlocks
         .map(block => {
           if (block.type === 'text') {
@@ -229,6 +293,7 @@ const MixedContentView = memo(function MixedContentView({
               imageUrls: block.image_urls || [],
               imageAttachmentIds: block.image_attachment_ids || [],
               imageCount: block.image_count ?? 0,
+              imageSize: block.image_size,
               status: block.status,
               message: block.content, // Progress message
             }
@@ -375,7 +440,13 @@ const MixedContentView = memo(function MixedContentView({
         }
       }
 
-      const dedupedMapped = mapped.filter((item, index, items) => {
+      const visibleMapped = hasCompletedMediaResult
+        ? mapped.filter(
+            item => !item || item.type !== 'content' || !isMediaCompletionMessage(item.content)
+          )
+        : mapped
+
+      const dedupedMapped = visibleMapped.filter((item, index, items) => {
         if (!item || item.type !== 'interactive_form_question') return true
 
         const toolUseId = item.data.tool_use_id || item.blockId
@@ -560,6 +631,14 @@ const MixedContentView = memo(function MixedContentView({
             </div>
           )
         } else if (item.type === 'video') {
+          if (
+            item.status === 'error' ||
+            (item.isPlaceholder && isTerminalFailure) ||
+            (!item.isPlaceholder && !item.videoUrl)
+          ) {
+            return null
+          }
+
           // Render video block using VideoPlayer component
           return (
             <div key={item.blockId} className="space-y-2">
@@ -571,10 +650,6 @@ const MixedContentView = memo(function MixedContentView({
                 isPlaceholder={item.isPlaceholder}
                 progress={item.progress}
               />
-              {/* Show progress message if available */}
-              {item.isPlaceholder && item.message && (
-                <div className="text-xs text-text-muted">{item.message}</div>
-              )}
             </div>
           )
         } else if (item.type === 'thinking') {
@@ -589,24 +664,16 @@ const MixedContentView = memo(function MixedContentView({
             />
           )
         } else if (item.type === 'image') {
+          if (item.isPlaceholder && (isTerminalFailure || item.status === 'error')) {
+            return null
+          }
+
           // Render image block using ImageGallery component
           return (
             <div key={item.blockId} className="space-y-2">
               {item.isPlaceholder ? (
                 // Show loading state for placeholder images
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-surface border border-border">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-text-primary">
-                      {t('image.generating') || 'Generating images...'}
-                    </div>
-                    {item.message && (
-                      <div className="text-xs text-text-muted mt-1">{item.message}</div>
-                    )}
-                  </div>
-                </div>
+                <ImageGenerationPlaceholder imageSize={item.imageSize} />
               ) : item.imageUrls && item.imageUrls.length > 0 ? (
                 // Show generated images
                 <ImageGallery
@@ -614,6 +681,7 @@ const MixedContentView = memo(function MixedContentView({
                     url,
                     attachmentId: item.imageAttachmentIds?.[i],
                   }))}
+                  imageSize={item.imageSize}
                   onUseAsReference={onUseAsReference}
                 />
               ) : null}

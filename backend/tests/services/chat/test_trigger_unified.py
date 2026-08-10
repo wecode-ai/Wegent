@@ -16,6 +16,40 @@ from shared.models.knowledge import (
 )
 
 
+def test_apply_image_generation_params_overrides_request_size() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    model_config = {
+        "modelType": "image",
+        "imageConfig": {"size": "1024x1024", "quality": "high"},
+    }
+
+    trigger_unified._apply_image_generation_params(
+        model_config,
+        SimpleNamespace(size="1512x648"),
+    )
+
+    assert model_config["imageConfig"] == {
+        "size": "1512x648",
+        "quality": "high",
+    }
+
+
+def test_generation_config_for_log_excludes_capabilities() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    assert trigger_unified._generation_config_for_log(
+        {
+            "size": "1512x648",
+            "quality": "high",
+            "capabilities": {"size_presets": [{"size": "1512x648"}]},
+        }
+    ) == {
+        "size": "1512x648",
+        "quality": "high",
+    }
+
+
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     """Codex execution requests should carry explicit user runtime config status."""
     from app.services.chat.trigger import unified as trigger_unified
@@ -837,6 +871,48 @@ class TestProcessContextsAttachments:
             bot=[{"shell_type": "ClaudeCode"}],
         )
 
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="",
+            ),
+        )
+        prepare_mock = AsyncMock(return_value=ctx)
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=prepare_mock,
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1642,
+                    user_id=2,
+                )
+
+        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
+
+    @pytest.mark.asyncio
+    async def test_video_generation_uses_attachment_metadata_only(self):
+        """VideoAgent resolves uploaded media itself and must not receive duplicates."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1233,
+            subtask_id=1643,
+            prompt="generate a video",
+            system_prompt="system",
+            model_config={"modelType": "video"},
+            bot=[{"shell_type": "Chat"}],
+        )
         ctx = ChatContextsResult(
             final_message="processed",
             has_table_context=False,

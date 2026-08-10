@@ -73,9 +73,14 @@ jest.mock('@/features/tasks/components/message/RegenerateModelPopover', () => ({
   default: () => null,
 }))
 
+const mockVideoConfigBadge = jest.fn()
+
 jest.mock('@/features/tasks/components/message/VideoConfigBadge', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: unknown) => {
+    mockVideoConfigBadge(props)
+    return <div data-testid="video-config-badge" />
+  },
 }))
 
 jest.mock('@/features/tasks/components/message/ErrorCard', () => ({
@@ -164,6 +169,64 @@ describe('MessageBubble', () => {
     mockThinkingDisplay.mockClear()
     mockStreamingWaitIndicator.mockClear()
     mockBubbleTools.mockClear()
+    mockVideoConfigBadge.mockClear()
+  })
+
+  it('does not display a video config badge for image generation', () => {
+    const msg: Message = {
+      type: 'user',
+      content: 'Generate an image',
+      timestamp: Date.now(),
+      result: {
+        video_config: {
+          model: 'GPT-Image-2',
+        },
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        taskType="image"
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(screen.queryByTestId('video-config-badge')).not.toBeInTheDocument()
+    expect(mockVideoConfigBadge).not.toHaveBeenCalled()
+  })
+
+  it('does not display the config badge for video generation', () => {
+    const msg: Message = {
+      type: 'user',
+      content: 'Generate a video',
+      timestamp: Date.now(),
+      result: {
+        video_config: {
+          model: 'Seedance',
+          ratio: '16:9',
+        },
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        taskType="video"
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(screen.queryByTestId('video-config-badge')).not.toBeInTheDocument()
+    expect(mockVideoConfigBadge).not.toHaveBeenCalled()
   })
 
   it('offers saving completed AI Markdown to a knowledge base', () => {
