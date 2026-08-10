@@ -1,5 +1,6 @@
 {
   "title": "History",
+  "description": "Select and delete conversation history.",
   "sections": {
     "recent": "Recent",
     "today": "Today",
@@ -14,7 +15,16 @@
     "restore": "Restore",
     "clear_all": "Clear All",
     "export": "Export",
-    "search": "Search History"
+    "search": "Search History",
+    "bulk_delete": "Bulk Delete",
+    "select_all": "Select All",
+    "select_task": "Select {{title}}",
+    "selected_count": "{{count}} selected",
+    "selected_count_one": "{{count}} selected",
+    "selected_count_other": "{{count}} selected",
+    "select_all_count": "Select all {{count}} items",
+    "select_all_count_one": "Select the only item",
+    "select_all_count_other": "Select all {{count}} items"
   },
   "filters": {
     "all": "All",

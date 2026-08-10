@@ -5,7 +5,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { ChevronDown, Search, Settings2 } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DroppableHistory, ProjectSection, useProjectContext } from '@/features/projects'
@@ -28,7 +28,7 @@ interface TaskHistorySectionProps {
   setIsMobileSidebarOpen: (open: boolean) => void
   isSearchResult: boolean
   onTaskSelect: () => void
-  setIsHistoryManageDialogOpen?: (open: boolean) => void
+  onSelectMultiple: (taskId: number) => void
 }
 
 /**
@@ -51,7 +51,7 @@ export default function TaskHistorySection({
   setIsMobileSidebarOpen,
   isSearchResult,
   onTaskSelect,
-  setIsHistoryManageDialogOpen,
+  onSelectMultiple,
 }: TaskHistorySectionProps) {
   const { t } = useTranslation()
   const { projectTaskIds, projects } = useProjectContext()
@@ -86,30 +86,7 @@ export default function TaskHistorySection({
         <DroppableHistory>
           {!isCollapsed && (
             <div className="px-1 pb-1 pt-2 mt-1.5 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                {setIsHistoryManageDialogOpen ? (
-                  <TooltipProvider>
-                    <Tooltip delayDuration={300}>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => setIsHistoryManageDialogOpen(true)}
-                          className="flex items-center gap-1 hover:text-text-primary transition-colors group"
-                        >
-                          <span className="group-hover:underline">
-                            {t('common:tasks.history_title')}
-                          </span>
-                          <Settings2 className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        <p>{t('history:actions.search')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : (
-                  <span>{t('common:tasks.history_title')}</span>
-                )}
-              </div>
+              <span>{t('common:tasks.history_title')}</span>
               <div className="flex items-center gap-2">
                 {totalUnreadCount > 0 && (
                   <button
@@ -152,6 +129,7 @@ export default function TaskHistorySection({
             isCollapsed={isCollapsed}
             showTitle={false}
             enableDrag={true}
+            onSelectMultiple={onSelectMultiple}
             key={`regular-tasks-${viewStatusVersion}`}
           />
           {hasMorePersonalTasks && !isCollapsed && (
