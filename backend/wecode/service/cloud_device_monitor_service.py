@@ -12,7 +12,7 @@ and send notifications when devices go offline or come back online.
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from redis.asyncio import Redis
 from sqlalchemy import and_
@@ -23,7 +23,6 @@ from shared.models.db.kind import Kind
 from shared.models.db.user import User
 from wecode.service.cloud_device_provider import cloud_device_provider
 from wecode.service.dingtalk_webhook import DingTalkWebhookSender
-from wecode.service.nevis_client import nevis_client
 from wecode.service.ping_utils import ping_device_ip
 
 logger = logging.getLogger(__name__)
@@ -246,15 +245,8 @@ async def check_cloud_devices_status(
         except Exception:
             pass
 
-        # Get client IP: prefer spec.clientIp, fallback to sandbox API
-        client_ip = spec.get("clientIp")
-        if not client_ip and sandbox_id:
-            try:
-                sandbox_info = await nevis_client.get_sandbox(sandbox_id)
-                details = sandbox_info.get("details", {})
-                client_ip = details.get("urls")
-            except Exception as e:
-                logger.debug(f"Failed to get sandbox IP for {device_id}: {e}")
+        # Nevis is authoritative; the periodic index sync runs before monitoring.
+        client_ip = cloud_config.get("nevisIp")
         client_ip = client_ip or "-"
 
         device_info = {

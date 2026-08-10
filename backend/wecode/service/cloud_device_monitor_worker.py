@@ -12,7 +12,6 @@ the online status of cloud devices and sends notifications.
 import asyncio
 import logging
 import threading
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -70,24 +69,20 @@ def cloud_device_monitor_worker(stop_event: threading.Event):
 
 
 async def _run_monitor_check():
-    """Run a single monitoring check."""
+    """Refresh the Nevis IP index and optionally run offline monitoring."""
     from redis.asyncio import Redis
 
     from app.core.config import settings
-
-    # Check if cloud device offline alert is enabled
-    if not settings.CLOUD_DEVICE_OFFLINE_ALERT_ENABLED:
-        logger.debug("[cloud-device-monitor] Alert is disabled, skipping check")
-        return
     from app.db.session import get_db_session
+    from wecode.service.cloud_device_ip_index import cloud_device_ip_index_service
     from wecode.service.cloud_device_monitor_service import (
         check_cloud_devices_status,
         send_monitoring_report,
         trigger_auto_heal_for_offline_devices,
     )
     from wecode.service.dingtalk_webhook import (
-        DINGTALK_WEBHOOK_URL,
         DINGTALK_WEBHOOK_SECRET,
+        DINGTALK_WEBHOOK_URL,
         DingTalkWebhookSender,
     )
 
@@ -103,6 +98,28 @@ async def _run_monitor_check():
         lock_acquired = await acquire_monitor_lock(redis_client)
         if not lock_acquired:
             return  # Another instance is handling this check
+
+        try:
+            with get_db_session() as db:
+                ip_sync = await cloud_device_ip_index_service.sync_all(db)
+
+            if ip_sync.skipped:
+                logger.debug("[cloud-device-ip-index] Nevis is not configured")
+            else:
+                logger.info(
+                    "[cloud-device-ip-index] Sync completed: "
+                    "total=%s, persisted=%s, missing_ip=%s, failed=%s",
+                    ip_sync.total,
+                    ip_sync.persisted,
+                    ip_sync.missing_ip,
+                    ip_sync.failed,
+                )
+        except Exception:
+            logger.exception("[cloud-device-ip-index] Sync failed")
+
+        if not settings.CLOUD_DEVICE_OFFLINE_ALERT_ENABLED:
+            logger.debug("[cloud-device-monitor] Alert is disabled, skipping check")
+            return
 
         with get_db_session() as db:
             result = await check_cloud_devices_status(db, redis_client)
@@ -128,9 +145,7 @@ async def _run_monitor_check():
 
         # Send notification if there are offline devices or changes
         should_notify = (
-            result["offline_count"] > 0
-            or result["new_offline"]
-            or result["recovered"]
+            result["offline_count"] > 0 or result["new_offline"] or result["recovered"]
         )
 
         if should_notify:
