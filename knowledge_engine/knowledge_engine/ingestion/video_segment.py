@@ -29,19 +29,29 @@ VIDEO_SEGMENT_SUMMARY_PATTERN = re.compile(
 
 
 def _to_seconds(value: str) -> int | None:
-    """Convert ``[HH:]MM:SS`` to seconds, rejecting invalid minute/second."""
+    """Convert ``[HH:]MM:SS`` to seconds, rejecting invalid second values.
+
+    For the 2-part (MM:SS) form the first field is treated as total minutes
+    (not clock minutes), so values ≥ 60 are accepted for long videos where
+    Gemini may emit e.g. ``65:00`` instead of ``01:05:00``.
+    """
     parts = value.split(":")
     if len(parts) == 2:
-        hours, minutes, seconds = "0", parts[0], parts[1]
+        total_minutes, seconds = parts[0], parts[1]
+        if not seconds.isdigit() or int(seconds) > 59:
+            return None
+        if not total_minutes.isdigit():
+            return None
+        return int(total_minutes) * 60 + int(seconds)
     elif len(parts) == 3:
         hours, minutes, seconds = parts
+        minute = int(minutes)
+        second = int(seconds)
+        if minute > 59 or second > 59:
+            return None
+        return int(hours) * 3600 + minute * 60 + second
     else:
         return None
-    minute = int(minutes)
-    second = int(seconds)
-    if minute > 59 or second > 59:
-        return None
-    return int(hours) * 3600 + minute * 60 + second
 
 
 def extract_video_segment_metadata(text: str) -> dict[str, Any] | None:

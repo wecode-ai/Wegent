@@ -109,6 +109,24 @@ def test_extract_video_segment_copy_preserves_title_and_summary() -> None:
     }
 
 
+def test_extract_accepts_mmss_with_minute_over_59() -> None:
+    """Long videos may emit (65:00 - 70:00) where minute > 59 in MM:SS form."""
+    metadata = extract_video_segment_metadata(
+        "### 章节 (65:00 - 70:30)\n长视频章节内容"
+    )
+
+    assert metadata == {
+        "video_segment_id": "segment_3900_4230",
+        "video_start_sec": 3900,
+        "video_end_sec": 4230,
+    }
+
+
+def test_extract_rejects_invalid_seconds_in_mmss() -> None:
+    """Seconds > 59 are invalid even in MM:SS form."""
+    assert extract_video_segment_metadata("### 章节 (00:75 - 01:30)\n无效秒数") is None
+
+
 def test_enrich_video_segment_nodes_copies_display_metadata_to_parent() -> None:
     node = TextNode(
         text=(
