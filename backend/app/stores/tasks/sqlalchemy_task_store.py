@@ -1286,6 +1286,8 @@ class SqlAlchemyTaskStore:
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]:
         query = db.query(TaskResource).filter(
             TaskResource.user_id == user_id,
@@ -1299,8 +1301,27 @@ class SqlAlchemyTaskStore:
             query = query.filter(TaskResource.project_id > 0)
         elif scope == "project_id":
             query = query.filter(TaskResource.project_id == project_id)
+        if exclude_group_chats:
+            legacy_group_chat_flag = TaskResource.json[
+                ("spec", "is_group_chat")
+            ].as_boolean()
+            query = query.filter(
+                and_(
+                    or_(
+                        TaskResource.is_group_chat.is_(False),
+                        TaskResource.is_group_chat.is_(None),
+                    ),
+                    or_(
+                        legacy_group_chat_flag.is_(False),
+                        legacy_group_chat_flag.is_(None),
+                    ),
+                )
+            )
         if client_origin:
             query = query.filter(TaskResource.client_origin == client_origin)
+        query = query.order_by(TaskResource.created_at.desc())
+        if limit is not None:
+            query = query.limit(limit)
         return query.all()
 
     def list_archived_task_ids(
