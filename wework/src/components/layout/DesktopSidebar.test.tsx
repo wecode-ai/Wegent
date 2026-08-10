@@ -116,13 +116,17 @@ function renderSidebar(
   )
   if (appUpdate) {
     const value: AppUpdateContextValue = {
+      updateChannel: 'stable',
       availableUpdate: null,
+      installedReleaseNotes: null,
       status: 'idle',
       downloadProgress: null,
       message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
+      dismissInstalledReleaseNotes: vi.fn(),
+      setUpdateChannel: vi.fn().mockResolvedValue(undefined),
       ...appUpdate,
     }
     tree = <AppUpdateContext.Provider value={value}>{tree}</AppUpdateContext.Provider>
@@ -680,6 +684,60 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sidebar-app-update-action')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-10')
+  })
+
+  test('shows installed release notes above the account row and opens details on demand', async () => {
+    renderSidebar({}, undefined, {
+      installedReleaseNotes: {
+        version: '0.2.0',
+        body: '## Changes\n\n- Added the new changelog card.\n\n[Learn more](https://example.com)',
+      },
+    })
+
+    const card = screen.getByTestId('sidebar-release-notes-card')
+    const account = screen.getByTestId('settings-button')
+    const openButton = screen.getByTestId('sidebar-release-notes-open')
+    expect(card.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(card).toHaveTextContent('Wework 已更新至 v0.2.0')
+    expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(openButton)
+
+    expect(screen.getByTestId('app-release-notes-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('app-release-notes-content')).toHaveTextContent(
+      'Added the new changelog card.'
+    )
+    const closeButton = screen.getByTestId('app-release-notes-dialog-close')
+    const releaseNotesLink = screen.getByRole('link', { name: 'Learn more' })
+    await waitFor(() => expect(closeButton).toHaveFocus())
+
+    await userEvent.tab()
+    expect(releaseNotesLink).toHaveFocus()
+    await userEvent.tab()
+    expect(closeButton).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(releaseNotesLink).toHaveFocus()
+
+    await userEvent.click(closeButton)
+
+    expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-release-notes-card')).toBeInTheDocument()
+    expect(openButton).toHaveFocus()
+  })
+
+  test('dismisses the installed release notes card only from its close action', async () => {
+    const dismissInstalledReleaseNotes = vi.fn()
+    renderSidebar({}, undefined, {
+      installedReleaseNotes: {
+        version: '0.2.0',
+        body: '## Changes',
+      },
+      dismissInstalledReleaseNotes,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-release-notes-dismiss'))
+
+    expect(dismissInstalledReleaseNotes).toHaveBeenCalledTimes(1)
   })
 
   test('shows download progress in the account-row update icon', () => {
