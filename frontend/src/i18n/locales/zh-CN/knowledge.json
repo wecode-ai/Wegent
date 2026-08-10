@@ -1117,7 +1117,11 @@
       "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
       "ownedBy": "归属 {{owner}}，可向其索要分享",
       "showGenerationTask": "显示生成任务",
-      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。"
+      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。",
+      "modelLabel": "生成模型",
+      "modelDescription": "生成时会把仓库代码交给该模型阅读。请自行评估把这个代码库暴露给该模型是否可接受。",
+      "modelPlaceholder": "选择模型",
+      "modelRequired": "请选择生成模型"
     },
     "reader": {
       "regenerate": "重新生成",

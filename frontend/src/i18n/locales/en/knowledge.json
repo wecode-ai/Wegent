@@ -1117,7 +1117,11 @@
       "alreadyBuilt": "{{count}} other wiki(s) already document this repository — you could ask for a share",
       "ownedBy": "owned by {{owner}} — ask them for a share",
       "showGenerationTask": "Show generation runs",
-      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id."
+      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id.",
+      "modelLabel": "Generation model",
+      "modelDescription": "Generating hands this repository's code to the model to read. Assess for yourself whether exposing this codebase to it is acceptable.",
+      "modelPlaceholder": "Select a model",
+      "modelRequired": "Select the model to generate with"
     },
     "reader": {
       "regenerate": "Regenerate",

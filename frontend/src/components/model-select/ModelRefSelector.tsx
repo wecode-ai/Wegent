@@ -6,35 +6,42 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import {
-  GroupedModelSelect,
-  type ModelCascadeLabels,
-} from '@/components/model-select/ModelCascadeSelect'
+import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getGlobalModelPreference } from '@/utils/modelPreferences'
-import type { SummaryModelRef } from '@/types/knowledge'
+/** What a caller stores: enough to name one model among every scope. */
+export interface ModelRef {
+  name: string
+  namespace: string
+  type: 'public' | 'user' | 'group' | 'runtime'
+}
 
-interface SummaryModelSelectorProps {
-  value?: SummaryModelRef | null
-  onChange: (value: SummaryModelRef | null) => void
+interface ModelRefSelectorProps {
+  value?: ModelRef | null
+  onChange: (value: ModelRef | null) => void
   disabled?: boolean
   error?: string
+  /** Shown when nothing is selected yet. Each caller names its own purpose. */
+  placeholder: string
   /** Optional team ID to read cached model preference from localStorage */
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
+  dataTestId: string
 }
 
-export function SummaryModelSelector({
+export function ModelRefSelector({
   value,
   onChange,
   disabled = false,
   error,
+  placeholder,
   knowledgeDefaultTeamId,
   bindModel,
-}: SummaryModelSelectorProps) {
-  const { t } = useTranslation('knowledge')
+  dataTestId,
+}: ModelRefSelectorProps) {
+  const { t } = useTranslation('common')
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(false)
   // Track the last team ID for which we attempted preselection
@@ -183,8 +190,8 @@ export function SummaryModelSelector({
       // Model not found in list but value exists
       return value.name
     }
-    return t('document.summary.selectModel')
-  }, [selectedModel, value, t])
+    return placeholder
+  }, [selectedModel, value, placeholder])
 
   const handleSelect = (model: UnifiedModel) => {
     onChange({
@@ -232,7 +239,7 @@ export function SummaryModelSelector({
         onSelectModel={handleSelect}
         placeholder={loading ? t('common:loading', 'Loading...') : displayValue}
         disabled={disabled || loading}
-        dataTestId="summary-model-select"
+        dataTestId={dataTestId}
         triggerClassName={error ? 'border-red-500' : undefined}
         getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
         renderModelBadges={model => (

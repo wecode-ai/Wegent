@@ -164,6 +164,7 @@ export function useKnowledgeBaseDialogs({
             namespace,
             source_type: data.source_type!,
             source_url: data.source_url!,
+            execution_model_ref: data.execution_model_ref!,
           })
           setShowCreateDialog(false)
           resetCreateDialogState()

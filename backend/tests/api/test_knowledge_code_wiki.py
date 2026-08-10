@@ -23,6 +23,7 @@ PAYLOAD = {
     "namespace": "default",
     "source_type": "github",
     "source_url": "https://github.com/wecode-ai/Wegent.git",
+    "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
 }
 
 

@@ -745,6 +745,56 @@ def test_a_wiki_may_ask_for_its_runs_to_be_listed(
     assert tasks.namespaces[0] == "default"
 
 
+def test_the_run_uses_the_model_the_wiki_was_created_with(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """Which model reads the repository is the creator's choice, so it has to reach
+    the task. Nothing else carries it: the team's bot would otherwise decide.
+    """
+    _set_spec(
+        test_db,
+        knowledge_base,
+        executionModelRef={"name": "claude-opus-5", "type": "public"},
+    )
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    created = tasks.created[0]
+    assert created.model_id == "claude-opus-5"
+    assert created.force_override_bot_model_type == "public"
+    # Set by TaskCreate itself from model_id. Without it the executor reads the
+    # choice as advisory and the bot's own model wins anyway.
+    assert created.force_override_bot_model is True
+
+
+def test_a_wiki_created_before_the_model_field_runs_on_its_team_s_model(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """The field is required for new wikis, so an absent one means an older wiki.
+    Those keep running on whatever their team binds, as they always have -- sending
+    an empty override instead would break them.
+    """
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    created = tasks.created[0]
+    assert created.model_id is None
+    assert created.force_override_bot_model is False
+
+
+def test_a_model_ref_naming_nothing_is_not_sent_as_an_override(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A ref with no name cannot select anything. Passed through, it would set the
+    override flag on an empty id and strand the run with no model at all.
+    """
+    _set_spec(test_db, knowledge_base, executionModelRef={"type": "public"})
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].model_id is None
+    assert tasks.created[0].force_override_bot_model is False
+
+
 def test_the_hiding_namespace_is_the_one_the_listing_query_excludes():
     """The whole mechanism is that these two agree. The exclusion is written into raw
     SQL rather than expressed through the model, so nothing else ties the constant

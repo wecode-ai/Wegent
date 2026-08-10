@@ -246,6 +246,15 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation, as "
+            "{'name': ..., 'type': 'public|user|group'}. Only a code wiki generates, "
+            "and CodeWikiCreate requires it there. Unset means the team's bot "
+            "supplies the model, which is what wikis created before this field do."
+        ),
+    )
     guided_questions: Optional[List[str]] = Field(
         None,
         max_length=3,
@@ -310,6 +319,14 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation. Editable so a "
+            "wiki created before the field existed can be given one; the next run "
+            "picks it up, and one already running keeps the model it started with."
+        ),
     )
     show_generation_task: Optional[bool] = Field(
         None,
@@ -424,6 +441,22 @@ class CodeWikiCreate(KnowledgeBaseCreate):
             "existed also does."
         ),
     )
+    execution_model_ref: Dict[str, str] = Field(
+        ...,
+        description=(
+            "Model the generation agent runs on. Required: a wiki reads a whole "
+            "repository, so which model sees it is the caller's decision to make, "
+            "not one to inherit silently from whichever bot the team happens to bind."
+        ),
+    )
+
+    @field_validator("execution_model_ref")
+    @classmethod
+    def model_ref_names_a_model(cls, value: Dict[str, str]) -> Dict[str, str]:
+        """Reject a ref that names nothing, which would silently fall back."""
+        if not value.get("name"):
+            raise ValueError("execution_model_ref requires a model name")
+        return value
 
 
 class CodeWikiChangedPath(BaseModel):
@@ -702,6 +735,10 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         None,
         description="Model reference for summary generation",
     )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model that runs this knowledge base's own generation",
+    )
     summary: Optional[dict] = Field(
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
@@ -752,6 +789,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         summary = spec.get("summary")
         # Extract summary_model_ref from spec
         summary_model_ref = spec.get("summaryModelRef")
+        execution_model_ref = spec.get("executionModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
         kb_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
         # Only a code wiki has one. Carried so a list can render the repository on
@@ -794,6 +832,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
+            execution_model_ref=execution_model_ref,
             summary=summary,
             guided_questions=guided_questions,
             max_calls_per_conversation=max_calls,

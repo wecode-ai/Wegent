@@ -21,6 +21,8 @@ import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
+import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
+import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import type {
@@ -66,6 +68,9 @@ export function EditKnowledgeBaseDialog({
     useState<DirectAccessRequirement>('read')
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
+  // Editable so a wiki created before the field existed can be given a model. Left
+  // unset it keeps falling back to the team's bot, which is what it runs on today.
+  const [executionModelRef, setExecutionModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const {
     multimodalAnalysisEnabled,
@@ -149,6 +154,7 @@ export function EditKnowledgeBaseDialog({
       setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
+      setExecutionModelRef(kb.execution_model_ref || null)
       setSummaryModelError('')
       loadMultimodalFromKB({
         multimodalAnalysisEnabled: kb.multimodal_analysis_enabled || false,
@@ -234,7 +240,14 @@ export function EditKnowledgeBaseDialog({
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
-        ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
+        ...(isCodeWiki
+          ? {
+              show_generation_task: showGenerationTask,
+              // Applies to the next run. One already going keeps the model it was
+              // started with, which is the model its pages were written by.
+              execution_model_ref: executionModelRef,
+            }
+          : {}),
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -333,6 +346,26 @@ export function EditKnowledgeBaseDialog({
                       {tKnowledge('codeWiki.create.repository')}:{' '}
                       {kb.source.projectName || kb.source.sourceUrl}
                     </span>
+                  </div>
+                )}
+
+                {isCodeWiki && (
+                  <div className="mb-4">
+                    <SimpleConfigRow
+                      label={tKnowledge('codeWiki.create.modelLabel')}
+                      description={tKnowledge('codeWiki.create.modelDescription')}
+                      align="start"
+                    >
+                      <ModelRefSelector
+                        value={executionModelRef}
+                        onChange={setExecutionModelRef}
+                        placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
+                        knowledgeDefaultTeamId={
+                          !kb?.execution_model_ref ? knowledgeDefaultTeamId : undefined
+                        }
+                        dataTestId="code-wiki-execution-model-select"
+                      />
+                    </SimpleConfigRow>
                   </div>
                 )}
 
