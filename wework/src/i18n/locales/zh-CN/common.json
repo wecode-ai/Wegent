@@ -2018,6 +2018,8 @@
     "local_model_api_format_responses": "OpenAI Responses",
     "local_model_api_format_chat_completions": "OpenAI Chat Completions",
     "local_model_api_format_anthropic_messages": "Anthropic Messages",
+    "local_model_provider_minimax_cn": "MiniMax（中国大陆）",
+    "local_model_provider_minimax_global": "MiniMax（国际）",
     "local_model_api_format_hint": "Responses 接口会直接调用；Chat Completions 和 Anthropic Messages 会在本机转换为 Codex 所需的 Responses 格式，包括流式输出、推理内容和工具调用。",
     "local_model_tool_profile_label": "工具模式",
     "local_model_tool_profile_custom": "原生 Custom tools",

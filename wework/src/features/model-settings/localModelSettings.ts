@@ -183,6 +183,11 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
+  const providerProfileId =
+    legacyConfig.providerProfileId === 'minimax' &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.minimax.io/anthropic'
+      ? 'minimax-global'
+      : legacyConfig.providerProfileId
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
@@ -202,7 +207,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           baseUrl: legacyConfig.baseUrl,
           requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
-  const isCustomProvider = (legacyConfig.providerProfileId ?? 'custom') === 'custom'
+  const isCustomProvider = (providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
     legacyConfig.catalogEntry ??
     (isCustomProvider
@@ -215,7 +220,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       : undefined)
   const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
   const kimiCatalogModelId =
-    legacyConfig.providerProfileId === 'kimi-coding'
+    providerProfileId === 'kimi-coding'
       ? legacyConfig.modelId === 'k3'
         ? KIMI_K3_CATALOG_MODEL_ID
         : legacyConfig.modelId === 'kimi-for-coding' ||
@@ -224,15 +229,11 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           : undefined
       : undefined
   const deepSeekCatalogModelId =
-    legacyConfig.providerProfileId === 'deepseek'
-      ? deepSeekCatalogModelIdFor(legacyConfig.modelId)
-      : undefined
+    providerProfileId === 'deepseek' ? deepSeekCatalogModelIdFor(legacyConfig.modelId) : undefined
   const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
-    ...(legacyConfig.providerProfileId
-      ? { providerProfileId: legacyConfig.providerProfileId }
-      : {}),
+    ...(providerProfileId ? { providerProfileId } : {}),
     displayName: legacyConfig.displayName,
     ...(legacyConfig.group ? { group: legacyConfig.group } : {}),
     modelId: legacyConfig.modelId,
