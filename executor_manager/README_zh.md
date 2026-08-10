@@ -6,6 +6,7 @@
 
 使用一键启动脚本自动设置：
 
+
 ```bash
 cd executor_manager
 ./start.sh
