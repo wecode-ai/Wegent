@@ -25,16 +25,15 @@ function getLocalRuntimePlatform() {
 export function isLocalTerminalAvailable(): boolean {
   const platform = getLocalRuntimePlatform()
   return Boolean(
-    platform && isTauriRuntime() && (platform.isMacOs || platform.isWindows) && !platform.isIosLike
+    platform &&
+    isTauriRuntime() &&
+    !platform.isIosLike &&
+    (platform.isMacOs || platform.isWindows || import.meta.env.VITE_WEWORK_E2E === 'true')
   )
 }
 
 export function isLocalHarnessAvailable(): boolean {
-  if (isLocalTerminalAvailable()) return true
-  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return false
-
-  const platform = getLocalRuntimePlatform()
-  return Boolean(platform && isTauriRuntime() && !platform.isIosLike)
+  return isLocalTerminalAvailable()
 }
 
 export async function getLocalExecutorDeviceId(

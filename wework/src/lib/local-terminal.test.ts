@@ -77,7 +77,7 @@ describe('local-terminal', () => {
     expect(isLocalTerminalAvailable()).toBe(true)
   })
 
-  test('keeps the local terminal unavailable inside the Linux Tauri desktop E2E app', () => {
+  test('makes the local terminal available inside the Linux Tauri desktop E2E app', () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
     setNavigatorValue('platform', 'Linux x86_64')
@@ -87,7 +87,7 @@ describe('local-terminal', () => {
       value: {},
     })
 
-    expect(isLocalTerminalAvailable()).toBe(false)
+    expect(isLocalTerminalAvailable()).toBe(true)
   })
 
   test('makes local harnesses available inside the Linux Tauri desktop E2E app', () => {
