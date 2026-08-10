@@ -1149,6 +1149,20 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
   }
 }
 
+async function assertConversationTextNotDuplicated(control, texts) {
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  for (const text of texts) {
+    const occurrenceCount = countTextOccurrences(transcriptText, text)
+    assert.ok(
+      occurrenceCount <= 1,
+      `The conversation rendered "${text}" ${occurrenceCount} times instead of at most once`
+    )
+  }
+}
+
 function assertConversationTextOrder(transcriptText, expectedTexts) {
   let previousIndex = -1
   for (const expectedText of expectedTexts) {
@@ -8483,9 +8497,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     'Reloading exposed a direct send path while the provider turn was still active'
   )
   await assertConversationTextOccurrences(control, {
-    [GOAL_IDLE_PROMPT]: 1,
     [GOAL_IDLE_INITIAL_TEXT]: 1,
   })
+  await assertConversationTextNotDuplicated(control, [GOAL_IDLE_PROMPT])
   await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
