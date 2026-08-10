@@ -1787,20 +1787,27 @@ class KnowledgeBaseTool(BaseTool):
             if doc_id is not None and doc_id not in sources_by_document_id:
                 sources_by_document_id[doc_id] = source
 
-        seen_segments: set[tuple[Any, int, int]] = set()
+        seen_segments: set[tuple[int, int, int]] = set()
         for chunk in chunks:
             metadata = chunk.get("metadata") or {}
             start_sec = metadata.get("video_start_sec")
             end_sec = metadata.get("video_end_sec")
-            document_id = chunk.get("document_id")
-            # Playback resolves an internal KnowledgeDocument by its integer ID.
+            # The chunk "document_id" is LlamaIndex's internal ref_doc_id (a
+            # UUID string). The business-level KnowledgeDocument ID is stored in
+            # metadata.doc_ref (e.g. "811"). Use doc_ref so it matches the
+            # source reference and the frontend play-url endpoint (which expects
+            # an integer document ID). Fall back to document_id if doc_ref is
+            # absent (non-ES backends or test fixtures with int IDs).
+            doc_ref = metadata.get("doc_ref")
+            if doc_ref is None:
+                doc_ref = chunk.get("document_id")
+            try:
+                document_id = int(doc_ref)
+            except (TypeError, ValueError):
+                continue
             if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
                 continue
-            if (
-                not isinstance(document_id, int)
-                or isinstance(document_id, bool)
-                or document_id <= 0
-            ):
+            if isinstance(document_id, bool) or document_id <= 0:
                 continue
             if start_sec < 0 or end_sec <= start_sec:
                 continue
@@ -1871,12 +1878,26 @@ class KnowledgeBaseTool(BaseTool):
 
                 if source_key not in seen_sources:
                     seen_sources[source_key] = source_index
+                    # Use the business-level doc_ref (e.g. "811") as document_id
+                    # instead of the LlamaIndex UUID, so the video-segment upgrade
+                    # and the frontend play-url endpoint receive an integer ID.
+                    # Fall back to the raw document_id if doc_ref is absent (e.g.
+                    # non-ES backends or test fixtures that use int IDs directly).
+                    raw_doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+                    if raw_doc_ref is None:
+                        raw_doc_ref = chunk.get("document_id")
+                    try:
+                        doc_id_int = int(raw_doc_ref)
+                    except (TypeError, ValueError):
+                        # Keep the original value (e.g. UUID string) if it can't
+                        # be converted to int — non-ES backends or external sources.
+                        doc_id_int = raw_doc_ref
                     source_references.append(
                         {
                             "index": source_index,
                             "title": source_title,
                             "kb_id": internal_kb_id,
-                            "document_id": chunk.get("document_id"),
+                            "document_id": doc_id_int,
                             "source_id": source_id,
                             "source_type": chunk.get("source_type"),
                             "source_uri": chunk.get("source_uri"),
