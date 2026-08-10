@@ -415,6 +415,38 @@ describe('localModelSettings', () => {
     ])
   })
 
+  test('keeps existing MiniMax international configs on the global profile', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-minimax',
+          providerProfileId: 'minimax',
+          displayName: 'MiniMax M2.7',
+          modelId: 'MiniMax-M2.7',
+          baseUrl: 'https://api.minimax.io/anthropic',
+          apiFormat: 'anthropic-messages',
+          toolProfile: 'function',
+          requestPath: '/v1/messages',
+          contextWindow: 204_800,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          catalogReady: true,
+          enabled: true,
+          updatedAt: '2026-08-09T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-minimax',
+        providerProfileId: 'minimax-global',
+        baseUrl: 'https://api.minimax.io/anthropic',
+      }),
+    ])
+  })
+
   test('validates optional context window before saving', () => {
     expect(() =>
       saveLocalModelConfig({

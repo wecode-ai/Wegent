@@ -34,6 +34,7 @@ import {
   localModelSupportsImageInput,
   LOCAL_MODEL_PROVIDER_PROFILES,
   type DiscoveredLocalModel,
+  type LocalModelProviderProfile,
   type LocalModelProviderProfileId,
 } from '@/features/model-settings/localModelProviders'
 import {
@@ -735,6 +736,8 @@ function LocalModelSettingsSection({
       ),
     [editingId, models]
   )
+  const providerDisplayName = (profile: LocalModelProviderProfile) =>
+    profile.displayNameKey ? t(profile.displayNameKey, profile.displayName) : profile.displayName
 
   const resetForm = () => {
     setEditingId(null)
@@ -1154,7 +1157,7 @@ function LocalModelSettingsSection({
                   <option key={profile.id} value={profile.id}>
                     {profile.id === 'custom'
                       ? t('workbench.local_model_provider_custom')
-                      : profile.displayName}
+                      : providerDisplayName(profile)}
                   </option>
                 ))}
               </select>
@@ -1164,7 +1167,7 @@ function LocalModelSettingsSection({
               <div className="grid gap-4 border-t border-border pt-4">
                 <div>
                   <div className="text-sm font-medium text-text-primary">
-                    {findLocalModelProviderProfile(form.providerProfileId).displayName}
+                    {providerDisplayName(findLocalModelProviderProfile(form.providerProfileId))}
                   </div>
                   <p className="mt-1 text-xs leading-5 text-text-muted">
                     {t('workbench.local_model_provider_managed_hint')}
