@@ -1740,9 +1740,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           deviceId: loaded.deviceId || cachedState.deviceId,
         }
         cachedStateAt = Date.now()
-        if (cachedStateParamsKey) {
-          persistReadStateSnapshot(cachedStateParamsKey, cachedState, cachedStateAt)
-        }
+        // Keep the update in memory only. Persisting would write a membership-only
+        // snapshot into the 7-day durable cache and can clobber a fuller readState.
       }
       return { items: loaded.installedPlugins }
     },

@@ -3019,6 +3019,46 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
   })
 
+  test('paints cloud installed strip even when marketplace catalog is still empty', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    clearPluginMarketplaceCache()
+    clearLocalCodexPluginsReadStateCache()
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'local-device', marketplaces: [] })
+
+    let resolveMarketplace: ((value: unknown) => void) | null = null
+    const pendingMarketplace = new Promise(resolve => {
+      resolveMarketplace = resolve
+    })
+    const previousFetch = vi.mocked(fetch).getMockImplementation()
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const requestUrl = new URL(String(input), 'http://localhost')
+      if (requestUrl.pathname === '/api/plugins/marketplace') {
+        return pendingMarketplace as Promise<Response>
+      }
+      return previousFetch?.(input, init) as Promise<Response>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    // Installed strip must paint from /plugins/installed even before marketplace rows arrive.
+    expect(await screen.findByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+
+    resolveMarketplace?.({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [] }),
+    })
+    expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+  })
+
   test('sends remote plugin id for remote marketplace install', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,

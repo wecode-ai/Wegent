@@ -619,4 +619,64 @@ describe('local codex plugin readState cache', () => {
       )
     ).toHaveLength(1)
   })
+
+  test('listInstalledPlugins does not persist membership-only snapshot to durable cache', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+
+    const durableKey = 'wework.plugins.codexReadState.v1'
+    const durableBefore = window.localStorage.getItem(durableKey)
+    expect(durableBefore).toBeTruthy()
+
+    const installedResponse = (pluginName: string) => ({
+      marketplaces: [
+        {
+          ...personalMarketplace,
+          plugins: [
+            {
+              name: pluginName,
+              id: pluginName,
+              installed: true,
+              enabled: true,
+              interface: { displayName: pluginName },
+            },
+          ],
+        },
+      ],
+    })
+
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 61_000)
+    mocks.requestLocalExecutor.mockClear()
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return installedResponse('dingtalk')
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const listed = await api.listInstalledPlugins()
+    expect(listed.items.map(item => item.metadata.name)).toEqual(['dingtalk'])
+    // Memory is refreshed for this session…
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.installedPlugins.map(
+        item => item.metadata.name
+      )
+    ).toEqual(['dingtalk'])
+    // …but durable localStorage must keep the fuller readState snapshot.
+    expect(window.localStorage.getItem(durableKey)).toBe(durableBefore)
+  })
 })

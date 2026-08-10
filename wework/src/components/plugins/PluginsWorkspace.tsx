@@ -2487,15 +2487,20 @@ export function PluginsWorkspace({
         localRows,
         nextInstalled.map(plugin => plugin.raw)
       )
-      if (mergedItems.length === 0 && !hasCachedCatalog) return
-
-      // Publish installed rows when either side has data. Preserving prior cloud rows
-      // above stops a Codex-only peek from flashing away Wework/official icons.
+      // Publish installed rows even when the catalog is still empty — cloud
+      // listInstalledPlugins often arrives before marketplace rows.
       if (localStateForMerge || cloudInstalledForMerge) {
         setInstalledPlugins(previous =>
           sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
         )
       }
+      if (mergedItems.length === 0 && !hasCachedCatalog) {
+        if (localStateForMerge || cloudInstalledForMerge) {
+          setIsMarketplaceRefreshing(options.keepRefreshing)
+        }
+        return
+      }
+
       setPluginMarketplaceState({
         items: mergedItems,
         isLoading: false,
