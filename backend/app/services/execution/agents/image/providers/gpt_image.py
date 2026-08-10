@@ -25,6 +25,8 @@ MAX_REFERENCE_REDIRECTS = 5
 
 
 class GptImageProvider(ImageProvider):
+    generations_path = GPT_IMAGE_GENERATIONS_PATH
+    edits_path = GPT_IMAGE_EDITS_PATH
 
     def __init__(
         self,
@@ -57,10 +59,10 @@ class GptImageProvider(ImageProvider):
             if isinstance(reference, str) and reference.strip()
         ]
         payload = self._build_payload(prompt)
-        path = GPT_IMAGE_GENERATIONS_PATH
+        path = self.generations_path
         log_payload = dict(payload)
         if references:
-            path = GPT_IMAGE_EDITS_PATH
+            path = self.edits_path
             log_payload["image"] = references
 
         url = f"{self.base_url}{path}"
@@ -71,20 +73,12 @@ class GptImageProvider(ImageProvider):
         )
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            if references:
-                files = await self._load_reference_files(client, references)
-                response = await client.post(
-                    url=url,
-                    data=self._multipart_fields(payload),
-                    files=files,
-                    headers=self._request_headers(include_content_type=False),
-                )
-            else:
-                response = await client.post(
-                    url=url,
-                    json=payload,
-                    headers=self._request_headers(),
-                )
+            response = await self._post_request(
+                client=client,
+                url=url,
+                payload=payload,
+                references=references,
+            )
 
         if response.status_code >= 400:
             raise RuntimeError(
@@ -175,6 +169,27 @@ class GptImageProvider(ImageProvider):
         if not normalized:
             raise ValueError("GPT image provider requires model")
         return normalized
+
+    async def _post_request(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        payload: Dict[str, Any],
+        references: List[str],
+    ) -> httpx.Response:
+        if references:
+            files = await self._load_reference_files(client, references)
+            return await client.post(
+                url=url,
+                data=self._multipart_fields(payload),
+                files=files,
+                headers=self._request_headers(include_content_type=False),
+            )
+        return await client.post(
+            url=url,
+            json=payload,
+            headers=self._request_headers(),
+        )
 
     def _request_headers(self, include_content_type: bool = True) -> Dict[str, str]:
         headers = dict(self.default_headers)
