@@ -762,8 +762,10 @@ export function WorkbenchProvider({
     markRuntimeProjectRemoved,
     clearRuntimeProjectRemoval,
     refreshWorkLists,
+    refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
@@ -1516,14 +1518,21 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
-  const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
-    void stableRefreshWorkLists().catch(error => {
-      console.warn('[Wework] Runtime work list refresh failed', {
-        deviceId: address.deviceId,
-        taskId: address.taskId,
-        error,
+  const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
+    const expectedLifecycle = lifecycleStore.getTask(address)
+    void refreshRuntimeTask(address)
+      .then(task => {
+        if (task && lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)) {
+          updateLocalRuntimeTaskSnapshot(address, task)
+        }
       })
-    })
+      .catch(error => {
+        console.warn('[Wework] Runtime task snapshot sync failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+      })
   })
   const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
     const normalizedTitle = title.trim()
@@ -1614,6 +1623,7 @@ export function WorkbenchProvider({
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
+            syncRuntimeTaskSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1630,19 +1640,19 @@ export function WorkbenchProvider({
             const goal = payload.goal ?? null
             setRuntimeConversationGoal(address, goal)
             lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeGoalCleared: address => {
             setRuntimeConversationGoal(address, null)
             lifecycleStore.goalStatusReceived(address, null)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeSupervisorUpdated: address => {
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeGoalContinuation: (address, payload) => {
             applyRuntimeConversationGoalContinuation(address, payload)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
           onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
@@ -1652,12 +1662,13 @@ export function WorkbenchProvider({
       aiGenerationTelemetry,
       applyCanonicalRuntimeAction,
       lifecycleStore,
-      refreshRuntimeWorkLists,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskExecution,
+      updateLocalRuntimeTaskSnapshot,
       updateLocalRuntimeTaskTitle,
     ]
   )

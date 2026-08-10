@@ -14,18 +14,12 @@ export function reduceRuntimeTaskLifecycle(
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
         (!isTerminalTaskStatus(event.task.status) || hasIdentifiedActiveTurn)
+      if (shouldIgnoreStaleSnapshot) return state
+
       const executionPhase =
-        snapshotRunning === null
-          ? state.executionPhase
-          : shouldIgnoreStaleSnapshot
-            ? state.executionPhase
-            : snapshotRunning
-              ? 'running'
-              : 'idle'
-      const turnPhase =
-        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? 'idle' : state.turnPhase
-      const activeTurnId =
-        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? null : state.activeTurnId
+        snapshotRunning === null ? state.executionPhase : snapshotRunning ? 'running' : 'idle'
+      const turnPhase = snapshotRunning === false ? 'idle' : state.turnPhase
+      const activeTurnId = snapshotRunning === false ? null : state.activeTurnId
 
       return {
         ...state,
@@ -37,7 +31,6 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
-          !shouldIgnoreStaleSnapshot &&
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
           (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))
@@ -156,10 +149,19 @@ export function reduceRuntimeTaskLifecycle(
         : state
 
     case 'goal_status_received':
-      return {
-        ...state,
-        goalStatus: event.goalStatus,
-      }
+      return event.goalStatus !== null && event.goalStatus !== 'active'
+        ? {
+            ...state,
+            executionPhase: 'idle',
+            turnPhase: 'idle',
+            activeTurnId: null,
+            goalStatus: event.goalStatus,
+            expectedExecutorRunning: false,
+          }
+        : {
+            ...state,
+            goalStatus: event.goalStatus,
+          }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state

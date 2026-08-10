@@ -139,6 +139,11 @@ export type WorkbenchAction =
       running: boolean
       status: string
     }
+  | {
+      type: 'runtime_task_snapshot_updated'
+      address: RuntimeTaskAddress
+      task: RuntimeTaskSummary
+    }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
@@ -1200,7 +1205,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
           running: action.running,
           status: action.status,
+          optimistic: true,
         }),
+      }
+    case 'runtime_task_snapshot_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
       }
     case 'runtime_tasks_archived':
       return {

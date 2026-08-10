@@ -2047,7 +2047,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(getComposerApps()).toEqual([]))
   })
 
-  test('settles a background runtime task without refreshing runtime work', async () => {
+  test('settles a background runtime task while rejecting a stale running snapshot', async () => {
     let backgroundStreamHandlers: ChatStreamHandlers | null = null
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) {
@@ -2113,7 +2113,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('none')
     )
-    expect(listRuntimeWork).toHaveBeenCalledTimes(1)
+    expect(listRuntimeWork).toHaveBeenCalledTimes(2)
   })
 
   test('settles guidance applied while its runtime pane is in the background', async () => {
@@ -9720,36 +9720,82 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
-    const listRuntimeWork = vi.fn().mockResolvedValue(
-      createRuntimeWork({
-        projects: [
-          {
-            project: { id: 7, name: 'Wegent' },
-            deviceWorkspaces: [
-              {
-                deviceId: 'device-1',
-                deviceName: 'Project Device',
-                deviceStatus: 'online',
-                workspacePath: '/workspace/project-alpha',
-                mapped: true,
-                available: true,
-                tasks: [
-                  {
-                    taskId: 'runtime-a',
-                    workspacePath: '/workspace/project-alpha',
-                    title: 'Runtime A',
-                    runtime: 'codex',
-                    running: false,
-                    status: 'active',
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        totalTasks: 1,
-      })
-    )
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'active',
+                },
+                {
+                  taskId: 'runtime-b',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime B',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'done',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    })
+    const settledRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'done',
+                },
+                {
+                  taskId: 'runtime-b',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Stale Runtime B',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'done',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(initialRuntimeWork)
+      .mockResolvedValue(settledRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork,
     })
@@ -9763,7 +9809,13 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
-    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+    renderWorkbench(
+      <>
+        <RuntimeTopLevelStreamLifecycleProbe />
+        <RuntimePaneSendProbe />
+      </>,
+      services
+    )
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
 
@@ -9783,21 +9835,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     act(() => {
-      streamHandlers.onChatDone?.({
-        taskId: 'runtime-a',
-        subtaskId: '101',
-        deviceId: 'device-1',
-        result: { value: 'done' },
-      })
-    })
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'succeeded'
-      )
-    )
-
-    act(() => {
       streamHandlers.onRuntimeTaskTitleUpdated?.({
         taskId: 'runtime-a',
         subtaskId: 'friendly-title',
@@ -9811,7 +9848,26 @@ describe('WorkbenchProvider runtime tasks', () => {
         '修复登录回调'
       )
     )
-    expect(listRuntimeWork).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
+      )
+    )
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent(
+      '修复登录回调|Runtime B'
+    )
+    expect(screen.getByTestId('runtime-local-task-titles')).not.toHaveTextContent('Stale Runtime B')
   })
 
   test('sends queued runtime messages when the task becomes idle', async () => {

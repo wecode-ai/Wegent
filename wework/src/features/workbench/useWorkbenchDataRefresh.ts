@@ -6,6 +6,7 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
@@ -814,9 +815,38 @@ export function useWorkbenchDataRefresh({
       localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
         running,
         status,
+        optimistic: true,
       })
     },
     []
+  )
+
+  const refreshRuntimeTask = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      const runtimeWork = applyRuntimeTaskTitleOverrides(
+        filterRemovedRuntimeProjects(await executorClient.runtime.listRuntimeWork()),
+        true
+      )
+      const task = findRuntimeTask(runtimeWork, address)
+      return task ? { ...task, optimistic: false } : null
+    },
+    [applyRuntimeTaskTitleOverrides, executorClient, filterRemovedRuntimeProjects]
+  )
+
+  const updateLocalRuntimeTaskSnapshot = useCallback(
+    (address: RuntimeTaskAddress, task: RuntimeTaskSummary) => {
+      localRuntimeWorkRef.current = updateRuntimeWorkTask(
+        localRuntimeWorkRef.current,
+        address,
+        task
+      )
+      dispatch({
+        type: 'runtime_task_snapshot_updated',
+        address,
+        task,
+      })
+    },
+    [dispatch]
   )
 
   const getRemoteDeviceStartupCommand =
@@ -834,8 +864,10 @@ export function useWorkbenchDataRefresh({
     markRuntimeProjectRemoved,
     clearRuntimeProjectRemoval,
     refreshWorkLists,
+    refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   }
