@@ -157,12 +157,17 @@ class LoopItemService:
         values["assignment_history"] = (
             assignment_history if isinstance(assignment_history, list) else []
         )
-        execution = loop_item_execution_service.active_for_item(db, item_id=item.id)
+        # Surface the newest run even after it ends, so a terminal failure is
+        # visible to the UI instead of silently disappearing from the task.
+        execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
         values["execution_id"] = execution.id if execution else None
         values["execution_state"] = execution.status if execution else None
         values["queued_at"] = execution.queued_at if execution else None
         values["execution_note"] = (
             execution.execution_note or None if execution else None
+        )
+        values["execution_error"] = (
+            execution.error_message or None if execution else None
         )
         values["can_approve"] = self._can_approve_run(
             db, item=item, execution=execution, user_id=user_id

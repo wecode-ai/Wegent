@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>看板任务详情 · 评论框项目选择 Demo</title>
+<style>
+  :root {
+    --background: #ffffff;
+    --surface: #fafafa;
+    --muted: #f4f4f5;
+    --border: #e4e4e7;
+    --border-soft: #ececee;
+    --text-primary: #18181b;
+    --text-secondary: #52525b;
+    --text-muted: #a1a1aa;
+    --primary: #2563eb;
+    --violet: #7c3aed;
+    --amber: #f59e0b;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-2xl: 16px;
+    --shadow-menu: 0 10px 15px -3px rgba(0,0,0,0.10), 0 4px 6px -4px rgba(0,0,0,0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: #e9e9ec;
+    display: flex;
+    flex-direction: column;
+  }
+  button { font-family: inherit; cursor: pointer; background: none; border: none; color: inherit; }
+  svg { display: block; }
+
+  /* ---------- demo control bar (not part of the mock) ---------- */
+  .demo-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px;
+    background: #18181b; color: #fafafa;
+    font-size: 13px;
+  }
+  .demo-bar .demo-title { font-weight: 600; }
+  .demo-bar .demo-hint { color: #a1a1aa; }
+  .demo-toggle {
+    display: flex; margin-left: auto;
+    background: #27272a; border-radius: 999px; padding: 3px;
+  }
+  .demo-toggle button {
+    padding: 4px 14px; border-radius: 999px; font-size: 12px; color: #a1a1aa;
+    transition: background .15s, color .15s;
+  }
+  .demo-toggle button.active { background: #fafafa; color: #18181b; font-weight: 600; }
+
+  /* ---------- app window frame ---------- */
+  .window {
+    flex: 1; display: flex; flex-direction: column;
+    margin: 18px; background: var(--background);
+    border-radius: 14px; overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.18);
+    min-height: 0;
+  }
+  .traffic { display: flex; align-items: center; gap: 8px; padding: 12px 16px 0; }
+  .traffic span { width: 12px; height: 12px; border-radius: 50%; }
+  .traffic .r { background: #ff5f57; } .traffic .y { background: #febc2e; } .traffic .g { background: #28c840; }
+
+  .tabbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); }
+  .tab {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px; border-radius: 7px;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .tab.active { background: var(--muted); color: var(--text-primary); font-weight: 500; }
+  .tab svg { width: 13px; height: 13px; }
+
+  /* ---------- main layout ---------- */
+  .main { flex: 1; display: flex; min-height: 0; }
+  .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .content-scroll { flex: 1; overflow-y: auto; padding: 18px 32px 24px; }
+
+  .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .breadcrumb svg { width: 13px; height: 13px; }
+  .task-meta { margin-top: 22px; font-size: 12px; color: var(--text-muted); letter-spacing: .02em; }
+  .task-title { margin-top: 8px; font-size: 22px; font-weight: 700; }
+
+  .chip-row { display: flex; align-items: center; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    font-size: 12px; color: var(--text-secondary); background: var(--background);
+  }
+  .chip svg { width: 13px; height: 13px; }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+  .chip.tag { border-style: dashed; color: var(--text-muted); }
+  .chip .x { color: var(--text-muted); }
+
+  .assignee-row { display: flex; gap: 18px; margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+  .assignee-row svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; }
+
+  .desc { margin-top: 22px; font-size: 14px; line-height: 1.8; color: var(--text-primary); }
+  .desc .sub { color: var(--text-secondary); }
+  .desc-expand { margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+
+  /* ---------- comments ---------- */
+  .comments-head {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--border-soft);
+  }
+  .comments-head h3 { font-size: 15px; font-weight: 600; }
+  .comments-head .spacer { flex: 1; }
+  .comments-sort { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); padding: 4px 8px; border-radius: 6px; }
+  .comments-sort:hover { background: var(--muted); }
+  .comments-sort svg { width: 13px; height: 13px; }
+
+  .comments-empty {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 44px 0 30px; color: var(--text-muted);
+  }
+  .comments-empty svg { width: 30px; height: 30px; }
+  .comments-empty p { font-size: 13px; }
+
+  /* ---------- composer ---------- */
+  .composer-wrap { padding: 0 32px 22px; }
+  .composer {
+    border: 1px solid var(--border); border-radius: var(--radius-2xl);
+    background: var(--background);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    padding: 10px 12px 8px;
+  }
+  .composer:focus-within { border-color: #d4d4d8; }
+  .composer textarea {
+    width: 100%; border: none; outline: none; resize: none;
+    font-family: inherit; font-size: 14px; line-height: 1.6;
+    color: var(--text-primary); background: transparent;
+    min-height: 40px; padding: 2px 4px;
+  }
+  .composer textarea::placeholder { color: var(--text-muted); }
+  .composer-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .tool-btn {
+    display: flex; align-items: center; justify-content: center;
+    height: 28px; min-width: 28px; padding: 0 6px;
+    border-radius: 7px; color: var(--text-secondary);
+    transition: background .15s, color .15s;
+  }
+  .tool-btn:hover { background: var(--muted); color: var(--text-primary); }
+  .tool-btn svg { width: 16px; height: 16px; }
+  .tool-btn.plugin { gap: 4px; font-size: 12px; }
+  .tool-btn.plugin svg { width: 14px; height: 14px; }
+  .tool-btn .avatar {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--violet); color: #fff;
+    font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .toolbar-spacer { flex: 1; }
+  .model-btn {
+    display: flex; align-items: center; gap: 4px;
+    height: 28px; padding: 0 8px; border-radius: 7px;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .model-btn:hover { background: var(--muted); }
+  .model-btn svg { width: 13px; height: 13px; }
+  .send-btn {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #d4d4d8; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .send-btn svg { width: 14px; height: 14px; }
+
+  /* ---------- OLD: native select ---------- */
+  .old-select {
+    display: flex; align-items: center;
+    height: 28px; max-width: 280px; margin-bottom: 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: var(--surface); padding: 0 8px;
+  }
+  .old-select select {
+    width: 100%; height: 100%; border: none; outline: none; background: transparent;
+    font-size: 12px; color: var(--text-primary); appearance: none; font-family: inherit;
+  }
+
+  /* ---------- NEW: project picker (migrated from homepage ProjectWorkBar) ---------- */
+  .project-picker { position: relative; display: inline-block; margin-bottom: 8px; max-width: 100%; }
+  .project-trigger-group { display: flex; align-items: center; height: 32px; border-radius: var(--radius-lg); }
+  .project-clear-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: var(--radius-lg);
+    color: var(--text-secondary);
+    transition: background .15s, color .15s;
+  }
+  .project-clear-btn:hover { background: var(--muted); color: var(--text-primary); }
+  .project-clear-btn svg { width: 16px; height: 16px; }
+  .project-clear-btn .icon-x { display: none; }
+  .project-clear-btn:hover .icon-folder { display: none; }
+  .project-clear-btn:hover .icon-x { display: block; }
+  .project-trigger {
+    display: flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 8px;
+    border-radius: var(--radius-lg);
+    font-size: 14px; color: var(--text-secondary);
+    transition: background .15s, color .15s;
+    min-width: 0;
+  }
+  .project-trigger:hover, .project-trigger.open { background: var(--muted); color: var(--text-primary); }
+  .project-trigger svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .project-trigger .label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-trigger .chev { width: 14px; height: 14px; color: var(--text-muted); }
+
+  .project-menu {
+    position: absolute; left: 0; bottom: 40px; z-index: 50;
+    width: 320px; max-height: 420px;
+    display: flex; flex-direction: column;
+    background: var(--background);
+    border: 1px solid var(--border); border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-menu);
+    padding: 6px;
+  }
+  .project-menu[hidden] { display: none; }
+  .project-search {
+    display: flex; align-items: center; gap: 8px;
+    height: 36px; margin-bottom: 6px; padding: 0 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-xl);
+    background: var(--surface); color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .project-search svg { width: 15px; height: 15px; }
+  .project-search input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 13px; color: var(--text-primary);
+  }
+  .project-search input::placeholder { color: var(--text-muted); }
+  .project-list { overflow-y: auto; max-height: 180px; padding-right: 2px; }
+  .project-option {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; height: 38px; padding: 0 14px;
+    border-radius: var(--radius-lg); text-align: left;
+  }
+  .project-option:hover { background: var(--muted); }
+  .project-option svg.folder { width: 15px; height: 15px; color: var(--text-secondary); flex-shrink: 0; }
+  .project-option .name { font-size: 13px; color: var(--text-primary); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-option .device { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+  .project-option .device svg { width: 12px; height: 12px; }
+  .project-option .device .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .status-online { background: var(--primary); }
+  .status-busy { background: var(--amber); }
+  .status-offline { background: var(--text-muted); }
+  .project-option .device .device-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-option .check { width: 14px; height: 14px; margin-left: auto; color: var(--text-primary); flex-shrink: 0; }
+  .project-option .robot-badge {
+    flex-shrink: 0; padding: 1px 6px; border-radius: 5px;
+    background: rgba(124,58,237,.10); color: var(--violet);
+    font-size: 10px; font-weight: 500;
+  }
+  .menu-empty { padding: 12px 16px; font-size: 13px; color: var(--text-muted); }
+  .menu-divider { height: 1px; background: var(--border); margin: 6px 0; flex-shrink: 0; }
+
+  /* ---------- right sidebar ---------- */
+  .sidebar {
+    width: 300px; flex-shrink: 0;
+    border-left: 1px solid var(--border-soft);
+    overflow-y: auto; padding: 18px 20px;
+  }
+  .prop-grid { display: grid; grid-template-columns: 64px 1fr; row-gap: 14px; font-size: 13px; }
+  .prop-grid .k { color: var(--text-secondary); }
+  .prop-grid .v { color: var(--text-primary); font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .prop-grid .v.muted { color: var(--text-muted); font-weight: 400; }
+  .prop-grid .v svg { width: 13px; height: 13px; }
+  .side-section { margin-top: 24px; border-top: 1px solid var(--border-soft); padding-top: 14px; }
+  .side-section h4 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+  .side-section h4 svg { width: 14px; height: 14px; }
+  .side-section h4 .add { margin-left: auto; font-size: 12px; color: var(--text-primary); font-weight: 500; padding: 2px 8px; border-radius: 6px; }
+  .side-section h4 .add:hover { background: var(--muted); }
+  .side-empty {
+    margin-top: 10px; padding: 14px; border: 1px dashed var(--border); border-radius: var(--radius-lg);
+    text-align: center; font-size: 12px; color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <span class="demo-title">看板任务详情 · 评论框「选择项目」Demo</span>
+  <span class="demo-hint">新版把首页输入框的 ProjectWorkBar 逻辑迁到评论框上方，替代原生 select</span>
+  <div class="demo-toggle">
+    <button id="toggle-bound" class="active">机器人已绑定仓库</button>
+    <button id="toggle-unbound">机器人未绑定</button>
+  </div>
+  <div class="demo-toggle">
+    <button id="toggle-old">旧版 select</button>
+    <button id="toggle-new" class="active">新版项目按钮</button>
+  </div>
+</div>
+
+<div class="window">
+  <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+  <div class="tabbar">
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>任务</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>任务</div>
+    <div class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>hongyu91/tab-prompt</div>
+  </div>
+
+  <div class="main">
+    <div class="content">
+      <div class="content-scroll">
+        <div class="breadcrumb">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          hongyu91/tab-prompt / HONGYU913FDFF3-3
+        </div>
+        <div class="task-meta">HONGYU913FDFF3-3 · 创建于 07-28</div>
+        <h1 class="task-title">看起来展示的很乱</h1>
+
+        <div class="chip-row">
+          <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>状态 <span class="dot"></span>收集箱 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h12l4 4-8 12L4 8z"/></svg>优先级 普通 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span class="chip tag">+ 添加标签</span>
+          <span class="chip"># feedback <span class="x">×</span></span>
+          <span class="chip"># wework <span class="x">×</span></span>
+        </div>
+
+        <div class="assignee-row">
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>负责人 <b style="color:var(--text-secondary)">未指派</b></span>
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>截止 <b style="color:var(--text-secondary)">未设置</b></span>
+        </div>
+
+        <div class="desc">
+          看起来展示的很乱
+          <div class="sub">Feedback report: WF-19FA924B1E3</div>
+        </div>
+        <div class="desc-expand">展开描述</div>
+
+        <div class="comments-head">
+          <h3>评论</h3>
+          <span class="spacer"></span>
+          <button class="comments-sort"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v13M7 17l-3-3M7 17l3-3M17 20V7M17 7l-3 3M17 7l3 3"/></svg>最新</button>
+        </div>
+        <div class="comments-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <p>暂无动态</p>
+        </div>
+      </div>
+
+      <!-- ============ composer ============ -->
+      <div class="composer-wrap">
+
+        <!-- 旧版：原生 select（丑） -->
+        <label class="old-select" id="old-select" hidden>
+          <select>
+            <option>按机器人绑定</option>
+            <option>任务页面的项目 · tab-prompt</option>
+            <option>项目：Wegent</option>
+            <option>项目：wework-app</option>
+            <option>项目：docs-site</option>
+          </select>
+        </label>
+
+        <!-- 新版：首页 ProjectWorkBar 风格的项目选择按钮 -->
+        <div class="project-picker" id="project-picker">
+          <div class="project-menu" id="project-menu" hidden>
+            <label class="project-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input type="search" id="project-search" placeholder="搜索项目" />
+            </label>
+            <div class="project-list" id="project-list"></div>
+          </div>
+
+          <div class="project-trigger-group">
+            <!-- 已选项目时：hover 变 X 的清除按钮（迁移自首页桌面端交互） -->
+            <button class="project-clear-btn" id="project-clear-btn" hidden title="恢复默认" aria-label="恢复默认">
+              <svg class="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+              <svg class="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+            <button class="project-trigger" id="project-trigger" aria-expanded="false" aria-label="执行仓库">
+              <span id="trigger-icon"></span>
+              <span class="label" id="trigger-label">未绑定仓库</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="composer">
+          <textarea rows="2" placeholder="留下评论…"></textarea>
+          <div class="composer-toolbar">
+            <button class="tool-btn" title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="tool-btn" title="图片"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-7 7"/></svg></button>
+            <button class="tool-btn plugin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 7l-5 5 5 5M10 7L5 12l5 5" transform="rotate(90 12 12)"/></svg>插件 <span class="avatar">W</span></button>
+            <span class="toolbar-spacer"></span>
+            <button class="model-btn">默认 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+            <button class="send-btn" title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ right sidebar ============ -->
+    <aside class="sidebar">
+      <div class="prop-grid">
+        <span class="k">负责人</span><span class="v">添加</span>
+        <span class="k">截止日期</span><span class="v">添加日期</span>
+        <span class="k">优先级</span><span class="v"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h12l4 4-8 12L4 8z"/></svg>普通</span>
+        <span class="k">迭代</span><span class="v muted">未设置</span>
+        <span class="k">参与者</span><span class="v muted">暂无</span>
+        <span class="k">关联需求</span><span class="v muted">未设置</span>
+      </div>
+      <div class="side-section">
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>子任务 0 <button class="add">+ 添加</button></h4>
+        <div class="side-empty">暂无子任务</div>
+      </div>
+      <div class="side-section">
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.5l-8.5 8.5a2 2 0 01-2.8 0L3 14.5V3h11.5z"/><circle cx="8" cy="8" r="1.5"/></svg>附件 0 <button class="add">+ 上传</button></h4>
+        <div class="side-empty">暂无附件</div>
+      </div>
+      <div class="side-section">
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>执行记录 0</h4>
+        <div class="side-empty">尚未关联本地任务</div>
+      </div>
+      <div class="side-section">
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>交付 0</h4>
+        <div class="side-empty">暂无交付</div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+  // ---------- mock data：与首页 runtimeWork 的项目列表同构 ----------
+  const PROJECTS = [
+    { id: 1, name: 'tab-prompt', device: '本机', status: 'online', taskPage: true },
+    { id: 2, name: 'Wegent', device: '本机', status: 'online' },
+    { id: 3, name: 'wework-app', device: 'dev-cloud-01', status: 'busy', cloud: true },
+    { id: 4, name: 'docs-site', device: 'dev-cloud-02', status: 'offline', cloud: true },
+  ];
+  // 机器人（assignee agent）绑定本地仓库；切到「未绑定」时置 null
+  let robotBoundId = 2;
+
+  const state = { userSelectedId: null, open: false, query: '' };
+  const effectiveId = () => state.userSelectedId ?? robotBoundId;
+
+  const picker = document.getElementById('project-picker');
+  const menu = document.getElementById('project-menu');
+  const list = document.getElementById('project-list');
+  const search = document.getElementById('project-search');
+  const trigger = document.getElementById('project-trigger');
+  const triggerLabel = document.getElementById('trigger-label');
+  const triggerIcon = document.getElementById('trigger-icon');
+  const clearBtn = document.getElementById('project-clear-btn');
+
+  const ICON_FOLDER = '<svg class="folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>';
+  const ICON_FOLDER_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M13 11l6 6M19 11l-6 6"/></svg>';
+  const ICON_CHECK = '<svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>';
+  const ICON_CLOUD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 000-9 6 6 0 00-11.5 1.5A4 4 0 007 19z"/></svg>';
+  const ICON_DISK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 10v4M18 10v4"/></svg>';
+
+  function renderTrigger() {
+    const effective = PROJECTS.find(p => p.id === effectiveId()) ?? null;
+    if (effective) {
+      triggerLabel.textContent = effective.name;
+      trigger.setAttribute('aria-label', effective.name);
+      triggerIcon.innerHTML = ''; // 文件夹图标移到 hover 清除按钮上，与首页一致
+    } else {
+      triggerLabel.textContent = '未绑定仓库';
+      trigger.setAttribute('aria-label', '未绑定仓库');
+      triggerIcon.innerHTML = ICON_FOLDER_X;
+    }
+    // 只有用户手动改过选择（覆盖了机器人绑定）时才显示清除按钮
+    clearBtn.hidden = state.userSelectedId === null || state.userSelectedId === robotBoundId;
+  }
+
+  function renderList() {
+    const q = state.query.trim().toLowerCase();
+    const filtered = PROJECTS.filter(p => !q || (p.name + ' ' + p.device).toLowerCase().includes(q));
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="menu-empty">没有匹配的项目</div>';
+      return;
+    }
+    list.innerHTML = filtered.map(p => `
+      <button class="project-option" data-id="${p.id}">
+        ${ICON_FOLDER}
+        <span class="name">${p.name}${p.taskPage ? ' · 任务页面' : ''}</span>
+        ${p.id === robotBoundId ? '<span class="robot-badge">机器人绑定</span>' : ''}
+        <span class="device">
+          ${p.cloud ? ICON_CLOUD : ICON_DISK}
+          <span class="status-dot status-${p.status}"></span>
+          <span class="device-name">${p.device}</span>
+          <span>${p.status === 'online' ? '在线' : p.status === 'busy' ? '忙碌' : '离线'}</span>
+        </span>
+        ${p.id === effectiveId() ? ICON_CHECK : ''}
+      </button>
+    `).join('');
+  }
+
+  function setOpen(open) {
+    state.open = open;
+    menu.hidden = !open;
+    trigger.classList.toggle('open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) { state.query = ''; search.value = ''; renderList(); search.focus(); }
+  }
+
+  trigger.addEventListener('click', () => setOpen(!state.open));
+  clearBtn.addEventListener('click', () => { state.userSelectedId = null; renderTrigger(); });
+  search.addEventListener('input', () => { state.query = search.value; renderList(); });
+  list.addEventListener('click', event => {
+    const option = event.target.closest('.project-option');
+    if (!option) return;
+    const id = Number(option.dataset.id);
+    state.userSelectedId = id === robotBoundId ? null : id;
+    renderTrigger();
+    setOpen(false);
+  });
+  document.addEventListener('click', event => {
+    if (state.open && !picker.contains(event.target)) setOpen(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.open) setOpen(false);
+  });
+
+  // ---------- 机器人绑定状态切换 ----------
+  const toggleBound = document.getElementById('toggle-bound');
+  const toggleUnbound = document.getElementById('toggle-unbound');
+  function setBound(bound) {
+    robotBoundId = bound ? 2 : null;
+    state.userSelectedId = null;
+    toggleBound.classList.toggle('active', bound);
+    toggleUnbound.classList.toggle('active', !bound);
+    renderTrigger();
+    if (state.open) renderList();
+  }
+  toggleBound.addEventListener('click', () => setBound(true));
+  toggleUnbound.addEventListener('click', () => setBound(false));
+
+  // ---------- 旧版 / 新版 切换 ----------
+  const oldSelect = document.getElementById('old-select');
+  const toggleOld = document.getElementById('toggle-old');
+  const toggleNew = document.getElementById('toggle-new');
+  function setMode(mode) {
+    const isNew = mode === 'new';
+    picker.hidden = !isNew;
+    oldSelect.hidden = isNew;
+    toggleNew.classList.toggle('active', isNew);
+    toggleOld.classList.toggle('active', !isNew);
+  }
+  toggleOld.addEventListener('click', () => setMode('old'));
+  toggleNew.addEventListener('click', () => setMode('new'));
+
+  renderTrigger();
+</script>
+</body>
+</html>

@@ -417,6 +417,25 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByTestId('team-marketplace-example-conversations-add')).toBeInTheDocument()
   })
 
+  it('loads all shell-compatible model categories', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(undefined, false, 'personal', undefined)
+    })
+  })
+
   it('loads personal and target-team skills when creating a team agent', async () => {
     render(
       <TeamEditDialog

@@ -61,10 +61,91 @@ ROBOT_QUEUE_FAILED_TOTAL = Counter(
     "robot_queue_failed_total",
     "Robot queue runs marked failed",
 )
+ROBOT_QUEUE_INFRA_FAILED_TOTAL = Counter(
+    "robot_queue_infra_failed_total",
+    "Robot queue runs requeued after transient device/transport failures",
+    ["reason"],
+)
 
 ROBOT_CONSUMER_INTERVAL_SECONDS = 1.0
 ROBOT_CONSUMER_BACKOFF_MAX_SECONDS = 10.0
 ROBOT_CONSUMER_BATCH_SIZE = 16
+
+
+class RobotQueueInfraError(RuntimeError):
+    """Device/transport dispatch failure that must not consume run retries.
+
+    The run is requeued without incrementing ``retry_attempt`` so the next
+    scan can dispatch it once the device is reachable again.
+    """
+
+
+class DeviceOfflineError(RobotQueueInfraError):
+    """No online key for the resolved routing user and device."""
+
+
+class DeviceEmitRejectedError(RobotQueueInfraError):
+    """The internal runtime RPC emit could not be delivered to the device."""
+
+
+class ExecutorSessionStartError(RobotQueueInfraError):
+    """The device accepted the RPC but no codex session started in time."""
+
+
+def _infra_reason(exc: BaseException) -> str:
+    """Stable machine-readable reason for a transient dispatch failure."""
+
+    if isinstance(exc, DeviceOfflineError):
+        return "device_offline"
+    if isinstance(exc, DeviceEmitRejectedError):
+        return "device_emit_rejected"
+    if isinstance(exc, ExecutorSessionStartError):
+        return "executor_session_start_timeout"
+    return "device_infra"
+
+
+def _fail_dispatch(
+    db: Session, execution: LoopItemExecution, exc: BaseException
+) -> None:
+    """Record one failed dispatch.
+
+    Transient device/transport failures requeue the run without consuming
+    retries; real execution errors keep the existing requeue-until-retries
+    semantics.
+    """
+
+    if isinstance(exc, RobotQueueInfraError):
+        reason = _infra_reason(exc)
+        logger.warning(
+            "[RobotQueue] Dispatch infra failure execution=%s device=%s reason=%s "
+            "error=%s",
+            execution.id,
+            execution.execution_device_id,
+            reason,
+            str(exc)[:300],
+        )
+        loop_item_execution_service.fail(
+            db,
+            execution_id=execution.id,
+            error=str(exc)[:2000],
+            note=reason,
+            requeue_infra=True,
+        )
+        ROBOT_QUEUE_INFRA_FAILED_TOTAL.labels(reason=reason).inc()
+        return
+    logger.exception(
+        "[RobotQueue] Dispatch failed execution=%s device=%s",
+        execution.id,
+        execution.execution_device_id,
+    )
+    loop_item_execution_service.fail(
+        db,
+        execution_id=execution.id,
+        error=str(exc)[:2000],
+        requeue=True,
+    )
+    ROBOT_QUEUE_FAILED_TOTAL.inc()
+
 
 # The Socket.IO server is a process singleton bound to the event loop that
 # first created it. Celery runs each task on a fresh loop via asyncio.run, so
@@ -187,17 +268,13 @@ def execute_robot_task(self, execution_id: int) -> dict:
             ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
             return {"status": "dispatched", "execution_id": execution_id}
         except Exception as exc:
-            logger.exception(
-                "[RobotQueue] execute_robot_task failed execution=%s",
-                execution_id,
-            )
-            loop_item_execution_service.fail(
-                db,
-                execution_id=execution_id,
-                error=str(exc)[:2000],
-                requeue=True,
-            )
-            ROBOT_QUEUE_FAILED_TOTAL.inc()
+            _fail_dispatch(db, execution, exc)
+            if isinstance(exc, RobotQueueInfraError):
+                return {
+                    "status": "requeued",
+                    "reason": _infra_reason(exc),
+                    "execution_id": execution_id,
+                }
             return {"status": "failed", "execution_id": execution_id}
 
 
@@ -221,29 +298,79 @@ def _queued_devices(db: Session) -> list[tuple[str, str]]:
     return [(str(row[0]), str(row[1])) for row in rows if row[0]]
 
 
-def _device_owner_user_id(db: Session, device_id: str) -> Optional[int]:
+def _device_owner_user_id(
+    db: Session,
+    device_id: str,
+    preferred_user_id: Optional[int] = None,
+    fallback_to_any: bool = True,
+) -> Optional[int]:
     """Resolve the user who owns a device.
 
     The executor's device socket registers under the user who owns the device
-    (its online key is `device:online:{owner}:{device_id}`), which may differ
-    from the robot creator in mixed dev environments.
+    (its online key is ``device:online:{owner}:{device_id}``), which may
+    differ from the robot creator in mixed dev environments. When a preferred
+    user is given (the robot creator), their own Device row wins so robots
+    bound to a same-named device such as "local-device" stay on the creator's
+    device instead of an arbitrary shared owner.
     """
 
     from app.models.kind import Kind
 
-    row = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Device",
-            Kind.name == device_id,
-            Kind.is_active == True,
-        )
-        .first()
+    query = db.query(Kind).filter(
+        Kind.kind == "Device",
+        Kind.name == device_id,
+        Kind.is_active == True,
     )
+    if preferred_user_id is not None:
+        row = query.filter(Kind.user_id == preferred_user_id).first()
+        if row and row.user_id:
+            return row.user_id
+        if not fallback_to_any:
+            return None
+    row = query.first()
     return row.user_id if row and row.user_id else None
 
 
-async def _routing_user_for_device(db: Session, device_id: str) -> Optional[int]:
+def _resolve_routing_user_ids(
+    db: Session,
+    device_id: str,
+    creator_id: Optional[int],
+    environment: str,
+) -> list[int]:
+    """Candidate routing users for one bound device, best owner first.
+
+    Local/app robots must run on the creator's own device: a generic device id
+    such as "local-device" can be registered by many users in shared
+    environments, so the creator-scoped Device row is resolved first and no
+    stranger's same-named device is ever used. Cloud devices have unique ids,
+    so their recorded owner is preferred and the creator remains a fallback.
+    """
+
+    candidates: list[int] = []
+    if environment == "cloud":
+        owner = _device_owner_user_id(db, device_id)
+        if owner:
+            candidates.append(owner)
+        if creator_id and creator_id not in candidates:
+            candidates.append(creator_id)
+        return candidates
+    if creator_id:
+        creator_owner = _device_owner_user_id(
+            db,
+            device_id,
+            preferred_user_id=creator_id,
+            fallback_to_any=False,
+        )
+        if creator_owner:
+            candidates.append(creator_owner)
+        if creator_id not in candidates:
+            candidates.append(creator_id)
+    return candidates
+
+
+async def _routing_user_for_device(
+    db: Session, device_id: str, environment: str
+) -> Optional[int]:
     """Return an online user that can route RPCs to this device."""
 
     sample = (
@@ -262,15 +389,12 @@ async def _routing_user_for_device(db: Session, device_id: str) -> Optional[int]
         if sample_agent and sample_agent.created_by_user_id
         else None
     )
-    device_owner = _device_owner_user_id(db, device_id)
-    candidate_users = {
-        user_id
-        for user_id in (
-            device_owner,
-            sample_creator.id if sample_creator else None,
-        )
-        if user_id
-    }
+    candidate_users = _resolve_routing_user_ids(
+        db,
+        device_id,
+        sample_creator.id if sample_creator else None,
+        environment,
+    )
     for candidate in candidate_users:
         if await _device_online(candidate, device_id):
             return candidate
@@ -313,15 +437,12 @@ async def _dispatch_queued_executions(db: Session) -> int:
                 if sample_agent and sample_agent.created_by_user_id
                 else None
             )
-            device_owner = _device_owner_user_id(db, device_id)
-            candidate_users = {
-                user_id
-                for user_id in (
-                    device_owner,
-                    sample_creator.id if sample_creator else None,
-                )
-                if user_id
-            }
+            candidate_users = _resolve_routing_user_ids(
+                db,
+                device_id,
+                sample_creator.id if sample_creator else None,
+                environment,
+            )
             routing_user_id = None
             for candidate in candidate_users:
                 if await _device_online(candidate, device_id):
@@ -376,16 +497,7 @@ async def _dispatch_queued_executions(db: Session) -> int:
                     dispatched += 1
                     ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
                 except Exception as exc:
-                    logger.exception(
-                        "[RobotQueue] Dispatch failed execution=%s", execution.id
-                    )
-                    loop_item_execution_service.fail(
-                        db,
-                        execution_id=execution.id,
-                        error=str(exc)[:2000],
-                        requeue=True,
-                    )
-                    ROBOT_QUEUE_FAILED_TOTAL.inc()
+                    _fail_dispatch(db, execution, exc)
 
     # Robots created before device binding have no bound device; they run on
     # any online local device of the creator.
@@ -428,17 +540,7 @@ async def _dispatch_queued_executions(db: Session) -> int:
             dispatched += 1
             ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
         except Exception as exc:
-            logger.exception(
-                "[RobotQueue] Unbound local dispatch failed execution=%s",
-                claimed.id,
-            )
-            loop_item_execution_service.fail(
-                db,
-                execution_id=claimed.id,
-                error=str(exc)[:2000],
-                requeue=True,
-            )
-            ROBOT_QUEUE_FAILED_TOTAL.inc()
+            _fail_dispatch(db, claimed, exc)
     return dispatched
 
 
@@ -458,6 +560,23 @@ async def dispatch_queues_background() -> None:
         logger.exception("[RobotQueue] Background queue dispatch failed")
 
 
+def _robot_queue_internal_url() -> str:
+    """Backend-internal API base for robot queue RPC emits.
+
+    ``BACKEND_INTERNAL_URL`` carries the ``/api`` suffix in some environments
+    (for example a gateway URL) and a bare host in others, so normalize before
+    appending the internal route. The worker and the API server may run in
+    different pods, so ``localhost`` must never be assumed.
+    """
+
+    base = (
+        (settings.BACKEND_INTERNAL_URL or "http://localhost:8000").strip().rstrip("/")
+    )
+    if base.endswith("/api"):
+        return base
+    return f"{base}/api"
+
+
 def emit_runtime_cancels(executions: list) -> None:
     """Best-effort tell devices to stop runs the backend just cancelled.
 
@@ -472,14 +591,24 @@ def emit_runtime_cancels(executions: list) -> None:
 
     from app.db.session import get_db_session
 
-    backend_url = "http://localhost:8000"
+    backend_url = _robot_queue_internal_url()
     with get_db_session() as db:
         for execution in executions:
             runtime_task_id = getattr(execution, "runtime_task_id", "") or ""
             runtime_device_id = getattr(execution, "runtime_device_id", "") or ""
             if not runtime_task_id or not runtime_device_id:
                 continue
-            user_id = _device_owner_user_id(db, runtime_device_id)
+            creator_id = None
+            agent_id = getattr(execution, "agent_id", None)
+            if agent_id:
+                agent = db.get(ProjectChatAgent, agent_id)
+                creator_id = agent.created_by_user_id if agent else None
+            user_id = _device_owner_user_id(
+                db, runtime_device_id, preferred_user_id=creator_id
+            )
+            if user_id is None:
+                # Cloud devices owned by another account still route by owner.
+                user_id = _device_owner_user_id(db, runtime_device_id)
             if user_id is None:
                 continue
             try:
@@ -487,7 +616,7 @@ def emit_runtime_cancels(executions: list) -> None:
                     base_url=backend_url, timeout=5, trust_env=False
                 ) as client:
                     response = client.post(
-                        "/api/internal/robot-queue/emit-runtime-rpc",
+                        "/internal/robot-queue/emit-runtime-rpc",
                         json={
                             "user_id": user_id,
                             "device_id": runtime_device_id,
@@ -611,7 +740,7 @@ async def _consumer_pass(db: Session) -> int:
         ) as acquired:
             if not acquired:
                 continue
-            routing_user_id = await _routing_user_for_device(db, device_id)
+            routing_user_id = await _routing_user_for_device(db, device_id, environment)
             if routing_user_id is None:
                 # Device offline or no identity online; leave runs queued.
                 continue
@@ -737,15 +866,30 @@ async def _dispatch_execution(
     )
     if task is None:
         raise RuntimeError(f"Execution {execution.id} lost its task")
-    routing_user_id = routing_user_id or (
-        _device_owner_user_id(db, execution.execution_device_id) or creator.id
-    )
+    if routing_user_id is None:
+        candidates = _resolve_routing_user_ids(
+            db,
+            execution.execution_device_id,
+            creator.id,
+            execution.execution_environment,
+        )
+        routing_user_id = candidates[0] if candidates else None
+    if routing_user_id is None:
+        raise RuntimeError(f"Execution {execution.id} has no routable device owner")
 
     online = await device_service.get_device_online_info(
         routing_user_id, execution.execution_device_id
     )
+    logger.info(
+        "[RobotQueue] Dispatch online check execution=%s device=%s "
+        "routing_user=%s online=%s",
+        execution.id,
+        execution.execution_device_id,
+        routing_user_id,
+        bool(online),
+    )
     if not online:
-        raise RuntimeError("Device went offline before dispatch")
+        raise DeviceOfflineError("Device went offline before dispatch")
 
     prompt = loop_item_execution_service.build_robot_prompt(agent)
     payload = loop_item_execution_service.build_runtime_payload(
@@ -793,10 +937,10 @@ async def _dispatch_execution(
     )
     if not ack.get("emitted"):
         wait_task.cancel()
-        raise RuntimeError("Device did not accept the runtime RPC")
+        raise DeviceEmitRejectedError("Device did not accept the runtime RPC")
     event_name = await wait_task
     if not event_name:
-        raise RuntimeError(
+        raise ExecutorSessionStartError(
             f"Executor did not start a codex session for {task_id} within "
             f"{DISPATCH_START_TIMEOUT_SECONDS}s"
         )
@@ -858,13 +1002,13 @@ async def _emit_runtime_rpc(
 
     import httpx
 
-    backend_url = "http://localhost:8000"
+    backend_url = _robot_queue_internal_url()
     try:
         async with httpx.AsyncClient(
             base_url=backend_url, timeout=30, trust_env=False
         ) as client:
             response = await client.post(
-                "/api/internal/robot-queue/emit-runtime-rpc",
+                "/internal/robot-queue/emit-runtime-rpc",
                 json={
                     "user_id": user_id,
                     "device_id": device_id,

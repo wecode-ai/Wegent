@@ -9,7 +9,7 @@ export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
 export type ExecutorNormalizationReason = 'requires_claude_code' | null
 
 export interface SimpleBindModeOption {
-  value: Extract<TaskType, 'chat' | 'code' | 'task'>
+  value: Extract<TaskType, 'chat' | 'code' | 'task' | 'video' | 'image'>
   titleKey: string
   descriptionKey: string
 }
@@ -40,6 +40,16 @@ const SIMPLE_BIND_MODE_OPTIONS: SimpleBindModeOption[] = [
     value: 'task',
     titleKey: 'settings:team.simple.bind_mode.task.title',
     descriptionKey: 'settings:team.simple.bind_mode.task.description',
+  },
+  {
+    value: 'video',
+    titleKey: 'settings:team.simple.bind_mode.video.title',
+    descriptionKey: 'settings:team.simple.bind_mode.video.description',
+  },
+  {
+    value: 'image',
+    titleKey: 'settings:team.simple.bind_mode.image.title',
+    descriptionKey: 'settings:team.simple.bind_mode.image.description',
   },
 ]
 

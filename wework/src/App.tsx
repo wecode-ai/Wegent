@@ -90,14 +90,10 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
+import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
-
-interface ViewportSize {
-  width: number
-  height: number
-}
 
 function isPopoutWindowRuntime() {
   if (!isTauriRuntime()) return false
@@ -442,65 +438,6 @@ function browserWorkspaceTabStorageScope(): string {
   return `browser:${window.name}`
 }
 
-function useTauriViewportSize(isTauri: boolean): ViewportSize | null {
-  const [viewportSize, setViewportSize] = useState<ViewportSize | null>(() => {
-    if (!isTauri || window.innerWidth <= 0 || window.innerHeight <= 0) return null
-    return { width: window.innerWidth, height: window.innerHeight }
-  })
-
-  useEffect(() => {
-    if (!isTauri) return undefined
-
-    const appWindow = getCurrentWindow()
-    let disposed = false
-    let unlisten: (() => void) | undefined
-
-    const applyPhysicalSize = async (
-      physicalSize: Awaited<ReturnType<typeof appWindow.innerSize>>
-    ) => {
-      const scaleFactor = await appWindow.scaleFactor()
-      const logicalSize = physicalSize.toLogical(scaleFactor)
-      if (disposed || logicalSize.width <= 0 || logicalSize.height <= 0) return
-      setViewportSize(current =>
-        current?.width === logicalSize.width && current.height === logicalSize.height
-          ? current
-          : { width: logicalSize.width, height: logicalSize.height }
-      )
-    }
-
-    void appWindow
-      .innerSize()
-      .then(applyPhysicalSize)
-      .catch(error => {
-        console.error('[Wework] Failed to read the Tauri viewport size:', error)
-      })
-
-    void appWindow
-      .onResized(({ payload }) => {
-        void applyPhysicalSize(payload).catch(error => {
-          console.error('[Wework] Failed to update the Tauri viewport size:', error)
-        })
-      })
-      .then(unlistenFn => {
-        if (disposed) {
-          unlistenFn()
-          return
-        }
-        unlisten = unlistenFn
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to listen for Tauri viewport changes:', error)
-      })
-
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  }, [isTauri])
-
-  return viewportSize
-}
-
 function AppShell() {
   const { t } = useTranslation('common')
   const { pathname: path, search } = useCurrentLocation()
@@ -533,7 +470,7 @@ function AppShell() {
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
         sites: t('workbench.workspace_tab_sites', '站点与小程序'),
-        automations: t('workbench.workspace_tab_automations', '自动化'),
+        automations: t('workbench.automation', '已安排'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
         apps: t('workbench.workspace_tab_apps', '应用'),
       },

@@ -180,6 +180,35 @@ describe('TeamSelectorButton', () => {
     expect(screen.queryByPlaceholderText('common:teams.search_team')).not.toBeInTheDocument()
   })
 
+  it('shows recently used image and video agents in chat mode', async () => {
+    mockedUserApis.getRecentTeams.mockResolvedValueOnce([
+      { id: 2, name: 'image-agent', is_system: false },
+      { id: 3, name: 'video-agent', is_system: false },
+    ])
+    const setSelectedTeam = jest.fn()
+    const chatTeam = makeTeam({ id: 1, name: 'chat-agent', bind_mode: ['chat'] })
+    const imageTeam = makeTeam({ id: 2, name: 'image-agent', bind_mode: ['image'] })
+    const videoTeam = makeTeam({ id: 3, name: 'video-agent', bind_mode: ['video'] })
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={chatTeam}
+        setSelectedTeam={setSelectedTeam}
+        teams={[chatTeam, imageTeam, videoTeam]}
+        disabled={false}
+        currentMode="chat"
+      />
+    )
+
+    expect(await screen.findByTestId('team-option-image-agent')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-video-agent')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('team-option-image-agent'))
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&mode=image')
+    expect(setSelectedTeam).not.toHaveBeenCalled()
+  })
+
   it('shows five recent teams and fills missing entries by update time', async () => {
     mockedUserApis.getRecentTeams.mockResolvedValueOnce([
       { id: 3, name: 'team-3', is_system: false },

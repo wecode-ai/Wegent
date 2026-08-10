@@ -285,8 +285,9 @@
   z-index: 2;
   bottom: 0;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   min-height: 78px;
   margin: 0 -4px;
   padding: 10px 4px 0;
@@ -297,7 +298,8 @@
 
 .task-detail-comment-bar > div {
   min-width: 0;
-  flex: 1;
+  width: 100%;
+  margin: 0;
 }
 
 .task-detail-comment-chat-input {

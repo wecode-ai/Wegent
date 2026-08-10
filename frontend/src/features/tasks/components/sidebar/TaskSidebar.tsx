@@ -133,6 +133,12 @@ export default function TaskSidebar({
 
   // History manage dialog state
   const [isHistoryManageDialogOpen, setIsHistoryManageDialogOpen] = useState(false)
+  const [initialHistoryTaskId, setInitialHistoryTaskId] = useState<number | null>(null)
+
+  const handleSelectMultiple = (taskId: number) => {
+    setInitialHistoryTaskId(taskId)
+    setIsHistoryManageDialogOpen(true)
+  }
 
   // Use external shortcut display text from parent
   const shortcutDisplayText = externalShortcutDisplayText ?? ''
@@ -795,7 +801,7 @@ export default function TaskSidebar({
                   setIsMobileSidebarOpen={setIsMobileSidebarOpen}
                   isSearchResult={isSearchResult}
                   onTaskSelect={() => setIsMobileSidebarOpen(false)}
-                  setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
+                  onSelectMultiple={handleSelectMultiple}
                 />
               )}
               {loadingMore && isSearchResult && (
@@ -857,7 +863,13 @@ export default function TaskSidebar({
       {/* History Manage Dialog */}
       <HistoryManageDialog
         open={isHistoryManageDialogOpen}
-        onOpenChange={setIsHistoryManageDialogOpen}
+        initialTaskId={initialHistoryTaskId}
+        onOpenChange={open => {
+          setIsHistoryManageDialogOpen(open)
+          if (!open) {
+            setInitialHistoryTaskId(null)
+          }
+        }}
       />
     </>
   )

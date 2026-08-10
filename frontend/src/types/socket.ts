@@ -153,6 +153,10 @@ export interface ChatSendPayload {
     ratio?: string
     /** Duration in seconds for video generation */
     duration?: number
+    /** Selected model-defined video generation mode */
+    generation_mode_id?: string
+    /** Image dimensions selected at generation time */
+    size?: string
   }
   interactive_form_answer?: InteractiveFormAnswerPayload
 }

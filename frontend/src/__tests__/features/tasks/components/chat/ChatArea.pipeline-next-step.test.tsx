@@ -293,6 +293,11 @@ jest.mock('@/features/tasks/components/hooks/useFloatingInput', () => ({
 }))
 jest.mock('@/apis/attachments', () => ({
   getAttachment: jest.fn(),
+  getFileExtension: (filename: string) => filename.slice(filename.lastIndexOf('.')),
+  isAudioExtension: (extension: string) => ['.mp3', '.m4a'].includes(extension),
+  isImageExtension: (extension: string) => ['.jpg', '.jpeg', '.png', '.webp'].includes(extension),
+  isVideoExtension: (extension: string) => ['.mp4', '.mov'].includes(extension),
+  formatsToAcceptString: jest.fn(() => 'image/*'),
 }))
 jest.mock('@/features/tasks/components/hooks/useAttachmentUpload', () => ({
   useAttachmentUpload: () => ({
