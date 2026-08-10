@@ -16,7 +16,11 @@ import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
+import {
+  ChatInput,
+  type ProjectChatControls,
+  type ProjectWorkControls,
+} from '@/components/chat/ChatInput'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -29,7 +33,6 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
-import { ExecutionProjectPicker } from './ExecutionProjectPicker'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -385,6 +388,48 @@ export function TaskActivityView({
         ? (localProjects.find(project => project.id === assignedAgent.localProjectId) ?? null)
         : null,
     [assignedAgent, localProjects]
+  )
+  // The composer project bar reuses the homepage ProjectWorkBar directly; the
+  // selection drives only the per-comment execution project. The default ('')
+  // follows the robot-bound repository, so picking that repository explicitly
+  // is mapped back to the default and the clear button only appears while an
+  // actual override is selected.
+  const effectiveCommentProject =
+    selectedCommentProjectId !== ''
+      ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
+      : robotBoundProject
+  const commentProjectWork = useMemo<ProjectWorkControls>(
+    () => ({
+      projects: localProjects,
+      devices: state.devices,
+      runtimeWork: state.runtimeWork,
+      currentProject: effectiveCommentProject,
+      currentProjectId: effectiveCommentProject?.id,
+      currentStandaloneDeviceId: null,
+      selectedDeviceWorkspaceId: null,
+      pendingProjectWorkspaceProjectId: null,
+      executionMode: 'current_workspace',
+      executionModeLocked: true,
+      // The execution-mode control is meaningless for comment runs; hide it.
+      isGitProject: false,
+      showProjectClearButton: selectedCommentProjectId !== '',
+      onSelectProject: projectId =>
+        setSelectedCommentProjectId(
+          projectId == null || projectId === robotBoundProject?.id ? '' : projectId
+        ),
+      onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),
+      onSelectProjectWorkspace: projectId =>
+        setSelectedCommentProjectId(projectId === robotBoundProject?.id ? '' : projectId),
+      onExecutionModeChange: () => {},
+    }),
+    [
+      effectiveCommentProject,
+      localProjects,
+      robotBoundProject?.id,
+      selectedCommentProjectId,
+      state.devices,
+      state.runtimeWork,
+    ]
   )
   const activeUserId = currentUserId ?? chatCurrentUserId
   const isBotCreator = assignedAgent
@@ -1055,17 +1100,6 @@ export function TaskActivityView({
             !compact && 'pt-2'
           )}
         >
-          {localProjects.length > 0 ? (
-            <ExecutionProjectPicker
-              projects={localProjects}
-              devices={state.devices}
-              runtimeWork={state.runtimeWork}
-              selectedProjectId={selectedCommentProjectId}
-              defaultProject={robotBoundProject}
-              taskPageProject={taskPageProject}
-              onSelectProject={setSelectedCommentProjectId}
-            />
-          ) : null}
           <div className="task-detail-comment-chat-input">
             <ChatInput
               value={newCommentDraft}
@@ -1081,7 +1115,8 @@ export function TaskActivityView({
               }
               variant="desktop"
               projectChat={commentProjectChat}
-              showProjectWorkBar={false}
+              projectWork={commentProjectWork}
+              showProjectWorkBar={localProjects.length > 0}
               inputTestId="cloud-task-activity-composer"
             />
           </div>

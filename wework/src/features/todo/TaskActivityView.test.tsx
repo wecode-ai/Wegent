@@ -302,7 +302,7 @@ describe('TaskActivityView', () => {
             {
               deviceId: 'device-1',
               projectId: 91,
-              tasks: [{ taskId: 'runtime-task-1' }],
+              tasks: [{ taskId: 'runtime-task-1', title: '执行任务' }],
             },
           ],
         },
@@ -358,7 +358,7 @@ describe('TaskActivityView', () => {
       />
     )
 
-    const projectTrigger = screen.getByTestId('cloud-task-activity-execution-project')
+    const projectTrigger = screen.getByTestId('project-work-button')
     expect(projectTrigger).toHaveTextContent('运营工作区')
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
@@ -438,9 +438,7 @@ describe('TaskActivityView', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('cloud-task-activity-execution-project')).toHaveTextContent(
-        '运营工作区'
-      )
+      expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
     )
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
@@ -453,7 +451,7 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it('shows an unbound repository label when nothing binds a project', async () => {
+  it('shows the project placeholder when nothing binds a project', async () => {
     const client = {
       subscribe: vi.fn(async () => ({
         snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
@@ -489,11 +487,19 @@ describe('TaskActivityView', () => {
       />
     )
 
-    const projectTrigger = screen.getByTestId('cloud-task-activity-execution-project')
-    expect(projectTrigger).toHaveTextContent('未绑定仓库')
+    const projectTrigger = screen.getByTestId('project-work-button')
+    expect(projectTrigger).toHaveTextContent('请选择项目')
   })
 
   it('lets the user override the execution project from the picker menu', async () => {
+    runtimeWorkMock.value = {
+      projects: [
+        { project: { id: 91, name: '运营工作区' }, deviceWorkspaces: [] },
+        { project: { id: 92, name: '侧项目' }, deviceWorkspaces: [] },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
     agentsMock.value = [
       {
         id: '12',
@@ -563,23 +569,16 @@ describe('TaskActivityView', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('cloud-task-activity-execution-project')).toHaveTextContent(
-        '运营工作区'
-      )
+      expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
     )
-    expect(
-      screen.queryByTestId('cloud-task-activity-execution-project-clear')
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('clear-project-button')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('cloud-task-activity-execution-project'))
-    const menu = await screen.findByTestId('cloud-task-activity-execution-project-menu')
-    expect(within(menu).getByText('机器人绑定')).toBeInTheDocument()
-    await user.click(screen.getByTestId('cloud-task-activity-execution-project-option-92'))
+    await user.click(screen.getByTestId('project-work-button'))
+    await screen.findByTestId('project-work-menu')
+    await user.click(screen.getByTestId('project-option-92'))
 
-    expect(screen.getByTestId('cloud-task-activity-execution-project')).toHaveTextContent('侧项目')
-    expect(
-      screen.queryByTestId('cloud-task-activity-execution-project-menu')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('侧项目')
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
 
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
@@ -590,10 +589,8 @@ describe('TaskActivityView', () => {
       )
     )
 
-    await user.click(screen.getByTestId('cloud-task-activity-execution-project-clear'))
-    expect(screen.getByTestId('cloud-task-activity-execution-project')).toHaveTextContent(
-      '运营工作区'
-    )
+    await user.click(screen.getByTestId('clear-project-button'))
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
   })
 
   it('passes the per-comment model override to the AI run', async () => {
