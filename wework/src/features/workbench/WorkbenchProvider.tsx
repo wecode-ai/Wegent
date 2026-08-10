@@ -349,16 +349,21 @@ export function WorkbenchProvider({
     Record<string, PluginPathComponent[]>
   >({})
   const [trialPluginNameByScope, setTrialPluginNameByScope] = useState<Record<string, string>>({})
+  const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
+    Record<string, LocalDeviceApp>
+  >({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
+  const trialPluginApp = trialPluginAppByScope[projectChatScopeKey]
   useEffect(() => {
     const showGuide = (event: Event) => {
       const detail = (
         event as CustomEvent<{
           pluginName?: unknown
           templates?: unknown
+          app?: unknown
         }>
       ).detail
       if (typeof detail?.pluginName !== 'string' || !Array.isArray(detail.templates)) return
@@ -378,6 +383,24 @@ export function WorkbenchProvider({
         ...current,
         [projectChatScopeKey]: templates.slice(0, 6),
       }))
+      if (
+        detail.app &&
+        typeof detail.app === 'object' &&
+        typeof (detail.app as LocalDeviceApp).id === 'string' &&
+        typeof (detail.app as LocalDeviceApp).name === 'string'
+      ) {
+        setTrialPluginAppByScope(current => ({
+          ...current,
+          [projectChatScopeKey]: detail.app as LocalDeviceApp,
+        }))
+      } else {
+        setTrialPluginAppByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+      }
     }
     window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
     return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
@@ -396,6 +419,12 @@ export function WorkbenchProvider({
           return next
         })
         setTrialPluginNameByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+        setTrialPluginAppByScope(current => {
           if (!current[projectChatScopeKey]) return current
           const next = { ...current }
           delete next[projectChatScopeKey]
@@ -436,6 +465,12 @@ export function WorkbenchProvider({
       delete next[projectChatScopeKey]
       return next
     })
+    setTrialPluginAppByScope(current => {
+      if (!current[projectChatScopeKey]) return current
+      const next = { ...current }
+      delete next[projectChatScopeKey]
+      return next
+    })
   }, [projectChatScopeKey, trialPluginName])
   const applyTrialTemplate = useCallback(
     (template: PluginPathComponent) => {
@@ -456,6 +491,16 @@ export function WorkbenchProvider({
           ...current,
           [scopeKey]: trial.templates.slice(0, 6),
         }))
+        const app = trial.app
+        if (app) setTrialPluginAppByScope(current => ({ ...current, [scopeKey]: app }))
+        else {
+          setTrialPluginAppByScope(current => {
+            if (!current[scopeKey]) return current
+            const next = { ...current }
+            delete next[scopeKey]
+            return next
+          })
+        }
         return
       }
       setTrialPluginNameByScope(current => {
@@ -465,6 +510,12 @@ export function WorkbenchProvider({
         return next
       })
       setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginAppByScope(current => {
         if (!current[scopeKey]) return current
         const next = { ...current }
         delete next[scopeKey]
@@ -1931,6 +1982,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -1972,6 +2024,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2011,6 +2064,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2052,6 +2106,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,

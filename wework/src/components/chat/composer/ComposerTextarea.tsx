@@ -883,7 +883,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
         commitEditorValue(replacement.value, replacement.cursor)
         if (candidate.kind === 'app') {
-          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates, candidate.app)
         }
         closeAutocompleteMenu()
         textareaRef.current?.focus()

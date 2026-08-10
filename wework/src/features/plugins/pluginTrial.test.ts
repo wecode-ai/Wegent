@@ -218,6 +218,14 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
+    expect(trial?.app).toEqual(
+      expect.objectContaining({
+        id: 'plugin:documents',
+        name: 'Documents',
+        pluginKey: 'documents',
+        source: 'installed-plugin',
+      })
+    )
     expect(trial?.openInNewChat).toBe(true)
   })
 

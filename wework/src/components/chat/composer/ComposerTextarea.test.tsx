@@ -613,6 +613,53 @@ describe('ComposerTextarea', () => {
     await waitFor(() => expect(editor.value).toBe('[$GitHub](/tmp/github/SKILL.md) '))
   })
 
+  test('uses canonical plugin brands and initials in the slash menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const apps: LocalDeviceApp[] = [
+      {
+        ...GITHUB_PLUGIN,
+        id: 'weibo-app',
+        name: '微博开放平台内部WIKI',
+        pluginKey: 'weibo-api-wiki',
+        logoUrl: null,
+        source: 'codex-app',
+      },
+      {
+        ...GITHUB_PLUGIN,
+        id: 'wework-video',
+        name: 'Wework 教学视频工作室',
+        pluginKey: 'wework-video',
+        logoUrl: null,
+        source: 'codex-app',
+      },
+    ]
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onListLocalApps={async () => apps}
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    const weiboIcon = await screen.findByTestId('slash-command-icon-app-weibo-app')
+    expect(weiboIcon.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
+    const videoIcon = screen.getByTestId('slash-command-icon-app-wework-video')
+    expect(videoIcon.querySelector('img')).toBeNull()
+    expect(videoIcon).toHaveTextContent('W')
+  })
+
   test('preloads callable plugins before the slash menu opens', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onListLocalApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])

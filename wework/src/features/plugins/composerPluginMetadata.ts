@@ -8,6 +8,8 @@ function normalized(value: string | null | undefined): string {
 }
 
 export function composerAppPluginKey(app: LocalDeviceApp): string {
+  const pluginKey = app.pluginKey?.trim()
+  if (pluginKey) return pluginKey
   if (app.source === 'installed-plugin') {
     return app.id.replace(/^plugin:/, '')
   }
@@ -136,6 +138,7 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
   return {
     id: `plugin:${pluginKey}`,
     name: displayName,
+    pluginKey,
     description:
       interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
     logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light') || null,
@@ -168,6 +171,7 @@ export function enrichComposerApps(
         {
           ...app,
           name: plugin.spec.displayName || app.name,
+          pluginKey: plugin.spec.source.pluginKey,
           description:
             interfaceData?.shortDescription || plugin.spec.description || app.description || null,
           logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light') || app.logoUrl || null,

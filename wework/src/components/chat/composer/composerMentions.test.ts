@@ -118,6 +118,22 @@ describe('composer mention icons', () => {
     expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
   })
 
+  test('falls back from a broken registered logo to the canonical plugin brand', () => {
+    const reference = '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent)'
+    registerComposerMentionIcon(reference, 'https://example.com/missing-weibo.png')
+    const element = createComposerMentionElement({
+      name: '微博开放平台内部WIKI',
+      label: '微博开放平台内部WIKI',
+      reference,
+    })
+    const declaredLogo = element.querySelector('img')
+
+    declaredLogo?.dispatchEvent(new Event('error'))
+
+    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
+    expect(element.querySelector('.composer-mention-initial-icon')).toBeNull()
+  })
+
   test('keeps the generic cube icon for skill mentions without a brand logo', () => {
     const reference = '[$gmail](/tmp/gmail/SKILL.md)'
     const element = createComposerMentionElement({

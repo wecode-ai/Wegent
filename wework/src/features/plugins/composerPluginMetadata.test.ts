@@ -102,12 +102,44 @@ describe('enrichComposerApps', () => {
     expect(enrichComposerApps([githubApp], [githubPlugin])).toEqual([
       expect.objectContaining({
         name: 'GitHub',
+        pluginKey: 'github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
         logoUrl: '/Users/test/plugins/github/assets/icon.png',
         pluginDisplayNames: ['GitHub'],
         trialTemplates: expect.any(Array),
       }),
     ])
+  })
+
+  test('preserves the canonical plugin key when the app uses a localized display name', () => {
+    const localizedPlugin: InstalledPlugin = {
+      ...githubPlugin,
+      metadata: { name: 'weibo-api-wiki', namespace: 'default' },
+      spec: {
+        ...githubPlugin.spec,
+        source: {
+          ...githubPlugin.spec.source,
+          pluginKey: 'weibo-api-wiki',
+        },
+        displayName: '微博开放平台内部WIKI',
+        components: {
+          ...githubPlugin.spec.components,
+          apps: [{ name: '微博开放平台内部WIKI', path: 'weibo-api-wiki' }],
+        },
+        interface: null,
+      },
+    }
+    const localizedApp: LocalDeviceApp = {
+      ...githubApp,
+      id: 'weibo-api-wiki',
+      name: '微博开放平台内部WIKI',
+      pluginDisplayNames: ['微博开放平台内部WIKI'],
+    }
+
+    const [app] = enrichComposerApps([localizedApp], [localizedPlugin])
+
+    expect(app?.pluginKey).toBe('weibo-api-wiki')
+    expect(app && composerAppPluginKey(app)).toBe('weibo-api-wiki')
   })
 
   test('enriches a Wegent connector app after connector synchronization', () => {
@@ -182,6 +214,7 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       expect.objectContaining({
         id: 'plugin:superpowers',
         name: 'superpowers',
+        pluginKey: 'superpowers',
         source: 'installed-plugin',
         skillPath: 'plugin://superpowers@openai-official',
         logoUrl: '/tmp/plugins/superpowers/assets/icon.png',

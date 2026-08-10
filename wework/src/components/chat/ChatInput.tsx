@@ -53,6 +53,7 @@ import {
 } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
+import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -68,6 +69,7 @@ export interface ProjectChatControls {
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string
+  trialPluginApp?: LocalDeviceApp
   hasConversationContext?: boolean
   onDismissTrialGuide?: () => void
   onApplyTrialTemplate?: (template: PluginPathComponent) => void
@@ -232,6 +234,7 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function PluginTrialTemplateStrip({
   templates,
   pluginName,
+  pluginApp,
   draft,
   hasConversationContext = false,
   onApplyTemplate,
@@ -241,6 +244,7 @@ function PluginTrialTemplateStrip({
 }: {
   templates: PluginPathComponent[]
   pluginName?: string
+  pluginApp?: LocalDeviceApp
   draft: string
   hasConversationContext?: boolean
   onApplyTemplate?: (template: PluginPathComponent) => void
@@ -345,9 +349,18 @@ function PluginTrialTemplateStrip({
     >
       <div className="flex items-center justify-between gap-3 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
-            <Sparkles className="h-4 w-4" aria-hidden="true" />
-          </span>
+          {pluginApp ? (
+            <ComposerPluginIcon
+              app={pluginApp}
+              className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
+              initialClassName="text-xs font-medium leading-none text-text-secondary"
+              testId="plugin-trial-plugin-icon"
+            />
+          ) : (
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+            </span>
+          )}
           <div className="flex min-w-0 items-baseline gap-2">
             <h3 className="shrink-0 text-sm font-medium leading-5 text-text-primary">
               {pluginName
@@ -819,6 +832,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           key={controls.trialPluginName || 'plugin-trial'}
           templates={controls.trialTemplates ?? []}
           pluginName={controls.trialPluginName}
+          pluginApp={controls.trialPluginApp}
           draft={value}
           hasConversationContext={controls.hasConversationContext}
           onApplyTemplate={applyTrialTemplate}
@@ -926,6 +940,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         key={controls.trialPluginName || 'plugin-trial'}
         templates={controls.trialTemplates ?? []}
         pluginName={controls.trialPluginName}
+        pluginApp={controls.trialPluginApp}
         draft={value}
         hasConversationContext={controls.hasConversationContext}
         onApplyTemplate={applyTrialTemplate}

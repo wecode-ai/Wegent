@@ -3877,6 +3877,12 @@ describe('ChatInput', () => {
         onSubmit={onSubmit}
         projectChat={projectChatControls({
           trialPluginName: 'Documents',
+          trialPluginApp: {
+            id: 'plugin:documents',
+            name: 'Documents',
+            pluginKey: 'documents',
+            logoUrl: 'https://example.com/documents.png',
+          },
           trialTemplates,
           applyTrialTemplate,
           dismissTrialGuide,
@@ -3886,6 +3892,10 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
     expect(screen.getByText('Documents 可以这样用')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-plugin-icon').querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/documents.png'
+    )
     expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 1')
     expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(2)
     expect(screen.queryByText('Scenario 4')).not.toBeInTheDocument()

@@ -1337,6 +1337,7 @@ export interface LocalDeviceSkill {
 export interface LocalDeviceApp {
   id: string
   name: string
+  pluginKey?: string | null
   description?: string | null
   logoUrl?: string | null
   logoUrlDark?: string | null

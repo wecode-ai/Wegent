@@ -102,8 +102,8 @@ describe('PluginPickerMenu', () => {
     expect(trigger).not.toHaveTextContent('+2')
 
     const gitlabPreview = screen.getByTestId('composer-plugin-preview-icon-gitlab')
-    expect(gitlabPreview).toHaveTextContent('G')
-    expect(gitlabPreview.querySelector('img')).toBeNull()
+    expect(gitlabPreview).not.toHaveTextContent('G')
+    expect(gitlabPreview.querySelector('img')).toHaveAttribute('src', '/plugin-icons/gitlab.svg')
 
     const githubPreview = screen.getByTestId('composer-plugin-preview-icon-github')
     const githubLogo = githubPreview.querySelector('img')
@@ -136,6 +136,30 @@ describe('PluginPickerMenu', () => {
 
     window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
     window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
+  })
+
+  test('falls back from a broken declared logo to the canonical plugin brand', async () => {
+    const weiboApp: LocalDeviceApp = {
+      id: 'weibo-app',
+      name: '微博开放平台内部WIKI',
+      pluginKey: 'weibo-api-wiki',
+      description: '检索微博开放平台内部 Wiki API 文档。',
+      logoUrl: 'https://example.com/missing-weibo.png',
+      isAccessible: true,
+      isEnabled: true,
+    }
+
+    render(<PluginPickerMenu onListLocalApps={async () => [weiboApp]} />)
+
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    const icon = await screen.findByTestId('composer-plugin-picker-icon-weibo-app')
+    const declaredLogo = icon.querySelector('img')
+    expect(declaredLogo).toHaveAttribute('src', 'https://example.com/missing-weibo.png')
+
+    act(() => declaredLogo?.dispatchEvent(new Event('error')))
+
+    expect(icon.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
+    expect(icon).not.toHaveTextContent('微')
   })
 
   test('renders a single icon trigger when iconOnly is set', async () => {

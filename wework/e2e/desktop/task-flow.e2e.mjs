@@ -5175,6 +5175,11 @@ async function verifyMarketplacePluginLifecycle({
       snapshot.text.includes(PLUGIN_DISPLAY_NAME),
     'Trying the installed plugin did not expose its AI usage guide'
   )
+  await assertPluginLogoImage(
+    control,
+    '[data-testid="plugin-trial-plugin-icon"] img',
+    'The plugin usage guide did not reuse the marketplace logo'
+  )
   await control.command('click', '[data-testid="plugin-trial-ai-refine"]')
   await control.command('waitFor', '[data-testid="plugin-trial-ai-result"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5228,6 +5233,11 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', slashPluginSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertPluginLogoImage(
+    control,
+    `[data-testid="slash-command-icon-app-plugin-${PLUGIN_NAME}"] img`,
+    'The slash command did not reuse the marketplace logo'
+  )
   await control.command('click', slashPluginSelector)
   await waitForSnapshot(
     control,

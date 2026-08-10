@@ -1,4 +1,4 @@
-import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceApp, PluginPathComponent } from '@/types/api'
 import { resolveInstalledPluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
@@ -20,7 +20,8 @@ export function insertPluginReference(reference: string) {
 
 export function showPluginTrialGuide(
   pluginName: string,
-  templates: PluginPathComponent[] | undefined
+  templates: PluginPathComponent[] | undefined,
+  app?: LocalDeviceApp
 ) {
   const normalizedName = pluginName.trim()
   const availableTemplates = (templates ?? []).filter(template => !template.unavailableReason)
@@ -30,6 +31,7 @@ export function showPluginTrialGuide(
       detail: {
         pluginName: normalizedName,
         templates: availableTemplates.slice(0, 6),
+        app,
       },
     })
   )
@@ -39,6 +41,7 @@ interface PendingPluginTrial {
   input: string
   pluginName: string
   templates: PluginPathComponent[]
+  app?: LocalDeviceApp
   openInNewChat?: boolean
 }
 
@@ -91,6 +94,19 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
 
 function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
   registerComposerMentionIcon(reference, resolveInstalledPluginLogoUrl(plugin))
+}
+
+function pluginTrialApp(plugin: InstalledPlugin): LocalDeviceApp {
+  const pluginKey = plugin.spec.source.pluginKey
+  const name = plugin.spec.displayName || pluginKey
+  return {
+    id: `plugin:${pluginKey}`,
+    name,
+    pluginKey,
+    logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light') || null,
+    logoUrlDark: resolveInstalledPluginLogoUrl(plugin, 'dark') || null,
+    source: 'installed-plugin',
+  }
 }
 
 function skillFilePath(path: string): string {
@@ -225,6 +241,7 @@ export function queuePluginTrial(
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
     templates: pluginTrialTemplates(plugin, options.prompt),
+    app: pluginTrialApp(plugin),
     openInNewChat: options.openInNewChat === true,
   })
 }
@@ -244,6 +261,7 @@ export function queuePluginPromptTrial(
     input: `${reference} ${normalizedPrompt}`,
     pluginName,
     templates: [],
+    app: pluginTrialApp(plugin),
     openInNewChat,
   })
 }
@@ -277,6 +295,13 @@ export function consumePluginTrial(): PendingPluginTrial | null {
       input: payload.input,
       pluginName: typeof payload.pluginName === 'string' ? payload.pluginName : '',
       templates: Array.isArray(payload.templates) ? payload.templates : [],
+      app:
+        payload.app &&
+        typeof payload.app === 'object' &&
+        typeof payload.app.id === 'string' &&
+        typeof payload.app.name === 'string'
+          ? payload.app
+          : undefined,
       openInNewChat: payload.openInNewChat === true,
     }
   } catch {

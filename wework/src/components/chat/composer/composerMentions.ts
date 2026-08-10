@@ -8,7 +8,21 @@ import {
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
-const composerMentionIconUrls = new Map<string, string>()
+const serverComposerMentionIconUrls = new Map<string, string>()
+
+declare global {
+  interface Window {
+    __weworkComposerMentionIconUrls?: Map<string, string>
+  }
+}
+
+function composerMentionIconUrls(): Map<string, string> {
+  if (typeof window === 'undefined') return serverComposerMentionIconUrls
+  if (!window.__weworkComposerMentionIconUrls) {
+    window.__weworkComposerMentionIconUrls = new Map<string, string>()
+  }
+  return window.__weworkComposerMentionIconUrls
+}
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const COMPOSER_MENTION_ICON_PATHS = [
   'M16.5 9.4 7.55 4.24',
@@ -36,14 +50,14 @@ export function registerComposerMentionIcon(reference: string, iconUrl?: string 
   const normalizedIconUrl = iconUrl?.trim()
   if (!href) return
   if (!normalizedIconUrl) {
-    composerMentionIconUrls.delete(href)
+    composerMentionIconUrls().delete(href)
     return
   }
-  composerMentionIconUrls.set(href, normalizedIconUrl)
+  composerMentionIconUrls().set(href, normalizedIconUrl)
 }
 
 export function getComposerMentionIconUrl(href: string): string | undefined {
-  return composerMentionIconUrls.get(href)
+  return composerMentionIconUrls().get(href)
 }
 
 /** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
@@ -54,6 +68,26 @@ export function resolveComposerMentionBrandIconUrl(href: string): string | null 
     return resolvePluginLogoUrl({ logo: registered, appearanceMode }) || null
   }
 
+  const pluginReference = parsePluginUri(href)
+  if (pluginReference) {
+    return (
+      resolvePluginLogoUrl({
+        pluginKey: pluginReference.pluginName,
+        appearanceMode,
+      }) || null
+    )
+  }
+
+  if (href.startsWith('app://')) {
+    const appId = href.slice('app://'.length).trim()
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId, appearanceMode }) || null : null
+  }
+
+  return null
+}
+
+function resolveComposerMentionFallbackBrandIconUrl(href: string): string | null {
+  const appearanceMode = currentPluginLogoAppearanceMode()
   const pluginReference = parsePluginUri(href)
   if (pluginReference) {
     return (
@@ -226,6 +260,9 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   iconSlot.setAttribute('aria-hidden', 'true')
   const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
   const brandIconUrl = mentionHref ? resolveComposerMentionBrandIconUrl(mentionHref) : null
+  const fallbackBrandIconUrl = mentionHref
+    ? resolveComposerMentionFallbackBrandIconUrl(mentionHref)
+    : null
   const usePluginInitial = Boolean(pluginReference || mentionHref?.startsWith('app://'))
   iconSlot.append(
     pathReference?.directory
@@ -233,7 +270,7 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
       : conversationReference
         ? createComposerConversationIcon()
         : brandIconUrl
-          ? createComposerBrandIcon(brandIconUrl)
+          ? createComposerBrandIcon(brandIconUrl, displayLabel, fallbackBrandIconUrl)
           : usePluginInitial
             ? createComposerInitialIcon(displayLabel)
             : createComposerMentionIcon()
@@ -247,11 +284,23 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   return element
 }
 
-function createComposerBrandIcon(iconUrl: string): HTMLImageElement {
+function createComposerBrandIcon(
+  iconUrl: string,
+  fallbackLabel: string,
+  fallbackIconUrl: string | null
+): HTMLImageElement {
   const icon = document.createElement('img')
   icon.className = 'composer-mention-icon composer-mention-brand-icon'
   icon.src = iconUrl
   icon.alt = ''
+  icon.addEventListener('error', () => {
+    if (fallbackIconUrl && fallbackIconUrl !== iconUrl && icon.dataset.fallbackTried !== 'true') {
+      icon.dataset.fallbackTried = 'true'
+      icon.src = fallbackIconUrl
+      return
+    }
+    icon.replaceWith(createComposerInitialIcon(fallbackLabel))
+  })
   return icon
 }
 

@@ -10,7 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
-import { pluginNameInitial, resolvePluginLogo } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
 import {
   getComposerApps,
@@ -25,48 +25,12 @@ import {
   readRecentPluginAppIds,
   sortComposerPluginsByUsage,
 } from './composerPluginSort'
+import { ComposerPluginIcon } from './ComposerPluginIcon'
 
 interface PluginPickerMenuProps {
   disabled?: boolean
   iconOnly?: boolean
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
-}
-
-function ComposerPluginIcon({
-  app,
-  className,
-  initialClassName,
-  testId,
-}: {
-  app: LocalDeviceApp
-  className: string
-  initialClassName: string
-  testId: string
-}) {
-  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
-  const logo = resolvePluginLogo({
-    pluginKey: composerAppPluginKey(app),
-    logo: app.logoUrl,
-    logoDark: app.logoUrlDark,
-    appearanceMode,
-  })
-  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
-  const showInitial = logo.isGenericFallback || failedLogoUrl === logo.url
-
-  return (
-    <span data-testid={testId} className={className}>
-      {showInitial ? (
-        <span className={initialClassName}>{pluginNameInitial(app.name)}</span>
-      ) : (
-        <img
-          src={logo.url}
-          alt=""
-          className="h-full w-full object-contain p-px"
-          onError={() => setFailedLogoUrl(logo.url)}
-        />
-      )}
-    </span>
-  )
 }
 
 function enabledComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
@@ -306,7 +270,7 @@ export function PluginPickerMenu({
                         logo.isGenericFallback ? null : logo.url
                       )
                       insertPluginReference(reference)
-                      showPluginTrialGuide(displayAppName(app), app.trialTemplates)
+                      showPluginTrialGuide(displayAppName(app), app.trialTemplates, app)
                       const recent = JSON.parse(
                         window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
                       ) as string[]
