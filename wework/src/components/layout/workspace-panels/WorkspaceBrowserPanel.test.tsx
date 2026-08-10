@@ -1358,16 +1358,13 @@ describe('WorkspaceBrowserPanel', () => {
     expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
-  test('closes an owned native browser by identity when the panel unmounts', async () => {
+  test('does not close an owned native browser when the panel unmounts', async () => {
     const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
     await screen.findByTestId('workspace-browser-native-view')
 
     view.unmount()
 
-    expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
-      'workspace-browser-runtime-1',
-      'workspace-browser-native-1'
-    )
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
   test('ignores a stale close event for a replacement native browser', async () => {

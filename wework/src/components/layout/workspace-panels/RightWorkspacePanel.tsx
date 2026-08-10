@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
@@ -148,6 +148,58 @@ interface RightWorkspacePanelProps {
   onRefreshReview?: () => void
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
+}
+
+interface RightWorkspaceBrowserPanelSlotProps {
+  tab: RightWorkspaceBrowserTab
+  active: boolean
+  state: RightWorkspaceBrowserState
+  codeCommentCount: number
+  onAddCodeComment: (context: CodeCommentContext) => void
+  onBrowserStateChange: (
+    tab: RightWorkspaceBrowserTab,
+    update: Partial<RightWorkspaceBrowserState>
+  ) => void
+}
+
+function RightWorkspaceBrowserPanelSlot({
+  tab,
+  active,
+  state,
+  codeCommentCount,
+  onAddCodeComment,
+  onBrowserStateChange,
+}: RightWorkspaceBrowserPanelSlotProps) {
+  const handleDownloadActivityChange = useCallback(
+    (hasActiveDownload: boolean) => onBrowserStateChange(tab, { hasActiveDownload }),
+    [onBrowserStateChange, tab]
+  )
+  const handleFaviconChange = useCallback(
+    (faviconUrl: string | null) => onBrowserStateChange(tab, { faviconUrl }),
+    [onBrowserStateChange, tab]
+  )
+  const handleTitleChange = useCallback(
+    (title: string | null) => onBrowserStateChange(tab, { title }),
+    [onBrowserStateChange, tab]
+  )
+  const handleNativeLabelChange = useCallback(
+    (nativeLabel: string | null) => onBrowserStateChange(tab, { nativeLabel }),
+    [onBrowserStateChange, tab]
+  )
+
+  return (
+    <WorkspaceBrowserPanel
+      active={active}
+      label={state.label}
+      openRequest={state.openRequest}
+      codeCommentCount={codeCommentCount}
+      onAddCodeComment={onAddCodeComment}
+      onDownloadActivityChange={handleDownloadActivityChange}
+      onFaviconChange={handleFaviconChange}
+      onTitleChange={handleTitleChange}
+      onNativeLabelChange={handleNativeLabelChange}
+    />
+  )
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
@@ -462,18 +514,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               key={tab}
               className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
             >
-              <WorkspaceBrowserPanel
+              <RightWorkspaceBrowserPanelSlot
+                tab={tab}
                 active={visible && activeView === tab}
-                label={browserState.label}
-                openRequest={browserState.openRequest}
+                state={browserState}
                 codeCommentCount={codeCommentCount}
                 onAddCodeComment={onAddCodeComment}
-                onDownloadActivityChange={hasActiveDownload =>
-                  onBrowserStateChange(tab, { hasActiveDownload })
-                }
-                onFaviconChange={faviconUrl => onBrowserStateChange(tab, { faviconUrl })}
-                onTitleChange={title => onBrowserStateChange(tab, { title })}
-                onNativeLabelChange={nativeLabel => onBrowserStateChange(tab, { nativeLabel })}
+                onBrowserStateChange={onBrowserStateChange}
               />
             </div>
           )

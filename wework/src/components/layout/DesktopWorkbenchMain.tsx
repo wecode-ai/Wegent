@@ -535,6 +535,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
+  const paneActiveRef = useRef(paneActive)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
@@ -567,6 +568,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )?.project
   const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
+  useLayoutEffect(() => {
+    paneActiveRef.current = paneActive
+  }, [paneActive])
   const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
     useState<HTMLDivElement | null>(null)
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
@@ -1673,7 +1677,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [defaultEmbeddedBrowserLabel, openBrowserTab, rightPanelView]
   )
   useEffect(() => {
+    if (!paneActive) return undefined
+
     const listener = listenEmbeddedBrowserOpenRequests(request => {
+      if (!paneActiveRef.current) return
       logBrowserOpenDiagnostic('openRequestReceived', {
         requestId: request.id,
         url: request.url,

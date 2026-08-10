@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { normalizeBrowserUrl } from './browser-url'
 import { isTauriRuntime } from './runtime-environment'
 
@@ -526,13 +527,13 @@ export function listenEmbeddedBrowserOpenRequests(
       embeddedBrowserOpenRequestUnlisten = null
       embeddedBrowserOpenRequestUnlistenPromise = null
       if (currentUnlisten) {
-        currentUnlisten()
+        disposeTauriListener(currentUnlisten, 'embedded browser open request')
         logEmbeddedBrowserOpenTransport('native_listener_released', { handlerId })
         return
       }
       if (pendingUnlisten) {
         void pendingUnlisten.then(unlisten => {
-          unlisten()
+          disposeTauriListener(unlisten, 'embedded browser pending open request')
           logEmbeddedBrowserOpenTransport('pending_native_listener_released', { handlerId })
         })
       }

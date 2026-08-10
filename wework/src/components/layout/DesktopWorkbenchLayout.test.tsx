@@ -8251,18 +8251,19 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const tauriInvokeMock = vi.fn(async (command: string) => {
+      if (command === 'embedded_browser_pending_open_requests') return []
+      if (command === 'embedded_browser_open') {
+        return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
+      }
+      return null
+    })
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {
         transformCallback: vi.fn(() => 1),
         unregisterCallback: vi.fn(),
-        invoke: vi.fn(async (command: string) => {
-          if (command === 'embedded_browser_pending_open_requests') return []
-          if (command === 'embedded_browser_open') {
-            return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
-          }
-          return null
-        }),
+        invoke: tauriInvokeMock,
       },
     })
     Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
@@ -8270,22 +8271,36 @@ describe('DesktopWorkbenchLayout', () => {
       value: { unregisterListener: vi.fn() },
     })
     const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
-    const browserHost = () =>
-      screen.getByTestId('desktop-workbench-main').querySelector('[data-embedded-browser-label]')
 
     await waitFor(() => {
       expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
     })
     await waitFor(() => {
-      expect(browserHost()).toHaveAttribute('data-embedded-browser-label', 'workspace-browser')
+      expect(tauriInvokeMock).toHaveBeenCalledWith(
+        'embedded_browser_open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'https://example.com/',
+        }),
+        undefined
+      )
     })
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
-    expect(browserHost()).toHaveAttribute(
-      'data-embedded-browser-label',
-      'workspace-browser-runtime-b'
-    )
+    await waitFor(() => {
+      expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(tauriInvokeMock).toHaveBeenCalledWith(
+        'embedded_browser_open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-b',
+          url: 'https://example.org/',
+        }),
+        undefined
+      )
+    })
 
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
