@@ -1525,24 +1525,30 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }),
     [defaultEmbeddedBrowserLabel]
   )
+  const syncActiveEmbeddedBrowserLabel = useCallback(
+    (activeBrowserLabel: string) => {
+      void setEmbeddedBrowserActiveTab(defaultEmbeddedBrowserLabel, activeBrowserLabel).catch(
+        error => {
+          console.error('Failed to synchronize active embedded browser tab:', error)
+        }
+      )
+      if (defaultEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) {
+        void setEmbeddedBrowserActiveTab(DEFAULT_EMBEDDED_BROWSER_LABEL, activeBrowserLabel).catch(
+          error => {
+            console.error('Failed to synchronize default embedded browser tab:', error)
+          }
+        )
+      }
+    },
+    [defaultEmbeddedBrowserLabel]
+  )
   useEffect(() => {
     if (!isRightWorkspaceBrowserTab(rightPanelView)) return
     const activeBrowserLabel = browserStates[rightPanelView]?.label
     if (!activeBrowserLabel) return
 
-    void setEmbeddedBrowserActiveTab(defaultEmbeddedBrowserLabel, activeBrowserLabel).catch(
-      error => {
-        console.error('Failed to synchronize active embedded browser tab:', error)
-      }
-    )
-    if (defaultEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) {
-      void setEmbeddedBrowserActiveTab(DEFAULT_EMBEDDED_BROWSER_LABEL, activeBrowserLabel).catch(
-        error => {
-          console.error('Failed to synchronize default embedded browser tab:', error)
-        }
-      )
-    }
-  }, [browserStates, defaultEmbeddedBrowserLabel, rightPanelView])
+    syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
+  }, [browserStates, rightPanelView, syncActiveEmbeddedBrowserLabel])
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
       rightPanelOpen,
@@ -2136,16 +2142,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
+      syncActiveEmbeddedBrowserLabel(stateLabel)
       return tab
     },
-    [allocateBrowserTab, createBrowserTabState, defaultEmbeddedBrowserLabel]
+    [
+      allocateBrowserTab,
+      createBrowserTabState,
+      defaultEmbeddedBrowserLabel,
+      syncActiveEmbeddedBrowserLabel,
+    ]
   )
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
       setRightPanelView(tab)
+      if (isRightWorkspaceBrowserTab(tab)) {
+        const activeBrowserLabel = browserStatesRef.current[tab]?.label
+        if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
+      }
     },
-    [setRightPanelOpen, setRightPanelView]
+    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {

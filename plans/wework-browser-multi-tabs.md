@@ -62,47 +62,47 @@ graph TD
 模型定义在 `wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx`：
 
 ```ts
-export type RightWorkspaceChatTab = `chat:${string}`
-export type RightWorkspaceBrowserTab = `browser:${string}`
+export type RightWorkspaceChatTab = `chat:${string}`;
+export type RightWorkspaceBrowserTab = `browser:${string}`;
 
 export type RightWorkspacePanelTab =
-  | 'review'
-  | 'terminal'
-  | 'files'
-  | 'plan'
+  | "review"
+  | "terminal"
+  | "files"
+  | "plan"
   | RightWorkspaceChatTab
-  | RightWorkspaceBrowserTab
+  | RightWorkspaceBrowserTab;
 ```
 
 每个浏览器页签的前端状态为：
 
 ```ts
 export interface RightWorkspaceBrowserState {
-  label: string
-  browserSessionId: string
-  title: string | null
-  faviconUrl: string | null
-  hasActiveDownload: boolean
-  openRequest: EmbeddedBrowserOpenRequest | null
+  label: string;
+  browserSessionId: string;
+  title: string | null;
+  faviconUrl: string | null;
+  hasActiveDownload: boolean;
+  openRequest: EmbeddedBrowserOpenRequest | null;
 }
 ```
 
 `DesktopWorkbenchMain` 按一级浏览器页签保存状态：
 
 ```ts
-Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>;
 ```
 
 状态职责如下：
 
-| 字段 | 职责 |
-| --- | --- |
-| `label` | 该页签对应的 Tauri 逻辑 webview label |
-| `browserSessionId` | agent 浏览器会话路由标识，默认使用 `browser:N` 的后缀 |
-| `title` | 页面标题，显示在一级页签上 |
-| `faviconUrl` | 页面 favicon，显示在一级页签上 |
-| `hasActiveDownload` | 关闭页签前是否需要下载确认 |
-| `openRequest` | 定向到该页签的待处理打开请求 |
+| 字段                | 职责                                                  |
+| ------------------- | ----------------------------------------------------- |
+| `label`             | 该页签对应的 Tauri 逻辑 webview label                 |
+| `browserSessionId`  | agent 浏览器会话路由标识，默认使用 `browser:N` 的后缀 |
+| `title`             | 页面标题，显示在一级页签上                            |
+| `faviconUrl`        | 页面 favicon，显示在一级页签上                        |
+| `hasActiveDownload` | 关闭页签前是否需要下载确认                            |
+| `openRequest`       | 定向到该页签的待处理打开请求                          |
 
 页面 URL、地址栏、导航、下载、注释、TLS 和 agent 操作状态仍由对应的 `WorkspaceBrowserPanel` 实例管理。一级容器只保留跨组件路由和页签展示所需的最小状态。
 
@@ -185,27 +185,27 @@ Tauri `EmbeddedBrowserState` 保留两类路由：
 
 ```ts
 interface EmbeddedBrowserOpenRequest {
-  id: string
-  url: string
-  label?: string
-  baseLabel: string
-  source: 'user' | 'agent' | 'popup' | 'restore'
-  disposition: 'new-tab' | 'current-tab' | 'restore-tab'
-  targetLabel?: string
-  parentLabel?: string
-  browserSessionId?: string
+  id: string;
+  url: string;
+  label?: string;
+  baseLabel: string;
+  source: "user" | "agent" | "popup" | "restore";
+  disposition: "new-tab" | "current-tab" | "restore-tab";
+  targetLabel?: string;
+  parentLabel?: string;
+  browserSessionId?: string;
 }
 ```
 
 路由规则：
 
-| 请求 | 行为 |
-| --- | --- |
-| `source='user'` | 创建并聚焦新的一级浏览器页签 |
-| `source='popup'` | 根据 `parentLabel` 显式找到所属 pane，再创建新的一级浏览器页签 |
-| `disposition='new-tab'` | 创建并聚焦新的一级浏览器页签 |
-| agent `current-tab` | 优先按 `targetLabel` 找现有页签，否则使用当前活动浏览器页签；没有浏览器时创建一个 |
-| `restore-tab` | 按 `targetLabel` 找到原一级页签，不创建浏览器子标签 |
+| 请求                    | 行为                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `source='user'`         | 创建并聚焦新的一级浏览器页签                                                      |
+| `source='popup'`        | 根据 `parentLabel` 显式找到所属 pane，再创建新的一级浏览器页签                    |
+| `disposition='new-tab'` | 创建并聚焦新的一级浏览器页签                                                      |
+| agent `current-tab`     | 优先按 `targetLabel` 找现有页签，否则使用当前活动浏览器页签；没有浏览器时创建一个 |
+| `restore-tab`           | 按 `targetLabel` 找到原一级页签，不创建浏览器子标签                               |
 
 `DesktopWorkbenchMain` 是 open request 和 popup 的统一路由层。`RightWorkspacePanel` 与 `WorkspaceBrowserPanel` 不自行猜测请求属于哪个 pane。
 
@@ -259,20 +259,20 @@ Agent 多步操作必须始终作用于同一个浏览器页签：
 
 ## 10. 组件职责
 
-| 组件 | 最终职责 |
-| --- | --- |
-| `DesktopWorkbenchMain.tsx` | 管理一级页签顺序、浏览器状态、创建/关闭、open request、popup、迁移和 active label 同步 |
-| `RightWorkspacePanel.tsx` | 统一渲染所有一级页签、加号菜单、快捷键和各类 panel 实例 |
-| `WorkspaceBrowserPanelContainer.tsx` | 单浏览器 panel 的薄包装，直接渲染 `WorkspaceBrowserTabPanel` |
-| `WorkspaceBrowserPanel.tsx` | 单个 label 的完整浏览器 UI 与 native webview 生命周期 |
-| `embedded-browser.ts` | Tauri API、open/popup 事件监听、active/relabel/close-many 调用 |
-| `embedded_browser.rs` | 多 webview map、active/agent 路由、relabel、批量关闭和 popup 策略 |
+| 组件                                 | 最终职责                                                                               |
+| ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `DesktopWorkbenchMain.tsx`           | 管理一级页签顺序、浏览器状态、创建/关闭、open request、popup、迁移和 active label 同步 |
+| `RightWorkspacePanel.tsx`            | 统一渲染所有一级页签、加号菜单、快捷键和各类 panel 实例                                |
+| `WorkspaceBrowserPanelContainer.tsx` | 单浏览器 panel 的薄包装，直接渲染 `WorkspaceBrowserTabPanel`                           |
+| `WorkspaceBrowserPanel.tsx`          | 单个 label 的完整浏览器 UI 与 native webview 生命周期                                  |
+| `embedded-browser.ts`                | Tauri API、open/popup 事件监听、active/relabel/close-many 调用                         |
+| `embedded_browser.rs`                | 多 webview map、active/agent 路由、relabel、批量关闭和 popup 策略                      |
 
 `WorkspaceBrowserPanelContainer.tsx` 当前只保留：
 
 ```tsx
 export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
-  return <WorkspaceBrowserTabPanel {...props} />
+  return <WorkspaceBrowserTabPanel {...props} />;
 }
 ```
 
@@ -306,7 +306,13 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
 - `browser-multi-tabs` 已注册为桌面 E2E checkpoint，并由 CI 使用的共享 desktop runner 调用。
 - E2E 场景自建两个浏览器 fixture，验证一级混排顺序、独立页面状态、切换、关闭和不存在内部标签条。
 
-最终一次 E2E 修正后重跑曾被本地权限审核服务容量限制拦截，未产生新的最终 PASS 记录；此前运行已进入并执行混排场景，失败原因是测试读取 `snapshot.testIds` 的自动排序而非产品行为，断言现已改为读取 tabbar 的实际文本顺序。
+2026-08-09 已补跑共享 desktop runner 的单 checkpoint：
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment browser-multi-tabs
+```
+
+结果：PASS，`assertion-errors=none`。证据目录：`wework/test-results/desktop-e2e/2026-08-09T15-44-57-117Z-61512`。
 
 ### 12.2 真实 Tauri 验证
 
@@ -318,7 +324,7 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
 4. 两个浏览器保持各自页面状态。
 5. 浏览器内容区没有第二层标签条。
 
-验证截图：`wework/test-results/ai-verify/2026-08-07T06-59-12-262Z-3352/top-level-browser-tabs.png`。
+验证截图：`wework/test-results/ai-verify/2026-08-09T15-46-26-684Z-63354/top-level-browser-tabs.png`。
 
 ### 12.3 人工验收清单
 

@@ -7,10 +7,17 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_BROWSER_OPTION_SELECTOR = '[data-testid="right-workspace-browser-option"]'
-const RIGHT_CHAT_OPTION_SELECTOR = '[data-testid="right-workspace-chat-option"]'
-const RIGHT_TERMINAL_OPTION_SELECTOR = '[data-testid="right-workspace-terminal-option"]'
+const RIGHT_NEW_TAB_BROWSER_OPTION_SELECTOR =
+  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-browser-option"]'
+const RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR =
+  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
+  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-terminal-option"]'
+const ACTIVE_BROWSER_PANEL_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
 const BROWSER_INPUT_SELECTOR =
-  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
 const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
@@ -58,14 +65,14 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
-async function callBridge(identity, payload) {
+async function callBridge(identity, payload, label = BROWSER_LABEL) {
   const response = await fetch(identity.baseUrl + '/browser', {
     method: 'POST',
     headers: {
       authorization: 'Bearer ' + identity.token,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ label: BROWSER_LABEL, ...payload }),
+    body: JSON.stringify({ label, ...payload }),
   })
   const body = await response.json()
   assert.equal(response.ok, true, 'Bridge HTTP failed: ' + JSON.stringify(body))
@@ -80,6 +87,18 @@ async function waitForValue(control, selector, expected, timeoutMs, message) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
+}
+
+async function waitForBridgeActiveLabel(identity, label, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastLabel = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const status = await callBridge(identity, { action: 'status' }, label)
+    lastLabel = status.label
+    if (status.label === expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message + (lastLabel ? '; last label=' + lastLabel : ''))
 }
 
 async function waitForSnapshot(control, predicate, message, timeoutMs, selector = 'body') {
@@ -131,6 +150,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The first browser tab did not load the A fixture'
       )
+      const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
+      const secondBrowserLabel = firstBrowserLabel + '-2'
       await waitForSnapshot(
         control,
         snapshot =>
@@ -142,11 +163,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
 
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
-      await control.command('click', RIGHT_CHAT_OPTION_SELECTOR)
+      await control.command('click', RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR)
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
-      await control.command('click', RIGHT_TERMINAL_OPTION_SELECTOR)
+      await control.command('click', RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR)
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
-      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
+      await control.command('click', RIGHT_NEW_TAB_BROWSER_OPTION_SELECTOR)
       const mixedTabsSnapshot = await waitForSnapshot(
         control,
         snapshot =>
@@ -184,8 +205,19 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The newly added browser tab was not selected'
       )
+      await waitForBridgeActiveLabel(
+        bridgeIdentity,
+        firstBrowserLabel,
+        secondBrowserLabel,
+        uiTimeoutMs,
+        'The embedded browser bridge did not route to the newly added tab'
+      )
 
-      await callBridge(bridgeIdentity, { action: 'open', url: fixtureBUrl, timeoutMs: 8000 })
+      await callBridge(
+        bridgeIdentity,
+        { action: 'open', url: fixtureBUrl, timeoutMs: 8000 },
+        firstBrowserLabel
+      )
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,
@@ -193,17 +225,28 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The second browser tab did not load the B fixture'
       )
-      const secondTabText = await callBridge(bridgeIdentity, {
-        action: 'inspect',
-        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
-        timeoutMs: 5000,
-      })
+      const secondTabText = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+          timeoutMs: 5000,
+        },
+        firstBrowserLabel
+      )
       assert.ok(
         secondTabText.inspectText.includes(FIXTURE_B_TEXT),
         'The second browser tab did not retain its own page state'
       )
 
       await control.command('click', FIRST_BROWSER_TAB_SELECTOR)
+      await waitForBridgeActiveLabel(
+        bridgeIdentity,
+        firstBrowserLabel,
+        firstBrowserLabel,
+        uiTimeoutMs,
+        'Switching back to the first browser tab did not update bridge routing'
+      )
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,
@@ -211,11 +254,15 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'Switching back to the first browser tab did not restore its URL'
       )
-      const firstTabText = await callBridge(bridgeIdentity, {
-        action: 'inspect',
-        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
-        timeoutMs: 5000,
-      })
+      const firstTabText = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+          timeoutMs: 5000,
+        },
+        firstBrowserLabel
+      )
       assert.ok(
         firstTabText.inspectText.includes(FIXTURE_A_TEXT),
         'The first browser tab did not retain its own page state'
@@ -239,11 +286,22 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'Closing the first browser tab did not activate the remaining tab'
       )
-      const remainingTabText = await callBridge(bridgeIdentity, {
-        action: 'inspect',
-        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
-        timeoutMs: 5000,
-      })
+      await waitForBridgeActiveLabel(
+        bridgeIdentity,
+        firstBrowserLabel,
+        secondBrowserLabel,
+        uiTimeoutMs,
+        'Closing the first browser tab did not route the bridge to the remaining tab'
+      )
+      const remainingTabText = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+          timeoutMs: 5000,
+        },
+        firstBrowserLabel
+      )
       assert.ok(
         remainingTabText.inspectText.includes(FIXTURE_B_TEXT),
         'Closing the first browser tab lost the second tab page state'
@@ -269,7 +327,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'body'
       )
 
-      await callBridge(bridgeIdentity, { action: 'open', url: fixtureAUrl, timeoutMs: 8000 })
+      await callBridge(
+        bridgeIdentity,
+        { action: 'open', url: fixtureAUrl, timeoutMs: 8000 },
+        firstBrowserLabel
+      )
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,
@@ -277,11 +339,15 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The reopened browser panel did not accept a fresh navigation'
       )
-      const reopenedText = await callBridge(bridgeIdentity, {
-        action: 'inspect',
-        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
-        timeoutMs: 5000,
-      })
+      const reopenedText = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+          timeoutMs: 5000,
+        },
+        firstBrowserLabel
+      )
       assert.ok(
         reopenedText.inspectText.includes(FIXTURE_A_TEXT),
         'The reopened browser panel did not render the fresh page'
