@@ -44,6 +44,13 @@ WARMPOOL_MAX_REPLICAS = int(os.getenv("WARMPOOL_MAX_REPLICAS", "20"))
 # Maximum idle time before pod recycling (e.g., "30m", "1h")
 WARMPOOL_MAX_IDLE_TIME = os.getenv("WARMPOOL_MAX_IDLE_TIME", "30m")
 
+# Enable warm pool claims for non-Git standard online executor tasks. These
+# tasks share the SandboxTemplate selected by WARMPOOL_TEMPLATE_NAME. It is
+# enabled by default whenever the shared warm pool is enabled.
+EXECUTOR_WARMPOOL_ENABLED = (
+    os.getenv("EXECUTOR_WARMPOOL_ENABLED", "true").lower() == "true"
+)
+
 # ==================== Executor Manager URLs ====================
 
 # Task API domain (backend service URL)
@@ -56,7 +63,9 @@ EXECUTOR_MANAGER_URL = os.getenv(
 )
 
 # Executor manager heartbeat base URL
-EXECUTOR_MANAGER_HEARTBEAT_BASE_URL = os.getenv("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL", "")
+EXECUTOR_MANAGER_HEARTBEAT_BASE_URL = os.getenv(
+    "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL", ""
+)
 
 # Callback URL for executor (derived from EXECUTOR_MANAGER_URL)
 CALLBACK_URL = EXECUTOR_MANAGER_URL + "/executor-manager/callback"

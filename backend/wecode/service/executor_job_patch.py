@@ -239,10 +239,10 @@ async def cleanup_orphan_pods(
     """Scan K8s for old pods with no DB subtask records or stale and clean them up.
 
     Mirrors the pod_delete/ pipeline:
-    1. get_old_pods_async: list old pods by name pattern (wegent-task|sandbox)
+    1. get_old_pods_async: list old direct Pods and warm-pool runtime targets
     2. For each pod with a valid task_id > ORPHAN_POD_MIN_TASK_ID and no DB records:
        - call cleanup_stale_task_executor with inactive_hours (INACTIVE_HOURS=24)
-       - if executor_not_found, delete K8s pod by name directly
+       - if executor_not_found, delete the Pod or owning SandboxClaim by target name
     3. Pods with no task_id label or task_id <= threshold are skipped entirely,
        matching the original scripts' awk '$1+0 > 1000' guard.
 

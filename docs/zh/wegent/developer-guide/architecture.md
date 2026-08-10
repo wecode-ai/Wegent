@@ -337,7 +337,17 @@ EXECUTOR_PORT_RANGE_MIN: 10001      # 端口范围起始
 EXECUTOR_PORT_RANGE_MAX: 10100      # 端口范围结束
 NETWORK: wegent-network              # Docker 网络
 EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
+WARMPOOL_ENABLED: false              # 是否启用共享预热池
+WARMPOOL_TEMPLATE_NAME: ""           # Sandbox 与非 Git Executor 共用的模板
 ```
+
+#### Kubernetes Executor 预热池
+
+Kubernetes 部署中的标准 `online` 非 Git 任务与交互式 Sandbox 共用 `WARMPOOL_TEMPLATE_NAME` 指向的同一个 `SandboxTemplate` 和 `SandboxWarmPool`，不再创建独立的 Executor 池。任务只要包含 `git_url`、`git_repo`、`git_repo_id`、`git_worktree` 工作区或工作区仓库信息，就视为 Git 任务并继续走普通 Pod 创建流程。使用自定义 Executor 镜像或 `base_image` 的任务也继续直建 Pod。用户配置过 Git 账号本身不代表当前任务是 Git 任务。
+
+预热 Pod 启动时只包含静态运行时配置，不预置 task ID、认证 Token、技能身份或任务心跳 ID。Executor Manager 领取 Pod 后写入非敏感任务标签，首次 `/v1/responses` 请求再绑定逻辑 Executor 身份并启动动态任务心跳。非 Git Executor 预热默认开启，不需要配置 `EXECUTOR_WARMPOOL_ENABLED`；`WARMPOOL_ENABLED` 是共享池总开关。上线前必须先将共享池模板升级到包含动态任务心跳能力、且与 `EXECUTOR_IMAGE` 一致的镜像，并同时验证 Sandbox 与非 Git Executor。
+
+预热 Executor 的删除必须以 `SandboxClaim` 为所有权边界：显式删除、按 task ID 删除和孤儿资源清理都会优先删除 Claim，由控制器级联清理 Sandbox、Service 和 Pod。非 Git Executor 领取后会在 Claim 和 Pod 上标记 `pool-profile=executor-standard`、task ID 和 `pool-state=bound`；孤儿扫描只处理这类已领取 Pod，明确排除未领取的共享池容量和交互式 Sandbox，并可通过 Claim 标签清理 Pod 已丢失的遗留绑定。删除成功后同时移除任务心跳、RunningTaskTracker 状态和 Redis executor binding。
 
 ---
 
