@@ -9935,7 +9935,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
-        subtaskId: '101',
+        subtaskId: 'provider-turn-101',
         deviceId: 'device-1',
         result: { value: 'done' },
       })
