@@ -541,7 +541,24 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
                 }
                 let created_at =
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
-                let synthetic = json!({
+                let index = messages
+                    .iter()
+                    .position(|message| {
+                        timestamp_ms_field(message, "createdAt")
+                            .is_some_and(|message_at| message_at >= created_at)
+                    })
+                    .unwrap_or(messages.len());
+                let turn_id = string_field(&presentation, "turnId")
+                    .or_else(|| string_field(&presentation, "turn_id"))
+                    .or_else(|| {
+                        messages[index..].iter().find_map(|message| {
+                            string_field(message, "turnId")
+                                .or_else(|| string_field(message, "turn_id"))
+                                .or_else(|| string_field(message, "subtaskId"))
+                                .or_else(|| string_field(message, "subtask_id"))
+                        })
+                    });
+                let mut synthetic = json!({
                     "id": client_user_message_id,
                     "clientUserMessageId": client_user_message_id,
                     "role": "user",
@@ -550,13 +567,10 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
                     "createdAt": created_at,
                     "source": presentation.get("source").cloned(),
                 });
-                let index = messages
-                    .iter()
-                    .position(|message| {
-                        timestamp_ms_field(message, "createdAt")
-                            .is_some_and(|message_at| message_at > created_at)
-                    })
-                    .unwrap_or(messages.len());
+                if let Some(turn_id) = turn_id {
+                    synthetic["turnId"] = Value::String(turn_id.clone());
+                    synthetic["subtaskId"] = Value::String(turn_id);
+                }
                 messages.insert(index, synthetic);
                 index
             }

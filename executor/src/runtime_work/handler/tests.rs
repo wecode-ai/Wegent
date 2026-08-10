@@ -1109,6 +1109,7 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_i
 fn transcript_restores_a_missing_supervisor_generated_user_message() {
     let mut provider_messages = vec![json!({
         "id": "assistant-1",
+        "turnId": "turn-1",
         "role": "assistant",
         "content": "Corrected",
         "createdAt": 200
@@ -1129,6 +1130,38 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
 
     assert_eq!(provider_messages[0]["role"], "user");
     assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
+    assert_eq!(provider_messages[1]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(turns[0]["items"][0]["message"]["content"], "Use Japanese");
+}
+
+#[test]
+fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "turnId": "turn-1",
+        "role": "assistant",
+        "content": "Done",
+        "createdAt": 100
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-1",
+        "content": "Fix the issue",
+        "createdAt": 100,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
     assert_eq!(provider_messages[1]["role"], "assistant");
 }
 

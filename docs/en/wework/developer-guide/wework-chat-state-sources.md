@@ -262,6 +262,15 @@ The server-provided `messageIndex` is the only ordering authority for the persis
 
 While the current pane has a live turn that the transcript has not covered yet, the UI may keep displaying that pane's stream projection as a whole. Once the Provider covers the same turn, the pane switches to the transcript as a whole instead of taking the union of both message sets. Transcript-page deduplication uses only stable Provider message ids and must not infer identity from content, role, or subtask.
 
+Codex may filter the initial user input from the Provider transcript `items`,
+while Wework still retains the visible text that the user submitted in
+`RuntimeTaskLink.userMessagePresentations`. When the executor restores such a
+message, it must bind it to the next Provider turn on the timeline and write
+the canonical `turnId` and `subtaskId`. If the user input and the first
+assistant message share a timestamp, the user input must remain first.
+Canonical `turns` are the frontend transcript's only input, so restoring a
+message only in the compatibility `messages` array is insufficient.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
