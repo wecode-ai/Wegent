@@ -23,6 +23,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { TruncatedText } from '@/components/common/long-text'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
@@ -1073,7 +1074,10 @@ export function KnowledgeSourcePicker({
           error={dingtalkTrees.error}
           configured={dingtalkTrees.isConfigured}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
+          lastSyncedAt={dingtalkTrees.lastSyncedAt}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={() => toggleDingTalkNodeList(dingtalkTrees.nodes)}
         />
       )
@@ -1089,7 +1093,10 @@ export function KnowledgeSourcePicker({
           configured={dingtalkTrees.wikispaceConfigured}
           selectedIds={selectedDingTalkIds}
           activeNode={activeDingTalkSpace}
+          syncing={dingtalkTrees.wikispaceSyncing}
+          lastSyncedAt={dingtalkTrees.wikispaceLastSyncedAt}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onOpen={setActiveDingTalkSpace}
           onToggle={toggleDingTalkNode}
         />
@@ -1166,7 +1173,12 @@ export function KnowledgeSourcePicker({
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Icon className="h-4 w-4 shrink-0" />
-                <span className="truncate text-sm font-medium">{row.label}</span>
+                <TruncatedText
+                  text={row.label}
+                  focusable={false}
+                  tooltip
+                  className="text-sm font-medium"
+                />
               </span>
               <Badge variant="secondary" size="sm">
                 {row.count}
@@ -1201,7 +1213,12 @@ export function KnowledgeSourcePicker({
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <Users className="h-4 w-4 shrink-0 text-text-muted" />
-                          <span className="truncate text-sm font-medium">{group.displayName}</span>
+                          <TruncatedText
+                            text={group.displayName}
+                            focusable={false}
+                            tooltip
+                            className="text-sm font-medium"
+                          />
                         </span>
                         <Badge variant="secondary" size="sm">
                           {group.items.length}
@@ -1237,9 +1254,12 @@ export function KnowledgeSourcePicker({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <ScopeIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">
-                          {getExternalScopeLabel(scope, t)}
-                        </span>
+                        <TruncatedText
+                          text={getExternalScopeLabel(scope, t)}
+                          focusable={false}
+                          tooltip
+                          className="text-sm font-medium"
+                        />
                       </span>
                       <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
                     </button>
@@ -1291,7 +1311,12 @@ export function KnowledgeSourcePicker({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <SectionIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">{section.label}</span>
+                        <TruncatedText
+                          text={section.label}
+                          focusable={false}
+                          tooltip
+                          className="text-sm font-medium"
+                        />
                       </span>
                       <Badge variant="secondary" size="sm">
                         {section.count}
@@ -1324,7 +1349,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.empty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={toggleDingTalkNode}
           onToggleAll={toggleDingTalkNodeList}
         />
@@ -1347,7 +1374,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.wikispaceSyncing}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onToggle={toggleDingTalkNode}
           onToggleAll={toggleDingTalkNodeList}
         />
@@ -1532,9 +1561,12 @@ function KnowledgeBaseRows({
             <span className="flex min-w-0 items-center gap-2">
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.name}
-                </span>
+                <TruncatedText
+                  text={item.name}
+                  focusable={false}
+                  tooltip
+                  className="text-sm font-medium text-text-primary"
+                />
                 <span className="block text-xs text-text-muted">
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
@@ -1595,9 +1627,12 @@ function ExternalKnowledgeBaseRows({
             <span className="flex min-w-0 items-center gap-2">
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.knowledge_base_name}
-                </span>
+                <TruncatedText
+                  text={item.knowledge_base_name}
+                  focusable={false}
+                  tooltip
+                  className="text-sm font-medium text-text-primary"
+                />
                 <span className="block text-xs text-text-muted">
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
@@ -1623,13 +1658,22 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
   return (
     <div className="shrink-0 border-b border-border px-3 py-2">
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-text-primary">{title}</div>
+        <TruncatedText
+          text={title}
+          focusable={false}
+          tooltip
+          className="text-sm font-semibold text-text-primary"
+        />
         <div className="text-xs text-text-muted">
           {t('picker.count.documents', { count: documentCount })}
         </div>
       </div>
     </div>
   )
+}
+
+function formatKnowledgePath(path: string[], name: string) {
+  return path.length > 0 ? [...path, name].join(' / ') : name
 }
 
 function PathLabel({ path }: { path: string[] }) {
@@ -1693,7 +1737,13 @@ function InternalDocumentSearchResults({
             <span className="flex min-w-0 items-start gap-2">
               <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
+                <TruncatedText
+                  text={node.name}
+                  tooltipText={formatKnowledgePath(path, node.name)}
+                  focusable={false}
+                  tooltip
+                  className="text-text-primary"
+                />
                 <PathLabel path={path} />
               </span>
             </span>
@@ -1748,7 +1798,13 @@ function ExternalDocumentSearchResults({
             <span className="flex min-w-0 items-start gap-2">
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
+                <TruncatedText
+                  text={node.name}
+                  tooltipText={formatKnowledgePath(path, node.name)}
+                  focusable={false}
+                  tooltip
+                  className="text-text-primary"
+                />
                 <PathLabel path={path} />
               </span>
             </span>
@@ -1819,7 +1875,12 @@ function InternalDocumentNode({
             />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
+              <TruncatedText
+                text={node.name}
+                focusable={false}
+                tooltip
+                className="text-text-primary"
+              />
             </span>
           </button>
           <span className="flex shrink-0 items-center gap-2">
@@ -1876,7 +1937,13 @@ function InternalDocumentNode({
             <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
+              <TruncatedText
+                text={node.name}
+                tooltipText={formatKnowledgePath(node.path, node.name)}
+                focusable={false}
+                tooltip
+                className="text-text-primary"
+              />
               <PathLabel path={node.path} />
             </span>
           </span>
@@ -1960,7 +2027,12 @@ function ExternalDocumentNode({
           )}
           <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
           <span className="min-w-0">
-            <span className="block truncate text-text-primary">{node.name}</span>
+            <TruncatedText
+              text={node.name}
+              focusable={false}
+              tooltip
+              className="text-text-primary"
+            />
           </span>
         </span>
         {isFolder ? (
