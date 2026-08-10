@@ -7,7 +7,7 @@
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -308,6 +308,12 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
+        ensure_workspace = mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
 
         sandbox, error = await manager.create_sandbox(
             shell_type="ClaudeCode",
@@ -319,6 +325,7 @@ class TestSandboxManager:
         assert error is None
         assert sandbox is not None
         assert sandbox.sandbox_id == "12345"
+        ensure_workspace.assert_awaited_once_with(sandbox)
 
     @pytest.mark.asyncio
     async def test_create_sandbox_container_start_failure(
@@ -346,23 +353,30 @@ class TestSandboxManager:
         assert error == "Container creation failed"
 
     @pytest.mark.asyncio
-    async def test_create_sandbox_restores_archive_after_new_container_starts(
+    async def test_create_sandbox_initializes_workspace_before_restoring_archive(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """Test newly created sandboxes restore archived task files when available."""
+        """Test workspace initialization happens before archive restoration."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = None
+        call_order = []
         mocker.patch.object(
             manager,
             "_start_sandbox_container",
             new_callable=AsyncMock,
             return_value=None,
         )
+        ensure_workspace = mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            side_effect=lambda sandbox: call_order.append("ensure"),
+        )
         restore = mocker.patch.object(
             manager,
             "_restore_sandbox_after_create",
             new_callable=AsyncMock,
-            return_value=True,
+            side_effect=lambda sandbox: call_order.append("restore") or True,
         )
 
         sandbox, error = await manager.create_sandbox(
@@ -374,7 +388,98 @@ class TestSandboxManager:
 
         assert error is None
         assert sandbox is not None
+        ensure_workspace.assert_awaited_once_with(sandbox)
         restore.assert_awaited_once_with(sandbox)
+        assert call_order == ["ensure", "restore"]
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_fails_when_workspace_initialization_fails(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test a sandbox is not returned as ready without its task workspace."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = None
+        mocker.patch.object(
+            manager,
+            "_start_sandbox_container",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value="Workspace initialization failed",
+        )
+        restore = mocker.patch.object(
+            manager,
+            "_restore_sandbox_after_create",
+            new_callable=AsyncMock,
+        )
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={"task_id": 99999},
+        )
+
+        assert error == "Workspace initialization failed"
+        assert sandbox.error_message == error
+        restore.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ensure_sandbox_workspace_creates_required_directories(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mock_httpx_async_client,
+        mocker,
+    ):
+        """Test initialization creates sandbox home and task workspace."""
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.httpx.AsyncClient",
+            return_value=mock_httpx_async_client,
+        )
+
+        error = await manager._ensure_sandbox_workspace(sample_sandbox)
+
+        assert error is None
+        assert mock_httpx_async_client.post.await_args_list == [
+            call(
+                "http://localhost:10001/filesystem.Filesystem/MakeDir",
+                json={"path": "/home/user"},
+                headers={"Content-Type": "application/json"},
+            ),
+            call(
+                "http://localhost:10001/filesystem.Filesystem/MakeDir",
+                json={"path": "/workspace/12345"},
+                headers={"Content-Type": "application/json"},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_ensure_sandbox_workspace_accepts_existing_directory(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mock_httpx_async_client,
+        mocker,
+    ):
+        """Test existing sandbox directories keep initialization idempotent."""
+        manager = sandbox_manager_with_mock_redis
+        mock_httpx_async_client.post.return_value.status_code = 409
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.httpx.AsyncClient",
+            return_value=mock_httpx_async_client,
+        )
+
+        error = await manager._ensure_sandbox_workspace(sample_sandbox)
+
+        assert error is None
+        assert mock_httpx_async_client.post.await_count == 2
+        mock_httpx_async_client.post.return_value.raise_for_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_sandbox_serializes_concurrent_requests_for_same_task(
@@ -425,6 +530,12 @@ class TestSandboxManager:
             "_restore_sandbox_after_create",
             new_callable=AsyncMock,
             return_value=True,
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
         )
 
         first_create = asyncio.create_task(

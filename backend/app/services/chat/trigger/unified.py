@@ -926,7 +926,7 @@ async def build_execution_request(
             )
             if (
                 preload_selected_kb_skill
-                and device_id
+                and (device_id or _request_shell_type(request) == "ClaudeCode")
                 and request.knowledge_base_ids
                 and request.is_user_selected_kb
                 and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])
