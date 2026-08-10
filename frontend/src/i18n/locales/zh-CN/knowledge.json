@@ -576,7 +576,13 @@
         "refetchFailed": "重新抓取失败",
         "refetchConfirm": "确定要重新抓取此网页吗？系统将重新获取网页内容并更新文档。"
       },
-      "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"
+      "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。",
+      "longVideoWarning": {
+        "title": "视频时长较长",
+        "description": "建议视频不超过 30 分钟，超过可能无法分析完整。建议切割后上传。",
+        "cancel": "返回处理文件",
+        "continue": "仍然上传"
+      }
     },
     "permission": {
       "noAccess": "您没有操作权限",

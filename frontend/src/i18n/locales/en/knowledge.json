@@ -576,7 +576,13 @@
         "refetchFailed": "Failed to re-fetch web page",
         "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
       },
-      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."
+      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files.",
+      "longVideoWarning": {
+        "title": "Long video",
+        "description": "We recommend videos no longer than 30 minutes. Longer videos may not be analyzed completely. Consider splitting the file before uploading.",
+        "cancel": "Go back",
+        "continue": "Upload anyway"
+      }
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",
