@@ -5535,7 +5535,9 @@ async function ensureExperimentalFeaturesEnabled(control) {
   await control.command('waitFor', toggleSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  if ((await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true') {
+  if (
+    (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true'
+  ) {
     await control.command('click', toggleSelector)
     await waitForAttribute(
       control,
@@ -6087,27 +6089,31 @@ function processIsAlive(processId) {
   }
 }
 
-function macosSleepInhibitorProcessIds(appProcessId) {
+function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
-  const output = commandOutput('/bin/ps', ['-axo', 'pid=,ppid=,command='])
+  const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
   return output.split('\n').flatMap(line => {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
-    if (!match || Number(match[2]) !== appProcessId || match[3] !== '/usr/bin/caffeinate -i') {
+    const match = line
+      .trim()
+      .match(
+        /^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*PreventUserIdleSystemSleep named: "Wework local task is running"/i
+      )
+    if (!match || Number(match[1]) !== appProcessId) {
       return []
     }
-    return [Number(match[1])]
+    return [match[2]]
   })
 }
 
-async function waitForMacosSleepInhibitor(appProcessId, expectedRunning) {
+async function waitForMacosSleepAssertion(appProcessId, expectedRunning) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const processIds = macosSleepInhibitorProcessIds(appProcessId)
-    if (processIds.length > 0 === expectedRunning) return processIds
+    const assertionIds = macosSleepAssertionIds(appProcessId)
+    if (assertionIds.length > 0 === expectedRunning) return assertionIds
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(
-    `Timed out waiting for the macOS sleep inhibitor to be ${expectedRunning ? 'running' : 'stopped'}`
+    `Timed out waiting for the macOS sleep assertion to be ${expectedRunning ? 'active' : 'released'}`
   )
 }
 
@@ -6460,8 +6466,8 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   const sleepInhibitorEvidence = []
   if (process.platform === 'darwin') {
-    const processIds = await waitForMacosSleepInhibitor(app.pid, true)
-    sleepInhibitorEvidence.push({ stage: 'task-running', processIds })
+    const assertionIds = await waitForMacosSleepAssertion(app.pid, true)
+    sleepInhibitorEvidence.push({ stage: 'task-running', assertionIds })
   }
   const runningTaskSnapshot = await waitForSnapshot(
     control,
@@ -6517,10 +6523,10 @@ async function verifyBackgroundTaskWindowLifecycle({
       true,
       'Closing to tray terminated the executor process'
     )
-    const backgroundProcessIds = await waitForMacosSleepInhibitor(app.pid, true)
+    const backgroundAssertionIds = await waitForMacosSleepAssertion(app.pid, true)
     sleepInhibitorEvidence.push({
       stage: 'window-closed-to-tray',
-      processIds: backgroundProcessIds,
+      assertionIds: backgroundAssertionIds,
     })
 
     await reactivateMacApplication(appIdentifier)
@@ -6629,8 +6635,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
   if (process.platform === 'darwin') {
-    const processIds = await waitForMacosSleepInhibitor(app.pid, false)
-    sleepInhibitorEvidence.push({ stage: 'task-completed', processIds })
+    const assertionIds = await waitForMacosSleepAssertion(app.pid, false)
+    sleepInhibitorEvidence.push({ stage: 'task-completed', assertionIds })
     await writeFile(
       join(resultDir, 'sleep-inhibitor-lifecycle-verification.json'),
       `${JSON.stringify({ appProcessId: app.pid, stages: sleepInhibitorEvidence }, null, 2)}\n`
