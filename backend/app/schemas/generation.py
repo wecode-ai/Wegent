@@ -28,6 +28,28 @@ class ResolutionOption(BaseModel):
     width: Optional[int] = Field(None, description="Width in pixels")
     height: Optional[int] = Field(None, description="Height in pixels")
     label: str = Field(..., description="Display label (e.g., '720p')")
+    value: Optional[str] = Field(
+        None, description="Submitted value used in generation params"
+    )
+    tooltip: Optional[str] = Field(
+        None, description="Tooltip shown for this resolution"
+    )
+
+
+class VideoGenerationMode(BaseModel):
+    """Named video generation mode with material-specific constraints."""
+
+    id: str = Field(..., min_length=1, description="Mode identifier")
+    label: str = Field(..., min_length=1, description="Display label")
+    max_images: Optional[int] = Field(None, ge=0)
+    max_videos: Optional[int] = Field(None, ge=0)
+    max_audios: Optional[int] = Field(None, ge=0)
+    max_total: Optional[int] = Field(None, ge=0)
+    max_images_first_last: Optional[int] = Field(None, ge=0)
+    image_required: Optional[bool] = None
+    first_frame_required: Optional[bool] = None
+    audio_allowed: Optional[bool] = None
+    video_allowed: Optional[bool] = None
 
 
 class VideoCapabilities(BaseModel):
@@ -42,6 +64,40 @@ class VideoCapabilities(BaseModel):
     durations_sec: Optional[List[int]] = Field(
         None, description="Supported durations in seconds (e.g., [5, 10])"
     )
+    supports_image_input: Optional[bool] = None
+    supports_video_input: Optional[bool] = None
+    supports_audio_input: Optional[bool] = None
+    generate_audio: Optional[bool] = None
+    max_reference_materials: Optional[int] = Field(None, ge=0)
+    max_reference_images: Optional[int] = Field(None, ge=0)
+    max_reference_images_with_video: Optional[int] = Field(None, ge=0)
+    max_reference_videos: Optional[int] = Field(None, ge=0)
+    max_reference_audios: Optional[int] = Field(None, ge=0)
+    image_input_required: Optional[bool] = None
+    reference_material_required: Optional[bool] = None
+    image_formats: Optional[List[str]] = None
+    image_max_size_mb: Optional[int] = Field(None, gt=0)
+    image_min_dimension: Optional[int] = Field(None, gt=0)
+    image_max_dimension: Optional[int] = Field(None, gt=0)
+    image_min_aspect_ratio: Optional[float] = Field(None, gt=0)
+    image_max_aspect_ratio: Optional[float] = Field(None, gt=0)
+    video_formats: Optional[List[str]] = None
+    video_max_size_mb: Optional[int] = Field(None, gt=0)
+    video_min_duration_sec: Optional[float] = Field(None, ge=0)
+    video_max_duration_sec: Optional[float] = Field(None, gt=0)
+    video_min_dimension: Optional[int] = Field(None, gt=0)
+    video_max_dimension: Optional[int] = Field(None, gt=0)
+    video_min_pixels: Optional[int] = Field(None, gt=0)
+    video_max_pixels: Optional[int] = Field(None, gt=0)
+    video_min_aspect_ratio: Optional[float] = Field(None, gt=0)
+    video_max_aspect_ratio: Optional[float] = Field(None, gt=0)
+    video_min_fps: Optional[float] = Field(None, gt=0)
+    video_max_fps: Optional[float] = Field(None, gt=0)
+    audio_formats: Optional[List[str]] = None
+    audio_max_size_mb: Optional[int] = Field(None, gt=0)
+    audio_min_duration_sec: Optional[float] = Field(None, ge=0)
+    audio_max_duration_sec: Optional[float] = Field(None, gt=0)
+    generation_modes: Optional[List[VideoGenerationMode]] = None
 
 
 class VideoGenerationConfig(BaseModel):
@@ -57,9 +113,23 @@ class VideoGenerationConfig(BaseModel):
     seed: Optional[int] = Field(None, description="Random seed")
     camera_fixed: Optional[bool] = Field(None, description="Fixed camera")
     watermark: Optional[bool] = Field(None, description="Include watermark")
+    max_reference_images: Optional[int] = Field(None, ge=0)
     capabilities: Optional[VideoCapabilities] = Field(
         None, description="Declared capabilities for this video model"
     )
+
+
+class ImageCapabilities(BaseModel):
+    """Declares reference-image constraints for an image model."""
+
+    supports_image_input: Optional[bool] = None
+    max_reference_images: Optional[int] = Field(None, ge=0)
+    image_formats: Optional[List[str]] = None
+    image_max_size_mb: Optional[int] = Field(None, gt=0)
+    image_min_dimension: Optional[int] = Field(None, gt=0)
+    image_max_dimension: Optional[int] = Field(None, gt=0)
+    image_min_aspect_ratio: Optional[float] = Field(None, gt=0)
+    image_max_aspect_ratio: Optional[float] = Field(None, gt=0)
 
 
 class ImageGenerationConfig(BaseModel):
@@ -69,6 +139,9 @@ class ImageGenerationConfig(BaseModel):
     size: Optional[str] = Field(
         "2048x2048",
         description="Image size. Can be resolution like '2K'/'3K' or pixel dimensions like '2048x2048'",
+    )
+    capabilities: Optional[ImageCapabilities] = Field(
+        None, description="Declared reference-image capabilities"
     )
 
     # Sequential image generation configuration
@@ -90,7 +163,25 @@ class ImageGenerationConfig(BaseModel):
     )
     output_format: Optional[str] = Field(
         "jpeg",
-        description="Output image format: 'jpeg' or 'png' (only for seedream-5.0-lite)",
+        description="Output image format: 'jpeg', 'png', or 'webp'",
+    )
+    output_compression: Optional[int] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Output compression for JPEG or WebP",
+    )
+    quality: Optional[str] = Field(
+        None,
+        description="Image quality: 'low', 'medium', 'high', or 'auto'",
+    )
+    background: Optional[str] = Field(
+        None,
+        description="Background mode: 'opaque', 'transparent', or 'auto'",
+    )
+    moderation: Optional[str] = Field(
+        None,
+        description="Moderation strength: 'auto' or 'low'",
     )
 
     # Other configuration
@@ -106,7 +197,7 @@ class ImageGenerationConfig(BaseModel):
     # Reference image upload configuration
     max_reference_images: Optional[int] = Field(
         1,
-        ge=1,
-        le=10,
+        ge=0,
+        le=20,
         description="Maximum number of reference images that can be uploaded for image generation",
     )

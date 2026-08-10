@@ -110,6 +110,10 @@ export interface ChatMessageRequest {
     duration?: number
     /** Model name for video/image generation */
     model?: string
+    /** Model-declared video generation mode */
+    generation_mode_id?: string
+    /** Image dimensions selected at generation time */
+    size?: string
   }
   /** Structured answer for a deferred interactive form tool call */
   interactive_form_answer?: InteractiveFormAnswerPayload
@@ -685,15 +689,17 @@ export function useMessageSyncer({
       })
 
       // Create user message
-      // Include video_config in result if generate_params is provided (for video generation tasks)
-      const videoConfig = request.generate_params
-        ? {
-            model: request.generate_params.model,
-            resolution: request.generate_params.resolution,
-            ratio: request.generate_params.ratio,
-            duration: request.generate_params.duration,
-          }
-        : undefined
+      // Persist the optimistic config badge only for video generation.
+      const videoConfig =
+        request.task_type === 'video' && request.generate_params
+          ? {
+              model: request.generate_params.model,
+              resolution: request.generate_params.resolution,
+              ratio: request.generate_params.ratio,
+              duration: request.generate_params.duration,
+              generation_mode_id: request.generate_params.generation_mode_id,
+            }
+          : undefined
 
       const userMessage: UnifiedMessage = {
         id: userMessageId,
@@ -707,7 +713,7 @@ export function useMessageSyncer({
         senderUserName: options?.currentUserName,
         senderUserId: options?.currentUserId,
         shouldShowSender: request.is_group_chat,
-        // Add video_config to result for video generation tasks
+        // Add video_config to result for video generation tasks.
         result: videoConfig ? { video_config: videoConfig } : undefined,
       }
 

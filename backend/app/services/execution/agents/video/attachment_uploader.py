@@ -37,7 +37,7 @@ async def upload_video_attachment(
         Attachment ID (SubtaskContext ID)
     """
     from app.db.session import SessionLocal
-    from app.models.subtask_context import ContextStatus, SubtaskContext
+    from app.services.context import context_service
 
     # Download video to get size
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -47,24 +47,21 @@ async def upload_video_attachment(
 
     db = SessionLocal()
     try:
-        context = SubtaskContext(
-            subtask_id=subtask_id,
+        context, _ = context_service.upload_attachment(
+            db=db,
             user_id=user_id,
-            context_type="attachment",
-            name=f"video_{task_id}_{subtask_id}.mp4",
-            status=ContextStatus.READY.value,
-            type_data={
-                "file_extension": "mp4",
-                "file_size": video_size,
-                "mime_type": "video/mp4",
-                "video_metadata": {
-                    "video_url": video_url,
-                    "thumbnail": thumbnail,
-                    "duration": duration,
-                },
-            },
+            filename=f"video_{task_id}_{subtask_id}.mp4",
+            binary_data=response.content,
+            subtask_id=subtask_id,
         )
-        db.add(context)
+        context.type_data = {
+            **(context.type_data or {}),
+            "video_metadata": {
+                "video_url": video_url,
+                "thumbnail": thumbnail,
+                "duration": duration,
+            },
+        }
         db.commit()
         db.refresh(context)
 

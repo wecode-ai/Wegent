@@ -21,7 +21,7 @@ import {
 } from '@/features/tasks/hooks/useChatStatusIndicator'
 import { cn } from '@/lib/utils'
 
-const ACTIVE_TASK_STATUS_PATHS = ['/chat', '/generate', '/devices/chat']
+const ACTIVE_TASK_STATUS_PATHS = ['/chat', '/devices/chat']
 
 type ChatToolbarStatusProps = {
   className?: string

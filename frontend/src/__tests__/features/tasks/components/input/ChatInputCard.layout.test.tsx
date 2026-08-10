@@ -9,6 +9,9 @@ import {
 const mockChatInputControls = jest.fn((_props: Record<string, unknown>) => (
   <div data-testid="chat-input-controls" />
 ))
+const mockSelectedTeamBadge = jest.fn((_props: Record<string, unknown>) => (
+  <div data-testid="selected-team-badge" />
+))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -18,14 +21,21 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/features/tasks/components/input/ChatInput', () => ({
   __esModule: true,
-  default: ({ compactSpacing }: { compactSpacing?: boolean }) => (
-    <div data-testid="chat-input" data-compact-spacing={compactSpacing ? 'true' : 'false'} />
+  default: ({ compactSpacing, badge }: { compactSpacing?: boolean; badge?: React.ReactNode }) => (
+    <div data-testid="chat-input" data-compact-spacing={compactSpacing ? 'true' : 'false'}>
+      {badge}
+    </div>
   ),
 }))
 
 jest.mock('@/features/tasks/components/input/InputBadgeDisplay', () => ({
   __esModule: true,
   default: () => <div data-testid="input-badge-display" />,
+  useAuthenticatedImageInline: () => ({
+    blobUrl: 'blob:test-image',
+    isLoading: false,
+    error: false,
+  }),
 }))
 
 jest.mock('@/features/tasks/components/params/ExternalApiParamsInput', () => ({
@@ -34,7 +44,7 @@ jest.mock('@/features/tasks/components/params/ExternalApiParamsInput', () => ({
 }))
 
 jest.mock('@/features/tasks/components/selector/SelectedTeamBadge', () => ({
-  SelectedTeamBadge: () => <div data-testid="selected-team-badge" />,
+  SelectedTeamBadge: (props: Record<string, unknown>) => mockSelectedTeamBadge(props),
 }))
 
 jest.mock('@/features/tasks/components/input/ChatInputControls', () => ({
@@ -165,6 +175,7 @@ const buildProps = (): ChatInputCardProps => ({
 describe('ChatInputCard layout', () => {
   beforeEach(() => {
     mockChatInputControls.mockClear()
+    mockSelectedTeamBadge.mockClear()
   })
 
   it('keeps the badge area attached to the input content instead of distributing vertical gaps', () => {
@@ -193,6 +204,77 @@ describe('ChatInputCard layout', () => {
         canQueueMessage: true,
         canSendGuidance: true,
         onSendGuidance: expect.any(Function),
+      })
+    )
+  })
+
+  it('uses the clearable team badge in image generation mode', () => {
+    const onRestoreDefaultTeam = jest.fn()
+    const imageTeam: NonNullable<ChatInputCardProps['selectedTeam']> = {
+      id: 2,
+      name: 'image-agent',
+      namespace: 'default',
+      description: '',
+      bots: [],
+      workflow: { mode: 'solo' },
+      is_active: true,
+      user_id: 123,
+      created_at: '2026-08-07T00:00:00Z',
+      updated_at: '2026-08-07T00:00:00Z',
+      bind_mode: ['image'],
+    }
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="image"
+        selectedTeam={imageTeam}
+        teams={[imageTeam]}
+        isUsingDefaultTeam={false}
+        onRestoreDefaultTeam={onRestoreDefaultTeam}
+      />
+    )
+
+    expect(screen.getByTestId('selected-team-badge')).toBeInTheDocument()
+    expect(mockSelectedTeamBadge.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        team: imageTeam,
+        showClearButton: true,
+        onClear: onRestoreDefaultTeam,
+      })
+    )
+  })
+
+  it('does not allow clearing the selected team after the conversation starts', () => {
+    const imageTeam: NonNullable<ChatInputCardProps['selectedTeam']> = {
+      id: 2,
+      name: 'image-agent',
+      namespace: 'default',
+      description: '',
+      bots: [],
+      workflow: { mode: 'solo' },
+      is_active: true,
+      user_id: 123,
+      created_at: '2026-08-07T00:00:00Z',
+      updated_at: '2026-08-07T00:00:00Z',
+      bind_mode: ['image'],
+    }
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="image"
+        selectedTeam={imageTeam}
+        teams={[imageTeam]}
+        isUsingDefaultTeam={false}
+        hasMessages
+      />
+    )
+
+    expect(mockSelectedTeamBadge.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        team: imageTeam,
+        showClearButton: false,
       })
     )
   })
@@ -345,5 +427,144 @@ describe('ChatInputCard layout', () => {
 
     expect(onEditGuidanceMessage).toHaveBeenCalledWith('guidance-1')
     expect(screen.queryByTestId('prompt-edit-textarea')).not.toBeInTheDocument()
+  })
+
+  it('renders ordered first and last frame upload slots', () => {
+    const onFileSelect = jest.fn()
+    const { rerender } = render(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="video"
+        selectedVideoGenerationMode="first_last_frame"
+        materialAccept="image/jpeg,image/png"
+        onFileSelect={onFileSelect}
+      />
+    )
+
+    expect(screen.getByTestId('first-last-frame-uploader')).toBeInTheDocument()
+    expect(screen.getByTestId('first-last-frame-file-input')).toHaveAttribute(
+      'accept',
+      'image/jpeg,image/png'
+    )
+    expect(screen.getByTestId('first-frame-upload')).toBeEnabled()
+    expect(screen.getByTestId('last-frame-upload')).toBeDisabled()
+
+    rerender(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="video"
+        selectedVideoGenerationMode="first_last_frame"
+        materialAccept="image/jpeg,image/png"
+        onFileSelect={onFileSelect}
+        attachmentState={{
+          attachments: [
+            {
+              id: 1,
+              filename: 'first.jpg',
+              file_size: 10,
+              mime_type: 'image/jpeg',
+              status: 'ready',
+              subtask_id: null,
+              file_extension: '.jpg',
+              created_at: new Date().toISOString(),
+            },
+          ],
+          uploadingFiles: new Map(),
+          errors: new Map(),
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('first-frame-upload')).toHaveTextContent('video.first_frame')
+    expect(screen.getByTestId('last-frame-upload')).toBeEnabled()
+  })
+
+  it('swaps the uploaded first and last frames', () => {
+    const onSwapAttachments = jest.fn()
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="video"
+        selectedVideoGenerationMode="first_last_frame"
+        onSwapAttachments={onSwapAttachments}
+        attachmentState={{
+          attachments: [
+            {
+              id: 1,
+              filename: 'first.jpg',
+              file_size: 10,
+              mime_type: 'image/jpeg',
+              status: 'ready',
+              subtask_id: null,
+              file_extension: '.jpg',
+              created_at: new Date().toISOString(),
+            },
+            {
+              id: 2,
+              filename: 'last.jpg',
+              file_size: 10,
+              mime_type: 'image/jpeg',
+              status: 'ready',
+              subtask_id: null,
+              file_extension: '.jpg',
+              created_at: new Date().toISOString(),
+            },
+          ],
+          uploadingFiles: new Map(),
+          errors: new Map(),
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('swap-first-last-frames'))
+
+    expect(onSwapAttachments).toHaveBeenCalledWith(1, 2)
+  })
+
+  it('keeps the last frame in its slot after the first frame is removed', () => {
+    const firstFrame = {
+      id: 1,
+      filename: 'first.jpg',
+      file_size: 10,
+      mime_type: 'image/jpeg',
+      status: 'ready' as const,
+      subtask_id: null,
+      file_extension: '.jpg',
+      created_at: new Date().toISOString(),
+    }
+    const lastFrame = {
+      ...firstFrame,
+      id: 2,
+      filename: 'last.jpg',
+    }
+    const { rerender } = render(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="video"
+        selectedVideoGenerationMode="first_last_frame"
+        attachmentState={{
+          attachments: [firstFrame, lastFrame],
+          uploadingFiles: new Map(),
+          errors: new Map(),
+        }}
+      />
+    )
+
+    rerender(
+      <ChatInputCard
+        {...buildProps()}
+        taskType="video"
+        selectedVideoGenerationMode="first_last_frame"
+        attachmentState={{
+          attachments: [lastFrame],
+          uploadingFiles: new Map(),
+          errors: new Map(),
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('first-frame-upload').tagName).toBe('BUTTON')
+    expect(screen.getByTestId('last-frame-upload')).toHaveTextContent('video.last_frame')
+    expect(screen.getByTestId('last-frame-upload').querySelector('img')).toBeInTheDocument()
   })
 })

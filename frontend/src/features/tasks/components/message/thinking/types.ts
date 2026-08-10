@@ -204,6 +204,7 @@ export interface ImageBlock extends BaseBlock {
   image_urls: string[] // Image URLs
   image_attachment_ids?: number[] // Attachment IDs for image downloads
   image_count: number // Number of generated images
+  image_size?: string // Requested output dimensions, e.g. 1512x648
   is_placeholder?: boolean // True when images are still being generated
   content?: string // Progress message
 }

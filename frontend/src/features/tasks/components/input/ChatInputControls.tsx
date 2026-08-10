@@ -38,15 +38,20 @@ import {
   ImageSizeSelector,
   GenerateModeSelector,
   isGenerateMode,
+  VideoGenerationModeSelector,
   VideoSettingsPopover,
 } from '../selector'
 import type { GenerateMode } from '../selector'
+import type { AspectRatioOption, ResolutionOption, VideoGenerationMode } from '@/apis/models'
 import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelectorTab'
 import { getChatSendState } from './chatSendState'
 import AgentSkillSelectorMenu from './AgentSkillSelectorMenu'
 import InputMoreActionsMenu from './InputMoreActionsMenu'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { TeamModeFilter } from '../selector/team-selector-utils'
+import {
+  teamSupportsBothGenerationModes,
+  type TeamModeFilter,
+} from '../selector/team-selector-utils'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -118,6 +123,7 @@ export interface ChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  submitBlockedReason?: string | null
   canQueueMessage?: boolean
   canSendGuidance?: boolean
   canCancelTask?: boolean
@@ -149,12 +155,18 @@ export interface ChatInputControlsProps {
   selectedResolution?: string
   onResolutionChange?: (resolution: string) => void
   availableResolutions?: string[]
+  resolutionOptions?: ResolutionOption[]
   selectedRatio?: string
   onRatioChange?: (ratio: string) => void
   availableRatios?: string[]
+  ratioOptions?: AspectRatioOption[]
   selectedDuration?: number
   onDurationChange?: (duration: number) => void
   availableDurations?: number[]
+  videoGenerationModes?: VideoGenerationMode[]
+  selectedVideoGenerationMode?: string
+  onVideoGenerationModeChange?: (modeId: string) => void
+  materialAccept?: string
 
   // Image mode props (only used when taskType === 'image')
   selectedImageModel?: Model | null
@@ -241,6 +253,7 @@ export function ChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  submitBlockedReason,
   canQueueMessage = false,
   canSendGuidance = false,
   canCancelTask,
@@ -263,12 +276,18 @@ export function ChatInputControls({
   selectedResolution = '720p',
   onResolutionChange,
   availableResolutions,
+  resolutionOptions,
   selectedRatio = '16:9',
   onRatioChange,
   availableRatios,
+  ratioOptions,
   selectedDuration = 5,
   onDurationChange,
   availableDurations,
+  videoGenerationModes = [],
+  selectedVideoGenerationMode,
+  onVideoGenerationModeChange,
+  materialAccept,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -372,6 +391,7 @@ export function ChatInputControls({
             disabled={sendState.isPrimaryDisabled}
             isLoading={false}
             ariaLabel="Queue message"
+            disabledReason={submitBlockedReason}
           />
         </div>
       )
@@ -382,6 +402,7 @@ export function ChatInputControls({
         onClick={onSendMessage}
         disabled={sendState.isPrimaryDisabled}
         isLoading={false}
+        disabledReason={submitBlockedReason}
       />
     )
   }
@@ -429,6 +450,7 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
+        submitBlockedReason={submitBlockedReason}
         hasAttachments={attachmentState.attachments.length > 0}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
@@ -450,6 +472,13 @@ export function ChatInputControls({
                 setTaskInputMessage(taskInputMessage ? `${taskInputMessage}${text}` : text)
             : undefined
         }
+        attachmentAccept={isGenerationMode ? materialAccept : undefined}
+        videoGenerationModes={videoGenerationModes}
+        selectedVideoGenerationMode={selectedVideoGenerationMode}
+        onVideoGenerationModeChange={onVideoGenerationModeChange}
+        selectedVideoModel={selectedVideoModel}
+        onVideoModelChange={onVideoModelChange}
+        isVideoModelsLoading={isVideoModelsLoading}
       />
     )
   }
@@ -469,23 +498,37 @@ export function ChatInputControls({
         data-testid="input-controls"
       >
         {/* Generate Mode Selector - show when in video or image mode */}
-        {isGenerateMode(taskType) && onGenerateModeChange && (
-          <GenerateModeSelector
-            selectedMode={taskType as GenerateMode}
-            onModeChange={onGenerateModeChange}
-            disabled={isStreaming || hasMessages}
-          />
-        )}
+        {isGenerateMode(taskType) &&
+          onGenerateModeChange &&
+          teamSupportsBothGenerationModes(selectedTeam) && (
+            <GenerateModeSelector
+              selectedMode={taskType as GenerateMode}
+              onModeChange={onGenerateModeChange}
+              disabled={isStreaming || hasMessages}
+            />
+          )}
 
         {/* Reference image upload button - show for image and video generation modes,
             placed between the mode toggle and the model selector */}
-        {isGenerationMode && (
-          <AttachmentButton onFileSelect={onFileSelect} disabled={isStreaming} accept="image/*" />
+        {isGenerationMode && selectedVideoGenerationMode !== 'first_last_frame' && (
+          <AttachmentButton
+            onFileSelect={onFileSelect}
+            disabled={isStreaming}
+            accept={materialAccept ?? 'image/*'}
+          />
         )}
 
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
+            {onVideoGenerationModeChange && (
+              <VideoGenerationModeSelector
+                modes={videoGenerationModes}
+                value={selectedVideoGenerationMode}
+                onChange={onVideoGenerationModeChange}
+                disabled={isStreaming}
+              />
+            )}
             {/* Video Model Selector - using unified ModelSelector with video category */}
             {onVideoModelChange && (
               <ModelSelector
@@ -506,12 +549,14 @@ export function ChatInputControls({
                 selectedRatio={selectedRatio}
                 onRatioChange={onRatioChange}
                 availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                ratioOptions={ratioOptions}
                 selectedDuration={selectedDuration}
                 onDurationChange={onDurationChange}
                 availableDurations={availableDurations ?? [5, 10]}
                 selectedResolution={selectedResolution}
                 onResolutionChange={onResolutionChange}
                 availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                resolutionOptions={resolutionOptions}
                 disabled={isStreaming}
               />
             )}

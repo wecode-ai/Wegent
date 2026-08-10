@@ -164,6 +164,23 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('syncs a programmatic clear into the composer immediately', async () => {
+    const { rerender } = render(
+      <BufferedChatInput
+        value="queued message"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+
+    rerender(<BufferedChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+    })
+  })
+
   test('appends an insertion without replacing the buffered draft', async () => {
     const props = {
       value: '',
