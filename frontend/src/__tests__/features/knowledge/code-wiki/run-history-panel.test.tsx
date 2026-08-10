@@ -44,10 +44,14 @@ async function openHistory() {
   return screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`)
 }
 
+function mockHistory(runs: CodeWikiRunRecord[]) {
+  ;(codeWikiApi.history as jest.Mock).mockResolvedValue({ runs })
+}
+
 describe('restoring a past version', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    ;(codeWikiApi.history as jest.Mock).mockResolvedValue({ runs: [RESTORABLE] })
+    mockHistory([RESTORABLE])
     ;(codeWikiApi.republish as jest.Mock).mockResolvedValue({})
   })
 
@@ -67,5 +71,42 @@ describe('restoring a past version', () => {
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
 
     await waitFor(() => expect(codeWikiApi.republish).toHaveBeenCalledWith(1, 42))
+  })
+})
+
+describe('a failure reason of any length', () => {
+  const LONG = 'clone failed: '.repeat(40)
+  const FAILED: CodeWikiRunRecord = {
+    ...RESTORABLE,
+    generation_id: 43,
+    status: 'failed',
+    error_message: LONG,
+    failure_code: '',
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockHistory([FAILED])
+  })
+
+  it('is clamped so one bad run cannot crowd out the rest of the history', async () => {
+    render(<RunHistory knowledgeBaseId={1} status={null} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+
+    const reason = await screen.findByTestId('code-wiki-run-error')
+    expect(reason.className).toContain('line-clamp-3')
+    // Clamped visually, not cut: the text itself is the only diagnostic there is.
+    expect(reason).toHaveTextContent('clone failed:')
+    expect(reason).toHaveAttribute('title', LONG)
+  })
+
+  it('opens up when clicked, because that is what this panel is for', async () => {
+    render(<RunHistory knowledgeBaseId={1} status={null} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+    const reason = await screen.findByTestId('code-wiki-run-error')
+
+    fireEvent.click(reason)
+
+    expect(reason.className).not.toContain('line-clamp-3')
   })
 })

@@ -99,6 +99,11 @@ function RunRow({
   // the pages it overwrites keep their document ids only for as long as they exist
   // -- links held elsewhere to the current pages do not survive being replaced.
   const [confirming, setConfirming] = useState(false)
+  // A reason is external text -- git's output, the agent's own message, a stack --
+  // and arrives at whatever length it happens to be. Clamped so one failed run
+  // cannot push the rest of the history out of a 320px popover, expandable because
+  // this panel is where someone goes precisely to read the whole thing.
+  const [reasonExpanded, setReasonExpanded] = useState(false)
 
   const republish = async () => {
     setConfirming(false)
@@ -197,7 +202,17 @@ function RunRow({
         </AlertDialog>
         {reason && (
           <p
-            className="mt-0.5 break-words text-[11px] text-amber-500"
+            className={`mt-0.5 whitespace-pre-wrap break-words text-[11px] text-amber-500 ${
+              reasonExpanded ? '' : 'line-clamp-3'
+            }`}
+            onClick={event => {
+              // Not a button: the reason is the text, and wrapping it in one would
+              // put a control in the middle of a list of facts. Stops the click
+              // from reaching the row behind it.
+              event.stopPropagation()
+              setReasonExpanded(current => !current)
+            }}
+            title={reasonExpanded ? undefined : reason}
             data-testid="code-wiki-run-error"
           >
             {reason}

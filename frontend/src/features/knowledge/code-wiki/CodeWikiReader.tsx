@@ -389,7 +389,11 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
               <p className="text-sm text-text-tertiary">{emptyState.hint}</p>
               {control.hint && (
                 <p
-                  className="max-w-lg text-center text-xs text-amber-500"
+                  // Clamped: this is the summary line, and an agent's error can run
+                  // to hundreds of characters. The run history beside it shows the
+                  // whole reason, which is what that panel is for.
+                  className="line-clamp-3 max-w-lg whitespace-pre-wrap break-words text-center text-xs text-amber-500"
+                  title={control.hint}
                   data-testid="code-wiki-run-hint"
                 >
                   {control.hint}
