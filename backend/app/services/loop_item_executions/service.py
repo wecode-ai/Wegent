@@ -652,14 +652,28 @@ class LoopItemExecutionService:
         error: str,
         note: Optional[str] = None,
         requeue: bool = False,
+        requeue_infra: bool = False,
     ) -> Optional[LoopItemExecution]:
-        """Mark a run failed (or requeue it when retries remain)."""
+        """Mark a run failed, requeue it when retries remain, or requeue it
+        after a transient infrastructure failure.
+
+        ``requeue_infra`` covers device/transport failures (device offline,
+        emit rejected, executor session start timeout). Such failures must not
+        consume ``retry_attempt``: the device may come back at any moment, and
+        the run should stay queued for the next scan instead of terminally
+        failing after one or two attempts.
+        """
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status in TERMINAL_STATUSES:
             return row
         now = utcnow()
-        if requeue and row.retry_attempt < row.max_retries:
+        if requeue_infra:
+            row.status = STATUS_QUEUED
+            row.queued_at = now
+            row.lease_expires_at = EPOCH_TIME
+            row.error_message = self._error_text(error)[:2000]
+        elif requeue and row.retry_attempt < row.max_retries:
             row.retry_attempt += 1
             row.status = STATUS_QUEUED
             row.queued_at = now
