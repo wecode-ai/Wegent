@@ -17,7 +17,6 @@ const labels = {
     sites: '站点',
     automations: '已安排',
     cloud: '云端工作',
-    apps: '应用',
   },
 }
 
