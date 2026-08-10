@@ -46,6 +46,7 @@ import TeamBasicInfoForm from '@/features/settings/components/team-edit/TeamBasi
 import TeamModeSelector from '@/features/settings/components/team-edit/TeamModeSelector'
 import TeamModeEditor from '@/features/settings/components/team-edit/TeamModeEditor'
 import TeamModeChangeDialog from '@/features/settings/components/team-edit/TeamModeChangeDialog'
+import { getModelCategoryTypeForBindMode } from '@/features/settings/components/team-edit/simple-team-edit-utils'
 
 interface PublicTeamEditDialogProps {
   open: boolean
@@ -975,6 +976,7 @@ export default function PublicTeamEditDialog({
                     allowedAgentsForMode={allowedAgentsForMode}
                     botEditRef={botEditRef}
                     scope="public"
+                    modelCategoryType={getModelCategoryTypeForBindMode(bindMode)}
                     requireConfirmationMap={requireConfirmationMap}
                     setRequireConfirmationMap={setRequireConfirmationMap}
                     contextPassingMap={contextPassingMap}
