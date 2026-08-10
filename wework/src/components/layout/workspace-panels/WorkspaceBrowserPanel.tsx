@@ -790,7 +790,6 @@ export function WorkspaceBrowserTabPanel({
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
-  const [embeddedBrowserLabel, setEmbeddedBrowserLabel] = useState<string | null>(null)
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
     id: number
@@ -848,7 +847,6 @@ export function WorkspaceBrowserTabPanel({
 
       nativeLabelRef.current = nativeLabel
       adoptedDownloadOwnerLabelRef.current = logicalLabel
-      setEmbeddedBrowserLabel(nativeLabel)
       onNativeLabelChange?.(nativeLabel)
       reconcileDownloadSnapshot(nativeLabel)
     },
@@ -993,7 +991,6 @@ export function WorkspaceBrowserTabPanel({
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
-      setEmbeddedBrowserLabel(null)
       activeDownloadIdsRef.current = new Set()
       onNativeLabelChange?.(null)
       onDownloadActivityChange?.(false)
@@ -2118,6 +2115,7 @@ export function WorkspaceBrowserTabPanel({
   return (
     <div
       data-testid="workspace-browser-panel"
+      data-embedded-browser-label={label}
       className={cn(
         'flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
         !active && 'hidden'
@@ -2499,7 +2497,6 @@ export function WorkspaceBrowserTabPanel({
           <div
             ref={browserHostRef}
             data-testid="workspace-browser-native-view"
-            data-embedded-browser-label={embeddedBrowserLabel ?? undefined}
             className="relative h-full min-h-0 w-full bg-background"
             aria-label={t('workbench.browser')}
           >

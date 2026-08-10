@@ -12,6 +12,8 @@ const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
 const TRANSIENT_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="transient-notice"]`
+const BROWSER_PANEL_LABEL_SELECTOR =
+  '[data-testid="workspace-browser-panel"][data-embedded-browser-label]'
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
 const REDIRECT_PATH = '/embedded-browser-agent-redirect'
@@ -46,6 +48,12 @@ const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
 const BROWSER_CLEAR_COMPLETED_TEXT = '浏览数据已清除'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
+
+async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
+  const selector = `${scopeSelector} ${BROWSER_PANEL_LABEL_SELECTOR}`
+  await control.command('waitFor', selector, { timeoutMs })
+  return control.command('getAttribute', selector, { value: 'data-embedded-browser-label' })
+}
 
 function fixtureHtml() {
   return `<!doctype html>
@@ -463,10 +471,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
       const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
-      const browserLabel = await control.command(
-        'getAttribute',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-embedded-browser-label]`,
-        { value: 'data-embedded-browser-label' }
+      const browserLabel = await readBrowserPanelLabel(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
       )
       assert.equal(
         browserLabel,
@@ -497,10 +505,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Opening another task tab did not make the browser-owning task inactive'
       )
       const secondTaskTabId = secondTaskTabTestId.replace('workspace-tab-select-', '')
-      const activeBrowserLabel = await control.command(
-        'getAttribute',
-        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
-        { value: 'data-embedded-browser-label' }
+      const activeBrowserLabel = await readBrowserPanelLabel(
+        control,
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"]`,
+        uiTimeoutMs
       )
       assert.ok(activeBrowserLabel, 'The active task did not expose a browser label')
       assert.notEqual(
@@ -556,10 +564,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         secondTaskTabTestId,
         'Inactive task browser calls changed the selected task tab'
       )
-      const activeLabelAfterBackgroundCalls = await control.command(
-        'getAttribute',
-        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
-        { value: 'data-embedded-browser-label' }
+      const activeLabelAfterBackgroundCalls = await readBrowserPanelLabel(
+        control,
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"]`,
+        uiTimeoutMs
       )
       assert.equal(
         activeLabelAfterBackgroundCalls,

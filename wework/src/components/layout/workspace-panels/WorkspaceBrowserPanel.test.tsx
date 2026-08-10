@@ -159,6 +159,10 @@ describe('WorkspaceBrowserPanel', () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser'
+    )
     const input = screen.getByTestId('workspace-browser-url-input')
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)
