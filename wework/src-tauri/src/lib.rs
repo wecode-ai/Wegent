@@ -651,6 +651,8 @@ struct LocalHarnessPreference {
     env: HashMap<String, String>,
     #[serde(default = "default_harness_permission_mode")]
     permission_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_key: Option<String>,
 }
 
 fn default_harness_permission_mode() -> String {
@@ -667,6 +669,7 @@ fn default_local_harness_preferences() -> Vec<LocalHarnessPreference> {
             args: Vec::new(),
             env: HashMap::new(),
             permission_mode: default_harness_permission_mode(),
+            model_key: None,
         })
         .collect()
 }
@@ -685,6 +688,7 @@ fn normalize_local_harness_preferences(
                 return default_preference;
             };
             preference.executable_path = preference.executable_path.and_then(normalized_non_empty);
+            preference.model_key = preference.model_key.and_then(normalized_non_empty);
             preference
                 .args
                 .retain(|arg| !arg.is_empty() && !arg.contains('\0'));
@@ -4361,6 +4365,7 @@ mod tests {
             .into_iter()
             .collect(),
             permission_mode: "plan".to_string(),
+            model_key: Some("  wework:user:default:42:glm  ".to_string()),
         }]);
 
         assert_eq!(preferences.len(), 2);
@@ -4378,6 +4383,10 @@ mod tests {
             Some("us-west-2")
         );
         assert_eq!(preferences[1].permission_mode, "plan");
+        assert_eq!(
+            preferences[1].model_key.as_deref(),
+            Some("wework:user:default:42:glm")
+        );
     }
 
     #[cfg(desktop)]

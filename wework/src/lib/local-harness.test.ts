@@ -16,6 +16,7 @@ describe('local harness settings', () => {
         args: ['--model', 'openai/gpt-5'],
         env: { OPENCODE_CONFIG: '/tmp/opencode.json' },
         permissionMode: 'bypass',
+        modelKey: '  wework:runtime::local-model  ',
       },
     ])
 
@@ -27,6 +28,7 @@ describe('local harness settings', () => {
         args: ['--model', 'openai/gpt-5'],
         env: { OPENCODE_CONFIG: '/tmp/opencode.json' },
         permissionMode: 'default',
+        modelKey: 'wework:runtime::local-model',
       },
       {
         id: 'claude_code',

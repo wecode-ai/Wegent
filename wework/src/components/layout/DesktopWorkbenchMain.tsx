@@ -16,6 +16,7 @@ import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorA
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { updateAppPreferences } from '@/tauri/appPreferences'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
@@ -94,10 +95,7 @@ import {
   localHarnessLabel,
   type LocalHarnessId,
 } from '@/lib/local-harness'
-import {
-  listLocalHarnessModelOptions,
-  type LocalHarnessModelOption,
-} from '@/features/local-harness/localHarnessModels'
+import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
@@ -705,12 +703,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
-  const [localHarnessModels, setLocalHarnessModels] = useState<
-    Record<LocalHarnessId, LocalHarnessModelOption | null>
-  >({
-    opencode: null,
-    claude_code: null,
-  })
+  const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
+    Partial<Record<LocalHarnessId, string>>
+  >({})
   const localHarnessPreferences =
     appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
   const enabledLocalHarnesses = useMemo(
@@ -1439,17 +1434,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !experimentalFeaturesEnabled || newChatRuntime === 'codex'
       ? null
       : (enabledLocalHarnesses.find(preference => preference.id === newChatRuntime) ?? null)
-  const configuredHarnessModel = selectedHarnessPreference
-    ? localHarnessModels[selectedHarnessPreference.id]
-    : null
   const harnessModelOptions = selectedHarnessPreference
-    ? listLocalHarnessModelOptions(selectedHarnessPreference.id, projectChat.models)
+    ? listLocalHarnessModelOptions(
+        selectedHarnessPreference.id,
+        projectChat.models,
+        projectChat.selectedModel,
+        projectChat.selectedModelOptions
+      )
     : []
+  const currentComposerHarnessModel =
+    projectChat.selectedModel &&
+    harnessModelOptions.find(
+      option =>
+        option.model.name === projectChat.selectedModel?.name &&
+        option.model.type === projectChat.selectedModel.type
+    )
   const selectedHarnessModel =
-    configuredHarnessModel &&
-    harnessModelOptions.some(option => option.key === configuredHarnessModel.key)
-      ? configuredHarnessModel
-      : (harnessModelOptions[0] ?? null)
+    harnessModelOptions.find(
+      option =>
+        option.key ===
+        (selectedHarnessPreference
+          ? (localHarnessModelKeys[selectedHarnessPreference.id] ??
+            selectedHarnessPreference.modelKey)
+          : null)
+    ) ??
+    currentComposerHarnessModel ??
+    harnessModelOptions[0] ??
+    null
   const selectedHarnessInstalled = Boolean(
     selectedHarnessPreference &&
     localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
@@ -3225,12 +3236,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             harnessId={selectedHarnessPreference.id}
                             models={harnessModelOptions}
                             selectedModel={selectedHarnessModel}
-                            onModelChange={model =>
-                              setLocalHarnessModels(current => ({
+                            onModelChange={model => {
+                              setLocalHarnessModelKeys(current => ({
                                 ...current,
-                                [selectedHarnessPreference.id]: model,
+                                [selectedHarnessPreference.id]: model?.key ?? '',
                               }))
-                            }
+                              const localHarnesses = localHarnessPreferences.map(preference =>
+                                preference.id === selectedHarnessPreference.id
+                                  ? { ...preference, modelKey: model?.key ?? null }
+                                  : preference
+                              )
+                              void updateAppPreferences({ localHarnesses }).catch(error => {
+                                console.error('Failed to save harness model selection:', error)
+                                setCentralHarnessError(
+                                  t(
+                                    'workbench.harness_model_save_failed',
+                                    '运行工具模型选择保存失败'
+                                  )
+                                )
+                              })
+                            }}
                           />
                         ) : undefined
                       }

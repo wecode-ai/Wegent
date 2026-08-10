@@ -32,6 +32,15 @@ describe('localHarnessModels', () => {
     expect(listLocalHarnessModelOptions('claude_code', models)).toHaveLength(2)
   })
 
+  it('carries the current Wework model options into harness routing', () => {
+    const [option] = listLocalHarnessModelOptions('opencode', [cloudModel], cloudModel, {
+      reasoning: 'high',
+      speed: 'fast',
+    })
+
+    expect(option.options).toEqual({ reasoning: 'high', speed: 'fast' })
+  })
+
   it('routes OpenCode through the local Anthropic Messages endpoint', () => {
     const [option] = listLocalHarnessModelOptions('opencode', [cloudModel])
     const launch = harnessLaunchThroughMessagesProxy('opencode', option, {

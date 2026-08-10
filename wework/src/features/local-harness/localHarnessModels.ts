@@ -1,11 +1,13 @@
 import type { LocalHarnessId } from '@/lib/local-harness'
-import type { UnifiedModel } from '@/types/api'
+import { getDefaultModelOptions } from '@/lib/model-ui'
+import type { ModelOptions, UnifiedModel } from '@/types/api'
 
 export interface LocalHarnessModelOption {
   key: string
   label: string
   source: 'local' | 'cloud'
   model: UnifiedModel
+  options: ModelOptions
 }
 
 export interface LocalHarnessModelLaunchConfig {
@@ -21,7 +23,7 @@ export interface HarnessProxyRegistration {
 
 const HARNESS_MODEL_ALIAS = 'wework-selected'
 
-function modelOptionKey(model: UnifiedModel): string {
+export function localHarnessModelOptionKey(model: UnifiedModel): string {
   return [
     'wework',
     model.type,
@@ -35,7 +37,9 @@ function modelOptionKey(model: UnifiedModel): string {
 
 export function listLocalHarnessModelOptions(
   _harnessId: LocalHarnessId,
-  models: UnifiedModel[]
+  models: UnifiedModel[],
+  selectedModel: UnifiedModel | null = null,
+  selectedModelOptions: ModelOptions = {}
 ): LocalHarnessModelOption[] {
   const options: LocalHarnessModelOption[] = []
   for (const model of models) {
@@ -45,10 +49,14 @@ export function listLocalHarnessModelOptions(
         typeof model.config?.weworkModelKind === 'string' ? model.config.weworkModelKind : ''
       if (modelKind !== 'model-interface') continue
       options.push({
-        key: modelOptionKey(model),
+        key: localHarnessModelOptionKey(model),
         label: model.displayName?.trim() || model.modelId?.trim() || model.name,
         source: 'local',
         model,
+        options:
+          selectedModel?.name === model.name && selectedModel.type === model.type
+            ? selectedModelOptions
+            : getDefaultModelOptions(model),
       })
       continue
     }
@@ -60,10 +68,14 @@ export function listLocalHarnessModelOptions(
       continue
     }
     options.push({
-      key: modelOptionKey(model),
+      key: localHarnessModelOptionKey(model),
       label: model.displayName?.trim() || model.modelId?.trim() || model.name,
       source: 'cloud',
       model,
+      options:
+        selectedModel?.name === model.name && selectedModel.type === model.type
+          ? selectedModelOptions
+          : getDefaultModelOptions(model),
     })
   }
   return options

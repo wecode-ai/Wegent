@@ -1066,7 +1066,7 @@ function harnessProxyUpstream(
   option: LocalHarnessModelOption,
   cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
-  const execution = selectedModelExecutionFields(option.model, {})
+  const execution = selectedModelExecutionFields(option.model, option.options)
   const config = localRuntimeModelConfig(
     runtime,
     execution.modelId,

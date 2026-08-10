@@ -9,6 +9,7 @@ export interface LocalHarnessPreference {
   args: string[]
   env: Record<string, string>
   permissionMode: ClaudeCodePermissionMode
+  modelKey?: string | null
 }
 
 export const LOCAL_HARNESS_IDS: LocalHarnessId[] = ['opencode', 'claude_code']
@@ -59,6 +60,8 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
       (record.permissionMode === 'plan' || record.permissionMode === 'bypass')
         ? record.permissionMode
         : 'default'
+    const modelKey =
+      typeof record.modelKey === 'string' && record.modelKey.trim() ? record.modelKey.trim() : null
 
     return {
       id: defaultPreference.id,
@@ -67,6 +70,7 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
       args,
       env,
       permissionMode,
+      ...(modelKey ? { modelKey } : {}),
     }
   })
 }
