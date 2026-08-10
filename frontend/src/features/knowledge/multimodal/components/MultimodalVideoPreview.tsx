@@ -135,6 +135,7 @@ export function MultimodalVideoPreview({
     true
   )
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [videoError, setVideoError] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
@@ -183,17 +184,22 @@ export function MultimodalVideoPreview({
     )
   }
 
-  if (!playUrl) {
+  const showVideoError = hasError || videoError
+
+  if (!playUrl || videoError) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
         <AlertCircle className="h-4 w-4" />
-        <span>{hasError ? t('document.multimodal.videoPreview.loadFailed') : name}</span>
-        {hasError && (
+        <span>{showVideoError ? t('document.multimodal.videoPreview.loadFailed') : name}</span>
+        {showVideoError && (
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={retry}
+            onClick={() => {
+              setVideoError(false)
+              retry()
+            }}
             data-testid="video-preview-retry"
           >
             {t('document.multimodal.videoPreview.retry')}
@@ -209,6 +215,7 @@ export function MultimodalVideoPreview({
       controls
       preload="metadata"
       onTimeUpdate={handleTimeUpdate}
+      onError={() => setVideoError(true)}
       className="rounded-lg border border-border max-h-[600px] max-w-full bg-black"
       data-testid="multimodal-video-preview"
     >

@@ -100,6 +100,7 @@ function VideoSegmentCard({
   const [position, setPosition] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [videoError, setVideoError] = useState(false)
   const fullscreenAvailable = typeof document !== 'undefined' && document.fullscreenEnabled
 
   const seekToSegmentStart = useCallback(() => {
@@ -213,11 +214,18 @@ function VideoSegmentCard({
           onTimeUpdate={handleTimeUpdate}
           onPause={() => setIsPlaying(false)}
           onEnded={() => setIsPlaying(false)}
+          onError={() => setVideoError(true)}
           className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
           data-testid={`video-segment-player-${segment.start_sec}`}
         >
           <source src={playUrl} type={mimeType} />
         </video>
+        {videoError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80 px-4 text-sm text-white">
+            <AlertCircle className="h-5 w-5 shrink-0" />
+            {t('sourceReferences.videoLoadFailed')}
+          </div>
+        )}
         {!bounds && mediaDuration !== undefined && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/80 px-4 text-sm text-white">
             <AlertCircle className="h-5 w-5 shrink-0" />

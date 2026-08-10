@@ -54,6 +54,7 @@
     "videoSegmentSummary": "本段摘要",
     "videoNotReady": "视频仍在处理中，请稍后重试",
     "videoUnavailable": "视频片段暂时无法播放",
+    "videoLoadFailed": "视频加载失败，链接可能已过期",
     "maximizeVideoSegment": "最大化播放视频片段",
     "exitVideoSegmentFullscreen": "退出视频片段全屏",
     "playVideoSegment": "播放视频片段",

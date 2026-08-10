@@ -54,6 +54,7 @@
     "videoSegmentSummary": "Segment summary",
     "videoNotReady": "Video is still processing. Please try again later.",
     "videoUnavailable": "This video segment is temporarily unavailable.",
+    "videoLoadFailed": "Failed to load video. The link may have expired.",
     "maximizeVideoSegment": "Play video segment fullscreen",
     "exitVideoSegmentFullscreen": "Exit video segment fullscreen",
     "playVideoSegment": "Play video segment",
