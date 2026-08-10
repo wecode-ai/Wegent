@@ -1148,21 +1148,48 @@ fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response
         "turnId": "turn-1",
         "role": "assistant",
         "content": "Done",
-        "createdAt": 100
+        "createdAt": 1_780_000_000_000_i64
     })];
-    let presentations = vec![json!({
-        "clientUserMessageId": "client-user-1",
-        "content": "Fix the issue",
-        "createdAt": 100,
-        "ensureVisible": true,
-        "references": []
-    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "First instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+        json!({
+            "clientUserMessageId": "client-user-2",
+            "content": "Second instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+    ];
 
     attach_user_message_presentations(&mut provider_messages, presentations);
 
     assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "First instruction");
     assert_eq!(provider_messages[0]["turnId"], "turn-1");
-    assert_eq!(provider_messages[1]["role"], "assistant");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
+    assert_eq!(provider_messages[1]["role"], "user");
+    assert_eq!(provider_messages[1]["content"], "Second instruction");
+    assert_eq!(provider_messages[2]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][0]["message"]["content"],
+        "First instruction"
+    );
+    assert_eq!(turns[0]["items"][1]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][1]["message"]["content"],
+        "Second instruction"
+    );
 }
 
 #[test]

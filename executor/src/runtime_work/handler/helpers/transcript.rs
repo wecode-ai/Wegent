@@ -545,7 +545,11 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
                     .iter()
                     .position(|message| {
                         timestamp_ms_field(message, "createdAt")
-                            .is_some_and(|message_at| message_at >= created_at)
+                            .is_some_and(|message_at| {
+                                message_at > created_at
+                                    || (message_at == created_at
+                                        && string_field(message, "role").as_deref() != Some("user"))
+                            })
                     })
                     .unwrap_or(messages.len());
                 let turn_id = string_field(&presentation, "turnId")
