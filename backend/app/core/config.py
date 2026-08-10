@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     WEB_CONTENT_ALLOWED_MEDIA_HOSTS: list[str] = []
 
     # Public Model CRD id used by the media-understanding MCP tool.
-    MEDIA_UNDERSTANDING_MODEL_KIND_ID: int = 237555
+    MEDIA_UNDERSTANDING_MODEL_KIND_ID: int = 255323
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
