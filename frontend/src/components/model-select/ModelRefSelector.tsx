@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getGlobalModelPreference } from '@/utils/modelPreferences'
+import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
 /** What a caller stores: enough to name one model among every scope. */
 export interface ModelRef {
   name: string
@@ -209,6 +209,21 @@ export function ModelRefSelector({
   const handleSelect = (model: UnifiedModel) => {
     // Picked deliberately, so nothing may overwrite it.
     guessedRef.current = false
+    // Remembered here rather than when the form is submitted, which is what the
+    // chat does. Saving on submit only meant a dialog closed without submitting
+    // forgot the choice, and the next one opened on the fallback again.
+    //
+    // Only a deliberate pick is remembered: the preselect above must not write
+    // back its own guess, or the first model in the list would install itself as
+    // the preference simply by being shown.
+    if (knowledgeDefaultTeamId) {
+      saveGlobalModelPreference(knowledgeDefaultTeamId, {
+        modelName: model.name,
+        modelType: model.type,
+        forceOverride: true,
+        updatedAt: Date.now(),
+      })
+    }
     onChange({
       name: model.name,
       namespace: model.namespace || 'default',

@@ -13,9 +13,9 @@
  * often a different one was chosen and saved.
  */
 
-import { render, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
-import { saveGlobalModelPreference } from '@/utils/modelPreferences'
+import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
 import { modelApis } from '@/apis/models'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -118,5 +118,36 @@ describe('preselecting the remembered model', () => {
 
     await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalled())
     expect(onChange).not.toHaveBeenCalled()
+  })
+})
+
+describe('remembering a deliberate choice', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    jest.clearAllMocks()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: MODELS })
+  })
+
+  it('remembers as soon as it is picked, not when the form is submitted', async () => {
+    // A dialog closed without submitting used to forget the choice entirely, so
+    // the next one opened on the fallback however many times a model was chosen.
+    const onChange = jest.fn()
+    renderSelector({ value: null, onChange, teamId: TEAM_ID })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('model-select'))
+    fireEvent.click(await screen.findByText('ZZZ'))
+
+    expect(getGlobalModelPreference(TEAM_ID)?.modelName).toBe('zzz-remembered')
+  })
+
+  it('does not let its own guess install itself as the preference', async () => {
+    // Otherwise whichever model sorted first would become "what you chose" just
+    // by being displayed once, and no real choice could ever be seen again.
+    const onChange = jest.fn()
+    renderSelector({ value: null, onChange, teamId: TEAM_ID })
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(getGlobalModelPreference(TEAM_ID)).toBeNull()
   })
 })
