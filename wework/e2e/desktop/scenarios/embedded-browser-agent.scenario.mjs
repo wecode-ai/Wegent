@@ -233,6 +233,9 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     appShellHeight: await control.command('getInlineStyle', '[data-testid="app-shell"]', {
       value: 'height',
     }),
+    tauriViewportHeight: await control.command('getAttribute', '[data-testid="app-shell"]', {
+      value: 'data-tauri-viewport-height',
+    }),
     routeHost: JSON.parse(
       await control.command('getElementMetrics', '[data-testid="app-route-host"]')
     ),

@@ -25,7 +25,14 @@ vi.mock('@tauri-apps/api/window', () => ({
     toggleMaximize: vi.fn(),
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
+    innerSize: vi.fn().mockResolvedValue({
+      width: 1280,
+      height: 720,
+      toLogical: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+    }),
+    scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
+    onScaleChanged: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
 
