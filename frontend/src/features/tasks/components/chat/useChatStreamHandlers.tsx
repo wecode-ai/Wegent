@@ -126,6 +126,8 @@ export interface GenerateParams {
   ratio?: string
   /** Duration in seconds for video generation */
   duration?: number
+  /** Selected model-defined video generation mode */
+  generation_mode_id?: string
   /** Model name for video/image generation (for display in user message) */
   model?: string
   /** Image size for image generation (e.g., '2048x2048') */

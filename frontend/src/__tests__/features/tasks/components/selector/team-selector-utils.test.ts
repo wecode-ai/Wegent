@@ -5,9 +5,12 @@
 import type { Team } from '@/types/api'
 import {
   buildTeamTargetHref,
+  findDefaultTeamForMode,
   filterTeamsByMode,
   getRecentTeams,
+  getTeamGenerateMode,
   getTeamTargetPage,
+  teamSupportsBothGenerationModes,
 } from '@/features/tasks/components/selector/team-selector-utils'
 
 function makeTeam(id: number, bindMode?: Team['bind_mode']): Team {
@@ -42,11 +45,41 @@ describe('team selector utils', () => {
     expect(filterTeamsByMode(teams, 'all').map(team => team.id)).toEqual([1, 2, 3, 4, 5])
   })
 
+  it('finds the configured default team for a mode and prioritizes the public team', () => {
+    const personalDefault = {
+      ...makeTeam(1, ['chat']),
+      default_for_modes: ['chat'] as Team['default_for_modes'],
+    }
+    const publicDefault = {
+      ...makeTeam(2, ['chat']),
+      user_id: 0,
+      default_for_modes: ['chat'] as Team['default_for_modes'],
+    }
+
+    expect(findDefaultTeamForMode([personalDefault, publicDefault], 'chat')).toBe(publicDefault)
+    expect(findDefaultTeamForMode([personalDefault], 'video')).toBeNull()
+  })
+
   it('resolves target pages from bind mode and current filter', () => {
     expect(getTeamTargetPage(makeTeam(1, ['task']), 'all')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(2, ['chat', 'task']), 'task')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(3, ['chat', 'code']), 'code')).toBe('code')
     expect(getTeamTargetPage(makeTeam(4, ['chat', 'code']), 'all')).toBe('chat')
+    expect(getTeamTargetPage(makeTeam(5, ['video']), 'all')).toBe('video')
+    expect(getTeamTargetPage(makeTeam(6, ['image']), 'all')).toBe('image')
+  })
+
+  it('derives generation mode from the selected agent', () => {
+    expect(getTeamGenerateMode(makeTeam(1, ['video']), 'image')).toBe('video')
+    expect(getTeamGenerateMode(makeTeam(2, ['image']), 'video')).toBe('image')
+    expect(getTeamGenerateMode(makeTeam(3, ['video', 'image']), 'video')).toBe('video')
+    expect(getTeamGenerateMode(makeTeam(4, ['chat']), 'video')).toBeNull()
+  })
+
+  it('only keeps the generation mode selector for dual-mode agents', () => {
+    expect(teamSupportsBothGenerationModes(makeTeam(1, ['video', 'image']))).toBe(true)
+    expect(teamSupportsBothGenerationModes(makeTeam(2, ['video']))).toBe(false)
+    expect(teamSupportsBothGenerationModes(makeTeam(3, ['image']))).toBe(false)
   })
 
   it('keeps recent-use order and fills to five with latest updated teams', () => {
@@ -74,5 +107,7 @@ describe('team selector utils', () => {
 
     expect(buildTeamTargetHref('code', params)).toBe('/chat?teamId=42&agent=code')
     expect(buildTeamTargetHref('devices/chat', params)).toBe('/devices/chat?teamId=42')
+    expect(buildTeamTargetHref('video', params)).toBe('/chat?teamId=42&mode=video')
+    expect(buildTeamTargetHref('image', params)).toBe('/chat?teamId=42&mode=image')
   })
 })

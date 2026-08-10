@@ -872,6 +872,10 @@ class SubtaskStore(Protocol):
 
     def list_running(self, db: Session) -> list[Subtask]: ...
 
+    def list_running_since(
+        self, db: Session, *, created_after: datetime
+    ) -> list[Subtask]: ...
+
     def list_session_task_ids(
         self, db: Session, *, skip: int, limit: int
     ) -> list[int]: ...

@@ -232,6 +232,8 @@
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {
+        "more_modes": "More modes",
+        "collapse_more_modes": "Collapse more modes",
         "chat": {
           "title": "Chat",
           "description": "Use for Q&A, document discussion, and ongoing conversation."
@@ -243,6 +245,14 @@
         "task": {
           "title": "Device",
           "description": "Use for tasks that need a local device or execution environment."
+        },
+        "video": {
+          "title": "Video",
+          "description": "Use for video generation and video creation tasks."
+        },
+        "image": {
+          "title": "Image",
+          "description": "Use for image generation and image creation tasks."
         }
       },
       "executor": {

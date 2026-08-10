@@ -97,7 +97,7 @@ class TestImageGenerationConfig:
         with pytest.raises(ValidationError):
             ImageGenerationConfig(max_images=-1)
 
-    def test_max_images_valid_range(self):
+    def test_max_images_valid_range(self) -> None:
         """Test max_images accepts values in valid range."""
         from app.schemas.generation import ImageGenerationConfig
 
@@ -105,49 +105,49 @@ class TestImageGenerationConfig:
             config = ImageGenerationConfig(max_images=value)
             assert config.max_images == value
 
-    def test_max_reference_images_minimum_value(self):
-        """Test max_reference_images minimum value validation (ge=1)."""
+    def test_max_reference_images_minimum_value(self) -> None:
+        """Test max_reference_images minimum value validation (ge=0)."""
         from app.schemas.generation import ImageGenerationConfig
 
         # Valid minimum value
-        config = ImageGenerationConfig(max_reference_images=1)
-        assert config.max_reference_images == 1
+        config = ImageGenerationConfig(max_reference_images=0)
+        assert config.max_reference_images == 0
 
         # Invalid value below minimum
         with pytest.raises(ValidationError) as exc_info:
-            ImageGenerationConfig(max_reference_images=0)
+            ImageGenerationConfig(max_reference_images=-1)
 
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("max_reference_images",)
-        assert "greater than or equal to 1" in errors[0]["msg"]
+        assert "greater than or equal to 0" in errors[0]["msg"]
 
-    def test_max_reference_images_maximum_value(self):
-        """Test max_reference_images maximum value validation (le=10)."""
+    def test_max_reference_images_maximum_value(self) -> None:
+        """Test max_reference_images maximum value validation (le=20)."""
         from app.schemas.generation import ImageGenerationConfig
 
         # Valid maximum value
-        config = ImageGenerationConfig(max_reference_images=10)
-        assert config.max_reference_images == 10
+        config = ImageGenerationConfig(max_reference_images=20)
+        assert config.max_reference_images == 20
 
         # Invalid value above maximum
         with pytest.raises(ValidationError) as exc_info:
-            ImageGenerationConfig(max_reference_images=11)
+            ImageGenerationConfig(max_reference_images=21)
 
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("max_reference_images",)
-        assert "less than or equal to 10" in errors[0]["msg"]
+        assert "less than or equal to 20" in errors[0]["msg"]
 
-    def test_max_reference_images_valid_range(self):
+    def test_max_reference_images_valid_range(self) -> None:
         """Test max_reference_images accepts values in valid range."""
         from app.schemas.generation import ImageGenerationConfig
 
-        for value in [1, 3, 5, 10]:
+        for value in [0, 1, 5, 16, 20]:
             config = ImageGenerationConfig(max_reference_images=value)
             assert config.max_reference_images == value
 
-    def test_size_various_formats(self):
+    def test_size_various_formats(self) -> None:
         """Test size field accepts various formats."""
         from app.schemas.generation import ImageGenerationConfig
 
@@ -294,6 +294,51 @@ class TestVideoGenerationConfig:
         assert config.fps is None
         assert config.max_duration is None
 
+    def test_seedance_reference_capabilities(self):
+        """Seedance 2.0 material and generation-mode capabilities are preserved."""
+        from app.schemas.generation import VideoGenerationConfig
+
+        config = VideoGenerationConfig(
+            ratio="adaptive",
+            duration=15,
+            resolution="1080p",
+            capabilities={
+                "resolutions": [
+                    {
+                        "label": "2K",
+                        "value": "1440p",
+                        "tooltip": "2560 × 1440",
+                    }
+                ],
+                "image_formats": ["jpeg", "png"],
+                "video_formats": ["mp4", "mov"],
+                "audio_formats": ["wav", "mp3"],
+                "supports_image_input": True,
+                "supports_video_input": True,
+                "supports_audio_input": True,
+                "generate_audio": True,
+                "generation_modes": [
+                    {
+                        "id": "first_last_frame",
+                        "label": "首尾帧",
+                        "image_required": True,
+                        "first_frame_required": "true",
+                        "video_allowed": False,
+                        "audio_allowed": False,
+                        "max_images_first_last": 2,
+                    }
+                ],
+            },
+        )
+
+        assert config.capabilities is not None
+        assert config.capabilities.resolutions[0].value == "1440p"
+        assert config.capabilities.resolutions[0].tooltip == "2560 × 1440"
+        assert config.capabilities.generate_audio is True
+        mode = config.capabilities.generation_modes[0]
+        assert mode.first_frame_required is True
+        assert mode.max_images_first_last == 2
+
 
 class TestModelSpecWithImageConfig:
     """Tests for ModelSpec with imageConfig field."""
@@ -354,3 +399,38 @@ class TestModelSpecWithImageConfig:
         assert spec.imageConfig.size == "3K"
         assert spec.imageConfig.max_images == 10
         assert spec.imageConfig.watermark is True
+
+    def test_gpt_image_config_fields(self):
+        """Test GPT Image output options are retained."""
+        from app.schemas.generation import ImageGenerationConfig
+
+        config = ImageGenerationConfig(
+            size="1024x1024",
+            output_format="webp",
+            output_compression=80,
+            quality="high",
+            background="auto",
+            moderation="low",
+        )
+
+        assert config.output_format == "webp"
+        assert config.output_compression == 80
+        assert config.quality == "high"
+        assert config.background == "auto"
+        assert config.moderation == "low"
+
+    def test_image_reference_capabilities_are_retained(self):
+        """Test model-specific reference image formats are retained."""
+        from app.schemas.generation import ImageGenerationConfig
+
+        config = ImageGenerationConfig(
+            capabilities={
+                "supports_image_input": True,
+                "max_reference_images": 16,
+                "image_formats": ["png", "webp"],
+            }
+        )
+
+        assert config.capabilities is not None
+        assert config.capabilities.max_reference_images == 16
+        assert config.capabilities.image_formats == ["png", "webp"]

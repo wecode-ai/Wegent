@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import MixedContentView from '@/features/tasks/components/message/thinking/MixedContentView'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -85,6 +85,218 @@ const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
   })
 
 describe('MixedContentView', () => {
+  it('renders the image generation placeholder while the task is running', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+            image_size: '1512x648',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+      'image.generating 0%'
+    )
+    expect(screen.getByTestId('image-generation-placeholder').style.aspectRatio).toBe('1512 / 648')
+    expect(screen.getByTestId('image-generation-placeholder').style.height).toBe('220px')
+    expect(screen.queryByText('image.generating')).not.toBeInTheDocument()
+  })
+
+  it('uses a fixed 220 pixel width for portrait image placeholders', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'portrait-image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+            image_size: '648x1512',
+          },
+        ]}
+      />
+    )
+
+    const placeholder = screen.getByTestId('image-generation-placeholder')
+    expect(placeholder.style.aspectRatio).toBe('648 / 1512')
+    expect(placeholder.style.width).toBe('220px')
+  })
+
+  it('caps estimated image generation progress at 99 percent after two minutes', () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-08-07T00:00:00Z'))
+
+    try {
+      render(
+        <MixedContentView
+          thinking={null}
+          content=""
+          taskStatus="RUNNING"
+          theme="light"
+          blocks={[
+            {
+              id: 'image-placeholder',
+              type: 'image',
+              status: 'streaming',
+              is_placeholder: true,
+              image_urls: [],
+              image_count: 0,
+            },
+          ]}
+        />
+      )
+
+      act(() => {
+        jest.advanceTimersByTime(120_000)
+      })
+
+      expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+        'image.generating 99%'
+      )
+      const placeholder = screen.getByTestId('image-generation-placeholder')
+      expect(placeholder.style.aspectRatio).toBe('1 / 1')
+      expect(placeholder.querySelector('svg')).not.toBeInTheDocument()
+      expect(screen.getByText('99%')).toHaveClass('right-3', 'top-3', 'text-black')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('hides a stale image placeholder after the task fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('image-generation-placeholder')).not.toBeInTheDocument()
+  })
+
+  it('hides a stale video placeholder after the task fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-placeholder',
+            type: 'video',
+            status: 'streaming',
+            is_placeholder: true,
+            video_url: '',
+            video_progress: 5,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('video-player')).not.toBeInTheDocument()
+  })
+
+  it('does not render the provider progress message below a video placeholder', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-placeholder',
+            type: 'video',
+            status: 'streaming',
+            is_placeholder: true,
+            video_url: '',
+            video_progress: 5,
+            content: 'Starting video generation...',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('video-player')).toBeInTheDocument()
+    expect(screen.queryByText('Starting video generation...')).not.toBeInTheDocument()
+  })
+
+  it('hides an error video block after generation fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-error',
+            type: 'video',
+            status: 'error',
+            is_placeholder: false,
+            video_url: '',
+            video_progress: 0,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('video-player')).not.toBeInTheDocument()
+  })
+
+  it('hides redundant completion text when a generated image is already displayed', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content="Image generation completed"
+        theme="light"
+        blocks={[
+          {
+            id: 'generated-image',
+            type: 'image',
+            status: 'done',
+            image_urls: ['/generated.png'],
+            image_count: 1,
+            is_placeholder: false,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('image-gallery')).toBeInTheDocument()
+    expect(screen.queryByText('Image generation completed')).not.toBeInTheDocument()
+  })
+
   it('renders child agent output inside an expandable subagent block', () => {
     render(
       <MixedContentView

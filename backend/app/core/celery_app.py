@@ -44,6 +44,7 @@ celery_app = Celery(
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
         "app.tasks.plugin_marketplace_tasks",
+        "app.tasks.video_tasks",
     ],
 )
 

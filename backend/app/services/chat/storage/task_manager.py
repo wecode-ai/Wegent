@@ -468,12 +468,15 @@ def _update_task_execution_workspace(
 def build_user_subtask_result(
     *,
     video_config: Optional[Dict[str, Any]] = None,
+    image_config: Optional[Dict[str, Any]] = None,
     message_source: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build persisted metadata for a user subtask result."""
     result: Dict[str, Any] = {}
     if video_config:
         result["video_config"] = deepcopy(video_config)
+    if image_config:
+        result["image_config"] = deepcopy(image_config)
     if message_source is not None:
         result["source"] = deepcopy(message_source)
     return result or None
@@ -490,6 +493,7 @@ def create_user_subtask(
     next_message_id: int,
     parent_id: int,
     video_config: Optional[Dict[str, Any]] = None,
+    image_config: Optional[Dict[str, Any]] = None,
     message_source: Optional[Dict[str, Any]] = None,
 ) -> Subtask:
     """
@@ -506,6 +510,7 @@ def create_user_subtask(
         next_message_id: Message ID for this subtask
         parent_id: Parent message ID
         video_config: Optional video generation config (model, resolution, ratio, duration)
+        image_config: Optional image generation config (model, size)
         message_source: Optional message source metadata
 
     Returns:
@@ -513,6 +518,7 @@ def create_user_subtask(
     """
     result = build_user_subtask_result(
         video_config=video_config,
+        image_config=image_config,
         message_source=message_source,
     )
 
@@ -741,18 +747,27 @@ async def create_task_and_subtasks(
     else:
         bot_ids = get_bot_ids_from_team(db, team)
 
-    # Build video_config for video generation tasks
-    # This stores the user-selected generation params in the user subtask for display
+    # Persist user-selected generation parameters for display and retry.
     video_config = None
+    image_config = None
     if params.task_type == "video" and params.generate_params:
         video_config = {
             "model": params.model_id,
             "resolution": params.generate_params.get("resolution"),
             "ratio": params.generate_params.get("ratio"),
             "duration": params.generate_params.get("duration"),
+            "generation_mode_id": params.generate_params.get("generation_mode_id"),
         }
         logger.info(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
+        )
+    elif params.task_type == "image" and params.generate_params:
+        image_config = {
+            "model": params.model_id,
+            "size": params.generate_params.get("size"),
+        }
+        logger.info(
+            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
         )
 
     prepared_task = None
@@ -774,6 +789,7 @@ async def create_task_and_subtasks(
         should_trigger_ai=should_trigger_ai,
         bot_ids_override=bot_ids,
         video_config=video_config,
+        image_config=image_config,
         prepared_task=prepared_task,
     )
     task = session.task
