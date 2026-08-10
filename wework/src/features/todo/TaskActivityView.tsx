@@ -29,6 +29,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
+import { ExecutionProjectPicker } from './ExecutionProjectPicker'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -787,6 +788,23 @@ export function TaskActivityView({
               {t('workbench.task_activity_cancelled')}
             </span>
           ) : null}
+          {task.execution_state === 'failed' ? (
+            <span
+              data-testid={`cloud-task-activity-execution-failed-${task.id}`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-700"
+            >
+              {t('workbench.task_activity_failed')}
+            </span>
+          ) : null}
+          {task.execution_error ? (
+            <span
+              data-testid={`cloud-task-activity-execution-error-${task.id}`}
+              className="inline-flex max-w-72 items-center gap-1.5 truncate rounded-full bg-red-500/5 px-2.5 py-1 text-xs text-red-700"
+              title={task.execution_error}
+            >
+              {task.execution_error}
+            </span>
+          ) : null}
           {task.execution_note ? (
             <span
               data-testid={`cloud-task-activity-execution-note-${task.id}`}
@@ -1038,37 +1056,15 @@ export function TaskActivityView({
           )}
         >
           {localProjects.length > 0 ? (
-            <label className="mb-2 flex h-7 max-w-[280px] items-center rounded-lg border border-border bg-muted/50 pl-2 pr-1">
-              <span className="sr-only">{t('workbench.task_activity_execution_project')}</span>
-              <select
-                data-testid="cloud-task-activity-execution-project"
-                value={selectedCommentProjectId}
-                onChange={event =>
-                  setSelectedCommentProjectId(
-                    event.target.value === '' ? '' : Number(event.target.value)
-                  )
-                }
-                className="h-full w-full appearance-none truncate bg-transparent text-xs text-text-primary outline-none"
-              >
-                <option value="">{t('workbench.task_activity_execution_project_none')}</option>
-                {taskPageProject ? (
-                  <option value={taskPageProject.id}>
-                    {t('workbench.task_activity_execution_project_task', {
-                      name: taskPageProject.name,
-                    })}
-                  </option>
-                ) : null}
-                {localProjects
-                  .filter(project => project.id !== taskPageProject?.id)
-                  .map(project => (
-                    <option key={project.id} value={project.id}>
-                      {t('workbench.task_activity_execution_project_option', {
-                        name: project.name,
-                      })}
-                    </option>
-                  ))}
-              </select>
-            </label>
+            <ExecutionProjectPicker
+              projects={localProjects}
+              devices={state.devices}
+              runtimeWork={state.runtimeWork}
+              selectedProjectId={selectedCommentProjectId}
+              defaultProject={robotBoundProject}
+              taskPageProject={taskPageProject}
+              onSelectProject={setSelectedCommentProjectId}
+            />
           ) : null}
           <div className="task-detail-comment-chat-input">
             <ChatInput
