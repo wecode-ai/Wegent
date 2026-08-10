@@ -675,6 +675,54 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('reconciles legacy assistant text with the resumed live text block', () => {
+    const content = 'Continue with the existing beta conversation.'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'live-message-1',
+            type: 'block',
+            block: {
+              id: 'live-message-1',
+              subtaskId: 'turn-1',
+              type: 'text',
+              content,
+              status: 'done',
+              createdAt: 2,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'legacy-assistant-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toEqual(snapshot[0].items)
+    expect(projectRuntimeConversationTurns(merged)).toEqual([
+      expect.objectContaining({
+        content,
+        blocks: undefined,
+      }),
+    ])
+  })
+
   test('keeps realtime tail items temporarily missing from a full Codex snapshot', () => {
     const local: RuntimeConversationTurn[] = [
       {

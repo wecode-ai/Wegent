@@ -213,7 +213,7 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   // Refs for tracking state changes
   // -------------------------------------------------------------------------
-  const prevTeamIdRef = useRef<number | null>(null)
+  const prevTeamIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdRef = useRef<number | null | undefined>(undefined)
   const hasInitializedRef = useRef(false)
   const isRestoringRef = useRef(false)
@@ -227,13 +227,15 @@ export function useModelSelection({
 
   /** Check if all bots have predefined models (show "Default" option) */
   const showDefaultOption = useMemo(() => {
+    if (modelCategoryType !== 'llm') return false
     return allBotsHavePredefinedModel(selectedTeam)
-  }, [selectedTeam])
+  }, [modelCategoryType, selectedTeam])
 
   /** Get compatible provider based on team agent_type */
   const compatibleProvider = useMemo((): CompatibleProvider[] | null => {
+    if (modelCategoryType !== 'llm') return null
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
-  }, [selectedTeam?.agent_type])
+  }, [modelCategoryType, selectedTeam?.agent_type])
 
   /** Get allowed_models whitelist from the first bot's agent_config */
   const allowedModels = useMemo(() => {
@@ -377,7 +379,18 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null
-    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId
+
+    // Skip if no models loaded yet
+    if (models.length === 0) {
+      return
+    }
+
+    // Wait for the agent before choosing its generation model.
+    if (!selectedTeam && !hasInitializedRef.current) {
+      return
+    }
+
+    const teamChanged = hasInitializedRef.current && prevTeamIdRef.current !== currentTeamId
     const taskChanged =
       hasInitializedRef.current &&
       prevTaskIdRef.current !== taskId &&
@@ -385,11 +398,6 @@ export function useModelSelection({
 
     prevTeamIdRef.current = currentTeamId
     prevTaskIdRef.current = taskId
-
-    // Skip if no models loaded yet
-    if (models.length === 0) {
-      return
-    }
 
     // Case 1: Initial load or team/task changed - restore model
     if (!hasInitializedRef.current || teamChanged || taskChanged) {
@@ -411,7 +419,7 @@ export function useModelSelection({
       // NOTE: Must search in selectableModels to ensure model is compatible with current team's agent_type
       // while still allowing persisted advanced models even when they are hidden from the dropdown.
       if (!restoredModel && teamId && !taskId) {
-        const preference = getGlobalModelPreference(teamId)
+        const preference = getGlobalModelPreference(teamId, modelCategoryType)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
           const foundModel = selectableModels.find(m => {
             if (preference.modelType) {
@@ -439,6 +447,11 @@ export function useModelSelection({
       if (!restoredModel && showDefaultOption) {
         restoredModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
         restoredForceOverride = false
+      }
+
+      if (!restoredModel && modelCategoryType !== 'llm' && selectableModels.length > 0) {
+        restoredModel = selectableModels[0]
+        restoredForceOverride = true
       }
 
       if (restoredModel) {
@@ -513,11 +526,12 @@ export function useModelSelection({
       modelType: selectedModel.type,
       forceOverride,
       updatedAt: Date.now(),
+      modelCategoryType,
     }
 
     // Always save to global when model changes
-    saveGlobalModelPreference(teamId, preference)
-  }, [selectedModel, forceOverride, teamId])
+    saveGlobalModelPreference(teamId, preference, modelCategoryType)
+  }, [selectedModel, forceOverride, teamId, modelCategoryType])
 
   // -------------------------------------------------------------------------
   // Actions

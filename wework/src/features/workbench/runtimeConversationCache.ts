@@ -374,6 +374,20 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
 }
 
+export function settleRuntimeConversationAcceptedMessage(address: RuntimeTaskAddress): void {
+  const key = runtimeConversationKey(address)
+  const queuedMessages = queuedMessagesByConversation.get(key)
+  if (!queuedMessages) return
+
+  const nextQueuedMessages = queuedMessages.filter(
+    message => message.status !== 'sending' || message.deliveryMode !== 'message'
+  )
+  if (nextQueuedMessages.length === queuedMessages.length) return
+
+  cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
+  notifyRuntimeConversation(key)
+}
+
 export function takeAppliedRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   payload: RuntimeGuidanceAppliedPayload

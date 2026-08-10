@@ -20,6 +20,7 @@ import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { AutomationDetailWorkspace } from '@/features/automations/AutomationDetailWorkspace'
 import {
   automationDraftFromAutomation,
+  automationWorkspaceTarget,
   buildAutomationProjectOptions,
   emptyAutomationDraft,
   scheduleFromAutomationDraft,
@@ -281,7 +282,7 @@ export function AutomationsPage() {
     setDirty(true)
   }
 
-  const buildMutation = async (): Promise<AutomationMutation> => {
+  const buildMutation = (): AutomationMutation => {
     if (!draft) throw new Error('Automation draft is missing')
     if (!draft.name.trim() || !draft.prompt.trim()) {
       throw new Error(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
@@ -292,15 +293,13 @@ export function AutomationsPage() {
     if (!draft.deviceId) {
       throw new Error(t('workbench.automation_target_required', '请选择设备'))
     }
-    const workspacePath =
-      draft.workspacePath.trim() || (await getDeviceHomeDirectory(draft.deviceId))
     const team = state.defaultTeam
     if (!team) {
       throw new Error(t('workbench.automation_team_unavailable', '无法获取运行所需的默认智能体'))
     }
     const taskRequest: RuntimeTaskCreateRequest = {
       deviceId: draft.deviceId,
-      workspacePath,
+      ...automationWorkspaceTarget(draft.workspacePath),
       teamId: team.id,
       runtime: 'codex',
       message: draft.prompt.trim(),
@@ -341,7 +340,7 @@ export function AutomationsPage() {
     if (!automationApi) return
     setSaving(true)
     try {
-      const mutation = await buildMutation()
+      const mutation = buildMutation()
       const response = editing
         ? await automationApi.updateAutomation(editing.id, mutation)
         : await automationApi.createAutomation(mutation)

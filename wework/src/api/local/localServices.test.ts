@@ -804,6 +804,58 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  test('persists projectless automations as standalone chat workspaces', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.automations.create') {
+          return { automation: data.automation }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.automationApi?.createAutomation({
+      source: 'local',
+      name: 'Projectless automation',
+      prompt: 'Say hello',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'local-device',
+        standaloneChatWorkspace: true,
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Say hello',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      {
+        automation: expect.objectContaining({
+          taskPayload: expect.objectContaining({
+            standaloneChatWorkspace: true,
+            executionRequest: expect.objectContaining({
+              standalone_chat_workspace: true,
+            }),
+          }),
+        }),
+      },
+      'local-device'
+    )
+    const automationPayload = request.mock.calls[0]?.[1]?.automation.taskPayload
+    expect(automationPayload).not.toHaveProperty('workspacePath')
+    expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
+  })
+
   test('creates a git worktree from the current branch before creating a local runtime task', async () => {
     const request = vi
       .fn()

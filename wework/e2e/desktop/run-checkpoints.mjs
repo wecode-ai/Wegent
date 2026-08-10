@@ -11,6 +11,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const CHECKPOINT_SCENARIO_MODULES = {
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
+  'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set(['local-harness'])

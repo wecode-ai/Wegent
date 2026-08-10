@@ -102,7 +102,7 @@ interface TeamEditDialogProps {
   ) => void
 }
 
-const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task'])
+const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task', 'video', 'image'])
 
 function getQuickPhrasePayload(phrases: string[]): string[] {
   return phrases.map(phrase => phrase.trim()).filter(Boolean)
@@ -704,8 +704,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const fetchModels = async () => {
       setSimpleLoadingModels(true)
       try {
-        const shellType = selectedSimpleShell.shellType || selectedSimpleShell.name
-        const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName, 'llm')
+        const response = await modelApis.getUnifiedModels(undefined, false, scope, groupName)
         if (!cancelled) {
           setSimpleModels(response.data)
         }

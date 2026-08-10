@@ -306,6 +306,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onCreateBranch={projectWork.onCreateBranch}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+            showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
             trailingContext={projectWorkBarTrailingContext}

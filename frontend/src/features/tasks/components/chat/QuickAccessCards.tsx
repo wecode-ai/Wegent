@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useRouter } from 'next/navigation'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { ArrowLeft, List, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
@@ -17,13 +18,15 @@ import { useToast } from '@/hooks/use-toast'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
 import TeamSelectorList from '../selector/TeamSelectorList'
 import {
+  buildTeamTargetHref,
   filterTeamsByMode,
   getTeamDisplayName,
+  getTeamTargetPage,
   type SelectableTeam,
   type TeamModeFilter,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
-import type { QuickLaunchIntent } from './quick-launch/launch-intent'
+import { getCurrentTargetPageByMode, type QuickLaunchIntent } from './quick-launch/launch-intent'
 import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
 import type { QuickPresetSelection } from './quick-launch/types'
 
@@ -64,6 +67,7 @@ export function QuickAccessCards({
   onLaunchIntentConsumed,
 }: QuickAccessCardsProps) {
   const { t } = useTranslation('common')
+  const router = useRouter()
   const { toast } = useToast()
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [quickAccessResponse, setQuickAccessResponse] = useState<QuickAccessResponse | null>(null)
@@ -113,6 +117,7 @@ export function QuickAccessCards({
   }, [teams])
 
   const filteredTeams = filterTeamsByMode(teams, currentMode)
+  const allModeTeams = filterTeamsByMode(teams, 'all')
   const systemRecommendedQuickAccessIds = quickAccessResponse?.system_team_ids ?? []
   const systemRecommendedQuickAccessIdSet = new Set(systemRecommendedQuickAccessIds)
 
@@ -142,7 +147,7 @@ export function QuickAccessCards({
     return true
   })
 
-  const allSelectableTeams: DisplayTeam[] = filteredTeams.map(team => {
+  const allSelectableTeams: DisplayTeam[] = allModeTeams.map(team => {
     const quickAccessTeam = quickAccessTeams.find(qa => qa.id === team.id)
     return {
       ...team,
@@ -190,6 +195,19 @@ export function QuickAccessCards({
   }
 
   const handleSelectTeamFromMore = (team: Team) => {
+    if (showAllTeamsInMore) {
+      const targetPage = getTeamTargetPage(team, 'all')
+      const currentPage = getCurrentTargetPageByMode(currentMode)
+      if (targetPage !== currentPage) {
+        router.push(
+          buildTeamTargetHref(targetPage, new URLSearchParams({ teamId: String(team.id) }))
+        )
+        setMorePopoverOpen(false)
+        setSearchQuery('')
+        setShowAllTeamsInMore(false)
+        return
+      }
+    }
     onTeamSelect(team)
     setMorePopoverOpen(false)
     setSearchQuery('')

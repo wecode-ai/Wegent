@@ -70,8 +70,14 @@ describe('simple team edit utils', () => {
     expect(getDefaultSimpleBindMode()).toEqual(['chat'])
   })
 
-  it('only exposes chat, code, and task bind modes', () => {
-    expect(getSimpleBindModeOptions().map(option => option.value)).toEqual(['chat', 'code', 'task'])
+  it('exposes all supported bind modes', () => {
+    expect(getSimpleBindModeOptions().map(option => option.value)).toEqual([
+      'chat',
+      'code',
+      'task',
+      'video',
+      'image',
+    ])
   })
 
   it('exposes simple, complex, and custom executor presets', () => {

@@ -291,6 +291,7 @@ fn handle_status_request(
             y: None,
             timeout_ms: None,
             label: None,
+            browser_session_id: None,
             options: None,
             inspect_id: None,
             index: None,

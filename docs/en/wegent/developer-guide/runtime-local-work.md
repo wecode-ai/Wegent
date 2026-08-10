@@ -132,6 +132,8 @@ The frontend must insert the local guidance user message at the current streamin
 
 Persisted messages for a native Codex task have one source: `thread/turns/list` plus `thread/items/list`. The executor must not merge `runtimeHandle.messages` or another LocalTask cache into the Provider transcript; missing persisted messages must be fixed in the Codex event-recording or paginated-read path. The frontend may maintain an unpersisted in-memory live projection. When guidance is applied in the background, it must settle the guidance queue and add the confirmed user message to the source conversation's live projection so reopening before the Provider covers the running turn does not lose the message. Once the Provider covers the same turn, the paginated transcript takes over as a whole; the live projection must neither persist nor merge into Provider transcript pages.
 
+The live stream and Provider snapshot can represent the same assistant text differently within one turn. For example, realtime events may produce `block:text` while a restored legacy conversation returns `assistant_text`. When merging a turn, the frontend must treat items with identical content and these complementary types as one message, replacing the live representation with the snapshot representation. Merging only by item id renders the same streamed text twice after following up in an older conversation. Same-type items with identical text remain distinct by id so genuinely repeated model output is preserved. `runtimeConversationTurns` unit tests and the real-Tauri `streaming-text` E2E cover this boundary.
+
 Users can also manually compact a local Codex LocalTask from the composer's context-usage control:
 
 ```text

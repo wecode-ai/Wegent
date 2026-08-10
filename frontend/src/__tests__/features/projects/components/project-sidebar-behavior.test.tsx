@@ -231,6 +231,31 @@ describe('project sidebar behavior', () => {
     expect(screen.queryByText('workspace-project')).not.toBeInTheDocument()
   })
 
+  test('ordinary task menu starts bulk deletion from the current task', () => {
+    const onSelectMultiple = jest.fn()
+
+    render(
+      <TaskMenu
+        taskId={303}
+        handleCopyTaskId={jest.fn()}
+        handleDeleteTask={jest.fn()}
+        onSelectMultiple={onSelectMultiple}
+        isGroupChat={false}
+      />
+    )
+
+    const deleteTaskAction = screen.getByText('common:tasks.delete_task')
+    const bulkDeleteAction = screen.getByText('history:actions.bulk_delete')
+
+    expect(
+      deleteTaskAction.compareDocumentPosition(bulkDeleteAction) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    fireEvent.click(bulkDeleteAction)
+
+    expect(onSelectMultiple).toHaveBeenCalledWith(303)
+  })
+
   test('closes the delete dialog after deleting a project', async () => {
     const handleOpenChange = jest.fn()
 

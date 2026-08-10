@@ -46,6 +46,9 @@ class VideoProvider(ABC):
         prompt: str,
         reference_image: Optional[str] = None,
         image_mode: Optional[Literal["first_frame", "last_frame", "reference"]] = None,
+        reference_images: Optional[list] = None,
+        reference_videos: Optional[list] = None,
+        reference_audios: Optional[list] = None,
     ) -> str:
         """
         Create video generation job.

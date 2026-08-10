@@ -6,7 +6,8 @@ import type { Team, TaskType } from '@/types/api'
 import { buildChatCodeHref } from '@/config/coding-route'
 
 export type TeamModeFilter = 'all' | TaskType
-export type TeamTargetPage = 'chat' | 'code' | 'knowledge' | 'devices/chat' | 'generate'
+export type TeamTargetPage = 'chat' | 'code' | 'knowledge' | 'devices/chat' | 'video' | 'image'
+export type GenerateTaskMode = Extract<TaskType, 'video' | 'image'>
 
 export type SelectableTeam = Team & {
   display_name?: string | null
@@ -29,6 +30,28 @@ export function filterTeamsByMode(teams: Team[], currentMode: TeamModeFilter): T
   return teamsWithValidBindMode.filter(
     team => !team.bind_mode || team.bind_mode.includes(currentMode)
   )
+}
+
+export function findDefaultTeamForMode(teams: Team[], mode: TaskType): Team | null {
+  const matchedTeams = teams.filter(team => team.default_for_modes?.includes(mode))
+  if (matchedTeams.length === 0) return null
+  return matchedTeams.find(team => team.user_id === 0) ?? matchedTeams[0]
+}
+
+export function getTeamGenerateMode(
+  team: Team | null,
+  currentMode: GenerateTaskMode
+): GenerateTaskMode | null {
+  const bindMode = team?.bind_mode
+  if (!bindMode) return currentMode
+  if (bindMode.includes(currentMode)) return currentMode
+  if (bindMode.includes('video')) return 'video'
+  if (bindMode.includes('image')) return 'image'
+  return null
+}
+
+export function teamSupportsBothGenerationModes(team: Team | null): boolean {
+  return Boolean(team?.bind_mode?.includes('video') && team.bind_mode.includes('image'))
 }
 
 export function getRecentTeams(teams: Team[], recentTeamIds: number[], limit = 5): Team[] {
@@ -74,7 +97,7 @@ export function getTeamTargetPage(team: Team, currentMode: TeamModeFilter): Team
   }
 
   if (targetMode === 'video' || targetMode === 'image') {
-    return 'generate'
+    return targetMode
   }
 
   if (targetMode === 'knowledge') {
@@ -89,6 +112,13 @@ export function buildTeamTargetHref(targetPage: TeamTargetPage, params?: URLSear
     return buildChatCodeHref(params)
   }
 
-  const query = params?.toString()
+  const targetParams = new URLSearchParams(params?.toString())
+  if (targetPage === 'video' || targetPage === 'image') {
+    targetParams.set('mode', targetPage)
+    const query = targetParams.toString()
+    return query ? `/chat?${query}` : '/chat'
+  }
+
+  const query = targetParams.toString()
   return query ? `/${targetPage}?${query}` : `/${targetPage}`
 }

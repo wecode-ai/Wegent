@@ -759,7 +759,7 @@ export function createHybridWorkbenchServices(
       return runtimeApi(data.deviceId).restoreWorktree(data)
     },
     bindRuntimeTaskImSessions(data) {
-      return routeByAddress(data.address).bindRuntimeTaskImSessions(data)
+      return cloudServices.runtimeWorkApi!.bindRuntimeTaskImSessions(data)
     },
     getImNotificationSettings() {
       return cloudServices.runtimeWorkApi!.getImNotificationSettings()
@@ -768,10 +768,10 @@ export function createHybridWorkbenchServices(
       return cloudServices.runtimeWorkApi!.updateGlobalImNotification(data)
     },
     subscribeRuntimeTaskNotifications(data: RuntimeTaskIMNotificationSubscriptionRequest) {
-      return routeByAddress(data.address).subscribeRuntimeTaskNotifications(data)
+      return cloudServices.runtimeWorkApi!.subscribeRuntimeTaskNotifications(data)
     },
     unsubscribeRuntimeTaskNotifications(address: RuntimeTaskAddress) {
-      return routeByAddress(address).unsubscribeRuntimeTaskNotifications(address)
+      return cloudServices.runtimeWorkApi!.unsubscribeRuntimeTaskNotifications(address)
     },
     archiveRuntimeTask(address: RuntimeTaskAddress) {
       const request = routeByAddress(address).archiveRuntimeTask(address)

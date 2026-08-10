@@ -1346,6 +1346,21 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
+    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
@@ -1702,14 +1717,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
-  test('shows Automations only while experimental features are enabled', () => {
+  test('shows Automations when experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
     expect(screen.getByTestId('automation-button')).toBeInTheDocument()

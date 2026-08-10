@@ -18,6 +18,12 @@ import {
 } from '@/apis/attachments'
 import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
 import { toast } from '@/hooks/use-toast'
+import {
+  isAudioExtension,
+  isImageExtension,
+  isVideoExtension,
+  getFileExtension,
+} from '@/apis/attachments'
 
 interface UseMultiAttachmentReturn {
   /** Current attachment state */
@@ -28,6 +34,8 @@ interface UseMultiAttachmentReturn {
   addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   /** Remove specific attachment */
   handleRemove: (attachmentId: number) => Promise<void>
+  /** Swap two attachments without re-uploading them */
+  swapAttachments: (firstAttachmentId: number, secondAttachmentId: number) => void
   /** Reset state */
   reset: () => void
   /** Check if ready to send (no upload in progress, all attachments ready) */
@@ -38,11 +46,19 @@ interface UseMultiAttachmentReturn {
   truncatedAttachments: Map<number, TruncationInfo>
 }
 
+export type AttachmentTypeLimits = Partial<
+  Record<'image' | 'imageWithVideo' | 'video' | 'audio', number>
+>
+
 export function useMultiAttachment(options?: {
   maxAttachments?: number
+  maxByType?: AttachmentTypeLimits
+  validateFile?: (file: File) => Promise<string | null>
 }): UseMultiAttachmentReturn {
   const { t } = useTranslation()
   const maxAttachments = options?.maxAttachments
+  const maxByType = options?.maxByType
+  const validateFile = options?.validateFile
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -76,32 +92,89 @@ export function useMultiAttachment(options?: {
         }
       }
 
+      const getMediaType = (filename: string) => {
+        const extension = getFileExtension(filename)
+        if (isImageExtension(extension)) return 'image' as const
+        if (isVideoExtension(extension)) return 'video' as const
+        if (isAudioExtension(extension)) return 'audio' as const
+        return null
+      }
+      const counts = { image: 0, video: 0, audio: 0 }
+      for (const attachment of state.attachments) {
+        const type = getMediaType(attachment.filename)
+        if (type) counts[type] += 1
+      }
+      for (const uploading of state.uploadingFiles.values()) {
+        const type = getMediaType(uploading.file.name)
+        if (type) counts[type] += 1
+      }
+
       for (const file of fileList) {
         // Use only filename as fileId to avoid duplicate errors for the same file
         const fileId = file.name
+        const mediaType = getMediaType(file.name)
+
+        if (
+          mediaType === 'video' &&
+          maxByType?.imageWithVideo !== undefined &&
+          counts.image > maxByType.imageWithVideo
+        ) {
+          toast({
+            title: t('chat:generate.max_material_type', {
+              count: maxByType.imageWithVideo,
+            }),
+            variant: 'destructive',
+          })
+          continue
+        }
+
+        const maximum =
+          mediaType === 'image' && counts.video > 0
+            ? (maxByType?.imageWithVideo ?? maxByType?.image)
+            : mediaType
+              ? maxByType?.[mediaType]
+              : undefined
+        if (mediaType && maximum !== undefined) {
+          if (counts[mediaType] >= maximum) {
+            toast({
+              title: t('chat:generate.max_material_type', { count: maximum }),
+              variant: 'destructive',
+            })
+            continue
+          }
+        }
+
+        if (validateFile) {
+          const validationError = await validateFile(file)
+          if (validationError) {
+            toast({
+              title: validationError,
+              variant: 'destructive',
+            })
+            continue
+          }
+        }
 
         // Validate file type
         if (!isSupportedExtension(file.name)) {
-          setState(prev => {
-            const newErrors = new Map(prev.errors)
-            newErrors.set(
-              fileId,
-              `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`
-            )
-            return { ...prev, errors: newErrors }
+          toast({
+            title: t('common:attachment.errors.unsupported_type'),
+            description: t('common:attachment.errors.unsupported_type_hint', {
+              types: t('common:attachment.supported_types'),
+            }),
+            variant: 'destructive',
           })
           continue
         }
 
         // Validate file size
         if (!isValidFileSize(file.size)) {
-          setState(prev => {
-            const newErrors = new Map(prev.errors)
-            newErrors.set(
-              fileId,
-              `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
-            )
-            return { ...prev, errors: newErrors }
+          toast({
+            title: t('common:attachment.errors.file_too_large'),
+            description: t('common:attachment.errors.file_too_large_hint', {
+              size: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
+            }),
+            variant: 'destructive',
           })
           continue
         }
@@ -201,6 +274,7 @@ export function useMultiAttachment(options?: {
               uploadingFiles: newUploadingFiles,
             }
           })
+          if (mediaType) counts[mediaType] += 1
         } catch (err) {
           setState(prev => {
             const newUploadingFiles = new Map(prev.uploadingFiles)
@@ -219,7 +293,7 @@ export function useMultiAttachment(options?: {
         }
       }
     },
-    [state, t, maxAttachments]
+    [state, t, maxAttachments, maxByType, validateFile]
   )
 
   const addExistingAttachment = useCallback(
@@ -273,6 +347,25 @@ export function useMultiAttachment(options?: {
     [state.attachments]
   )
 
+  const swapAttachments = useCallback((firstAttachmentId: number, secondAttachmentId: number) => {
+    setState(prev => {
+      const firstIndex = prev.attachments.findIndex(
+        attachment => attachment.id === firstAttachmentId
+      )
+      const secondIndex = prev.attachments.findIndex(
+        attachment => attachment.id === secondAttachmentId
+      )
+      if (firstIndex < 0 || secondIndex < 0) return prev
+
+      const attachments = [...prev.attachments]
+      ;[attachments[firstIndex], attachments[secondIndex]] = [
+        attachments[secondIndex],
+        attachments[firstIndex],
+      ]
+      return { ...prev, attachments }
+    })
+  }, [])
+
   const reset = useCallback(() => {
     setState({
       attachments: [],
@@ -290,6 +383,7 @@ export function useMultiAttachment(options?: {
     handleFileSelect,
     addExistingAttachment,
     handleRemove,
+    swapAttachments,
     reset,
     isReadyToSend,
     isUploading,

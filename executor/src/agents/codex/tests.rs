@@ -1371,7 +1371,7 @@ fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
 }
 
 #[test]
-fn goal_created_during_turn_keeps_notification_reader_alive() {
+fn goal_created_during_turn_allows_the_current_run_to_settle() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1393,7 +1393,8 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
         }))
         .expect("turn completion should produce an outcome");
 
-    assert!(should_wait_for_goal_continuation(&outcome, &state));
+    assert!(!should_wait_for_goal_continuation(&outcome, &state, false));
+    assert!(should_wait_for_goal_continuation(&outcome, &state, true));
 }
 
 #[test]
