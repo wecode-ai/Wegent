@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from shared.models.db.kind import Kind
 from shared.models.db.user import User
+from wecode.service.cloud_device_ip_index import get_indexed_nevis_ip
 from wecode.service.cloud_device_provider import cloud_device_provider
 from wecode.service.dingtalk_webhook import DingTalkWebhookSender
 from wecode.service.ping_utils import ping_device_ip
@@ -246,7 +247,7 @@ async def check_cloud_devices_status(
             pass
 
         # Nevis is authoritative; the periodic index sync runs before monitoring.
-        client_ip = cloud_config.get("nevisIp")
+        client_ip = get_indexed_nevis_ip(cloud_config)
         client_ip = client_ip or "-"
 
         device_info = {

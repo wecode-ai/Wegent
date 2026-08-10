@@ -101,10 +101,16 @@ async def _run_monitor_check():
 
         try:
             with get_db_session() as db:
-                ip_sync = await cloud_device_ip_index_service.sync_all(db)
+                ip_sync = await cloud_device_ip_index_service.sync_missing(
+                    db,
+                    redis_client,
+                )
 
             if ip_sync.skipped:
-                logger.debug("[cloud-device-ip-index] Nevis is not configured")
+                logger.debug(
+                    "[cloud-device-ip-index] Sync skipped: reason=%s",
+                    ip_sync.skip_reason,
+                )
             else:
                 logger.info(
                     "[cloud-device-ip-index] Sync completed: "

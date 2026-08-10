@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +15,7 @@ from app.models.user import User
 from wecode.service.cloud_device_ip_index import (
     NEVIS_IP_FIELD,
     NEVIS_IP_OBSERVED_AT_FIELD,
+    NEVIS_IP_SANDBOX_ID_FIELD,
 )
 from wecode.service.ip_user_lookup import ip_user_lookup_service
 
@@ -30,6 +30,7 @@ def _create_device(
     nevis_ip: Optional[str] = None,
     runtime_transfer_host: Optional[str] = None,
     observed_at: Optional[str] = None,
+    indexed_sandbox_id: Optional[str] = None,
 ) -> None:
     spec = {
         "deviceId": device_id,
@@ -39,11 +40,12 @@ def _create_device(
     if runtime_transfer_host is not None:
         spec["runtimeTransferHost"] = runtime_transfer_host
     if device_type == "cloud" and nevis_ip is not None:
+        sandbox_id = f"sandbox-{device_id}"
         spec["cloudConfig"] = {
-            "sandboxId": f"sandbox-{device_id}",
+            "sandboxId": sandbox_id,
             NEVIS_IP_FIELD: nevis_ip,
-            NEVIS_IP_OBSERVED_AT_FIELD: observed_at
-            or datetime.now(timezone.utc).isoformat(),
+            NEVIS_IP_OBSERVED_AT_FIELD: observed_at or "2020-01-01T00:00:00+00:00",
+            NEVIS_IP_SANDBOX_ID_FIELD: indexed_sandbox_id or sandbox_id,
         }
     db.add(
         Kind(
@@ -213,7 +215,7 @@ def test_internal_admin_ip_lookup_does_not_trust_runtime_transfer_host(
     assert payload["lookup_errors"] == []
 
 
-def test_internal_admin_ip_lookup_reports_stale_nevis_index(
+def test_internal_admin_ip_lookup_does_not_expire_nevis_index(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -226,7 +228,7 @@ def test_internal_admin_ip_lookup_reports_stale_nevis_index(
         device_type="cloud",
         client_ip="",
         nevis_ip="10.201.4.121",
-        observed_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        observed_at="2020-01-01T00:00:00+00:00",
     )
     pod_lookup = AsyncMock(return_value=([], None))
 
@@ -240,10 +242,41 @@ def test_internal_admin_ip_lookup_reports_stale_nevis_index(
     assert response.status_code == 200
     payload = response.json()
     assert payload["user_names"] == [test_user.user_name]
+    assert payload["lookup_errors"] == []
+
+
+def test_internal_admin_ip_lookup_rejects_mismatched_sandbox_index(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_admin_token: str,
+):
+    _create_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="cloud-recreated",
+        device_type="cloud",
+        client_ip="",
+        nevis_ip="10.201.4.122",
+        indexed_sandbox_id="previous-sandbox",
+    )
+    pod_lookup = AsyncMock(return_value=([], None))
+
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
+        response = test_client.get(
+            "/api/internal/admin/users/by-ip",
+            params={"ip": "10.201.4.122"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_names"] == []
+    assert payload["matches"] == []
     assert payload["lookup_errors"] == [
         {
             "source": "cloud_device",
-            "message": "Nevis IP index is missing or stale for 1 active cloud devices",
+            "message": "Nevis IP index is missing for 1 active cloud devices",
         }
     ]
 

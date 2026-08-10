@@ -6,7 +6,6 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,14 +17,12 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import DeviceType
 from wecode.service.cloud_device_ip_index import (
-    NEVIS_IP_FIELD,
-    NEVIS_IP_OBSERVED_AT_FIELD,
+    get_indexed_nevis_ip,
 )
 
 logger = logging.getLogger(__name__)
 
 CloudDeviceRow = Tuple[Kind, User]
-NEVIS_IP_INDEX_MAX_AGE = timedelta(minutes=30)
 POD_LOOKUP_TIMEOUT_SECONDS = 3.0
 
 
@@ -35,25 +32,6 @@ def _same_ip(candidate: Any, expected: str) -> bool:
         return ip_address(str(candidate)) == ip_address(expected)
     except ValueError:
         return False
-
-
-def _is_nevis_index_fresh(kind: Kind, now: Optional[datetime] = None) -> bool:
-    """Return whether a device has a recent, valid Nevis IP observation."""
-    cloud_config = kind.json.get("spec", {}).get("cloudConfig") or {}
-    try:
-        ip_address(str(cloud_config.get(NEVIS_IP_FIELD)))
-    except ValueError:
-        return False
-    raw_observed_at = cloud_config.get(NEVIS_IP_OBSERVED_AT_FIELD)
-    if not isinstance(raw_observed_at, str):
-        return False
-    try:
-        observed_at = datetime.fromisoformat(raw_observed_at.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=timezone.utc)
-    return (now or datetime.now(timezone.utc)) - observed_at <= NEVIS_IP_INDEX_MAX_AGE
 
 
 class IpUserLookupService:
@@ -97,16 +75,19 @@ class IpUserLookupService:
             row
             for row in rows
             if _same_ip(
-                (row[0].json.get("spec", {}).get("cloudConfig") or {}).get(
-                    NEVIS_IP_FIELD
+                get_indexed_nevis_ip(
+                    row[0].json.get("spec", {}).get("cloudConfig") or {}
                 ),
                 ip_address,
             )
         ]
-        incomplete_count = sum(not _is_nevis_index_fresh(kind) for kind, _ in rows)
+        incomplete_count = sum(
+            get_indexed_nevis_ip(kind.json.get("spec", {}).get("cloudConfig") or {})
+            is None
+            for kind, _ in rows
+        )
         error = (
-            f"Nevis IP index is missing or stale for {incomplete_count} "
-            "active cloud devices"
+            f"Nevis IP index is missing for {incomplete_count} active cloud devices"
             if incomplete_count
             else None
         )
