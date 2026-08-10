@@ -168,11 +168,7 @@ async fn clear_platform_webview_data(
 ) -> Result<(), String> {
     use block2::RcBlock;
     use objc2_foundation::{NSDate, NSSet, NSString, NSURLCache};
-    use objc2_web_kit::{
-        WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
-        WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeMemoryCache,
-        WKWebsiteDataTypeOfflineWebApplicationCache,
-    };
+    use objc2_web_kit::{WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache};
 
     let (sender, receiver) = oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
@@ -187,15 +183,12 @@ async fn clear_platform_webview_data(
                 );
                 return;
             };
-            let mut data_types: Vec<&NSString> = Vec::with_capacity(5);
+            let mut data_types: Vec<&NSString> = Vec::with_capacity(2);
             if data_kinds.cookies {
                 data_types.push(unsafe { WKWebsiteDataTypeCookies });
             }
             if data_kinds.cache {
                 data_types.push(unsafe { WKWebsiteDataTypeDiskCache });
-                data_types.push(unsafe { WKWebsiteDataTypeFetchCache });
-                data_types.push(unsafe { WKWebsiteDataTypeMemoryCache });
-                data_types.push(unsafe { WKWebsiteDataTypeOfflineWebApplicationCache });
             }
             let data_types = NSSet::from_slice(&data_types);
             let date = NSDate::dateWithTimeIntervalSince1970(0.0);

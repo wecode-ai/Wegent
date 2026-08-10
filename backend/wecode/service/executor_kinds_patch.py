@@ -50,10 +50,11 @@ except Exception:
 
 
 async def get_old_pods_async(self, older_than_hours: int = 48) -> List[Dict[str, Any]]:
-    """Fetch old executor pods with task_id and pod_name for orphan cleanup.
+    """Fetch old executor runtime cleanup targets.
 
     Returns a list of dicts with keys 'task_id' (str or None), 'pod_name' (str)
     and 'status' (kubectl-style display status, e.g. 'Running', 'OOMKilled').
+    For a warm-pool runtime, 'pod_name' may be its owning SandboxClaim name.
     """
     try:
         logger.info(
@@ -106,10 +107,11 @@ async def delete_pod_by_name_async(
     pod_name: str,
     executor_namespace: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Delete a K8s pod directly by its name (kubectl fallback for orphan pods).
+    """Delete a K8s runtime by its Pod or SandboxClaim cleanup target name.
 
     Called when cleanup_stale_task_executor returns executor_not_found for pods
-    that have no DB subtask records at all.
+    that have no DB subtask records. Executor Manager resolves Pod ownership so
+    warm-pool runtimes are removed through SandboxClaim cascading deletion.
     """
     if not pod_name:
         raise HTTPException(status_code=400, detail="pod_name is required")

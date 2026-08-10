@@ -59,7 +59,6 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
@@ -485,6 +484,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
 const SIDEBAR_RUNNING_SPINNER_CLASS =
   'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
+const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
+  'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -1379,7 +1380,7 @@ function getDeviceUnavailableActionTitle(
 ) {
   const status = getSidebarDeviceStatusLabel(t, deviceState.status)
   return formatSidebarTemplate(
-    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法新建项目对话：{{device}}'),
+    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法私信 AI：{{device}}'),
     { status, device: getSidebarDeviceName(deviceState) }
   )
 }
@@ -2086,7 +2087,7 @@ function ProjectItem({
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
-      : t('workbench.new_project_chat', '新建项目对话')
+      : t('workbench.new_project_chat', '私信 AI')
   const archiveConversationCount = allRuntimeTaskItems.length
   const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
   const persistedProjectPinned = runtimeProjectWork?.project.pinned ?? false
@@ -2682,7 +2683,6 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const windowFocused = useWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -3290,7 +3290,6 @@ export function DesktopSidebar({
   return (
     <aside
       data-testid={containerTestId}
-      data-window-focused={windowFocused}
       data-sidebar-translucent={
         isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
       }
@@ -3303,9 +3302,6 @@ export function DesktopSidebar({
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
-        !windowFocused &&
-          !(background.imagePath && background.inSidebar) &&
-          'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
       )}
@@ -3334,6 +3330,7 @@ export function DesktopSidebar({
                 sidebarCollapsed={false}
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
+                buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
               />
             </div>
           )}
@@ -3345,6 +3342,7 @@ export function DesktopSidebar({
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}
                     className="gap-0"
+                    buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
                   />
                 )}
                 {onOpenSearch && (
@@ -3415,21 +3413,20 @@ export function DesktopSidebar({
             data-scrolled={sidebarScrolled}
             onScroll={event => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
             className={cn(
-              'scrollbar-none relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              'relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
               sidebarScrolled &&
-                '[mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]'
+                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
+              !sidebarScrolled && 'scrollbar-none'
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={AlarmClock}
-                  label={t('workbench.automation', '已安排')}
-                  testId="automation-button"
-                  selected={activeItem === 'automation'}
-                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-                />
-              )}
+              <DesktopSidebarNavItem
+                icon={AlarmClock}
+                label={t('workbench.automation', '已安排')}
+                testId="automation-button"
+                selected={activeItem === 'automation'}
+                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+              />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
                   icon={Sparkles}

@@ -4,12 +4,16 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    env,
+    path::{Path, PathBuf},
 };
 
 use serde_json::{json, Map, Value};
 
-use crate::protocol::{CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER};
+use crate::{
+    protocol::{CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
+    services::turn_file_changes::persist_named_artifact,
+};
 
 use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
@@ -2481,6 +2485,16 @@ fn file_changes_summary(
     if files.is_empty() {
         return None;
     }
+    let diff = diff.filter(|diff| !diff.trim().is_empty());
+    let artifact_id = diff.as_deref().and_then(|patch| {
+        persist_named_artifact(
+            Path::new(workspace_path),
+            "codex",
+            turn_id,
+            &executor_home(),
+            patch.as_bytes(),
+        )
+    });
     let additions = files
         .iter()
         .filter_map(|file| file.get("additions").and_then(Value::as_i64))
@@ -2492,7 +2506,9 @@ fn file_changes_summary(
     let mut summary = json!({
         "version": 1,
         "status": "active",
-        "artifact_id": format!("codex-{turn_id}-{item_id}"),
+        "artifact_id": artifact_id
+            .clone()
+            .unwrap_or_else(|| format!("codex-{turn_id}-{item_id}")),
         "device_id": device_id,
         "workspace_path": workspace_path,
         "file_count": files.len(),
@@ -2500,14 +2516,25 @@ fn file_changes_summary(
         "deletions": deletions,
         "files": files,
         "reverted_at": Value::Null,
-        "revertible": false,
+        "revertible": artifact_id.is_some(),
     });
-    if let Some(diff) = diff.filter(|diff| !diff.trim().is_empty()) {
+    if let Some(diff) = diff {
         if let Some(object) = summary.as_object_mut() {
             object.insert("diff".to_owned(), Value::String(diff));
         }
     }
     Some(summary)
+}
+
+fn executor_home() -> PathBuf {
+    env::var_os("WEGENT_EXECUTOR_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".wegent-executor")
+        })
 }
 
 fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option<Value> {
@@ -2651,14 +2678,22 @@ fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Op
         .iter()
         .filter_map(|change| {
             let path = string_field(change, "path")?;
-            let move_path = change.get("kind").and_then(|kind| {
+            let kind = change.get("kind");
+            let move_path = kind.and_then(|kind| {
                 string_field(kind, "movePath").or_else(|| string_field(kind, "move_path"))
             });
+            let kind_type = kind.and_then(|kind| string_field(kind, "type"));
             raw_string_field(change, "diff").map(|diff| match move_path {
-                Some(move_path) => {
-                    diff_with_file_header(&move_path, Some(&path), &diff, workspace_path)
+                Some(move_path) => diff_with_file_header(
+                    &move_path,
+                    Some(&path),
+                    kind_type.as_deref(),
+                    &diff,
+                    workspace_path,
+                ),
+                None => {
+                    diff_with_file_header(&path, None, kind_type.as_deref(), &diff, workspace_path)
                 }
-                None => diff_with_file_header(&path, None, &diff, workspace_path),
             })
         })
         .collect::<Vec<_>>()
@@ -2674,14 +2709,25 @@ fn combined_diff_from_patch_apply_end(item: &Value, workspace_path: &str) -> Opt
         .filter_map(|(path, change)| {
             let move_path =
                 string_field(change, "move_path").or_else(|| string_field(change, "movePath"));
+            let kind_type = string_field(change, "type");
             raw_string_field(change, "unified_diff")
                 .or_else(|| raw_string_field(change, "diff"))
                 .or_else(|| raw_string_field(change, "content"))
                 .map(|diff| match move_path {
-                    Some(move_path) => {
-                        diff_with_file_header(&move_path, Some(path), &diff, workspace_path)
-                    }
-                    None => diff_with_file_header(path, None, &diff, workspace_path),
+                    Some(move_path) => diff_with_file_header(
+                        &move_path,
+                        Some(path),
+                        kind_type.as_deref(),
+                        &diff,
+                        workspace_path,
+                    ),
+                    None => diff_with_file_header(
+                        path,
+                        None,
+                        kind_type.as_deref(),
+                        &diff,
+                        workspace_path,
+                    ),
                 })
         })
         .collect::<Vec<_>>()
@@ -2696,14 +2742,22 @@ fn combined_diff_from_patch_updated(params: &Value, workspace_path: &str) -> Opt
         .iter()
         .filter_map(|change| {
             let path = string_field(change, "path")?;
-            let move_path = change.get("kind").and_then(|kind| {
+            let kind = change.get("kind");
+            let move_path = kind.and_then(|kind| {
                 string_field(kind, "movePath").or_else(|| string_field(kind, "move_path"))
             });
+            let kind_type = kind.and_then(|kind| string_field(kind, "type"));
             raw_string_field(change, "diff").map(|diff| match move_path {
-                Some(move_path) => {
-                    diff_with_file_header(&move_path, Some(&path), &diff, workspace_path)
+                Some(move_path) => diff_with_file_header(
+                    &move_path,
+                    Some(&path),
+                    kind_type.as_deref(),
+                    &diff,
+                    workspace_path,
+                ),
+                None => {
+                    diff_with_file_header(&path, None, kind_type.as_deref(), &diff, workspace_path)
                 }
-                None => diff_with_file_header(&path, None, &diff, workspace_path),
             })
         })
         .collect::<Vec<_>>()
@@ -2727,6 +2781,7 @@ fn patch_updated_item_id(params: &Value) -> String {
 fn diff_with_file_header(
     path: &str,
     old_path: Option<&str>,
+    kind: Option<&str>,
     diff: &str,
     workspace_path: &str,
 ) -> String {
@@ -2743,10 +2798,30 @@ fn diff_with_file_header(
         .map(|path| workspace_relative_path(path, workspace_path))
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| relative_path.clone());
+    let kind = kind.unwrap_or("update").to_ascii_lowercase();
+    let old_file = if matches!(kind.as_str(), "add" | "create" | "created") {
+        "/dev/null".to_owned()
+    } else {
+        diff_git_path("a", &relative_old_path)
+    };
+    let new_file = if matches!(kind.as_str(), "delete" | "deleted") {
+        "/dev/null".to_owned()
+    } else {
+        diff_git_path("b", &relative_path)
+    };
+    let file_markers = if diff
+        .lines()
+        .any(|line| line.starts_with("--- ") || line.starts_with("+++ "))
+    {
+        String::new()
+    } else {
+        format!("--- {old_file}\n+++ {new_file}\n")
+    };
     format!(
-        "diff --git {} {}\n{}",
+        "diff --git {} {}\n{}{}\n",
         diff_git_path("a", &relative_old_path),
         diff_git_path("b", &relative_path),
+        file_markers,
         diff.trim_end()
     )
 }
@@ -2949,6 +3024,40 @@ mod tests {
             assert_eq!(block_id, id);
             assert_eq!(updates["status"], "done");
         }
+    }
+
+    #[test]
+    fn completed_mcp_tool_updates_preserve_structured_content() {
+        let params = json!({
+            "item": {
+                "id": "call-app",
+                "type": "mcpToolCall",
+                "server": "wegent_apps",
+                "tool": "wegent-sites__get_site",
+                "arguments": {"project_id": "prj_1"},
+                "status": "completed",
+                "error": null,
+                "result": {
+                    "_meta": null,
+                    "content": [{
+                        "type": "text",
+                        "text": "Wegent Sites tool completed successfully."
+                    }],
+                    "structuredContent": {
+                        "id": "prj_1",
+                        "title": "Palette"
+                    }
+                }
+            }
+        });
+
+        let (_, updates) =
+            tool_update_from_notification(&params).expect("completed MCP tool update");
+
+        assert_eq!(
+            updates["tool_output"]["structuredContent"],
+            json!({"id": "prj_1", "title": "Palette"})
+        );
     }
 
     #[test]
@@ -3295,6 +3404,10 @@ mod tests {
         assert_eq!(block["type"], "tool");
         assert_eq!(block["tool_name"], "ask");
         assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(
+            block["tool_output"]["structuredContent"]["answers"][0]["user_input"],
+            "done"
+        );
         assert_eq!(block["status"], "done");
     }
 

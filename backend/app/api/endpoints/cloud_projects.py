@@ -4,7 +4,16 @@
 
 """Shared cloud project endpoints."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -28,8 +37,19 @@ from app.schemas.cloud_project import (
     CloudProjectResponse,
     CloudProjectUpdate,
 )
+from app.schemas.delivery import LoopItemResponse
+from app.schemas.project_chat import (
+    LoopItemApproval,
+    LoopItemAssign,
+    ProjectChatAgentCreate,
+    ProjectChatAgentUpdate,
+    ProjectChatAgentView,
+)
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
+from app.services.loop_items import loop_item_service
+from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
 
@@ -90,6 +110,175 @@ def update_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
+
+
+@router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])
+def list_project_chat_agents(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ProjectChatAgentView]:
+    return project_chat_service.list_agents(
+        db, user_id=current_user.id, project_id=str(project_id)
+    )
+
+
+@router.post(
+    "/{project_id}/chat-agents",
+    response_model=ProjectChatAgentView,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_chat_agent(
+    project_id: int,
+    values: ProjectChatAgentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectChatAgentView:
+    return project_chat_service.create_agent(
+        db, user_id=current_user.id, project_id=str(project_id), request=values
+    )
+
+
+@router.patch(
+    "/{project_id}/chat-agents/{agent_id}", response_model=ProjectChatAgentView
+)
+def update_project_chat_agent(
+    project_id: int,
+    agent_id: str,
+    values: ProjectChatAgentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectChatAgentView:
+    return project_chat_service.update_agent(
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        agent_id=agent_id,
+        request=values,
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/assign",
+    response_model=LoopItemResponse,
+)
+def assign_loop_item(
+    project_id: int,
+    item_id: str,
+    values: LoopItemAssign,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Assign a task to a project member or to one of the project robots.
+
+    The assignment chain and the derived queue state live on the task itself;
+    there is no separate queue storage.
+    """
+
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.assign(
+            db, item_id, current_user.id, values
+        )
+        from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+        background_tasks.add_task(dispatch_queues_background)
+        return LoopItemResponse.model_validate(response)
+    item = loop_item_service.assign(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/approve",
+    response_model=LoopItemResponse,
+)
+def approve_loop_item_run(
+    project_id: int,
+    item_id: str,
+    values: LoopItemApproval,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Approve a pending robot run. Only the robot creator can approve."""
+
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.approve_run(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+        from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+        background_tasks.add_task(dispatch_queues_background)
+        return LoopItemResponse.model_validate(response)
+    item = loop_item_service.approve_run(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
+
+
+@router.post(
+    "/{project_id}/loop-items/{item_id}/reject",
+    response_model=LoopItemResponse,
+)
+def reject_loop_item_run(
+    project_id: int,
+    item_id: str,
+    values: LoopItemApproval,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Reject a pending robot run. Only the robot creator can reject."""
+
+    if external_loop_item_provider.is_external_item(db, item_id):
+        response = external_loop_item_provider.reject_run(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+        return LoopItemResponse.model_validate(response)
+    item = loop_item_service.reject_run(
+        db,
+        project_id=project_id,
+        item_id=item_id,
+        user_id=current_user.id,
+        values=values,
+    )
+    from app.tasks.robot_queue_tasks import dispatch_queues_background
+
+    background_tasks.add_task(dispatch_queues_background)
+    access = cloud_project_service.access(db, project_id, current_user.id)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

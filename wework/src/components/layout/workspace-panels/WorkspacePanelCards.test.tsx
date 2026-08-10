@@ -453,9 +453,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/projects/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/projects/project38',
+        })
+      )
     )
     expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api')
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -476,9 +478,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/projects/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/projects/project38',
+        })
+      )
     )
     expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/projects/project38')
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -497,9 +501,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/projects/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/projects/project38',
+        })
+      )
     )
     expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/projects/project38')
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
@@ -507,7 +513,6 @@ describe('WorkspacePanelCards', () => {
   })
 
   test('closes local terminal sessions when the workspace panel unmounts', async () => {
-    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const { unmount } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
 
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
@@ -515,15 +520,14 @@ describe('WorkspacePanelCards', () => {
 
     unmount()
 
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
-    expect(consoleInfo).toHaveBeenCalledWith('Closing local terminal session', {
-      sessionId: 'local-terminal-1',
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1', {
       reason: 'workspace-panel-unmount',
+      taskId: undefined,
+      workspacePath: '/workspace/projects/project38',
     })
   })
 
   test('closes local terminal sessions when the workspace target changes', async () => {
-    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const nextProject = {
       ...project,
       id: 8,
@@ -543,10 +547,10 @@ describe('WorkspacePanelCards', () => {
 
     rerender(<WorkspacePanelCards currentProject={nextProject} devices={[]} />)
 
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
-    expect(consoleInfo).toHaveBeenCalledWith('Closing local terminal session', {
-      sessionId: 'local-terminal-1',
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1', {
       reason: 'workspace-target-changed',
+      taskId: undefined,
+      workspacePath: '/workspace/projects/project38',
     })
     expect(screen.queryByTestId('embedded-local-terminal')).not.toBeInTheDocument()
   })
@@ -573,9 +577,11 @@ describe('WorkspacePanelCards', () => {
     pathCheck.resolve(true)
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/projects/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/projects/project38',
+        })
+      )
     )
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
@@ -596,9 +602,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/worktrees/8/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/worktrees/8/project38',
+        })
+      )
     )
     expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/worktrees/8/project38')
   })
@@ -621,9 +629,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/runtime/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/runtime/project38',
+        })
+      )
     )
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
@@ -766,9 +776,11 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/workspace/projects/project38',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/projects/project38',
+        })
+      )
     )
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',

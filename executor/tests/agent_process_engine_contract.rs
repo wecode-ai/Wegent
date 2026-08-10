@@ -88,6 +88,54 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs() {
+    let _lock = env_lock().lock().await;
+    let args_dir = unique_dir("claude-no-space-mcp");
+    fs::create_dir_all(&args_dir).unwrap();
+    let args_file = args_dir.join("args.txt");
+    let fake_claude = write_fake_executable(
+        "fake-claude-no-space-mcp",
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' "$@" > "{}"
+printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"done"}}]}}}}'
+"#,
+            args_file.display()
+        ),
+    );
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        prompt: json!("run"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let args = fs::read_to_string(&args_file).unwrap();
+    assert!(!args.contains("wework_space"));
+    let mcp_config_path = args
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--mcp-config").then_some(pair[1]))
+        .map(PathBuf::from);
+    if let Some(path) = mcp_config_path {
+        let config = fs::read_to_string(path).unwrap();
+        assert!(!config.contains("wework_space"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_applies_claude_specific_process_timeout() {
     let _lock = env_lock().lock().await;
     let _legacy_timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");

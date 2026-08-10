@@ -23,7 +23,12 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import {
+  getRuntimeConversationCacheStats,
+  getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
@@ -842,6 +847,42 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       return ''
+    case 'reconcileLegacyRuntimeAssistantSnapshot': {
+      const payload = JSON.parse(command.value ?? '{}') as {
+        address: RuntimeTaskAddress
+        content: string
+        itemId: string
+      }
+      const targetMessage = getRuntimeConversationMessages(payload.address)
+        .toReversed()
+        .find(
+          message =>
+            message.role === 'assistant' &&
+            (message.content === payload.content ||
+              message.blocks?.some(
+                block => block.type === 'text' && block.content === payload.content
+              ))
+        )
+      const turnId = targetMessage?.turnId ?? targetMessage?.subtaskId
+      if (!turnId) {
+        throw new Error('Unable to find the runtime turn for the legacy assistant snapshot')
+      }
+      reconcileRuntimeConversationSnapshot(payload.address, [
+        {
+          id: turnId,
+          items: [
+            {
+              id: payload.itemId,
+              type: 'assistant_text',
+              content: payload.content,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          status: 'done',
+        },
+      ])
+      return turnId
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':

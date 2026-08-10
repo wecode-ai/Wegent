@@ -16,23 +16,11 @@ import type { CloudProject } from '@/api/deliveries'
 import type {
   Attachment,
   ProjectWithTasks,
-  RuntimeAdditionalContext,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
 } from '@/types/api'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
-
-export interface ProjectSpaceChatLaunchRequest {
-  id: number
-  item: {
-    id: string
-    title: string
-    description: string
-    status: string
-  }
-  localProjectId: number | null
-}
 
 interface ProjectSpaceConversation {
   key: string
@@ -44,7 +32,6 @@ interface ProjectSpaceConversation {
 interface ProjectSpaceChatSidebarProps {
   project: CloudProject
   localProjects: ProjectWithTasks[]
-  launchRequest?: ProjectSpaceChatLaunchRequest | null
   onClose: () => void
 }
 
@@ -103,25 +90,13 @@ function lastConversationStorageKey(projectId: string): string {
   return `wework-project-space-chat:${projectId}`
 }
 
-function taskConversationDraft(
-  projectId: string | number,
-  request: ProjectSpaceChatLaunchRequest | null
-): string {
-  if (!request) return ''
-  const reference = `[$任务:${request.item.id}](cloud://projects/${projectId}/todos/${request.item.id})`
-  return request.item.description.trim()
-    ? `${reference}\n\n任务描述：\n${request.item.description.trim()}\n\n补充说明：\n`
-    : `${reference}\n\n`
-}
-
 export function ProjectSpaceChatSidebar({
   project,
   localProjects,
-  launchRequest = null,
   onClose,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
-  const { services, state, createProjectRuntimeTask } = useWorkbenchPaneContext()
+  const { state, createProjectRuntimeTask } = useWorkbenchPaneContext()
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
@@ -140,20 +115,14 @@ export function ProjectSpaceChatSidebar({
       ),
     [project.id, state.runtimeWork]
   )
-  const [localProjectId, setLocalProjectId] = useState<number | null>(
-    launchRequest ? launchRequest.localProjectId : (localProjects[0]?.id ?? null)
-  )
+  const [localProjectId, setLocalProjectId] = useState<number | null>(localProjects[0]?.id ?? null)
   const [selectedConversationKey, setSelectedConversationKey] = useState<string | null>(() =>
-    launchRequest
-      ? null
-      : window.localStorage.getItem(lastConversationStorageKey(String(project.id)))
+    window.localStorage.getItem(lastConversationStorageKey(String(project.id)))
   )
-  const [creatingNew, setCreatingNew] = useState(Boolean(launchRequest))
+  const [creatingNew, setCreatingNew] = useState(false)
   const [chatInstance, setChatInstance] = useState(0)
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
-  const [draft, setDraft] = useState(() => taskConversationDraft(project.id, launchRequest))
-  const [draftItemId, setDraftItemId] = useState<string | null>(launchRequest?.item.id ?? null)
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false)
   const conversationMenuRef = useRef<HTMLDivElement>(null)
   const resizeStartRef = useRef({ pointerX: 0, width: PROJECT_CHAT_DEFAULT_WIDTH })
@@ -204,8 +173,6 @@ export function ProjectSpaceChatSidebar({
     setCreatingNew(current => {
       if (current) return false
       setSelectedConversationKey(null)
-      setDraft('')
-      setDraftItemId(null)
       setChatInstance(instance => instance + 1)
       return true
     })
@@ -231,48 +198,18 @@ export function ProjectSpaceChatSidebar({
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
     ) => {
-      const taskContext: RuntimeAdditionalContext = draftItemId
-        ? {
-            projectSpaceTask: {
-              kind: 'application',
-              value: [
-                `Current task reference: cloud://projects/${project.id}/todos/${draftItemId}.`,
-                `Current task title: ${launchRequest?.item.title ?? ''}.`,
-                `Current task status: ${launchRequest?.item.status ?? ''}.`,
-                ...(launchRequest?.item.description.trim()
-                  ? [`Current task description: ${launchRequest.item.description.trim()}.`]
-                  : []),
-                'The referenced task is the default context for this conversation.',
-                'Use wework_space get_board_item when task details, attachments, or deliveries are needed.',
-              ].join('\n'),
-            },
-          }
-        : {}
       const address = await createProjectRuntimeTask(message, {
         project: selectedLocalProject,
         attachments: options.attachments,
         collaborationMode: 'default',
         cloudProjectId: String(project.id),
-        additionalContext: {
-          ...projectSpaceChatRuntimeContext(project),
-          ...taskContext,
-        },
+        additionalContext: projectSpaceChatRuntimeContext(project),
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
       })
-      if (address && draftItemId) {
-        await services.deliveryApi?.bindTask(draftItemId, address, launchRequest?.item.title)
-      }
       return address
     },
-    [
-      createProjectRuntimeTask,
-      draftItemId,
-      launchRequest,
-      project,
-      selectedLocalProject,
-      services.deliveryApi,
-    ]
+    [createProjectRuntimeTask, project, selectedLocalProject]
   )
 
   const resize = useCallback(
@@ -488,7 +425,6 @@ export function ProjectSpaceChatSidebar({
         source={null}
         instanceId={`project-space:${project.id}:${selectedConversation?.key ?? 'new'}`}
         testId="project-space-chat-panel"
-        initialInput={draft}
         initialAddress={selectedConversation?.address ?? null}
         createTask={createConversation}
         onAddressChange={rememberAddress}

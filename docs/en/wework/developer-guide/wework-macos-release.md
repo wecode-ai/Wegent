@@ -14,11 +14,17 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. Local or sta
 - The updater manifest includes both `darwin-aarch64` and `darwin-x86_64`; both platform entries can point to the same universal archive.
 - `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. Both the local release script and GitHub Actions use `wework/scripts/generate-release-config.mjs` to create a temporary Tauri config that injects release parameters while preserving the complete `bundle.resources` list from the base config. Tauri config overrides replace resource arrays as a whole, so release paths must not maintain a separate incomplete resources list.
 - Updater private keys and publish tokens are read only from environment variables or local files and must not be committed.
-- Codex CLI is not compiled locally. Before building, `wework/scripts/prepare-codex-binary.mjs` downloads the npm tarball pinned by `wework/codex-binaries.lock.json`, verifies its SHA256, and bundles it as a Tauri resource.
+- Codex CLI is not compiled locally. Before building, `wework/scripts/prepare-codex-binary.mjs` downloads the npm tarball pinned by `wework/codex-binaries.lock.json`, verifies its SHA-512 integrity, and bundles it as a Tauri resource.
 
 ## Bundled Codex Binary
 
 The Wework desktop package includes Codex CLI directly, so users do not need to install it on first launch. The version and per-platform tarball checksums are pinned in `wework/codex-binaries.lock.json`.
+
+The current pin is stable Codex `0.147.0`. An upgrade must update every
+supported platform's npm package version, official registry tarball URL, and
+SHA-512 integrity value together; do not replace the binary inside an already
+signed app bundle. Prepare the sidecar again through a release build, then
+package and code-sign the application.
 
 Local builds prepare the Codex binary for the current target automatically:
 
@@ -88,6 +94,21 @@ To validate local updater behavior, serve the script output directory:
 ```bash
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
+
+## Window Surfaces
+
+The Wework main window and detached workspace windows must use opaque Tauri
+windows that are fully covered by the WebView theme surface. Do not enable
+`transparent`, `windowEffects`, or native vibrancy materials for these windows.
+Transparent window edges are composed differently across macOS versions and
+graphics environments, which can expose the desktop or appear as translucent
+or gray borders.
+
+The system drag panel and Popout Window are separate lightweight overlays and
+are not covered by this rule. Changes to ordinary window backgrounds, title
+bars, or creation options must verify both the main window and detached
+workspace windows and retain automated assertions that prevent native
+transparency from being re-enabled.
 
 ## Tauri Dependency Upgrades
 

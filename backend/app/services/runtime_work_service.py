@@ -521,11 +521,6 @@ async def revert_runtime_file_changes(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Device returned malformed artifact output",
         )
-    if payload.get("success") is not True:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(payload.get("error") or "Runtime file changes revert failed"),
-        )
     if payload.get("status") == "conflicted":
         updated = _runtime_file_changes_with_status(summary, "conflicted")
         raise HTTPException(
@@ -537,6 +532,11 @@ async def revert_runtime_file_changes(
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail={"file_changes": updated, "message": "Artifact is missing"},
+        )
+    if payload.get("success") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(payload.get("error") or "Runtime file changes revert failed"),
         )
     if payload.get("status") != "reverted":
         raise HTTPException(

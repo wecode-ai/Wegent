@@ -47,6 +47,22 @@ class DocumentSourceType(str, PyEnum):
     TEXT = "text"  # Pasted text
     TABLE = "table"  # External table (DingTalk, Feishu, etc.)
     WEB = "web"  # Web page (scraped URL)
+    CODE = "code"  # Source file indexed for retrieval, not a browsable document
+
+
+class ContentOrigin(str, PyEnum):
+    """Ownership of knowledge content, deciding whether regeneration may touch it.
+
+    ``GENERATED`` content is owned by the generating agent: it may be overwritten by
+    a later run and removed by generation-set reconciliation. ``USER`` content is
+    owned by a person and is never touched by regeneration.
+
+    ``USER`` is the safe default: mislabelling generated content as user-owned only
+    stops automatic cleanup, while the reverse would expose user content to deletion.
+    """
+
+    GENERATED = "generated"
+    USER = "user"
 
 
 class DocumentIndexStatus(str, PyEnum):
@@ -131,6 +147,14 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+    # Content ownership; see ContentOrigin. Defaults to ``user`` so that any row this
+    # service did not create is protected from the generated-content projection.
+    origin = Column(
+        String(20),
+        nullable=False,
+        default=ContentOrigin.USER.value,
+        server_default=ContentOrigin.USER.value,
+    )
 
     # --- Helper properties for converted attachment reference ---
 
@@ -228,6 +252,14 @@ class KnowledgeFolder(Base):
     # Self-referencing parent folder, 0 = root level
     parent_id = Column(Integer, nullable=False, default=0)
     name = Column(String(255), nullable=False)
+    # Content ownership; a top-level folder decides ownership for its subtree.
+    # Defaults to ``user`` for the same fail-safe reason as on documents.
+    origin = Column(
+        String(20),
+        nullable=False,
+        default=ContentOrigin.USER.value,
+        server_default=ContentOrigin.USER.value,
+    )
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

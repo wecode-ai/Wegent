@@ -61,10 +61,11 @@ async def delete_executor_by_task_id(
 
 
 async def delete_pod_by_name(request: DeletePodByNameRequest, http_request: Request):
-    """Delete a specific executor pod by its name (kubectl fallback path).
+    """Delete an executor runtime by Pod or SandboxClaim name.
 
     Used as fallback when cleanup_stale_task_executor returns executor_not_found
-    for orphan pods that have no corresponding DB subtask records.
+    for orphan runtimes that have no corresponding DB subtask records. K8s
+    executors resolve a warm-pool Pod owner and delete its SandboxClaim first.
     """
     if not request.pod_name or not request.pod_name.strip():
         raise HTTPException(status_code=400, detail="pod_name must not be empty")
@@ -97,11 +98,11 @@ async def get_old_task_ids(
     older_than_hours: int = 48,
     http_request: Request = None,
 ):
-    """List old executor pods with task_id and pod_name for orphan cleanup.
+    """List old executor runtime cleanup targets.
 
-    Scans pods by name pattern (wegent-task or sandbox) and returns those
-    older than the given threshold, including both task_id (may be None)
-    and pod_name for direct deletion fallback.
+    Includes direct Pods and Executor warm-pool claims older than the threshold.
+    The ``pod_name`` response field remains for compatibility but may contain a
+    SandboxClaim name when that is the correct owner-level cleanup target.
     """
     # Safety guard: minimum 48h aligns with pod_delete scripts (date -v-2d)
     if older_than_hours < 48:

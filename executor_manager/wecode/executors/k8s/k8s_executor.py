@@ -25,9 +25,11 @@ from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
     DEFAULT_API_ENDPOINT,
 )
+from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE,
+    EXECUTOR_WARMPOOL_ENABLED,
     K8S_NAMESPACE,
     MAX_USER_TASKS,
     USER_WHITELIST_TASK_LIMIT_MAP,
@@ -37,6 +39,17 @@ from executor_manager.wecode.config.config import (
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
 from executor_manager.wecode.executors.k8s.pod_lookup import (
     lookup_pod_owners_by_ip,
+)
+from executor_manager.wecode.executors.warmpool.constants import (
+    LABEL_EXECUTOR,
+    LABEL_EXECUTOR_VALUE,
+    LABEL_POOL_PROFILE,
+    LABEL_POOL_STATE,
+    LABEL_TASK_ID,
+    LABEL_WARM_POOL,
+    POOL_PROFILE_EXECUTOR_STANDARD,
+    SANDBOX_API_GROUP,
+    SANDBOX_KIND,
 )
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
@@ -202,6 +215,7 @@ class K8sExecutor(Executor):
         should_create_new_pod = not executor_name
 
         if executor_name:
+            attach_executor_info(task_dict, executor_name, K8S_NAMESPACE)
             if prepare_only:
                 pod_result = self.get_pods_by_executor_name(executor_name)
                 pod_list = pod_result.get("pods", [])
@@ -232,6 +246,7 @@ class K8sExecutor(Executor):
                     executor_name = generate_executor_name(
                         task_id, subtask_id, user_name
                     )
+                attach_executor_info(task_dict, executor_name, K8S_NAMESPACE)
 
                 user_pod_count = self.get_user_pods(user_name=user_name)
                 logger.info(f"User {user_name} has {user_pod_count} pods.")
@@ -269,13 +284,16 @@ class K8sExecutor(Executor):
                             )
                             raise
 
-                    # Register regular tasks to RunningTaskTracker for heartbeat monitoring.
-                    self.register_task_for_heartbeat(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        executor_name=executor_name,
-                        task_type=get_metadata_field(task_dict, "type", "online"),
-                    )
+                    # A prepared executor has not started task execution yet. Register it
+                    # only after the first real dispatch so warm pods do not time out
+                    # while waiting for the user request.
+                    if not prepare_only:
+                        self.register_task_for_heartbeat(
+                            task_id=task_id,
+                            subtask_id=subtask_id,
+                            executor_name=executor_name,
+                            task_type=get_metadata_field(task_dict, "type", "online"),
+                        )
             except ApiException as e:
                 logger.error(
                     f"Kubernetes API error creating pod for task {task_id}: {e}"
@@ -489,6 +507,15 @@ class K8sExecutor(Executor):
         user_name = task_info["user_name"]
         image = get_metadata_field(task, "executor_image", EXECUTOR_DEFAULT_MAGE)
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
+        executor_warmpool_reason = self._executor_warmpool_ineligibility_reason(
+            task, image
+        )
+        use_executor_warmpool = (
+            WARMPOOL_ENABLED
+            and EXECUTOR_WARMPOOL_ENABLED
+            and not is_sandbox_task
+            and executor_warmpool_reason is None
+        )
 
         # Check if warm pool is enabled for sandbox tasks.
         if WARMPOOL_ENABLED and is_sandbox_task:
@@ -499,7 +526,28 @@ class K8sExecutor(Executor):
                 task_id=task_id,
                 subtask_id=task_info["subtask_id"],
             )
+        elif use_executor_warmpool:
+            if not WARMPOOL_TEMPLATE_NAME:
+                raise RuntimeError(
+                    "WARMPOOL_TEMPLATE_NAME is required when the standard "
+                    "Executor warm pool is enabled"
+                )
+            pod_result = self._create_pod_from_warmpool(
+                task=task,
+                executor_name=executor_name,
+                user_name=user_name,
+                task_id=task_id,
+                subtask_id=task_info["subtask_id"],
+                template_name=WARMPOOL_TEMPLATE_NAME,
+                workload_type="executor",
+            )
         else:
+            if EXECUTOR_WARMPOOL_ENABLED and not is_sandbox_task:
+                logger.info(
+                    "Executor warm pool skipped for task %s: %s",
+                    task_id,
+                    executor_warmpool_reason or "shared_warmpool_disabled",
+                )
             base_image = self._get_base_image_from_task(task)
             if base_image:
                 logger.info(
@@ -526,6 +574,42 @@ class K8sExecutor(Executor):
                 else "Kubernetes pod creation failed"
             )
             raise RuntimeError(error_msg)
+
+    def _executor_warmpool_ineligibility_reason(
+        self, task: Dict[str, Any], image: str
+    ) -> Optional[str]:
+        """Return why a task cannot use the standard executor warm pool."""
+        if get_metadata_field(task, "type", "online") != "online":
+            return "unsupported_task_type"
+        if image != EXECUTOR_DEFAULT_MAGE:
+            return "executor_image_mismatch"
+        if self._get_base_image_from_task(task):
+            return "custom_base_image"
+        if self._task_has_git_repository(task):
+            return "git_repository"
+        return None
+
+    @staticmethod
+    def _task_has_git_repository(task: Dict[str, Any]) -> bool:
+        """Return whether the task is associated with a Git repository."""
+        if any(
+            get_metadata_field(task, field)
+            for field in ("git_url", "git_repo", "git_repo_id")
+        ):
+            return True
+
+        if get_metadata_field(task, "workspace_source") == "git_worktree":
+            return True
+
+        workspace = get_metadata_field(task, "workspace", {}) or {}
+        repository = (
+            workspace.get("repository") if isinstance(workspace, dict) else None
+        )
+        if not isinstance(repository, dict):
+            return False
+        return any(
+            repository.get(field) for field in ("gitUrl", "gitRepo", "gitRepoId")
+        )
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait until Kubernetes pod is running and HTTP endpoint is available."""
@@ -842,13 +926,16 @@ class K8sExecutor(Executor):
                 return False
             time.sleep(interval_seconds)
 
-    def _is_warmpool_sandbox_reusable(self, sandbox_status: Dict[str, Any]) -> bool:
+    def _is_warmpool_sandbox_reusable(
+        self, sandbox_status: Optional[Dict[str, Any]]
+    ) -> bool:
         """Return whether an existing warm-pool sandbox has a usable Pod."""
+        status = sandbox_status or {}
         return bool(
-            sandbox_status.get("exists")
-            and sandbox_status.get("phase") == "Running"
-            and sandbox_status.get("pod_name")
-            and sandbox_status.get("pod_ip")
+            status.get("exists")
+            and status.get("phase") == "Running"
+            and status.get("pod_name")
+            and status.get("pod_ip")
         )
 
     def _handle_existing_warmpool_claim(
@@ -856,10 +943,24 @@ class K8sExecutor(Executor):
         warmpool_client,
         executor_name: str,
         task_id: str,
+        template_name: str,
     ) -> Optional[Dict[str, Any]]:
-        """Reuse a healthy SandboxClaim or delete a stale one before recreation."""
+        """Return a reusable sandbox status or delete a stale claim."""
         existing_claim = warmpool_client.get_sandbox_claim(executor_name)
         if not existing_claim:
+            return None
+
+        existing_template = (
+            existing_claim.get("spec", {}).get("sandboxTemplateRef", {}).get("name")
+        )
+        if existing_template != template_name:
+            logger.warning(
+                "SandboxClaim '%s' uses template '%s', expected '%s'; recreating",
+                executor_name,
+                existing_template,
+                template_name,
+            )
+            warmpool_client.delete_sandbox_claim(executor_name)
             return None
 
         logger.info(
@@ -870,14 +971,14 @@ class K8sExecutor(Executor):
         sandbox_status = warmpool_client.get_sandbox_status(executor_name)
         if self._is_warmpool_sandbox_reusable(sandbox_status):
             logger.info("Existing sandbox '%s' is running, reusing", executor_name)
-            return {"status": "success"}
+            return sandbox_status
 
-        if sandbox_status.get("phase") != "Running":
+        if (sandbox_status or {}).get("phase") != "Running":
             sandbox_status = self._wait_for_warmpool_sandbox_ready(
                 warmpool_client, executor_name, timeout=60
             )
             if self._is_warmpool_sandbox_reusable(sandbox_status or {}):
-                return {"status": "success"}
+                return sandbox_status
 
         logger.warning(
             "Existing SandboxClaim '%s' is not reusable for task %s: "
@@ -898,8 +999,10 @@ class K8sExecutor(Executor):
         user_name: str,
         task_id: str,
         subtask_id: str,  # noqa: ARG002 - kept for consistency with other methods
+        template_name: Optional[str] = None,
+        workload_type: str = "sandbox",
     ) -> Dict[str, Any]:
-        """Create a pod from the warm pool by claiming a SandboxClaim.
+        """Claim a warm-pool pod for a sandbox or standard executor task.
 
         Args:
             task: Task information
@@ -907,6 +1010,8 @@ class K8sExecutor(Executor):
             user_name: User name
             task_id: Task ID
             subtask_id: Subtask ID
+            template_name: SandboxTemplate name; defaults to the sandbox template
+            workload_type: Either ``sandbox`` or ``executor``
 
         Returns:
             dict with status and error_msg if failed
@@ -928,10 +1033,7 @@ class K8sExecutor(Executor):
             ANNOTATION_SKILL_IDENTITY_TOKEN,
             ANNOTATION_SKILL_USER_NAME,
             ANNOTATION_TASK_API_DOMAIN,
-            LABEL_EXECUTOR,
-            LABEL_EXECUTOR_VALUE,
             LABEL_PROXY_USER,
-            LABEL_TASK_ID,
             LABEL_TASK_TYPE,
             LABEL_TEAM_MODE,
             LABEL_USER,
@@ -945,38 +1047,58 @@ class K8sExecutor(Executor):
             }
 
         warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
+        resolved_template_name = template_name or WARMPOOL_TEMPLATE_NAME
+        claim_labels = {}
+        if workload_type == "executor":
+            claim_labels = {
+                LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE,
+                LABEL_TASK_ID: str(task_id),
+                LABEL_POOL_STATE: "bound",
+                LABEL_POOL_PROFILE: POOL_PROFILE_EXECUTOR_STANDARD,
+            }
 
         try:
-            existing_claim_result = self._handle_existing_warmpool_claim(
-                warmpool_client, executor_name, task_id
+            sandbox_status = self._handle_existing_warmpool_claim(
+                warmpool_client,
+                executor_name,
+                task_id,
+                resolved_template_name,
             )
-            if existing_claim_result:
-                return existing_claim_result
+            if sandbox_status is None:
+                # Claim metadata is not propagated to the Pod by the controller.
+                # Patch task metadata after the claimed sandbox becomes ready.
+                warmpool_client.create_sandbox_claim(
+                    name=executor_name,
+                    template_name=resolved_template_name,
+                    labels=claim_labels,
+                    annotations={},
+                )
 
-            # Create SandboxClaim CR (claims pod from warm pool)
-            # Note: labels/annotations passed here are for the SandboxClaim CR itself,
-            # not for the Pod. Pod metadata is patched separately after sandbox is ready.
-            warmpool_client.create_sandbox_claim(
-                name=executor_name,
-                template_name=WARMPOOL_TEMPLATE_NAME,
-                labels={},
-                annotations={},
-            )
+                logger.info(
+                    "Created SandboxClaim '%s' for %s task %s with template '%s'",
+                    executor_name,
+                    workload_type,
+                    task_id,
+                    resolved_template_name,
+                )
 
-            logger.info(
-                f"Created SandboxClaim '{executor_name}' for task {task_id} from warm pool"
-            )
-
-            # Wait for sandbox to be ready
-            sandbox_status = self._wait_for_warmpool_sandbox_ready(
-                warmpool_client, executor_name, timeout=60
-            )
+                sandbox_status = self._wait_for_warmpool_sandbox_ready(
+                    warmpool_client, executor_name, timeout=60
+                )
 
             if not sandbox_status:
                 return {
                     "status": "failed",
                     "error_msg": "Sandbox pod did not become ready in time",
                 }
+
+            if claim_labels:
+                # Claim labels are used by orphan cleanup even when its Pod is
+                # temporarily missing. They intentionally contain no task secrets.
+                warmpool_client.patch_sandbox_claim(
+                    executor_name,
+                    labels=claim_labels,
+                )
 
             # Build labels and annotations for Pod (injected via patch after sandbox is ready)
             labels = {
@@ -987,35 +1109,46 @@ class K8sExecutor(Executor):
                 LABEL_PROXY_USER: user_name,
                 LABEL_TASK_TYPE: get_metadata_field(task, "type", "online"),
                 LABEL_TEAM_MODE: get_metadata_field(task, "mode", "default"),
+                LABEL_POOL_STATE: "bound",
             }
+            if workload_type == "executor":
+                labels[LABEL_POOL_PROFILE] = POOL_PROFILE_EXECUTOR_STANDARD
             annotations = {
                 ANNOTATION_EMAIL: "weibo_ai_coding@weibo.com",
-                ANNOTATION_HEARTBEAT_ENABLED: "true",
-                ANNOTATION_HEARTBEAT_TYPE: "sandbox",
-                # Use task_id as heartbeat_id for sandbox lookup compatibility
-                ANNOTATION_HEARTBEAT_ID: str(task_id),
             }
-            auth_token = get_metadata_field(task, "auth_token")
-            if auth_token:
-                annotations[ANNOTATION_AUTH_TOKEN] = auth_token
-            if TASK_API_DOMAIN:
-                annotations[ANNOTATION_TASK_API_DOMAIN] = TASK_API_DOMAIN
-            if EXECUTOR_MANAGER_HEARTBEAT_BASE_URL:
-                annotations[ANNOTATION_HEARTBEAT_BASE_URL] = (
-                    EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+            if workload_type == "sandbox":
+                annotations.update(
+                    {
+                        ANNOTATION_HEARTBEAT_ENABLED: "true",
+                        ANNOTATION_HEARTBEAT_TYPE: "sandbox",
+                        ANNOTATION_HEARTBEAT_ID: str(task_id),
+                    }
                 )
-            if CALLBACK_URL:
-                annotations[ANNOTATION_CALLBACK_URL] = CALLBACK_URL
-            task_identity_env = build_task_identity_env(
-                skill_identity_token=get_metadata_field(task, "skill_identity_token"),
-                user_name=user_name,
-            )
-            skill_identity_token = task_identity_env.get("WEGENT_SKILL_IDENTITY_TOKEN")
-            if skill_identity_token:
-                annotations[ANNOTATION_SKILL_IDENTITY_TOKEN] = skill_identity_token
-            skill_user_name = task_identity_env.get("WEGENT_SKILL_USER_NAME")
-            if skill_user_name:
-                annotations[ANNOTATION_SKILL_USER_NAME] = skill_user_name
+                auth_token = get_metadata_field(task, "auth_token")
+                if auth_token:
+                    annotations[ANNOTATION_AUTH_TOKEN] = auth_token
+                if TASK_API_DOMAIN:
+                    annotations[ANNOTATION_TASK_API_DOMAIN] = TASK_API_DOMAIN
+                if EXECUTOR_MANAGER_HEARTBEAT_BASE_URL:
+                    annotations[ANNOTATION_HEARTBEAT_BASE_URL] = (
+                        EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+                    )
+                if CALLBACK_URL:
+                    annotations[ANNOTATION_CALLBACK_URL] = CALLBACK_URL
+                task_identity_env = build_task_identity_env(
+                    skill_identity_token=get_metadata_field(
+                        task, "skill_identity_token"
+                    ),
+                    user_name=user_name,
+                )
+                skill_identity_token = task_identity_env.get(
+                    "WEGENT_SKILL_IDENTITY_TOKEN"
+                )
+                if skill_identity_token:
+                    annotations[ANNOTATION_SKILL_IDENTITY_TOKEN] = skill_identity_token
+                skill_user_name = task_identity_env.get("WEGENT_SKILL_USER_NAME")
+                if skill_user_name:
+                    annotations[ANNOTATION_SKILL_USER_NAME] = skill_user_name
 
             # Patch Pod labels and annotations with task-specific data
             pod_name = sandbox_status.get("pod_name")
@@ -1042,12 +1175,18 @@ class K8sExecutor(Executor):
 
         except ApiException as e:
             logger.error(
-                f"Kubernetes API error creating sandbox from warm pool for task {task_id}: {e}"
+                "Kubernetes API error claiming warm-pool %s for task %s: %s",
+                workload_type,
+                task_id,
+                e,
             )
             return {"status": "failed", "error_msg": f"Kubernetes API error: {e}"}
         except Exception as e:
             logger.error(
-                f"Error creating sandbox from warm pool for task {task_id}: {e}"
+                "Error claiming warm-pool %s for task %s: %s",
+                workload_type,
+                task_id,
+                e,
             )
             return {"status": "failed", "error_msg": f"Error: {e}"}
 
@@ -1180,14 +1319,69 @@ class K8sExecutor(Executor):
     def _delete_warmpool_claim_for_executor(
         self, executor_name: str, executor_namespace: Optional[str]
     ) -> Optional[Dict[str, Any]]:
-        """Delete the same-name SandboxClaim before falling back to Pod deletion."""
+        """Delete the owning SandboxClaim before falling back to Pod deletion."""
         if executor_namespace and executor_namespace != K8S_NAMESPACE:
             return None
 
         claim_result = self.delete_sandbox_claim(executor_name)
-        if claim_result.get("status") == "not_found":
+        if claim_result.get("status") != "not_found":
+            return claim_result
+
+        core_v1 = self._get_core_v1_api()
+        if core_v1 is None:
             return None
-        return claim_result
+
+        try:
+            pod = core_v1.read_namespaced_pod(
+                name=executor_name,
+                namespace=K8S_NAMESPACE,
+            )
+        except ApiException as e:
+            if e.status == HTTPStatus.NOT_FOUND:
+                return None
+            return {
+                "status": "failed",
+                "error_msg": f"Kubernetes API error reading pod owner: {e}",
+            }
+
+        sandbox_name = self._sandbox_owner_name(pod.metadata)
+        if not sandbox_name:
+            return None
+
+        logger.info(
+            "Pod '%s' is owned by Sandbox '%s'; deleting its SandboxClaim",
+            executor_name,
+            sandbox_name,
+        )
+        owner_claim_result = self.delete_sandbox_claim(sandbox_name)
+        if owner_claim_result.get("status") == "not_found":
+            return None
+        return owner_claim_result
+
+    @staticmethod
+    def _sandbox_owner_name(metadata: Any) -> Optional[str]:
+        """Return the Sandbox owner name from Kubernetes object metadata."""
+        if isinstance(metadata, dict):
+            owner_references = metadata.get("ownerReferences") or []
+        else:
+            owner_references = getattr(metadata, "owner_references", None) or []
+
+        for owner in owner_references:
+            if isinstance(owner, dict):
+                kind = owner.get("kind")
+                name = owner.get("name")
+                api_version = owner.get("apiVersion", "")
+            else:
+                kind = getattr(owner, "kind", None)
+                name = getattr(owner, "name", None)
+                api_version = getattr(owner, "api_version", "") or ""
+            if (
+                kind == SANDBOX_KIND
+                and name
+                and api_version.split("/", 1)[0] == SANDBOX_API_GROUP
+            ):
+                return str(name)
+        return None
 
     def delete_sandbox_claim(self, sandbox_claim_name: str) -> Dict[str, Any]:
         """Delete a SandboxClaim CR (for warm pool sandboxes).
@@ -1236,9 +1430,9 @@ class K8sExecutor(Executor):
     def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
         """Delete executor by task_id.
 
-        First checks if there's a SandboxClaim binding in Redis (for warm pool sandboxes).
-        If so, deletes the SandboxClaim which cascades to delete Sandbox and Pod.
-        Otherwise, falls back to searching and deleting pods by task_id label.
+        First checks the Redis binding for a warm-pool SandboxClaim. If the
+        binding is missing or stale, searches Pods by task label and resolves
+        each Pod's Sandbox owner before falling back to direct Pod deletion.
 
         Args:
             task_id: Task ID to search for
@@ -1246,12 +1440,14 @@ class K8sExecutor(Executor):
         Returns:
             Dict with status and error_msg if failed
         """
-        # First, check if there's a SandboxClaim binding in Redis
         from executor_manager.services.sandbox.repository import get_sandbox_repository
 
+        repository = None
+        numeric_task_id = None
         try:
             repository = get_sandbox_repository()
-            binding = repository.load_executor_binding_full(int(task_id))
+            numeric_task_id = int(task_id)
+            binding = repository.load_executor_binding_full(numeric_task_id)
 
             if binding and binding.get("sandbox_claim_name"):
                 sandbox_claim_name = binding["sandbox_claim_name"]
@@ -1259,11 +1455,21 @@ class K8sExecutor(Executor):
                     f"Found sandbox_claim_name '{sandbox_claim_name}' in binding for task {task_id}, "
                     "deleting SandboxClaim"
                 )
-                return self.delete_sandbox_claim(sandbox_claim_name)
+                claim_result = self.delete_sandbox_claim(sandbox_claim_name)
+                if claim_result.get("status") == "success":
+                    repository.delete_executor_binding(numeric_task_id)
+                    return claim_result
+                if claim_result.get("status") != "not_found":
+                    return claim_result
+                logger.warning(
+                    "SandboxClaim '%s' from task %s binding is missing; "
+                    "falling back to Pod lookup",
+                    sandbox_claim_name,
+                    task_id,
+                )
         except Exception as e:
             logger.debug(f"Error checking binding for task {task_id}: {e}")
 
-        # Fall back to searching and deleting pods by task_id label
         try:
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:
@@ -1282,6 +1488,8 @@ class K8sExecutor(Executor):
             )
 
             if not pods.items:
+                if repository is not None and numeric_task_id is not None:
+                    repository.delete_executor_binding(numeric_task_id)
                 logger.warning(
                     f"No pod found with task_id label '{task_id}' "
                     f"in namespace {K8S_NAMESPACE}"
@@ -1291,37 +1499,41 @@ class K8sExecutor(Executor):
                     "error_msg": f"No pod found with task_id '{task_id}'",
                 }
 
-            delete_options = client.V1DeleteOptions(propagation_policy="Background")
-
-            # Delete all matching pods (should typically be one)
             deleted_pods = []
+            deletion_errors = []
             for pod in pods.items:
                 pod_name = pod.metadata.name
-                try:
-                    core_v1.delete_namespaced_pod(
-                        name=pod_name,
-                        namespace=K8S_NAMESPACE,
-                        body=delete_options,
-                    )
+                delete_result = self.delete_executor(pod_name, K8S_NAMESPACE)
+                if delete_result.get("status") == "success":
                     deleted_pods.append(pod_name)
                     logger.info(
-                        f"Deleted Kubernetes pod '{pod_name}' "
-                        f"found by task_id label '{task_id}'"
+                        "Deleted executor runtime '%s' found by task_id label '%s'",
+                        pod_name,
+                        task_id,
                     )
-                except ApiException as e:
-                    if e.status != HTTPStatus.NOT_FOUND:
-                        logger.error(f"Failed to delete pod '{pod_name}': {e}")
+                elif delete_result.get("status") != "not_found":
+                    deletion_errors.append(
+                        f"{pod_name}: {delete_result.get('error_msg', 'delete failed')}"
+                    )
 
             if deleted_pods:
+                if repository is not None and numeric_task_id is not None:
+                    repository.delete_executor_binding(numeric_task_id)
                 return {
                     "status": "success",
                     "deleted_pods": deleted_pods,
                 }
-            else:
+            if deletion_errors:
                 return {
-                    "status": "not_found",
-                    "error_msg": f"Failed to delete any pods for task_id '{task_id}'",
+                    "status": "failed",
+                    "error_msg": "; ".join(deletion_errors),
                 }
+            if repository is not None and numeric_task_id is not None:
+                repository.delete_executor_binding(numeric_task_id)
+            return {
+                "status": "not_found",
+                "error_msg": f"Failed to delete any pods for task_id '{task_id}'",
+            }
 
         except ApiException as e:
             logger.error(
@@ -1333,10 +1545,10 @@ class K8sExecutor(Executor):
             return {"status": "failed", "error_msg": f"Error: {e}"}
 
     def get_executor_task_id(self, executor_name: str) -> Optional[str]:
-        """Get task_id from pod label.
+        """Get task_id from a direct Pod or logical warm-pool executor name.
 
         Args:
-            executor_name: Name of the pod
+            executor_name: Direct Pod name or logical warm-pool executor name
 
         Returns:
             task_id string if found, None otherwise
@@ -1346,11 +1558,42 @@ class K8sExecutor(Executor):
             if core_v1 is None:
                 return None
 
-            pod = core_v1.read_namespaced_pod(
-                name=executor_name, namespace=K8S_NAMESPACE
+            try:
+                pod = core_v1.read_namespaced_pod(
+                    name=executor_name,
+                    namespace=K8S_NAMESPACE,
+                )
+                if pod.metadata and pod.metadata.labels:
+                    task_id = pod.metadata.labels.get(LABEL_TASK_ID)
+                    if task_id:
+                        return task_id
+            except ApiException as e:
+                if e.status != HTTPStatus.NOT_FOUND:
+                    raise
+
+            pods = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=(
+                    f"{LABEL_EXECUTOR}={LABEL_EXECUTOR_VALUE},app={executor_name}"
+                ),
             )
-            if pod.metadata and pod.metadata.labels:
-                return pod.metadata.labels.get("aigc.weibo.com/task-id")
+            for pod in pods.items:
+                labels = pod.metadata.labels or {}
+                task_id = labels.get(LABEL_TASK_ID)
+                if task_id:
+                    return task_id
+
+            if WARMPOOL_ENABLED:
+                from executor_manager.wecode.executors.warmpool import WarmPoolClient
+
+                api_client = _get_api_client()
+                if api_client is not None:
+                    claim = WarmPoolClient(
+                        api_client,
+                        K8S_NAMESPACE,
+                    ).get_sandbox_claim(executor_name)
+                    labels = (claim or {}).get("metadata", {}).get("labels") or {}
+                    return labels.get(LABEL_TASK_ID)
             return None
         except ApiException as e:
             if e.status != HTTPStatus.NOT_FOUND:
@@ -1485,18 +1728,18 @@ class K8sExecutor(Executor):
         return reason
 
     def get_old_task_ids(self, older_than_hours: int = 48) -> Dict[str, Any]:
-        """Get old executor pods with task_id and pod_name for orphan cleanup.
+        """Get old executor runtimes for orphan cleanup.
 
-        Scans all pods in the namespace by name pattern (wegent-task or sandbox)
-        rather than by label to catch pods where labels were not set correctly.
+        Includes normal executor Pods, bound warm-pool Pods, and labeled Executor
+        SandboxClaims whose Pod is missing. Standby warm-pool capacity is excluded.
 
         Args:
             older_than_hours: Minimum pod age in hours.
 
         Returns:
-            Dict with status and pods list of {task_id, pod_name, status} dicts.
-            task_id is None when the label is missing; status is the kubectl-style
-            display status (e.g. "Running", "OOMKilled").
+            Dict with status and a ``pods`` compatibility list. ``pod_name`` is
+            the cleanup target: a SandboxClaim name for warm-pool runtimes and
+            the actual Pod name otherwise.
         """
         import re
 
@@ -1521,35 +1764,50 @@ class K8sExecutor(Executor):
             items = data.get("items", [])
 
             old_pods: List[Dict[str, Any]] = []
+            cleanup_targets = set()
             for pod in items:
                 metadata = pod.get("metadata", {})
                 pod_name = metadata.get("name", "")
-                if not name_pattern.search(pod_name):
+                labels = metadata.get("labels") or {}
+                task_id = labels.get(LABEL_TASK_ID)
+                is_bound_executor_claim = (
+                    labels.get(LABEL_EXECUTOR) == LABEL_EXECUTOR_VALUE
+                    and labels.get(LABEL_POOL_PROFILE) == POOL_PROFILE_EXECUTOR_STANDARD
+                    and labels.get(LABEL_POOL_STATE) == "bound"
+                    and bool(task_id)
+                )
+                if (
+                    labels.get(LABEL_WARM_POOL) == "true"
+                    and not is_bound_executor_claim
+                ):
                     continue
-                creation_ts = metadata.get("creationTimestamp")
-                if not creation_ts:
+                if not name_pattern.search(pod_name) and not is_bound_executor_claim:
                     continue
-                try:
-                    creation_time = datetime.fromisoformat(
-                        creation_ts.replace("Z", "+00:00")
-                    )
-                    if creation_time >= cutoff:
-                        continue
-                except (ValueError, TypeError):
+                if not self._is_resource_older_than(metadata, cutoff):
                     continue
-                labels = metadata.get("labels", {})
-                task_id = labels.get("aigc.weibo.com/executor-task-id")
+                sandbox_name = self._sandbox_owner_name(metadata)
+                cleanup_target = sandbox_name or pod_name
                 old_pods.append(
                     {
                         "task_id": task_id,
-                        "pod_name": pod_name,
+                        "pod_name": cleanup_target,
                         "status": self._compute_pod_display_status(pod),
                     }
                 )
+                cleanup_targets.add(cleanup_target)
+
+            old_pods.extend(
+                self._get_old_executor_claim_targets(
+                    core_v1,
+                    cutoff,
+                    cleanup_targets,
+                )
+            )
 
             elapsed = time.time() - start_time
             logger.info(
-                "+++ Found %d old pods (older_than=%dh) in namespace %s (took %.2fs)",
+                "+++ Found %d old executor cleanup targets "
+                "(older_than=%dh) in namespace %s (took %.2fs)",
                 len(old_pods),
                 older_than_hours,
                 K8S_NAMESPACE,
@@ -1558,15 +1816,68 @@ class K8sExecutor(Executor):
             return {"status": "success", "pods": old_pods}
 
         except ApiException as e:
-            logger.error("+++ Kubernetes API error listing old pods: %s", e)
+            logger.error("+++ Kubernetes API error listing old runtimes: %s", e)
             return {
                 "status": "failed",
                 "error_msg": f"Kubernetes API error: {e}",
                 "pods": [],
             }
         except Exception as e:
-            logger.error("+++ Error listing old Kubernetes pods: %s", e)
+            logger.error("+++ Error listing old Kubernetes runtimes: %s", e)
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
+
+    @staticmethod
+    def _is_resource_older_than(metadata: Dict[str, Any], cutoff: datetime) -> bool:
+        """Return whether Kubernetes metadata has a valid timestamp before cutoff."""
+        creation_timestamp = metadata.get("creationTimestamp")
+        if not creation_timestamp:
+            return False
+        try:
+            creation_time = datetime.fromisoformat(
+                creation_timestamp.replace("Z", "+00:00")
+            )
+        except (ValueError, TypeError):
+            return False
+        return creation_time < cutoff
+
+    def _get_old_executor_claim_targets(
+        self,
+        core_v1: client.CoreV1Api,
+        cutoff: datetime,
+        existing_targets: set,
+    ) -> List[Dict[str, Any]]:
+        """List old standard Executor claims not already represented by a Pod."""
+        if not WARMPOOL_ENABLED:
+            return []
+
+        from executor_manager.wecode.executors.warmpool import WarmPoolClient
+
+        warmpool_client = WarmPoolClient(core_v1.api_client, K8S_NAMESPACE)
+        claim_selector = (
+            f"{LABEL_EXECUTOR}={LABEL_EXECUTOR_VALUE},"
+            f"{LABEL_POOL_PROFILE}={POOL_PROFILE_EXECUTOR_STANDARD}"
+        )
+        old_claims = []
+        for claim in warmpool_client.list_sandbox_claims(claim_selector):
+            metadata = claim.get("metadata") or {}
+            claim_name = metadata.get("name", "")
+            if (
+                not claim_name
+                or claim_name in existing_targets
+                or not self._is_resource_older_than(metadata, cutoff)
+            ):
+                continue
+            labels = metadata.get("labels") or {}
+            old_claims.append(
+                {
+                    "task_id": labels.get(LABEL_TASK_ID),
+                    "pod_name": claim_name,
+                    # Empty status avoids treating a temporarily Pod-less claim
+                    # as a dead Pod before backend activity checks.
+                    "status": "",
+                }
+            )
+        return old_claims
 
     def get_executor_count(
         self, label_selector: Optional[str] = None

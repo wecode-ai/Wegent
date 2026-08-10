@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, Database, User, Building2, Users, FileText } from 'lucide-react'
+import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,11 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import {
+  CodeWikiSourceFields,
+  type CodeWikiSource,
+} from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
 import type {
   DirectAccessRequirement,
   KnowledgeBaseCreate,
@@ -32,6 +37,7 @@ import type {
   RetrievalConfigDraft,
   RagConfigMode,
 } from '@/types/knowledge'
+import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
@@ -97,6 +103,19 @@ function createDefaultRetrievalConfig(): RetrievalConfigDraft {
   }
 }
 
+/** Documents are uploaded and organised; code is generated from a repository. */
+type KnowledgeBaseKind = 'document' | 'code'
+
+function createEmptySource(): CodeWikiSource {
+  return {
+    source_type: 'github',
+    source_url: '',
+    language: 'zh',
+    show_generation_task: false,
+    resolution: null,
+  }
+}
+
 export function CreateKnowledgeBaseDialog({
   open,
   onOpenChange,
@@ -118,6 +137,20 @@ export function CreateKnowledgeBaseDialog({
     useState<DirectAccessRequirement>('read')
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
+  // Which kind of knowledge base is being created. Chosen first because it decides
+  // which fields even apply: a code wiki has a repository and no opening view.
+  const [kind, setKind] = useState<KnowledgeBaseKind>('document')
+  // Staged rollout: creating code wikis is off unless the deployment opts in.
+  // Reading and regenerating existing ones is unaffected, here and on the server.
+  const kindOptions = (
+    [
+      ['document', FileText, 'knowledge:document.knowledgeBase.kindDocument'],
+      ...(getRuntimeConfigSync().enableCodeWiki
+        ? [['code', Code2, 'knowledge:document.knowledgeBase.kindCode'] as const]
+        : []),
+    ] as const
+  ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
+  const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
   // Default enable summary for all KB types
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
@@ -160,6 +193,8 @@ export function CreateKnowledgeBaseDialog({
   useEffect(() => {
     if (open) {
       setSelectedKbType(initialKbType)
+      setKind('document')
+      setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
     }
@@ -175,8 +210,15 @@ export function CreateKnowledgeBaseDialog({
     setSummaryModelError('')
     clearMultimodalError()
 
-    if (!name.trim()) {
+    // A code wiki may be left unnamed: the server fills in the repository's own
+    // name. Pre-filling the box here instead would read as the caller's own input.
+    if (!name.trim() && kind !== 'code') {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
+      return
+    }
+
+    if (kind === 'code' && !source.source_url) {
+      setError(t('knowledge:codeWiki.create.repositoryRequired'))
       return
     }
 
@@ -219,13 +261,29 @@ export function CreateKnowledgeBaseDialog({
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
-        kb_type: selectedKbType,
+        kb_type: kind === 'code' ? 'code_wiki' : selectedKbType,
+        ...(kind === 'code'
+          ? {
+              source_type: source.source_type,
+              source_url: source.source_url,
+              language: source.language,
+              show_generation_task: source.show_generation_task,
+              // Left blank, the repository's own name is used. Sent from what the
+              // form already resolved rather than pre-filled into the box, which
+              // would read as the caller's own input — and rather than resolved
+              // again on the server, which has asked the provider once already.
+              resolved_name: source.resolution?.name,
+              resolved_description: source.resolution?.description,
+            }
+          : {}),
       })
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
+      setKind('document')
+      setSource(createEmptySource())
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       resetMultimodal()
@@ -246,6 +304,8 @@ export function CreateKnowledgeBaseDialog({
       setDirectAccessRequirement('read')
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
+      setKind('document')
+      setSource(createEmptySource())
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setSummaryModelError('')
@@ -279,57 +339,106 @@ export function CreateKnowledgeBaseDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-3 [scrollbar-gutter:stable]">
+          {/* Which kind first: it decides which of the fields below even apply. The
+              choice disappears entirely while code wikis are off, rather than being
+              shown disabled: an option nobody in this deployment can pick is noise,
+              and the server refuses the call regardless. */}
+          <div className={`grid gap-3 ${kindOptions.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {kindOptions.map(([option, Icon, label]) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setKind(option)}
+                data-testid={`create-kb-kind-${option}`}
+                className={`flex items-center gap-3 p-3 rounded-md border transition-colors ${
+                  kind === option
+                    ? 'bg-primary/5 border-primary/20'
+                    : 'bg-muted border-border hover:bg-hover'
+                }`}
+              >
+                <div
+                  className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                    kind === option
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-surface text-text-secondary'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div className="text-left">
+                  <div className="font-medium text-sm">{t(label)}</div>
+                  <div className="text-xs text-text-muted">{t(`${label}Desc`)}</div>
+                </div>
+              </button>
+            ))}
+          </div>
           <KnowledgeBaseForm
+            advancedExtras={
+              kind === 'code' ? (
+                <GenerationTaskRow
+                  checked={source.show_generation_task}
+                  onChange={checked => setSource({ ...source, show_generation_task: checked })}
+                />
+              ) : undefined
+            }
+            nameRequired={kind !== 'code'}
+            namePlaceholder={
+              kind === 'code' ? t('knowledge:codeWiki.create.namePlaceholder') : undefined
+            }
             typeSection={
               <>
-                {/* KB Type selector - subtle style */}
-                <SimpleConfigRow label={t('knowledge:document.knowledgeBase.type')} align="start">
-                  <div className="space-y-2">
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
-                        className="text-xs text-text-muted hover:text-primary transition-colors"
-                        data-testid="switch-kb-type"
-                      >
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.convertToClassic')
-                          : t('knowledge:document.knowledgeBase.convertToNotebook')}
-                      </button>
-                    </div>
-                    <div
-                      className={`flex items-center gap-3 p-3 rounded-md border ${
-                        isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
-                      }`}
-                    >
+                {kind === 'code' ? (
+                  <CodeWikiSourceFields value={source} onChange={setSource} />
+                ) : (
+                  /* KB Type selector - subtle style */
+                  <SimpleConfigRow label={t('knowledge:document.knowledgeBase.type')} align="start">
+                    <div className="space-y-2">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
+                          className="text-xs text-text-muted hover:text-primary transition-colors"
+                          data-testid="switch-kb-type"
+                        >
+                          {isNotebook
+                            ? t('knowledge:document.knowledgeBase.convertToClassic')
+                            : t('knowledge:document.knowledgeBase.convertToNotebook')}
+                        </button>
+                      </div>
                       <div
-                        className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                          isNotebook
-                            ? 'bg-primary/10 text-primary'
-                            : 'bg-surface text-text-secondary'
+                        className={`flex items-center gap-3 p-3 rounded-md border ${
+                          isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
                         }`}
                       >
-                        {isNotebook ? (
-                          <BookOpen className="w-4 h-4" />
-                        ) : (
-                          <Database className="w-4 h-4" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="font-medium text-sm">
-                          {isNotebook
-                            ? t('knowledge:document.knowledgeBase.typeNotebook')
-                            : t('knowledge:document.knowledgeBase.typeClassic')}
+                        <div
+                          className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                            isNotebook
+                              ? 'bg-primary/10 text-primary'
+                              : 'bg-surface text-text-secondary'
+                          }`}
+                        >
+                          {isNotebook ? (
+                            <BookOpen className="w-4 h-4" />
+                          ) : (
+                            <Database className="w-4 h-4" />
+                          )}
                         </div>
-                        <div className="text-xs text-text-muted">
-                          {isNotebook
-                            ? t('knowledge:document.knowledgeBase.notebookDesc')
-                            : t('knowledge:document.knowledgeBase.classicDesc')}
+                        <div>
+                          <div className="font-medium text-sm">
+                            {isNotebook
+                              ? t('knowledge:document.knowledgeBase.typeNotebook')
+                              : t('knowledge:document.knowledgeBase.typeClassic')}
+                          </div>
+                          <div className="text-xs text-text-muted">
+                            {isNotebook
+                              ? t('knowledge:document.knowledgeBase.notebookDesc')
+                              : t('knowledge:document.knowledgeBase.classicDesc')}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </SimpleConfigRow>
+                  </SimpleConfigRow>
+                )}
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
                   <SimpleConfigRow

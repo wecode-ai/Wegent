@@ -42,7 +42,19 @@ get_local_ip() {
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
 
-    # Method 3: Try macOS/BSD ifconfig (works on macOS)
+    # Method 3: macOS gives the interface address directly. Tried before the
+    # ifconfig parsing below, which assumes "inet" is one line under the interface
+    # name -- on macOS it is four or five lines down, past options/ether/inet6, so
+    # that pipeline yields nothing and the whole function falls back to "localhost".
+    # A container handed "localhost" then calls itself and the task times out.
+    if [ -z "$ip" ] && command -v ipconfig &> /dev/null; then
+        for iface in en0 en1 en2; do
+            ip=$(ipconfig getifaddr "$iface" 2>/dev/null)
+            [ -n "$ip" ] && break
+        done
+    fi
+
+    # Method 4: Try Linux/BSD ifconfig
     # Filter out docker/bridge interfaces (br-, docker, veth)
     if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
         ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
@@ -60,11 +72,23 @@ get_local_ip() {
     echo "$ip"
 }
 
+# Load local overrides. Sourced rather than left to the process, because this
+# service reads os.getenv directly and depends on no dotenv library -- a .env sitting
+# next to it would otherwise do nothing at all.
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+    echo -e "${GREEN}✓ Loaded $ENV_FILE${NC}"
+fi
+
 # Default configuration
-DEFAULT_PORT=8001
+DEFAULT_PORT="${PORT:-8001}"
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
-DEFAULT_TASK_API_DOMAIN="http://$(get_local_ip):8000"
+DEFAULT_EXECUTOR_IMAGE="${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:latest}"
+DEFAULT_TASK_API_DOMAIN="${TASK_API_DOMAIN:-http://$(get_local_ip):8000}"
 PYTHON_PATH=""
 
 PORT=$DEFAULT_PORT

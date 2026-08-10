@@ -78,6 +78,15 @@ export function reduceRuntimeTaskLifecycle(
           }
     }
 
+    case 'send_blocked_by_active_turn':
+      return {
+        ...state,
+        executionPhase: 'running',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: null,
+      }
+
     case 'stop_requested':
       return {
         ...state,

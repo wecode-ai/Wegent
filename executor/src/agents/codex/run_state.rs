@@ -56,6 +56,14 @@ impl CodexRunState {
             .is_some_and(|status| status.eq_ignore_ascii_case("active"))
     }
 
+    pub(super) fn response_item_id(&self) -> Option<&str> {
+        if self.final_text.is_empty() {
+            self.pending_message_id.as_deref()
+        } else {
+            self.final_message_id.as_deref()
+        }
+    }
+
     pub(super) fn reset_turn_output(&mut self) {
         self.final_text.clear();
         self.final_message_id = None;

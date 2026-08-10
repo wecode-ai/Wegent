@@ -6,6 +6,11 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
+The context indicator beside the task composer shows the current model's context usage. Its used
+arc and remaining track automatically adapt their contrast for light and dark themes. When usage
+reaches the compaction threshold, the indicator switches to a warning color and, when compaction
+is available, offers the compact action.
+
 ## View app information
 
 Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
@@ -52,7 +57,7 @@ board items receive the updated title.
 
 ## Custom Codex models
 
-In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, GLM, and MiniMax. After entering the corresponding platform API key, Wework discovers available models through the provider's model-list endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint, while MiniMax uses its recommended Anthropic-compatible API and the `X-Api-Key` header for model discovery. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
 The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, live Web Search, and freeform `apply_patch`. The connection test also requires a real `apply_patch` custom-tool call. Existing Wework-managed DeepSeek Chat Completions configurations are migrated to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
 

@@ -3,6 +3,7 @@ import type {
   ModelOptions,
   RuntimeProjectWork,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeWorkListResponse,
   UnifiedModel,
 } from '@/types/api'
@@ -182,6 +183,15 @@ export function emptyAutomationDraft(
     modelType: selectedModel?.type ?? '',
     modelOptions: { ...selectedModelOptions },
   }
+}
+
+export function automationWorkspaceTarget(
+  workspacePath: string
+): Pick<RuntimeTaskCreateRequest, 'workspacePath' | 'standaloneChatWorkspace'> {
+  const normalizedWorkspacePath = workspacePath.trim()
+  return normalizedWorkspacePath
+    ? { workspacePath: normalizedWorkspacePath }
+    : { standaloneChatWorkspace: true }
 }
 
 export function toDateTimeLocal(date: Date): string {

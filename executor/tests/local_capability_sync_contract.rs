@@ -25,6 +25,375 @@ use wegent_executor::{
     protocol::ExecutionRequest,
 };
 
+#[test]
+fn plugin_store_uses_manifest_home_without_changing_skill_store() {
+    let temp = TempRoot::new("plugin-store-home");
+    let executor_home = temp.path().join(".wework");
+    let legacy_store = temp.path().join(".wegent-executor/capabilities/store");
+    let canonical_store = executor_home.join("capabilities/store");
+    let package_name = "9-wegent-dev-tools-0.1.0";
+    let legacy_package = legacy_store.join("plugins").join(package_name);
+    let canonical_package = canonical_store.join("plugins").join(package_name);
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    write_test_plugin_package(&legacy_package, "legacy-authoritative");
+    write_test_plugin_package(&canonical_package, "stale-canonical");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 7,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "name": "dev-tools",
+                    "marketplace": "wegent",
+                    "version": "0.1.0",
+                    "store_path": legacy_package.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+
+    assert_eq!(store.store_dir, legacy_store);
+    store.reconcile_managed_claude_plugins().unwrap();
+
+    let migrated_manifest = read_json(&manifest_path);
+    assert_eq!(
+        migrated_manifest["plugins"]["dev-tools@wegent"]["store_path"],
+        canonical_package.display().to_string()
+    );
+    assert_eq!(migrated_manifest["revision"], 8);
+    assert_eq!(
+        fs::read_to_string(canonical_package.join("payload.txt")).unwrap(),
+        "legacy-authoritative"
+    );
+    assert!(!legacy_package.exists());
+    assert!(canonical_store.join(".plugin-store-layout.json").is_file());
+
+    assert!(store.reconcile_managed_claude_plugins().unwrap().is_empty());
+    assert_eq!(read_json(manifest_path)["revision"], 8);
+}
+
+#[test]
+fn legacy_store_path_rewrites_after_desktop_home_was_already_moved() {
+    let temp = TempRoot::new("capability-store-moved-home");
+    let executor_home = temp.path().join(".wework");
+    let legacy_package = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-default-dev-tools");
+    let canonical_package = executor_home.join("capabilities/store/plugins/9-default-dev-tools");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    write_test_plugin_package(&canonical_package, "already-moved");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 2,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "name": "dev-tools",
+                    "marketplace": "wegent",
+                    "version": "0.1.0",
+                    "checksum": "stale-checksum",
+                    "store_path": legacy_package.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+
+    store.reconcile_managed_claude_plugins().unwrap();
+
+    let plugin = &read_json(manifest_path)["plugins"]["dev-tools@wegent"];
+    assert_eq!(
+        plugin["store_path"],
+        canonical_package.display().to_string()
+    );
+    assert!(plugin.get("checksum").is_none());
+    assert!(canonical_package.is_dir());
+}
+
+#[test]
+fn missing_legacy_package_does_not_bind_unverified_canonical_leftover() {
+    let temp = TempRoot::new("capability-store-unverified-canonical");
+    let executor_home = temp.path().join(".wework");
+    let legacy_package = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-default-dev-tools");
+    let canonical_package = executor_home.join("capabilities/store/plugins/9-default-dev-tools");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    fs::create_dir_all(&canonical_package).unwrap();
+    fs::write(canonical_package.join("payload.txt"), "leftover").unwrap();
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 2,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "name": "dev-tools",
+                    "marketplace": "wegent",
+                    "version": "0.1.0",
+                    "checksum": "stale-checksum",
+                    "store_path": legacy_package.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+
+    store.reconcile_managed_claude_plugins().unwrap();
+
+    let plugin = &read_json(manifest_path)["plugins"]["dev-tools@wegent"];
+    assert_eq!(plugin["store_path"], legacy_package.display().to_string());
+    assert_eq!(plugin["checksum"], "stale-checksum");
+}
+
+#[test]
+fn plugin_reconciliation_does_not_migrate_skill_store_paths() {
+    let temp = TempRoot::new("plugin-migration-skill-boundary");
+    let executor_home = temp.path().join(".wework");
+    let legacy_skill = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/skills/42-default-image-gen");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    fs::create_dir_all(&legacy_skill).unwrap();
+    fs::write(legacy_skill.join("SKILL.md"), "unchanged").unwrap();
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 5,
+            "skills": {
+                "image-gen": {
+                    "managed": true,
+                    "store_path": legacy_skill.display().to_string(),
+                },
+            },
+            "plugins": {},
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+
+    assert!(store.reconcile_managed_claude_plugins().unwrap().is_empty());
+
+    let manifest = read_json(manifest_path);
+    assert_eq!(
+        manifest["skills"]["image-gen"]["store_path"],
+        legacy_skill.display().to_string()
+    );
+    assert_eq!(manifest["revision"], 5);
+    assert!(legacy_skill.is_dir());
+    assert!(!executor_home
+        .join("capabilities/store/skills/42-default-image-gen")
+        .exists());
+}
+
+#[tokio::test]
+async fn skill_and_mcp_updates_do_not_trigger_plugin_store_migration() {
+    let temp = TempRoot::new("plugin-migration-non-plugin-boundary");
+    let executor_home = temp.path().join(".wework");
+    let legacy_plugin = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-wegent-dev-tools-0.1.0");
+    let canonical_plugin =
+        executor_home.join("capabilities/store/plugins/9-wegent-dev-tools-0.1.0");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    write_test_plugin_package(&legacy_plugin, "legacy-active");
+    write_test_plugin_package(&canonical_plugin, "stale-canonical");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 6,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "name": "dev-tools",
+                    "marketplace": "wegent",
+                    "version": "0.1.0",
+                    "store_path": legacy_plugin.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+    store
+        .record_skill(json!({
+            "name": "image-gen",
+            "skill_id": 42,
+            "namespace": "default",
+        }))
+        .unwrap();
+    let handler = CapabilitySyncHandler::new("token", store);
+
+    handler
+        .apply_sync(json!({
+            "mode": "merge",
+            "skills": [],
+            "plugins": [],
+            "mcps": [{
+                "name": "docs",
+                "installed_mcp_id": 7,
+                "server": {"type": "streamable-http", "url": "https://example.com/mcp"},
+            }],
+        }))
+        .await
+        .unwrap();
+
+    let manifest = read_json(manifest_path);
+    assert_eq!(
+        manifest["plugins"]["dev-tools@wegent"]["store_path"],
+        legacy_plugin.display().to_string()
+    );
+    assert!(legacy_plugin.is_dir());
+    assert_eq!(
+        fs::read_to_string(canonical_plugin.join("payload.txt")).unwrap(),
+        "stale-canonical"
+    );
+    assert!(!executor_home
+        .join("capabilities/store/.plugin-store-layout.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn plugin_sync_migrates_authoritative_legacy_package_before_reconciliation() {
+    let temp = TempRoot::new("plugin-sync-store-migration");
+    let executor_home = temp.path().join(".wework");
+    let legacy_plugin = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-wegent-dev-tools-0.1.0");
+    let canonical_plugin =
+        executor_home.join("capabilities/store/plugins/9-wegent-dev-tools-0.1.0");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    write_test_plugin_package(&legacy_plugin, "legacy-authoritative");
+    write_test_plugin_package(&canonical_plugin, "stale-canonical");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 6,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "name": "dev-tools",
+                    "marketplace": "wegent",
+                    "version": "0.1.0",
+                    "store_path": legacy_plugin.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"));
+    let handler = CapabilitySyncHandler::new("token", store);
+
+    let result = handler
+        .apply_sync(json!({
+            "mode": "merge",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 9,
+                "name": "dev-tools",
+                "marketplace": "wegent",
+                "version": "0.1.0",
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["plugins"][0]["status"], "synced");
+    assert_eq!(
+        fs::read_to_string(canonical_plugin.join("payload.txt")).unwrap(),
+        "legacy-authoritative"
+    );
+    assert!(!legacy_plugin.exists());
+    assert_eq!(
+        read_json(manifest_path)["plugins"]["dev-tools@wegent"]["store_path"],
+        canonical_plugin.display().to_string()
+    );
+}
+
+#[test]
+fn offline_migration_keeps_unavailable_legacy_package_reference() {
+    let temp = TempRoot::new("capability-store-offline-migration");
+    let executor_home = temp.path().join(".wework");
+    let legacy_package = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-default-dev-tools");
+    let manifest_path = executor_home.join("capabilities/manifest.json");
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 4,
+            "skills": {},
+            "plugins": {
+                "dev-tools@wegent": {
+                    "managed": true,
+                    "store_path": legacy_package.display().to_string(),
+                },
+            },
+            "mcps": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), executor_home.join(".claude/skills"));
+
+    assert!(store.reconcile_managed_claude_plugins().unwrap().is_empty());
+
+    let manifest = read_json(manifest_path);
+    assert_eq!(
+        manifest["plugins"]["dev-tools@wegent"]["store_path"],
+        legacy_package.display().to_string()
+    );
+    assert_eq!(manifest["revision"], 4);
+    assert!(!executor_home
+        .join("capabilities/store/.plugin-store-layout.json")
+        .exists());
+}
+
 #[tokio::test]
 async fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill() {
     let temp = TempRoot::new("capability-sync-skill");
@@ -1528,6 +1897,16 @@ impl Drop for EnvGuard {
             env::remove_var(self.name);
         }
     }
+}
+
+fn write_test_plugin_package(path: &Path, payload: &str) {
+    fs::create_dir_all(path.join(".claude-plugin")).unwrap();
+    fs::write(
+        path.join(".claude-plugin/plugin.json"),
+        r#"{"name":"dev-tools","version":"0.1.0"}"#,
+    )
+    .unwrap();
+    fs::write(path.join("payload.txt"), payload).unwrap();
 }
 
 fn read_json(path: impl AsRef<Path>) -> Value {

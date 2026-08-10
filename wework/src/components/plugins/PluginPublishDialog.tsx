@@ -18,6 +18,8 @@ interface PluginPublishDialogProps {
   canSharePersonal: boolean
   publishing: boolean
   error?: string | null
+  shareRecoveryLabel?: string | null
+  onShareRecovery?: () => void
   onClose: () => void
   onPublish: (request: PluginPublishRequest) => void
   searchUsers: (query: string) => Promise<PluginShareUserSearchItem[]>
@@ -30,6 +32,8 @@ export function PluginPublishDialog({
   canSharePersonal,
   publishing,
   error,
+  shareRecoveryLabel,
+  onShareRecovery,
   onClose,
   onPublish,
   searchUsers,
@@ -295,9 +299,19 @@ export function PluginPublishDialog({
         )}
 
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-600">
-            {error}
-          </p>
+          <div role="alert" className="mt-3 space-y-2">
+            <p className="text-sm text-red-600">{error}</p>
+            {shareRecoveryLabel && onShareRecovery ? (
+              <button
+                type="button"
+                data-testid="plugin-publish-share-recovery"
+                className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+                onClick={onShareRecovery}
+              >
+                {shareRecoveryLabel}
+              </button>
+            ) : null}
+          </div>
         )}
 
         <footer className="mt-5 flex justify-end gap-2">

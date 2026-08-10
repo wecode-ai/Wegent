@@ -1177,10 +1177,8 @@ import tempfile
 from pathlib import Path
 
 MAX_PATCH_BYTES = 20 * 1024 * 1024
-# task_id is 0 for runtime-local work (no DB task row); subtask_id is always
-# positive. Both segments are pure digits, so fullmatch still blocks traversal.
 ARTIFACT_PATTERN = re.compile(
-    r"turn-file-changes/([0-9]+)/([0-9]+)"
+    r"turn-file-changes/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)"
 )
 
 
@@ -1272,8 +1270,8 @@ match = ARTIFACT_PATTERN.fullmatch(artifact_id)
 if not match:
     fail("invalid artifact id")
 
-task_id = int(match.group(1))
-subtask_id = int(match.group(2))
+task_id = match.group(1)
+subtask_id = match.group(2)
 executor_home = Path(
     os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")
 ).expanduser()
@@ -1300,7 +1298,7 @@ except (OSError, json.JSONDecodeError) as exc:
 
 if not isinstance(metadata, dict):
     fail("invalid artifact metadata", code=65)
-if metadata.get("task_id") != task_id or metadata.get("subtask_id") != subtask_id:
+if str(metadata.get("task_id")) != task_id or str(metadata.get("subtask_id")) != subtask_id:
     fail("artifact metadata id mismatch", code=65)
 
 workspace = Path.cwd().resolve()
