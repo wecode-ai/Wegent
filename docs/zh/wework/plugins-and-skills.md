@@ -22,6 +22,18 @@ Wegent 市场发布和上传同时接受包含 `.codex-plugin/plugin.json` 或 `
 
 本地模式需要先连接 Wegent 云端。点击输入框中的插件标签会打开相应的 Wegent 云端市场详情页。
 
+### 在本地运行工具中使用插件
+
+实验性的 OpenCode、Claude Code 和 Kimi Code 运行工具会读取当前任务选择的 Wework 插件。
+Wework 优先使用 [Agent Plugins](https://agent-plugins.org/) 标准的 `plugin.json`、`skills/`
+和 `mcp.json`，并兼容现有的 Codex/Claude 插件清单。启动会话时，Wework 为所选运行工具生成
+隔离的适配目录，把 Skill 和 MCP Server 转换为该工具的原生配置；插件自己的持久数据保存在
+按插件隔离的数据目录中，不会按每个会话重复复制。
+
+每个本地运行工具会话还会自动获得 `wework_browser` MCP Server 和对应 Skill。AI 必须通过这些
+受控工具打开、检查和操作 Wework 内置浏览器，不会启动外部浏览器。会话重启或恢复时会继续使用
+创建会话时记录的插件集合，因此重启 Wework 不会丢失插件能力。
+
 ## 在任务中使用 Skill
 
 在输入框中输入 `/`，从列表中选择 Skill；也可以直接在任务说明中点名需要使用的 Skill。选择后，Wework 会把相应说明提供给 AI。

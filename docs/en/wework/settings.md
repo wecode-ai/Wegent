@@ -33,7 +33,7 @@ Common macOS shortcuts include:
 
 ## Local harnesses
 
-The desktop app can launch an installed OpenCode or Claude Code executable as a local coding
+The desktop app can launch an installed OpenCode, Claude Code, or Kimi Code executable as a local coding
 harness. Under **Settings → Connections → Harnesses**, you can:
 
 - Enable or hide each harness. Only enabled harnesses that are detected successfully appear in
@@ -49,26 +49,38 @@ harness. Under **Settings → Connections → Harnesses**, you can:
   risks are understood.
 
 After entering a task in a local project or development worktree, open the runtime selector in
-the composer to launch a harness. OpenCode receives the complete prompt through `--prompt`, while
-Claude Code receives it as a positional argument. The process runs in the current workspace
-through a local PTY, with its interactive terminal shown in the center of the workbench. Active
-sessions also appear in the left task section. Reloading the main WebView can reattach to a
-running session and restore its bounded terminal scrollback. Closing the session terminates the
-local process, and processes that have ended are not restored after Wework exits.
+the composer to launch a harness. Wework passes the complete prompt according to the selected
+tool's CLI protocol and runs the process in the current workspace through a local PTY. The
+interactive terminal appears in the center while the title bar, right workspace, and bottom panel
+remain available. The right and bottom panels can create additional harness sessions for the same
+workspace through a picker instead of exposing every installed tool inline. The primary session
+can be switched but not closed from a panel; additional sessions can be closed explicitly.
 
-After selecting OpenCode or Claude Code, the ordinary Codex model picker is replaced by the
+Session metadata, selected model, plugin sources, workspace, and native harness session identity
+remain on the current device. Reloading the main WebView or restarting Wework keeps sessions under
+their project. Reopening one uses the native continue or resume mechanism of OpenCode, Claude Code,
+or Kimi Code and restores bounded terminal scrollback. Explicitly closing a session terminates its
+process and removes the persisted record.
+
+After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by the
 harness model picker. It directly lists local model interfaces from **Settings → Models** and the
 public, personal, and group models available through the connected Wegent account. Harnesses no
 longer maintain a separate list of model IDs. An explicit composer selection replaces any
 `--model` or `-m` value from the default arguments.
 
-Both harnesses connect only to an Anthropic Messages-compatible loopback route exposed by the
+All three harnesses connect only to an Anthropic Messages-compatible loopback route exposed by the
 executor. The child process receives a fixed local model alias and non-privileged placeholder
 credentials. Provider keys, cloud login tokens, model resource identity, and the configured local
 HTTP/SOCKS proxy remain inside the executor. The executor converts Messages requests as peer
 adapters to Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions according to the
 selected model. Native Anthropic upstream requests and responses preserve their original fields.
 Closing or exiting a harness unregisters its route; abandoned routes expire after an idle timeout.
+
+Harnesses are experimental; Codex itself is not marked experimental. OpenCode, Claude Code, and
+Kimi Code load Agent Plugins-standard Skills and MCP servers from the Wework plugins selected for
+the task. They also connect automatically to the `wework_browser` MCP server so they can operate
+the Wework built-in browser through controlled tools. Plugin data is isolated by plugin and reused
+when a session resumes. Codex-only side-conversation flows are not exposed in harness sessions.
 
 ## Model availability
 
