@@ -590,7 +590,26 @@ pub fn start_local_terminal(
         )
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
+            return Err("Local terminal is supported only on macOS and Windows".to_string());
+        }
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        start_pty_shell(
+            app,
+            &state,
+            cwd,
+            rows,
+            cols,
+            env,
+            shell,
+            task_id,
+            workspace_path,
+        )
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = app;
         let _ = state;
