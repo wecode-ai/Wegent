@@ -1193,6 +1193,75 @@ fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response
 }
 
 #[test]
+fn paginated_transcript_does_not_restore_a_presentation_from_a_newer_page() {
+    let page_messages = vec![json!({
+        "id": "assistant-old",
+        "turnId": "turn-old",
+        "role": "assistant",
+        "content": "Old response",
+        "createdAt": 100
+    })];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-new",
+        "content": "New instruction",
+        "createdAt": 300,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        false,
+        true,
+    );
+
+    assert_eq!(provider_messages, page_messages);
+}
+
+#[test]
+fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page() {
+    let page_messages = vec![
+        json!({
+            "id": "assistant-first",
+            "turnId": "turn-first",
+            "role": "assistant",
+            "content": "First response",
+            "createdAt": 100
+        }),
+        json!({
+            "id": "assistant-last",
+            "turnId": "turn-last",
+            "role": "assistant",
+            "content": "Last response",
+            "createdAt": 300
+        }),
+    ];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-middle",
+        "content": "Middle instruction",
+        "createdAt": 200,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        true,
+        true,
+    );
+
+    assert_eq!(provider_messages.len(), 3);
+    assert_eq!(provider_messages[1]["content"], "Middle instruction");
+    assert_eq!(provider_messages[1]["turnId"], "turn-last");
+}
+
+#[test]
 fn transcript_only_adds_presentations_missing_from_provider_content() {
     let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
     let mut provider_messages = vec![json!({
