@@ -91,15 +91,19 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   return true;
 })()`
 
-interface WorkspaceBrowserPanelProps {
+export interface WorkspaceBrowserPanelProps {
   active: boolean
   label?: string
-  openRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
+  onNativeLabelChange?: (nativeLabel: string | null) => void
+  onDownloadActivityChange?: (hasActiveDownload: boolean) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
+
+export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
@@ -737,12 +741,14 @@ function browserAnnotationContext(
   }
 }
 
-export function WorkspaceBrowserPanel({
+export function WorkspaceBrowserTabPanel({
   active,
   label = 'workspace-browser',
   openRequest,
   codeCommentCount = 0,
   onAddCodeComment,
+  onNativeLabelChange,
+  onDownloadActivityChange,
   onFaviconChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
@@ -763,11 +769,12 @@ export function WorkspaceBrowserPanel({
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
+  const activeDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
-  const handledOpenRequestIdRef = useRef<number | null>(null)
-  const activeOpenRequestIdRef = useRef<number | null>(null)
+  const handledOpenRequestIdRef = useRef<string | null>(null)
+  const activeOpenRequestIdRef = useRef<string | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
@@ -814,11 +821,20 @@ export function WorkspaceBrowserPanel({
     setDownloadsOpen(true)
   }, [])
 
-  const reconcileDownloadSnapshot = useCallback((nativeLabel: string) => {
-    const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
-    setDownloads(snapshot)
-    setDownloadsOpen(snapshot.length > 0)
-  }, [])
+  const reconcileDownloadSnapshot = useCallback(
+    (nativeLabel: string) => {
+      const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
+      setDownloads(snapshot)
+      setDownloadsOpen(snapshot.length > 0)
+      activeDownloadIdsRef.current = new Set(
+        snapshot
+          .filter(download => download.status === 'started' || download.status === 'progress')
+          .map(download => download.id)
+      )
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+    },
+    [onDownloadActivityChange]
+  )
 
   const adoptNativeLabel = useCallback(
     (nativeLabel: string, logicalLabel: string) => {
@@ -831,9 +847,10 @@ export function WorkspaceBrowserPanel({
 
       nativeLabelRef.current = nativeLabel
       adoptedDownloadOwnerLabelRef.current = logicalLabel
+      onNativeLabelChange?.(nativeLabel)
       reconcileDownloadSnapshot(nativeLabel)
     },
-    [reconcileDownloadSnapshot]
+    [onNativeLabelChange, reconcileDownloadSnapshot]
   )
 
   useLayoutEffect(() => {
@@ -854,8 +871,16 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
-      if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
-      applyDownloadEvent(download)
+      if (download.nativeLabel !== nativeLabelRef.current) return
+      if (download.status === 'started' || download.status === 'progress') {
+        activeDownloadIdsRef.current.add(download.id)
+      } else {
+        activeDownloadIdsRef.current.delete(download.id)
+      }
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+      if (activeRef.current) {
+        applyDownloadEvent(download)
+      }
       if (
         (download.status === 'finished' ||
           download.status === 'failed' ||
@@ -873,7 +898,7 @@ export function WorkspaceBrowserPanel({
         })
       }
     })
-  }, [applyDownloadEvent])
+  }, [applyDownloadEvent, onDownloadActivityChange])
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserAgentState(event => {
@@ -966,6 +991,9 @@ export function WorkspaceBrowserPanel({
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
+      activeDownloadIdsRef.current = new Set()
+      onNativeLabelChange?.(null)
+      onDownloadActivityChange?.(false)
       currentUrlRef.current = null
       activePageUrlRef.current = null
       annotationModeRef.current = false
@@ -1006,7 +1034,7 @@ export function WorkspaceBrowserPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onFaviconChange, onTitleChange])
+  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -1404,6 +1432,11 @@ export function WorkspaceBrowserPanel({
       return false
     }
     const openWhenHostIsReady = async () => {
+      console.info('[Wework][browser-open] nativeOpenStart', {
+        label,
+        currentUrl,
+        active,
+      })
       try {
         const host = browserHostRef.current
         const measuredBounds = active && host ? getElementBounds(host) : null
@@ -1723,23 +1756,18 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     return () => {
+      // Do NOT close the native embedded browser here. React StrictMode double-invokes
+      // effects in development (mount -> unmount -> remount), so this cleanup runs once
+      // for a "fake" unmount immediately before the real mount. Closing the native
+      // webview here tears down the very browser the remounted panel is about to open,
+      // which resets the panel back to the empty start page (blank address bar).
+      // The native browser lifecycle is owned by the explicit close-tab action
+      // (closeRightPanelTab -> closeEmbeddedBrowsers), not by component unmount.
+      // Here we only clear local references so a remount re-adopts the existing browser.
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
-      const nativeLabel = nativeLabelRef.current
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
-      if (!nativeLabel) {
-        console.info(
-          '[Wework] Embedded browser cleanup skipped',
-          JSON.stringify({ label, reason: 'no_native_identity' })
-        )
-        return
-      }
-      console.info(
-        '[Wework] Embedded browser cleanup requested',
-        JSON.stringify({ label, nativeLabel })
-      )
-      void closeEmbeddedBrowser(label, nativeLabel).catch(() => undefined)
     }
   }, [label])
 
@@ -1940,7 +1968,14 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     if (!openRequest?.url) return
-    if (openRequest.label && openRequest.label !== label) return
+    if (openRequest.label && openRequest.label !== label) {
+      console.info('[Wework][browser-open] openRequestLabelMismatch', {
+        requestId: openRequest.id,
+        requestLabel: openRequest.label,
+        panelLabel: label,
+      })
+      return
+    }
     if (handledOpenRequestIdRef.current === openRequest.id) return
     handledOpenRequestIdRef.current = openRequest.id
     activeOpenRequestIdRef.current = openRequest.id

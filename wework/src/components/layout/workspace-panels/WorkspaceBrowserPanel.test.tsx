@@ -41,10 +41,12 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   openEmbeddedBrowser: vi.fn(),
   pauseEmbeddedBrowserDownload: vi.fn(),
   readEmbeddedBrowserPageState: vi.fn(),
+  relabelEmbeddedBrowser: vi.fn(),
   reloadEmbeddedBrowser: vi.fn(),
   resumeEmbeddedBrowserDownload: vi.fn(),
   resolveEmbeddedBrowserAgentApproval: vi.fn(),
   setEmbeddedBrowserAgentControlPaused: vi.fn(),
+  setEmbeddedBrowserActiveTab: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -1166,8 +1168,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: 'https://example.test/',
         }}
@@ -1219,8 +1223,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: 'https://example.test/',
         }}
@@ -1258,8 +1264,10 @@ describe('WorkspaceBrowserPanel', () => {
   test('opens an external request in a hidden browser while the panel is inactive', async () => {
     mockBrowserHostRect()
     const openRequest = {
-      id: 1,
-      requestId: 1,
+      id: 'test-2',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
       label: 'workspace-browser',
       url: 'https://example.test/',
     }
@@ -1309,8 +1317,10 @@ describe('WorkspaceBrowserPanel', () => {
         })
     )
     const openRequest = {
-      id: 1,
-      requestId: 1,
+      id: 'test-3',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
       label: 'workspace-browser',
       url: 'https://example.test/',
     }
@@ -1785,8 +1795,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-2',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: extensionUrl,
         }}

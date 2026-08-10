@@ -10,19 +10,21 @@ use std::{
 };
 
 use super::{
-    available_logical_entry, bridge_navigation_url, bridge_request_authorized,
-    browser_file_url_from_path, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
-    download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
-    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
-    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
-    register_agent_approval, register_preview_source, relabel_logical_entry,
-    remove_logical_entry_if_native_matches, resolve_browser_navigation_url, script_browser_action,
+    available_logical_entry,
+    bridge_navigation_url, bridge_request_authorized, browser_file_url_from_path,
+    browser_open_action, browser_webview_url, consume_approved_agent_risk,
+    directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
+    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
+    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
+    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
+    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
+    resolve_agent_bridge_label, resolve_browser_navigation_url, script_browser_action,
     script_resolve_inspect_target, script_semantic_inspect, should_block_local_file_preview,
     should_record_loaded_url, should_replay_browser_open_request,
-    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer, DirectoryEntry,
-    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer,
+    DirectoryEntry, EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload,
+    EmbeddedBrowserOpenAction, EmbeddedBrowserPageState, EmbeddedBrowserReadiness,
+    EmbeddedBrowserState,
     EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
@@ -261,6 +263,44 @@ fn bridge_navigation_allows_http_https_and_file() {
 }
 
 #[test]
+fn closed_agent_tab_routes_fail_without_retargeting() {
+    let state = EmbeddedBrowserState::default();
+    {
+        let mut webviews = state.webviews.lock().unwrap();
+        webviews.insert(
+            "workspace-browser-active".to_string(),
+            super::EmbeddedBrowserEntry {
+                native_label: "native-1".to_string(),
+                title: None,
+                url: None,
+                opened_at_unix_ms: 0,
+                phase: super::EmbeddedBrowserPhase::Opening,
+            },
+        );
+    }
+    state
+        .active_tabs
+        .lock()
+        .unwrap()
+        .insert("workspace-browser".to_string(), "workspace-browser-active".to_string());
+    {
+        let mut agent_tabs = state.agent_tabs.lock().unwrap();
+        agent_tabs.insert(
+            ("workspace-browser".to_string(), "session-1".to_string()),
+            super::AgentTabRoute {
+                label: "workspace-browser-active".to_string(),
+                last_request_at_unix_ms: 0,
+                closed_at_unix_ms: Some(1),
+            },
+        );
+    }
+
+    let error = resolve_agent_bridge_label(&state, "workspace-browser", Some("session-1"))
+        .expect_err("closed tab routes should fail");
+    assert_eq!(error, "agent tab was closed");
+}
+
+#[test]
 fn bridge_authorization_requires_the_runtime_token() {
     let _lock = TEST_ENV_LOCK.lock().unwrap();
     let old_token = env::var_os(EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
@@ -487,6 +527,7 @@ fn resolve_ref_script_uses_opaque_ref_without_selector_parsing() {
         inspect_id: Some("wk-inspect-1".to_string()),
         index: Some(7),
         ref_: Some("wk-mvp:wk-inspect-1:main:7:abcd1234".to_string()),
+        browser_session_id: None,
     });
 
     assert!(script.contains("resolveInspectTarget"));
@@ -515,6 +556,7 @@ fn browser_action_script_embeds_target_input_as_json_data() {
             inspect_id: Some("wk-inspect-1".to_string()),
             index: Some(2),
             ref_: None,
+            browser_session_id: None,
         },
     )
     .unwrap();
@@ -603,6 +645,7 @@ fn merge_request_option_preserves_existing_object_options() {
         inspect_id: None,
         index: None,
         ref_: Some("wk-mvp:1".to_string()),
+        browser_session_id: None,
     };
 
     merge_request_option(&mut request, "riskApproved", Value::Bool(true));
