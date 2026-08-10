@@ -6,6 +6,7 @@ mod automations;
 mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
+mod codex_transcript_page;
 mod connectors;
 mod events;
 pub mod fork_transfer;

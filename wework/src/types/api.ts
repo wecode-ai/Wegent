@@ -1163,6 +1163,7 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
@@ -1595,6 +1596,8 @@ export interface RuntimeContextUsage {
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
+  itemId?: string
+  item_id?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]

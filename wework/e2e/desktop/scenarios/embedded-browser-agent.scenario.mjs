@@ -37,7 +37,7 @@ const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
 const BROWSER_DATA_COOKIE_PATH = '/embedded-browser-data-cookie-fixture'
 const BROWSER_DATA_CACHE_PATH = '/embedded-browser-data-cache-fixture'
 const BROWSER_DATA_CACHE_RESOURCE_PATH = '/embedded-browser-data-cache-resource.js'
-const BROWSER_MORE_BUTTON_SELECTOR = '[data-testid="workspace-browser-more-button"]'
+const BROWSER_MORE_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-more-button"]`
 const BROWSER_CLEAR_DATA_SELECTOR = '[data-testid="workspace-browser-clear-data-item"]'
 const BROWSER_CLEAR_COOKIES_SELECTOR = '[data-testid="workspace-browser-clear-cookies-item"]'
 const BROWSER_CLEAR_CACHE_SELECTOR = '[data-testid="workspace-browser-clear-cache-item"]'
@@ -128,7 +128,11 @@ function browserDataCookieFixtureHtml() {
   <head><meta charset="utf-8" /><title>Browser data Cookie fixture</title></head>
   <body>
     <h1>Browser data Cookie fixture</h1>
-    <script>document.cookie = 'wework_browser_data_e2e=present; Path=/';</script>
+    <script>
+      if (new URLSearchParams(location.search).get('set') === '1') {
+        document.cookie = 'wework_browser_data_e2e=present; Path=/';
+      }
+    </script>
   </body>
 </html>`
 }
@@ -225,6 +229,28 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   const diagnostics = {
+    appShell: JSON.parse(await control.command('getElementMetrics', '[data-testid="app-shell"]')),
+    appShellHeight: await control.command('getInlineStyle', '[data-testid="app-shell"]', {
+      value: 'height',
+    }),
+    tauriViewportHeight: await control.command('getAttribute', '[data-testid="app-shell"]', {
+      value: 'data-tauri-viewport-height',
+    }),
+    routeHost: JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="app-route-host"]')
+    ),
+    activeTaskSurface: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[data-workspace-tab-content][aria-hidden="false"]'
+      )
+    ),
+    desktopWorkbenchSurface: JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-surface"]'
+      )
+    ),
     activeWorkbench: JSON.parse(
       await control.command('getElementMetrics', ACTIVE_WORKBENCH_SELECTOR)
     ),
@@ -449,29 +475,156 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, { label: browserLabel, ...payload })
-      const firstOpenStartedAt = Date.now()
-      const firstOpenPromise = bridgeCall({
-        action: 'open',
-        url: fixtureUrl,
-        timeoutMs: 8_000,
+      const firstTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(firstTaskTabTestId, 'The browser task did not expose its workspace tab identity')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('click', '[data-testid="workspace-tab-add-task"]')
+      await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+        timeoutMs: uiTimeoutMs,
       })
-      const [firstOpenResult] = await Promise.all([
-        firstOpenPromise,
-        waitForVisibleSingleElement(
-          control,
-          BROWSER_NATIVE_VIEW_SELECTOR,
-          8_000,
-          'The first bridge open did not make exactly one active host visible'
-        ),
-      ])
+      const secondTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.notEqual(
+        secondTaskTabTestId,
+        firstTaskTabTestId,
+        'Opening another task tab did not make the browser-owning task inactive'
+      )
+      const secondTaskTabId = secondTaskTabTestId.replace('workspace-tab-select-', '')
+      const activeBrowserLabel = await control.command(
+        'getAttribute',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.ok(activeBrowserLabel, 'The active task did not expose a browser label')
+      assert.notEqual(
+        activeBrowserLabel,
+        browserLabel,
+        'The second task tab reused the inactive task browser label'
+      )
+      const firstOpenStartedAt = Date.now()
+      const firstOpenResult = await withTimeout(
+        bridgeCall({
+          action: 'open',
+          url: fixtureUrl,
+          timeoutMs: 8_000,
+        }),
+        8_000,
+        'The inactive task did not bootstrap its task-scoped browser'
+      )
       assert.equal(
         firstOpenResult.ok,
         true,
-        `The first bridge open from a fresh task failed: ${JSON.stringify(firstOpenResult)}`
+        `The first bridge open from an inactive task failed: ${JSON.stringify(firstOpenResult)}`
       )
       assert.ok(
         Date.now() - firstOpenStartedAt < 8_000,
         'The first bridge open only completed after its tool timeout'
+      )
+      const inactiveWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: READY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        inactiveWait.ok,
+        true,
+        `The inactive task browser did not finish loading: ${JSON.stringify(inactiveWait)}`
+      )
+      const inactiveInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        inactiveInspect.inspectText.includes(READY_TEXT),
+        'The inactive task browser did not load the requested page'
+      )
+      const selectedTaskAfterBackgroundCalls = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.equal(
+        selectedTaskAfterBackgroundCalls,
+        secondTaskTabTestId,
+        'Inactive task browser calls changed the selected task tab'
+      )
+      const activeLabelAfterBackgroundCalls = await control.command(
+        'getAttribute',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"] [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.equal(
+        activeLabelAfterBackgroundCalls,
+        activeBrowserLabel,
+        'Inactive task browser calls changed the active task browser host'
+      )
+      const inactiveTaskSurfaceSelector = `[data-testid="workspace-tab-content-${firstTaskTabTestId.replace(
+        'workspace-tab-select-',
+        ''
+      )}"]`
+      const inactiveTaskAriaHidden = await control.command(
+        'getAttribute',
+        inactiveTaskSurfaceSelector,
+        { value: 'aria-hidden' }
+      )
+      assert.equal(
+        inactiveTaskAriaHidden,
+        'true',
+        'Inactive task browser calls exposed the task surface to accessibility'
+      )
+      const inactiveTaskClassName = await control.command(
+        'getAttribute',
+        inactiveTaskSurfaceSelector,
+        { value: 'class' }
+      )
+      assert.match(
+        inactiveTaskClassName,
+        /(?:^|\s)invisible(?:\s|$)/,
+        'Inactive task browser calls made the task surface visible'
+      )
+      await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="${firstTaskTabTestId}"][aria-selected="true"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        `[data-testid="${secondTaskTabTestId.replace('workspace-tab-select-', 'workspace-tab-close-')}"]`
+      )
+      const closedTaskContentCount = await control.command(
+        'getElementCount',
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"]`
+      )
+      assert.equal(
+        closedTaskContentCount,
+        '0',
+        'Closing the second task left its workbench mounted'
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${firstTaskTabTestId.replace(
+          'workspace-tab-select-',
+          ''
+        )}"][aria-hidden="false"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      const browserMenuButtonCount = await control.command(
+        'getElementCount',
+        BROWSER_MORE_BUTTON_SELECTOR
+      )
+      assert.equal(
+        browserMenuButtonCount,
+        '1',
+        'The active task did not retain a unique browser action menu'
       )
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForControlValue(
@@ -483,11 +636,11 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('finishAnimations', 'body')
-      const browserPanelMetrics = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
-        )
+      const browserPanelMetrics = await waitForVisibleSingleElement(
+        control,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`,
+        uiTimeoutMs,
+        'Browser panel did not become visible'
       )
       const [browserPanelWidth, rightPanelShellWidth] = await Promise.all([
         control.command(
@@ -501,11 +654,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           { value: 'width' }
         ),
       ])
-      assert.equal(browserPanelMetrics.length, 1, 'Expected exactly one active browser panel')
       assert.ok(
-        browserPanelMetrics[0].width > 1 && browserPanelMetrics[0].height > 1,
+        browserPanelMetrics.width > 1 && browserPanelMetrics.height > 1,
         `Browser panel is not visible: ${JSON.stringify({
-          metrics: browserPanelMetrics[0],
+          metrics: browserPanelMetrics,
           browserPanelWidth,
           rightPanelShellWidth,
         })}`
@@ -582,7 +734,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
       await pendingAgentWait
 
-      const cookieFixtureUrl = `${control.url}${BROWSER_DATA_COOKIE_PATH}`
+      const cookieVerificationUrl = `${control.url}${BROWSER_DATA_COOKIE_PATH}`
+      const cookieFixtureUrl = `${cookieVerificationUrl}?set=1`
       await bridgeCall({ action: 'open', url: cookieFixtureUrl, timeoutMs: 8_000 })
       await bridgeCall({
         action: 'waitFor',
@@ -601,7 +754,15 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.equal(cookieBeforeClear.value, true, 'Cookie fixture did not set its test cookie')
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_DATA_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_COOKIES_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_STARTED_TEXT,
@@ -609,7 +770,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: 35_000,
+      })
+      await bridgeCall({ action: 'open', url: cookieVerificationUrl, timeoutMs: 8_000 })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'Browser data Cookie fixture' } },
+        timeoutMs: 5_000,
       })
       const cookieAfterClear = await bridgeCall({
         action: 'evaluate',
@@ -632,11 +799,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.equal(cacheResourceRequests, 1, 'Cache fixture did not request its resource once')
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_DATA_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('waitFor', BROWSER_CLEAR_CACHE_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_CLEAR_CACHE_SELECTOR)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        text: BROWSER_CLEAR_STARTED_TEXT,
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        timeoutMs: 35_000,
       })
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })

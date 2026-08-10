@@ -164,7 +164,7 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     )
 
     assert updated.assignee_user_id == member.id
-    assert updated.assignee_agent_id is None
+    assert updated.assignee_agent_id == ""
     metadata = updated.metadata_json or {}
     assert metadata["assignment_history"][-1]["to_type"] == "user"
     assert metadata["assignment_history"][-1]["to_name"] == "assignee"

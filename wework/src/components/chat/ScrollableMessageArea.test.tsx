@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
+import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 
 function mockRect(element: Element, top: number, bottom: number) {
   element.getBoundingClientRect = vi.fn(
@@ -1474,7 +1475,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('does not activate a turn from mounted assistant rows when user rows are virtualized', () => {
+  test('activates a turn from mounted assistant rows when user rows are virtualized', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -1549,9 +1550,9 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 300)
-    mockRect(screen.getByText('First response'), -200, 120)
+    mockRect(screen.getByText('First response'), -500, -400)
     mockRect(screen.getByText('Long second response'), 40, 1_200)
-    mockRect(screen.getByText('Transient response without a transcript index'), 80, 120)
+    mockRect(screen.getByText('Transient response without a transcript index'), 1_300, 1_400)
 
     fireEvent.resize(window)
     flushScheduledTimers()
@@ -1559,16 +1560,16 @@ describe('ScrollableMessageArea', () => {
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers).toHaveLength(3)
     expect(markers[0]).toHaveAttribute('data-active', 'false')
-    expect(markers[1]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
     expect(markers[2]).toHaveAttribute('data-active', 'false')
 
     scroller.scrollTop = 2_900
     fireEvent.scroll(scroller)
 
-    expect(markers[1]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
-  test('does not activate a turn from a page-leading assistant', () => {
+  test('activates a turn from a page-leading assistant', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
 
@@ -1649,7 +1650,7 @@ describe('ScrollableMessageArea', () => {
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers).toHaveLength(3)
     expect(markers[0]).toHaveAttribute('data-active', 'false')
-    expect(markers[1]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })
 
@@ -1709,6 +1710,82 @@ describe('ScrollableMessageArea', () => {
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(markers).toHaveLength(3)
     expect(markers[0]).toHaveAttribute('data-active', 'true')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
+  test('tracks the active turn when the loaded page contains only its assistant response', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = projectRuntimeConversationTurns([
+      {
+        id: 'assistant-only-turn',
+        runtimeMessageIndex: 10,
+        items: [
+          {
+            id: 'assistant-only-item',
+            type: 'assistant_text',
+            content: 'Only the response is loaded on this page',
+            createdAt: '2026-08-09T00:00:00.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ])
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          <div data-message-id={messages[0].id}>Only the response is loaded on this page</div>
+        </div>
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'previous-user',
+              turnIndex: 4,
+              messageIndex: 8,
+              promptPreview: 'Previous request',
+              responsePreview: 'Previous response',
+            },
+            {
+              id: 'assistant-only-user',
+              turnIndex: 5,
+              messageIndex: 10,
+              promptPreview: 'Request for the loaded response',
+              responsePreview: 'Only the response is loaded on this page',
+            },
+            {
+              id: 'next-user',
+              turnIndex: 6,
+              messageIndex: 12,
+              promptPreview: 'Next request',
+              responsePreview: 'Next response',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 4_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_800,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Only the response is loaded on this page'), 40, 1_200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
     expect(markers[1]).toHaveAttribute('data-active', 'true')
     expect(markers[2]).toHaveAttribute('data-active', 'false')
   })

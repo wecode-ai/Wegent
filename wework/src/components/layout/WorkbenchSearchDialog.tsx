@@ -153,7 +153,10 @@ function WorkbenchSearchDialogPanel({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-1 ring-black/5">
+      <div
+        data-testid="workbench-search-dialog"
+        className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-popover text-text-primary shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-[0.5px] ring-border"
+      >
         <div className="flex h-14 items-center gap-3 border-b border-border/70 px-4">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input

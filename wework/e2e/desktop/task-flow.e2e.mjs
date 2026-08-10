@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from './checkpoints.mjs'
@@ -129,6 +129,12 @@ const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
+const GOAL_BUSY_PLAN_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN: keep this planning turn open while Goal is enabled.'
+const GOAL_BUSY_PLAN_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN_COMPLETE'
+const GOAL_BUSY_OBJECTIVE =
+  'WEWORK_DESKTOP_E2E_GOAL_BUSY_OBJECTIVE: start automatically after the planning turn.'
+const GOAL_BUSY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_COMPLETE'
 const GOAL_RESTART_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_RESTART: keep this active goal running until Wework restarts.'
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
@@ -168,8 +174,9 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
+const E2E_TRANSCRIPT_PAGE_SIZE = 49
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
-const TURN_NAVIGATION_ONLY_TURN_COUNT = 3
+const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
@@ -428,6 +435,7 @@ const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
 const COMPLETED_FORK_ONLY = process.argv.includes('--completed-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
+const GOAL_BUSY_ONLY = process.argv.includes('--goal-busy-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
@@ -525,6 +533,7 @@ function getActiveOnlyModes() {
     ['--completed-fork-only', COMPLETED_FORK_ONLY],
     ['--side-chat-only', SIDE_CHAT_ONLY],
     ['--goal-idle-only', GOAL_IDLE_ONLY],
+    ['--goal-busy-only', GOAL_BUSY_ONLY],
     ['--goal-restart-only', GOAL_RESTART_ONLY],
     ['--turn-navigation-only', TURN_NAVIGATION_ONLY],
     ['--attachment-only', ATTACHMENT_ONLY],
@@ -1678,7 +1687,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   }
 }
 
-async function verifyTurnNavigationTracksVisibleUserMessages(
+async function verifyTurnNavigationTracksVisibleTurnMessages(
   control,
   turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN + 1
 ) {
@@ -1693,20 +1702,10 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
     value: 'data-turn-index',
   })
   assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
-  const anchorResponseText = `Virtualized navigation response ${turnNumber}.1`
   const targetResponseText = `Virtualized navigation response ${turnNumber}.6`
-  await control.command(
-    'scrollToRatioAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
-    { value: '0' }
-  )
-  await control.command(
-    'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
-    { text: anchorResponseText }
-  )
 
   const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
+  await control.command('click', markerSelector)
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
@@ -1733,11 +1732,21 @@ async function verifyTurnNavigationTracksVisibleUserMessages(
   assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
 
-  await control.command('waitFor', `${markerSelector}[data-active="false"]`, {
+  const mountedUserMessages = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const virtualizedOutPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_1`
+  assert.ok(
+    !mountedUserMessages.includes(virtualizedOutPrompt),
+    'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
+  )
+
+  await control.command('waitFor', `${markerSelector}[data-active="true"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-inactive.png')
+  await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
 async function reopenCurrentTurnNavigationTask(
@@ -1770,6 +1779,16 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
+    await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+  }
+  await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
+    text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -1950,6 +1969,13 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     QUEUE_DIRECT_THIRD,
     'Continuing the queue did not send the message moved to the top'
   )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  assert.equal(
+    control.scenarioRequests.get('queue_management')?.length,
+    directRequestOffset + 2,
+    'The next queued message was sent before the active queued turn started'
+  )
+  control.releaseQueueManagementFirstResponse()
   await withTimeout(
     control.awaitScenarioRequestCount(
       'queue_management',
@@ -3969,6 +3995,7 @@ async function verifyWorkspaceDocumentTabs(control) {
 }
 
 async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
+  await ensureExperimentalFeaturesEnabled(control)
   const taskTabTestId = await control.command(
     'getAttribute',
     '[data-tab-kind="task"][aria-selected="true"]',
@@ -4012,9 +4039,15 @@ async function configureDefaultProjectSpaceAssociation(control, localProjectId) 
     value: 'Task Follow-up Board',
   })
   await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-edit-dialog'),
+    'Saving the local project did not close the edit dialog',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
     text: '加入看板 · Task Follow-up Board',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="add-context-button"]')
   await control.command('waitFor', '[data-testid="add-project-space-context-button"]', {
@@ -4607,23 +4640,21 @@ async function openMarketplacePluginActions(control, { pluginId, marketplaceName
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
-    if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
-      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
-    } else if (snapshot.testIds.includes('plugins-search-input')) {
-      await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
-    }
-    await control.command('waitFor', marketplaceTabSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', marketplaceTabSelector)
-    await control.command('fill', '[data-testid="plugins-search-input"]', {
-      value: displayName,
-    })
-    await control.command('waitFor', actionsSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
+  if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+  } else if (snapshot.testIds.includes('plugins-search-input')) {
+    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
   }
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: displayName,
+  })
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const actionsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!actionsSnapshot.testIds.includes(`plugin-marketplace-try-${pluginId}`)) {
     await control.command('click', actionsSelector)
@@ -5498,24 +5529,31 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
-  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!initialSnapshot.testIds.includes('automation-button')) {
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="settings-menu-button"]')
-    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
-    await control.command('click', '[data-testid="settings-back-button"]')
-    await control.command('waitFor', '[data-testid="automation-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+  const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if ((await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true') {
+    await control.command('click', toggleSelector)
+    await waitForAttribute(
+      control,
+      toggleSelector,
+      'aria-checked',
+      'true',
+      'Enabling experimental features was not persisted'
+    )
   }
-  return initialSnapshot
+  await control.command('click', '[data-testid="settings-back-button"]')
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
-  const initialSnapshot = await ensureExperimentalFeaturesEnabled(control)
+async function verifyAutomationLifecycle(control, executorHome, homePath) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('automation-button'),
+    'Automations remained hidden behind the experimental-features preference'
+  )
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5530,6 +5568,8 @@ async function verifyAutomationLifecycle(control, workspacePath) {
   await control.command('fill', '[data-testid="automation-prompt-input"]', {
     value: AUTOMATION_PROMPT,
   })
+  await control.command('click', '[data-testid="automation-project-select"]')
+  await control.command('click', '[data-testid="automation-project-select-option-"]')
   const draftSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     !draftSnapshot.testIds.includes('automation-workspace-input'),
@@ -5626,6 +5666,34 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     )
     assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
     const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
+    const runtimeIndex = JSON.parse(
+      await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+    )
+    const standaloneWorkspacePath = runtimeIndex.tasks[manualTaskId]?.workspace_path
+    assert.equal(
+      typeof standaloneWorkspacePath,
+      'string',
+      'The projectless automation task was grouped under a project workspace'
+    )
+    const standaloneWorkspaceSegments = relative(
+      join(homePath, 'Documents', 'Codex'),
+      standaloneWorkspacePath
+    ).split(/[/\\]/)
+    assert.match(
+      standaloneWorkspaceSegments[0],
+      /^\d{4}-\d{2}-\d{2}$/,
+      'The standalone automation workspace did not use a dated directory'
+    )
+    assert.deepEqual(
+      standaloneWorkspaceSegments.slice(1),
+      [manualTaskId],
+      'The projectless automation task was grouped under a project workspace'
+    )
+    assert.equal(
+      await pathExists(standaloneWorkspacePath),
+      true,
+      `The projectless automation did not create a standalone workspace: ${standaloneWorkspacePath}`
+    )
     if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
       await control.command('click', `[data-testid="${manualTaskRow}"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -6793,7 +6861,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     'utf8'
   )
   await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
-  await verifyTurnNavigationTracksVisibleUserMessages(control)
+  await verifyTurnNavigationTracksVisibleTurnMessages(control)
   return taskRowTestId
 }
 
@@ -7464,9 +7532,7 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     stableMs: 300,
   })
-  const queuedSnapshot = JSON.parse(
-    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-  )
+  const queuedSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     queuedSnapshot.testIds.includes('chat-input-error'),
     false,
@@ -7503,14 +7569,10 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     DEFAULT_STEP_TIMEOUT_MS,
     'The queued follow-up was not sent after the active turn settled'
   )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
-    {
-      text: SEND_REJECTION_RETRY_PROMPT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: SEND_REJECTION_RETRY_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
@@ -8372,6 +8434,102 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
 }
 
+async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
+  control.setScenario('goal_busy_handoff')
+  const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await ensurePlanMode(control)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_BUSY_PLAN_PROMPT,
+    'goal_busy_handoff'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('pause-response-button') && snapshotHasAssistantActivity(snapshot),
+    'The planning turn did not remain active before Goal submission'
+  )
+
+  const runningDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const goalTaskId = runningDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(goalTaskId, 'The busy Goal handoff did not expose its runtime task ID')
+  const goalTaskRowTestId = `runtime-local-task-row-${goalTaskId}`
+  const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', composerSelector, { value: GOAL_BUSY_OBJECTIVE })
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: GOAL_BUSY_OBJECTIVE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button'),
+    'Submitting Goal during a planning turn did not preserve the running state'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: GOAL_BUSY_OBJECTIVE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  control.releaseGoalBusyPlanResponse()
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_busy_handoff', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The queued Goal did not start after the planning turn completed'
+  )
+  const handoffExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  assert.equal(
+    (handoffExecutorLog.match(/codex shared turn request started/g) ?? []).length,
+    1,
+    `The busy Goal handoff did not keep exactly one ordinary planning turn:\n${handoffExecutorLog}`
+  )
+  assert.equal(
+    (handoffExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
+    1,
+    `The queued Goal did not use the Codex initial Goal protocol:\n${handoffExecutorLog}`
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_BUSY_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(GOAL_BUSY_PLAN_TEXT) &&
+      snapshot.text.includes(GOAL_BUSY_COMPLETION_TEXT) &&
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes('goal-status-bar') &&
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.testIds.includes('assistant-error-card'),
+    'The automatically started Goal did not complete cleanly'
+  )
+}
+
 async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
@@ -9173,6 +9331,9 @@ class DesktopE2EServer {
     this.sendRejectionCompletionRelease = new Promise(resolvePromise => {
       this.releaseSendRejectionCompletion = resolvePromise
     })
+    this.queueManagementFirstCompletionRelease = new Promise(resolvePromise => {
+      this.releaseQueueManagementFirstCompletion = resolvePromise
+    })
     this.sideChatQueueRelease = new Promise(resolvePromise => {
       this.resolveSideChatQueueRelease = resolvePromise
     })
@@ -9212,6 +9373,9 @@ class DesktopE2EServer {
     this.goalIdleContinuationRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleContinuation = resolvePromise
     })
+    this.goalBusyPlanRelease = new Promise(resolvePromise => {
+      this.releaseGoalBusyPlan = resolvePromise
+    })
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
@@ -9240,6 +9404,7 @@ class DesktopE2EServer {
       this.releaseCloudFollowUp = resolvePromise
     })
     this.goalIdleStage = 'initial'
+    this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
     this.scenarioRequests = new Map()
@@ -9417,6 +9582,7 @@ class DesktopE2EServer {
         'background_completion_restore',
         'background_follow_up_restore',
         'goal_idle',
+        'goal_busy_handoff',
         'goal_restart',
         'turn_navigation',
         'cancellation',
@@ -9546,6 +9712,10 @@ class DesktopE2EServer {
     this.releaseSendRejectionCompletion()
   }
 
+  releaseQueueManagementFirstResponse() {
+    this.releaseQueueManagementFirstCompletion()
+  }
+
   releaseSideChatQueueResponse() {
     this.resolveSideChatQueueRelease()
   }
@@ -9608,6 +9778,10 @@ class DesktopE2EServer {
 
   releaseGoalIdleResponse() {
     this.releaseGoalIdleContinuation()
+  }
+
+  releaseGoalBusyPlanResponse() {
+    this.releaseGoalBusyPlan()
   }
 
   releaseGoalRestartResponse() {
@@ -10923,6 +11097,60 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'goal_busy_handoff') {
+      this.recordScenarioRequest('goal_busy_handoff', modelRequest)
+      if (this.goalBusyStage === 'plan') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_BUSY_PLAN_PROMPT),
+          'The real Codex request did not contain the busy Goal planning prompt'
+        )
+        this.goalBusyStage = 'goal'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.goalBusyPlanRelease
+        response.end(
+          createSse([assistantMessage(GOAL_BUSY_PLAN_TEXT), responseCompleted(responseId)])
+        )
+        return
+      }
+      if (this.goalBusyStage === 'goal') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_BUSY_OBJECTIVE),
+          'The automatically started Goal request did not contain its objective'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalBusyStage = 'awaiting_update_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-goal-busy-complete', updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.goalBusyStage,
+        'awaiting_update_output',
+        `Unexpected busy Goal handoff model stage: ${this.goalBusyStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The busy Goal handoff did not return its update_goal output'
+      )
+      this.goalBusyStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_BUSY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'running_fork_follow_up') {
       this.recordScenarioRequest('running_fork_follow_up', modelRequest)
       assert.ok(
@@ -11591,6 +11819,24 @@ class DesktopE2EServer {
       ]
       const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
       assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
+      if (prompt === QUEUE_DIRECT_THIRD) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.queueManagementFirstCompletionRelease
+        if (response.destroyed || response.writableEnded) return
+        response.end(
+          createSse([
+            assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+            responseCompleted(responseId),
+          ])
+        )
+        return
+      }
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
@@ -13092,7 +13338,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
+        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
@@ -14184,6 +14430,17 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (GOAL_BUSY_ONLY) {
+      phase = 'goal-busy-handoff'
+      await verifyBusyTurnGoalHandoff({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorLogPath,
+      })
+      console.log(`Wework desktop busy Goal handoff E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (GOAL_RESTART_ONLY) {
       phase = 'goal-restart-recovery'
       await verifyGoalRestartRecoveryLifecycle({
@@ -14237,7 +14494,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleUserMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -14306,7 +14563,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (AUTOMATION_ONLY) {
       phase = 'automation-lifecycle'
-      await verifyAutomationLifecycle(control, workspacePath)
+      await verifyAutomationLifecycle(control, executorHome, homePath)
       console.log(`Wework desktop automation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -14437,7 +14694,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         await verifyWorkspaceDocumentTabs(control)
 
         phase = 'automation-lifecycle'
-        await verifyAutomationLifecycle(control, workspacePath)
+        await verifyAutomationLifecycle(control, executorHome, homePath)
 
         phase = 'cloud-work-page'
         await verifyCloudWorkPage(control)
@@ -15012,6 +15269,24 @@ last_updated = "2026-07-30T00:00:00Z"`
         'The real apply_patch result did not render the expected file diff'
       )
 
+      phase = 'file-changes-revert-confirmation'
+      await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', '[data-testid="confirm-revert-file-changes-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', '[data-testid="cancel-revert-file-changes-button"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('confirm-revert-file-changes-button'),
+        'Cancelling the file changes revert confirmation did not restore the conversation'
+      )
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]', {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
       await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
@@ -15421,6 +15696,13 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
+      phase = 'goal-busy-handoff'
+      await verifyBusyTurnGoalHandoff({
+        composerSelector,
+        control,
+        executorLogPath,
+      })
+
       phase = 'goal-idle-unread'
       await verifyActiveGoalIdleUnreadLifecycle({
         composerSelector,

@@ -43,6 +43,19 @@ function hint(): HTMLElement | null {
 }
 
 describe('ContextUsageIndicator', () => {
+  it('uses theme-aware semantic colors for the usage ring', () => {
+    renderIndicator(makeUsage(50))
+
+    const button = screen.getByTestId('context-usage-button')
+    const visual = button.querySelector('.context-usage-compact-visual')
+
+    expect(button).toHaveClass('text-text-muted')
+    expect(visual).toHaveClass('text-text-muted')
+    expect(visual).toHaveStyle({
+      background: 'conic-gradient(currentColor 180deg, rgb(var(--color-border) / 0.7) 0deg)',
+    })
+  })
+
   it('shows no compact hint below the default threshold', () => {
     renderIndicator(makeUsage(84))
     expect(hint()).not.toBeInTheDocument()

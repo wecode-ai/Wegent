@@ -566,7 +566,7 @@ impl RuntimeWorkRpcHandler {
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         if verify_no_active_turn && !ephemeral {
             let thread = self
-                .read_codex_thread_with_turns(&thread_id)
+                .read_codex_recent_turns(&thread_id)
                 .await
                 .map_err(|error| AppIpcError::new("codex_error", error))?;
             if codex_thread_has_in_progress_turn(&thread) {
@@ -674,7 +674,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
-        let thread = match self.read_codex_thread_with_turns(thread_id).await {
+        let thread = match self.read_codex_recent_turns(thread_id).await {
             Ok(thread) => thread,
             Err(error) => {
                 log_executor_event(
@@ -709,7 +709,7 @@ impl RuntimeWorkRpcHandler {
             return false;
         }
         for _ in 0..PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS {
-            match self.read_codex_thread_with_turns(thread_id).await {
+            match self.read_codex_recent_turns(thread_id).await {
                 Ok(thread) if !codex_thread_has_in_progress_turn(&thread) => return true,
                 Ok(_) => {
                     sleep(Duration::from_millis(PROVIDER_TURN_INTERRUPT_WAIT_MS)).await;

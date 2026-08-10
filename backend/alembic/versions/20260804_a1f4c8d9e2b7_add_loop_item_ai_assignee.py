@@ -15,18 +15,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "loop_items",
-        sa.Column("assignee_agent_id", sa.String(length=64), nullable=True),
-    )
-    op.create_index(
-        "ix_loop_items_assignee_agent_id",
-        "loop_items",
-        ["assignee_agent_id"],
-        unique=False,
+    op.execute(
+        sa.text(
+            "ALTER TABLE loop_items "
+            "ADD COLUMN assignee_agent_id VARCHAR(64) NOT NULL DEFAULT '' "
+            "COMMENT 'Assigned project chat agent ID; empty when unassigned', "
+            "ADD INDEX idx_loop_items_assignee_agent_id (assignee_agent_id)"
+        )
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_loop_items_assignee_agent_id", table_name="loop_items")
-    op.drop_column("loop_items", "assignee_agent_id")
+    op.execute(
+        sa.text(
+            "ALTER TABLE loop_items "
+            "DROP INDEX idx_loop_items_assignee_agent_id, "
+            "DROP COLUMN assignee_agent_id"
+        )
+    )

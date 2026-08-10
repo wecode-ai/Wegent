@@ -616,7 +616,7 @@ export function FileChangesCard({
   const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
   const reviewDisabled = actionsDisabled || !onOpenReview
   const showRevert = summary.status === 'active'
-  const revertDisabled = true
+  const revertDisabled = actionsDisabled || summary.revertible === false
 
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
@@ -820,7 +820,13 @@ function ConfirmRevertDialog({
           </button>
         </div>
         <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="primary" onClick={onClose} disabled={submitting}>
+          <Button
+            type="button"
+            variant="primary"
+            data-testid="cancel-revert-file-changes-button"
+            onClick={onClose}
+            disabled={submitting}
+          >
             {t('file_changes.cancel')}
           </Button>
           <Button

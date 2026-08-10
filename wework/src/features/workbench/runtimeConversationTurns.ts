@@ -104,6 +104,7 @@ export function reduceRuntimeConversationTurns(
         const items = applyCompletedAssistantContent(
           settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
           turn.id,
+          action.itemId,
           action.content
         )
         return {
@@ -320,28 +321,57 @@ function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  const localById = new Map(localItems.map(item => [item.id, item]))
+  const reconciledLocalItems = localItems.filter(
+    localItem =>
+      !snapshotItems.some(snapshotItem =>
+        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
+      )
+  )
+  const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item)
   )
-  if (localItems.length <= snapshotItems.length) return mergedSnapshotItems
-
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
-  const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
-  for (let index = mergedSnapshotItems.length - 1; index >= 0; index -= 1) {
-    const snapshotItem = mergedSnapshotItems[index]
-    if (snapshotItem?.type !== 'assistant_text') continue
-    const localMatch = mergedLocalItems.find(
-      item =>
-        item.type === 'assistant_text' &&
-        (item.id === snapshotItem.id || item.content === snapshotItem.content)
-    )
-    if (!localMatch) return [...mergedLocalItems, snapshotItem]
-    return mergedLocalItems.map(item =>
-      item === localMatch ? { ...snapshotItem, id: localMatch.id } : item
-    )
+  const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
+  for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
+    const snapshotItem = mergedSnapshotItems[snapshotIndex]
+    if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
+      continue
+    }
+
+    const nextSnapshotItem = mergedSnapshotItems
+      .slice(snapshotIndex + 1)
+      .find(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    if (nextSnapshotItem) {
+      const insertionIndex = mergedLocalItems.findIndex(item => item.id === nextSnapshotItem.id)
+      mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+      continue
+    }
+
+    const previousSnapshotItem = mergedSnapshotItems
+      .slice(0, snapshotIndex)
+      .findLast(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    const insertionIndex = previousSnapshotItem
+      ? mergedLocalItems.findIndex(item => item.id === previousSnapshotItem.id) + 1
+      : mergedLocalItems.length
+    mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
   }
   return mergedLocalItems
+}
+
+function isEquivalentAssistantTextRepresentation(
+  local: RuntimeConversationItem,
+  snapshot: RuntimeConversationItem
+): boolean {
+  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  const localContent = assistantTextRepresentationContent(local)
+  const snapshotContent = assistantTextRepresentationContent(snapshot)
+  return localContent !== undefined && localContent === snapshotContent
+}
+
+function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {
+  if (item.type === 'assistant_text') return item.content
+  return item.type === 'block' && item.block.type === 'text' ? item.block.content : undefined
 }
 
 function mergeRuntimeConversationItem(
@@ -519,6 +549,7 @@ function upsertAssistantText(
 function applyCompletedAssistantContent(
   items: RuntimeConversationItem[],
   turnId: string | null,
+  itemId: string | undefined,
   content: string | undefined
 ): RuntimeConversationItem[] {
   if (!content) return items
@@ -532,7 +563,7 @@ function applyCompletedAssistantContent(
   )
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
@@ -544,7 +575,7 @@ function applyCompletedAssistantContent(
   return [
     ...retained,
     {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
@@ -652,6 +683,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       fileChanges: isLast ? turn.fileChanges : undefined,
       error: isLast ? turn.error : undefined,

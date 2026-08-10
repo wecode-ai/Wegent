@@ -198,7 +198,7 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
     assert row.assignee_user_id == member.id
-    assert row.assignee_agent_id is None
+    assert row.assignee_agent_id == ""
     assert _active_execution(test_db, _item_id(project)) is None
 
 

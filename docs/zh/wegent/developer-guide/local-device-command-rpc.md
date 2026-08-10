@@ -95,7 +95,7 @@ LOCAL_DEVICE_COMMANDS='{"repo_status":"git status","repo_files":{"command":"ls -
 
 ### 单轮文件变更命令
 
-`turn_file_changes_review` 和 `turn_file_changes_revert` 只接受 `turn-file-changes/<taskId>/<subtaskId>` 形式的 artifact id。运行时本地任务没有中心库 task row 时，`taskId` 可以是 `0`；两个路径段仍必须是纯数字，并且命令脚本会用 fullmatch 拒绝路径穿越。命令读取 `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` 与 `changes.patch.gz`，校验 metadata 中的 workspace 和 patch checksum 后，才会返回 diff 或尝试安全撤销。
+`turn_file_changes_review` 和 `turn_file_changes_revert` 只接受 `turn-file-changes/<taskId>/<subtaskId>` 形式的 artifact id。中心库任务使用数字 ID；原生 Codex LocalTask 使用 `turn-file-changes/codex/<turnId>`。两个路径段只能包含 ASCII 字母、数字、连字符或下划线，并且命令脚本会用 fullmatch 拒绝路径穿越。命令读取 `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` 与 `changes.patch.gz`，校验 metadata 中的 workspace 和 patch checksum 后，才会返回 diff 或尝试安全撤销。
 
 调用方应把这两个命令绑定到当前 LocalTask 的 `deviceId + workspacePath` 上，而不是绑定中心库 Task API。这样即使本地运行时任务没有 `TaskResource`/`Subtask`，审核和撤销也会发生在生成 artifact 的同一台设备和同一个工作区。
 

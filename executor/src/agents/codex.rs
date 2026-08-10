@@ -200,6 +200,7 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub response_item_id: Option<String>,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
 }
@@ -1372,6 +1373,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let wait_for_goal_continuation = state.goal_is_active();
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1433,6 +1435,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 active_turn_started,
                 active_turn_finished,
+                wait_for_goal_continuation,
             },
         )
         .await;
@@ -1443,10 +1446,12 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
+        let response_item_id = state.response_item_id().map(str::to_owned);
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
+            response_item_id,
             goal_status,
             goal_status_observed,
         })
@@ -1656,10 +1661,12 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
+        let response_item_id = state.response_item_id().map(str::to_owned);
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
+            response_item_id,
             goal_status,
             goal_status_observed,
         })
@@ -1695,6 +1702,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    wait_for_goal_continuation: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -1870,7 +1878,11 @@ async fn read_shared_turn_notifications(
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
             }
-            if !should_wait_for_goal_continuation(&outcome, state) {
+            if !should_wait_for_goal_continuation(
+                &outcome,
+                state,
+                options.wait_for_goal_continuation,
+            ) {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
@@ -1879,8 +1891,14 @@ async fn read_shared_turn_notifications(
     }
 }
 
-fn should_wait_for_goal_continuation(outcome: &ExecutionOutcome, state: &CodexRunState) -> bool {
-    matches!(outcome, ExecutionOutcome::Completed { .. }) && state.goal_is_active()
+fn should_wait_for_goal_continuation(
+    outcome: &ExecutionOutcome,
+    state: &CodexRunState,
+    goal_was_active_at_turn_start: bool,
+) -> bool {
+    goal_was_active_at_turn_start
+        && matches!(outcome, ExecutionOutcome::Completed { .. })
+        && state.goal_is_active()
 }
 
 async fn recover_stalled_shared_turn(
@@ -3968,6 +3986,10 @@ fn validate_codex_model_provider(
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
+    params.insert(
+        "historyMode".to_owned(),
+        Value::String("paginated".to_owned()),
+    );
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

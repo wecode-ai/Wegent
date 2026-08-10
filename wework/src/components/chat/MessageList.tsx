@@ -1175,6 +1175,7 @@ function UserMessage({
       {!editing && (
         <MessageHoverActions
           message={message}
+          copyContent={displayContent}
           align="right"
           visible={areHoverActionsVisible}
           onEdit={editable ? onStartEdit : undefined}
@@ -1509,12 +1510,14 @@ function MessageImageAttachmentPreview({
 
 function MessageHoverActions({
   message,
+  copyContent = message.content,
   align,
   visible,
   onEdit,
   onFork,
 }: {
   message: WorkbenchMessage
+  copyContent?: string
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
@@ -1536,7 +1539,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(message.content).then(() => {
+    void copyText(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
