@@ -464,7 +464,203 @@ def test_execute_robot_task_fails_and_requeues(
     ):
         result = execute_robot_task(claimed[0].id)
 
-    assert result["status"] == "failed"
+    assert result["status"] == "requeued"
+    assert result["reason"] == "device_emit_rejected"
     test_db.refresh(claimed[0])
     assert claimed[0].status == "queued"
-    assert claimed[0].retry_attempt == 1
+    assert claimed[0].retry_attempt == 0
+    assert claimed[0].execution_note == "device_emit_rejected"
+    assert "Device did not accept the runtime RPC" in claimed[0].error_message
+
+
+def test_execute_robot_task_requeues_offline_without_consuming_retries(
+    test_db: Session, test_user: User
+) -> None:
+    """A device that drops between claim and dispatch must stay queued for the
+    next scan instead of terminally failing after the configured retries."""
+
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="local",
+        device_capacity=1,
+    )
+    assert len(claimed) == 1
+
+    online = AsyncMock(return_value=False)
+    emit_rpc = AsyncMock(return_value={"emitted": True})
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
+        ),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(claimed[0].id)
+
+    assert result["status"] == "requeued"
+    assert result["reason"] == "device_offline"
+    emit_rpc.assert_not_awaited()
+    test_db.refresh(claimed[0])
+    assert claimed[0].status == "queued"
+    assert claimed[0].retry_attempt == 0
+    assert claimed[0].execution_note == "device_offline"
+    assert "went offline before dispatch" in claimed[0].error_message
+
+
+def test_local_dispatch_never_uses_another_users_shared_device(
+    test_db: Session, test_user: User
+) -> None:
+    """Robots bound to a generic device id such as "local-device" must only run
+    on the creator's own device, even when another user's same-named device is
+    online and appears earlier in the Device kinds table."""
+
+    import asyncio
+    from contextlib import contextmanager
+    from unittest.mock import AsyncMock, patch
+
+    other = User(
+        user_name="other-device-owner",
+        password_hash="x",
+        email="other@example.com",
+        is_active=True,
+    )
+    test_db.add(other)
+    test_db.commit()
+    test_db.refresh(other)
+    # The stranger's Device row is inserted first; a global first() lookup
+    # would resolve to this user.
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="local-device",
+            namespace="default",
+            user_id=other.id,
+            is_active=True,
+            json={},
+        )
+    )
+    test_db.commit()
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+
+    emit_rpc = AsyncMock(return_value={"emitted": True, "accepted": True})
+
+    async def online(user_id: int, device_id: str):
+        # Only the stranger's device is online; the creator's is offline.
+        return user_id == other.id
+
+    @contextmanager
+    def _acquired(*args, **kwargs):
+        yield True
+
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
+            side_effect=online,
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks.distributed_lock.acquire_context",
+            _acquired,
+        ),
+    ):
+        from app.tasks.robot_queue_tasks import _dispatch_queued_executions
+
+        asyncio.run(_dispatch_queued_executions(test_db))
+
+    emit_rpc.assert_not_awaited()
+    test_db.refresh(execution)
+    assert execution.status == "queued"
+
+
+def test_emit_runtime_rpc_uses_configured_internal_url(monkeypatch) -> None:
+    """The internal emit must use BACKEND_INTERNAL_URL, never a hardcoded
+    localhost port; production pods listen on a different port than dev."""
+
+    import asyncio
+
+    import httpx
+
+    from app.core.config import settings
+    from app.tasks.robot_queue_tasks import _emit_runtime_rpc
+
+    captured: dict[str, str] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"emitted": True}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["base_url"] = kwargs["base_url"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, path: str, **kwargs):
+            captured["path"] = path
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        settings, "BACKEND_INTERNAL_URL", "https://internal.example.com/api"
+    )
+
+    result = asyncio.run(
+        _emit_runtime_rpc(
+            user_id=86,
+            device_id="local-device",
+            method="runtime.tasks.create",
+            payload={"taskId": "codex-queue-1"},
+        )
+    )
+
+    assert result == {"emitted": True}
+    assert captured["base_url"] == "https://internal.example.com/api"
+    assert captured["path"] == "/internal/robot-queue/emit-runtime-rpc"
+
+
+def test_loop_item_response_exposes_terminal_execution_error(
+    test_db: Session, test_user: User
+) -> None:
+    """Task detail responses must keep the newest run visible after it fails,
+    including its error message, so the UI can show why execution stopped."""
+
+    from app.services.loop_items.service import loop_item_service
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    loop_item_execution_service.fail(
+        test_db,
+        execution_id=execution.id,
+        error="Device went offline before dispatch",
+        requeue_infra=True,
+    )
+
+    values = loop_item_service.response_values(
+        test_db, test_db.get(LoopItem, execution.loop_item_id), test_user.id
+    )
+
+    assert values["execution_id"] == execution.id
+    assert values["execution_state"] == "queued"
+    assert values["execution_error"] == "Device went offline before dispatch"

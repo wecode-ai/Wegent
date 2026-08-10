@@ -76,6 +76,7 @@ export interface CloudLoopItem {
   } | null
   queued_at?: string | null
   execution_note?: string | null
+  execution_error?: string | null
   ai_state?: {
     run_id?: string
     status?: string
