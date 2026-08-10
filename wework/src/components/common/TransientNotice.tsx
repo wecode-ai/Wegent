@@ -25,7 +25,7 @@ export function TransientNotice({ message, tone = 'success', onClear }: Transien
       data-testid="transient-notice"
       data-embedded-browser-occlusion
       className={cn(
-        'fixed left-1/2 top-16 z-system max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border bg-surface px-4 py-3 text-sm shadow-[0_8px_28px_rgba(0,0,0,0.12)]',
+        'fixed left-1/2 top-28 z-system max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border bg-surface px-4 py-3 text-sm shadow-[0_8px_28px_rgba(0,0,0,0.12)]',
         tone === 'success' ? 'border-primary/20 text-text-primary' : 'border-red-200 text-red-700'
       )}
     >
