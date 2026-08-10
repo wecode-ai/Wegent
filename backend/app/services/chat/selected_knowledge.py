@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
+import os
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from fastapi import HTTPException
@@ -31,11 +35,58 @@ PROVIDER_SKILLS = {
     "dingtalk": "dingtalk-docs",
 }
 SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "ClaudeCode"}
+E2E_LOG_ENV = "PROVIDER_NATIVE_E2E_LOGGING"
+
+logger = logging.getLogger(__name__)
 
 
 def register_provider_skill(provider_id: str, skill_name: str) -> None:
     """Register a deployment-specific provider Skill before execution."""
     PROVIDER_SKILLS[provider_id] = skill_name
+
+
+def _e2e_logging_enabled() -> bool:
+    raw = os.getenv(E2E_LOG_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _log_e2e_event(
+    event: str,
+    request: "ExecutionRequest",
+    **details: Any,
+) -> None:
+    if not _e2e_logging_enabled():
+        return
+    payload = {
+        "event": event,
+        "task_id": request.task_id,
+        "subtask_id": request.subtask_id,
+        **details,
+    }
+    logger.info(
+        "[PROVIDER_NATIVE_E2E] %s",
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _serialize_refs(refs: list[SelectedKnowledgeRef]) -> list[dict[str, Any]]:
+    return [
+        {
+            "provider": ref.provider,
+            "knowledge_base_id": ref.knowledge_base_id,
+            "knowledge_base_name": ref.knowledge_base_name,
+            "resources": [
+                {
+                    "scope_type": resource.scope_type,
+                    "resource_id": resource.resource_id,
+                    "resource_name": resource.resource_name,
+                    "resource_url": resource.resource_url,
+                }
+                for resource in ref.resources
+            ],
+        }
+        for ref in refs
+    ]
 
 
 def apply_selected_knowledge_context(
@@ -48,12 +99,19 @@ def apply_selected_knowledge_context(
     if not refs:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
+        _log_e2e_event("selection_skipped", request, reason="no_selected_sources")
         return []
 
     shell_type = get_request_shell_type(request)
     if shell_type not in SUPPORTED_PROVIDER_NATIVE_SHELLS:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
+        _log_e2e_event(
+            "selection_skipped",
+            request,
+            reason="unsupported_shell",
+            shell_type=shell_type,
+        )
         return []
 
     request.selected_knowledge_prompt = render_selected_knowledge_prompt(refs)
@@ -70,6 +128,17 @@ def apply_selected_knowledge_context(
         selected_skills.append(skill_name)
         _append_unique(request.preload_skills, skill_name)
         _append_unique(request.user_selected_skills, skill_name)
+
+    prompt_bytes = request.selected_knowledge_prompt.encode("utf-8")
+    _log_e2e_event(
+        "selection_built",
+        request,
+        shell_type=shell_type,
+        refs=_serialize_refs(refs),
+        provider_skills=selected_skills,
+        selected_prompt_length=len(request.selected_knowledge_prompt),
+        selected_prompt_sha256=hashlib.sha256(prompt_bytes).hexdigest(),
+    )
     return selected_skills
 
 
@@ -94,6 +163,13 @@ def activate_provider_native_knowledge(
         if skill_name not in skill_names or skill_name not in skill_configs
     ]
     if missing_skills:
+        _log_e2e_event(
+            "activation_failed",
+            request,
+            reason="missing_skills",
+            provider_skills=provider_skills,
+            missing_skills=missing_skills,
+        )
         _raise_capability_error(
             "Required provider Skill is unavailable: " + ", ".join(missing_skills)
         )
@@ -112,6 +188,13 @@ def activate_provider_native_knowledge(
         expected_mcp_names.update(server["name"] for server in valid_servers)
 
     if invalid_mcp_skills:
+        _log_e2e_event(
+            "activation_failed",
+            request,
+            reason="missing_mcp_url",
+            provider_skills=provider_skills,
+            invalid_mcp_skills=invalid_mcp_skills,
+        )
         _raise_capability_error(
             "Required provider Skill has no enabled MCP URL: "
             + ", ".join(invalid_mcp_skills)
@@ -128,12 +211,30 @@ def activate_provider_native_knowledge(
         }
         missing_mcp_names = sorted(expected_mcp_names - configured_mcp_names)
         if missing_mcp_names:
+            _log_e2e_event(
+                "activation_failed",
+                request,
+                reason="claude_mcp_not_mounted",
+                provider_skills=provider_skills,
+                expected_mcp_names=sorted(expected_mcp_names),
+                configured_mcp_names=sorted(configured_mcp_names),
+                missing_mcp_names=missing_mcp_names,
+            )
             _raise_capability_error(
                 "Required provider MCP is unavailable to ClaudeCode: "
                 + ", ".join(missing_mcp_names)
             )
 
     request.provider_native_knowledge = True
+    _log_e2e_event(
+        "activation_succeeded",
+        request,
+        shell_type=get_request_shell_type(request),
+        provider_skills=provider_skills,
+        resolved_skill_names=sorted(skill_names),
+        expected_mcp_names=sorted(expected_mcp_names),
+        provider_native_knowledge=True,
+    )
 
 
 def get_request_shell_type(request: "ExecutionRequest") -> str:

@@ -19,6 +19,8 @@ Uses unified ResponsesAPIEmitter from shared module for event emission.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
@@ -29,6 +31,7 @@ from chat_shell.compression.context_metrics import (
     ContextMetricsTracker,
 )
 from chat_shell.core.config import settings
+from chat_shell.llm_logging import env_bool
 from chat_shell.services.context import ChatContext
 from chat_shell.services.guidance import GuidanceConsumer, create_guidance_queue_client
 from chat_shell.services.storage.session import session_manager
@@ -45,6 +48,53 @@ from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
+
+E2E_LOG_ENV = "PROVIDER_NATIVE_E2E_LOGGING"
+_E2E_SAFE_TOOL_ARGUMENTS = frozenset(
+    {
+        "knowledge_base_id",
+        "knowledge_base_ids",
+        "folder_id",
+        "folder_ids",
+        "include_subfolders",
+        "document_id",
+        "document_ids",
+        "nodeId",
+        "node_id",
+        "workspaceId",
+        "workspace_id",
+        "parent_id",
+        "scope",
+        "limit",
+        "offset",
+    }
+)
+
+
+def _provider_native_e2e_logging_enabled() -> bool:
+    return env_bool(E2E_LOG_ENV, default=False)
+
+
+def _log_provider_native_e2e(event: str, **details: Any) -> None:
+    if not _provider_native_e2e_logging_enabled():
+        return
+    logger.info(
+        "[PROVIDER_NATIVE_E2E] %s",
+        json.dumps({"event": event, **details}, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _safe_tool_scope(event_data: dict[str, Any]) -> dict[str, Any]:
+    data = event_data.get("data")
+    tool_input = data.get("input") if isinstance(data, dict) else None
+    if not isinstance(tool_input, dict):
+        return {}
+    return {
+        key: value
+        for key, value in tool_input.items()
+        if key in _E2E_SAFE_TOOL_ARGUMENTS
+        and isinstance(value, (str, int, float, bool, list, type(None)))
+    }
 
 
 def _resolve_final_context_metric_messages(
@@ -407,6 +457,28 @@ class ChatService(ChatInterface):
                 request.model_config.get("model_id") if request.model_config else None
             )
             dynamic_context = self._build_dynamic_context(request, ctx_result)
+            if request.provider_native_knowledge:
+                selected_prompt = request.selected_knowledge_prompt or ""
+                tool_names = sorted(
+                    tool.name
+                    for tool in ctx_result.extra_tools
+                    if hasattr(tool, "name")
+                )
+                _log_provider_native_e2e(
+                    "chat_runtime_ready",
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    provider_native_knowledge=True,
+                    selected_prompt_length=len(selected_prompt),
+                    selected_prompt_sha256=hashlib.sha256(
+                        selected_prompt.encode("utf-8")
+                    ).hexdigest(),
+                    selected_prompt_in_dynamic_context=(
+                        bool(selected_prompt) and selected_prompt in dynamic_context
+                    ),
+                    tool_names=tool_names,
+                    legacy_knowledge_search_present="knowledge_search" in tool_names,
+                )
             t1 = time.perf_counter()
             messages = agent.build_messages(
                 history=ctx_result.history,
@@ -471,11 +543,32 @@ class ChatService(ChatInterface):
             add_span_event("creating_tool_event_handler")
             t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
-            on_tool_event = create_tool_event_handler(
+            base_tool_event_handler = create_tool_event_handler(
                 state,
                 emitter,
                 agent_builder,
             )
+
+            def on_tool_event(kind: str, event_data: dict[str, Any]) -> None:
+                if request.provider_native_knowledge and kind in {
+                    "tool_start",
+                    "tool_end",
+                }:
+                    _log_provider_native_e2e(
+                        (
+                            "tool_call_started"
+                            if kind == "tool_start"
+                            else "tool_call_ended"
+                        ),
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        tool_name=event_data.get("name", "unknown"),
+                        scope_arguments=(
+                            _safe_tool_scope(event_data) if kind == "tool_start" else {}
+                        ),
+                    )
+                base_tool_event_handler(kind, event_data)
+
             logger.info(
                 "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
                 (time.perf_counter() - t2) * 1000,
