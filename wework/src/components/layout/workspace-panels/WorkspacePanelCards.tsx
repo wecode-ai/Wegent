@@ -89,9 +89,13 @@ function createAvailableTools(): WorkspaceToolAvailability {
   }
 }
 
-function closeLocalTerminalWithReason(sessionId: string, reason: LocalTerminalCloseReason) {
-  console.info('Closing local terminal session', { sessionId, reason })
-  void closeLocalTerminal(sessionId)
+function closeLocalTerminalWithReason(
+  sessionId: string,
+  reason: LocalTerminalCloseReason,
+  taskId?: string | null,
+  workspacePath?: string | null
+) {
+  void closeLocalTerminal(sessionId, { reason, taskId, workspacePath })
 }
 
 export function WorkspacePanelCards({
@@ -135,6 +139,7 @@ export function WorkspacePanelCards({
   })
   const projectDeviceId = getProjectDeviceId(currentProject)
   const workspaceSource = workspaceTarget?.source
+  const activeWorkspaceTaskId = workspaceTarget?.taskId
   const activeWorkspaceDeviceId = workspaceTarget?.deviceId ?? projectDeviceId
   const activeWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? getProjectLocalPath(currentProject) : undefined)
@@ -247,7 +252,12 @@ export function WorkspacePanelCards({
     return () => {
       terminalSessionsRef.current.forEach(session => {
         if (session.terminal_kind === 'local') {
-          closeLocalTerminalWithReason(session.session_id, 'workspace-panel-unmount')
+          closeLocalTerminalWithReason(
+            session.session_id,
+            'workspace-panel-unmount',
+            session.diagnostic_task_id,
+            session.cwd
+          )
         }
       })
     }
@@ -264,7 +274,12 @@ export function WorkspacePanelCards({
 
     terminalSessionsRef.current.forEach(session => {
       if (session.terminal_kind === 'local') {
-        closeLocalTerminalWithReason(session.session_id, 'workspace-target-changed')
+        closeLocalTerminalWithReason(
+          session.session_id,
+          'workspace-target-changed',
+          session.diagnostic_task_id,
+          session.cwd
+        )
       }
     })
     terminalSessionsRef.current = []
@@ -378,6 +393,10 @@ export function WorkspacePanelCards({
             projectName: currentProject?.name,
             workspacePath: activeWorkspacePath,
           }),
+          diagnosticContext: {
+            taskId: activeWorkspaceTaskId,
+            workspacePath: activeWorkspacePath,
+          },
         })
         const sessionDeviceId =
           activeWorkspaceDeviceId ?? resolvedLocalTerminalCheck.executorDeviceId ?? 'local'
@@ -393,6 +412,7 @@ export function WorkspacePanelCards({
             url: '',
             transport: 'socketio',
             cwd: activeWorkspacePath,
+            diagnostic_task_id: activeWorkspaceTaskId ?? undefined,
           },
         ])
         setActiveTerminalSessionId(sessionId)
@@ -484,6 +504,7 @@ export function WorkspacePanelCards({
     setProjectError,
     terminalContextTitle,
     useDeviceTerminalSession,
+    activeWorkspaceTaskId,
     workspaceSessionApi,
   ])
 
@@ -524,7 +545,12 @@ export function WorkspacePanelCards({
   const handleCloseTerminalSession = (sessionId: string) => {
     const session = terminalSessions.find(session => session.session_id === sessionId)
     if (session?.terminal_kind === 'local') {
-      closeLocalTerminalWithReason(sessionId, 'user-closed-session')
+      closeLocalTerminalWithReason(
+        sessionId,
+        'user-closed-session',
+        session.diagnostic_task_id,
+        session.cwd
+      )
     }
 
     removeTerminalSession(sessionId)

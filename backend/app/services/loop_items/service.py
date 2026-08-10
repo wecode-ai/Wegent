@@ -500,6 +500,7 @@ class LoopItemService:
         payload = values.model_dump()
         tags = payload.pop("tags")
         agent_id = payload.get("assignee_agent_id")
+        payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
         if agent_id:
             agent = db.get(ProjectChatAgent, agent_id)
@@ -851,6 +852,7 @@ class LoopItemService:
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
         if "assignee_agent_id" in values.model_fields_set:
             agent_id = values.assignee_agent_id
+            updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
                 agent = db.get(ProjectChatAgent, agent_id)
                 if (
@@ -864,7 +866,7 @@ class LoopItemService:
                     )
                 updates["assignee_user_id"] = None
         elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
-            updates["assignee_agent_id"] = None
+            updates["assignee_agent_id"] = ""
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
         if "tags" in values.model_fields_set:
@@ -1034,7 +1036,7 @@ class LoopItemService:
                 )
             assignee_updates = {
                 "assignee_user_id": target_user_id,
-                "assignee_agent_id": None,
+                "assignee_agent_id": "",
             }
             target = db.get(User, target_user_id)
             self._write_assignment_change(

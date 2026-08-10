@@ -14,11 +14,15 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 - updater manifest 同时写入 `darwin-aarch64` 和 `darwin-x86_64`，两个平台可以指向同一个 universal archive。
 - `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。本地发布脚本和 GitHub Actions 都通过 `wework/scripts/generate-release-config.mjs` 生成临时 Tauri config，在注入发布参数的同时完整保留基础配置中的 `bundle.resources`。Tauri config 覆盖会整体替换资源数组，因此发布路径不能单独维护一份不完整的 resources 列表。
 - updater 私钥和发布 token 只通过环境变量或本机文件读取，不提交到仓库。
-- Codex CLI 不在本地编译。构建前通过 `wework/scripts/prepare-codex-binary.mjs` 按 `wework/codex-binaries.lock.json` 下载 npm tarball，校验 SHA256 后打进 Tauri resources。
+- Codex CLI 不在本地编译。构建前通过 `wework/scripts/prepare-codex-binary.mjs` 按 `wework/codex-binaries.lock.json` 下载 npm tarball，校验 SHA-512 integrity 后打进 Tauri resources。
 
 ## Bundled Codex 二进制
 
 Wework 桌面包会直接附带 Codex CLI，避免用户在首次运行时再安装。版本和每个平台的 tarball 校验值由 `wework/codex-binaries.lock.json` 固定。
+
+当前固定版本为稳定版 Codex `0.147.0`。升级时必须同时更新所有支持平台的 npm
+包版本、官方 registry tarball 地址与 SHA-512 integrity 值；不能直接替换已签名
+应用包中的二进制。请通过发布构建重新准备 sidecar、打包并代码签名。
 
 本地构建会自动准备当前目标平台的 Codex：
 

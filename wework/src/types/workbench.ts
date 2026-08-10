@@ -7,6 +7,7 @@ import type {
   ProjectWithTasks,
   RuntimeAdditionalContext,
   RuntimeContextUsage,
+  RuntimeGoalCreateInput,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
@@ -105,6 +106,7 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
   runtimeGoalRequest?: boolean
+  initialGoal?: RuntimeGoalCreateInput
   additionalContext?: RuntimeAdditionalContext
 }
 

@@ -1,5 +1,9 @@
 import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
-import { pluginNameInitial, resolvePluginLogo } from '@/components/plugins/plugin-assets'
+import {
+  currentPluginLogoAppearanceMode,
+  pluginNameInitial,
+  resolvePluginLogoUrl,
+} from '@/components/plugins/plugin-assets'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
@@ -44,23 +48,25 @@ export function getComposerMentionIconUrl(href: string): string | undefined {
 
 /** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
 export function resolveComposerMentionBrandIconUrl(href: string): string | null {
+  const appearanceMode = currentPluginLogoAppearanceMode()
   const registered = getComposerMentionIconUrl(href)?.trim()
   if (registered) {
-    const logo = resolvePluginLogo({ logo: registered })
-    return logo.isGenericFallback ? null : logo.url
+    return resolvePluginLogoUrl({ logo: registered, appearanceMode }) || null
   }
 
   const pluginReference = parsePluginUri(href)
   if (pluginReference) {
-    const logo = resolvePluginLogo({ pluginKey: pluginReference.pluginName })
-    return logo.isGenericFallback ? null : logo.url
+    return (
+      resolvePluginLogoUrl({
+        pluginKey: pluginReference.pluginName,
+        appearanceMode,
+      }) || null
+    )
   }
 
   if (href.startsWith('app://')) {
     const appId = href.slice('app://'.length).trim()
-    if (!appId) return null
-    const logo = resolvePluginLogo({ pluginKey: appId })
-    return logo.isGenericFallback ? null : logo.url
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId, appearanceMode }) || null : null
   }
 
   return null

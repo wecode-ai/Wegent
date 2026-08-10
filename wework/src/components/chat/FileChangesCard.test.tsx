@@ -509,14 +509,28 @@ describe('FileChangesCard', () => {
     expect(screen.getByText('设备离线，无法审核或撤销')).toBeInTheDocument()
   })
 
-  test('keeps the revert action visible but disabled while revert is unsupported', async () => {
+  test('confirms before reverting active file changes', async () => {
     const { onRevert } = renderCard()
     const revertButton = screen.getAllByTestId('revert-file-changes-button')[0]
 
-    expect(revertButton).toBeDisabled()
+    expect(revertButton).toBeEnabled()
     await userEvent.click(revertButton)
+
+    expect(onRevert).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('confirm-revert-file-changes-button'))
+
+    await waitFor(() => expect(onRevert).toHaveBeenCalledWith('21', summary))
+  })
+
+  test('cancels file change revert without calling the backend', async () => {
+    const { onRevert } = renderCard()
+
+    await userEvent.click(screen.getByTestId('revert-file-changes-button'))
+    await userEvent.click(screen.getByTestId('cancel-revert-file-changes-button'))
+
     expect(onRevert).not.toHaveBeenCalled()
     expect(screen.queryByTestId('confirm-revert-file-changes-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('revert-file-changes-button')).toBeEnabled()
   })
 
   test('keeps the revert action visible but disabled when active changes are not revertible', () => {

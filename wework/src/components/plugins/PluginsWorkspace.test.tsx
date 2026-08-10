@@ -3,6 +3,9 @@ import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
+import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
+import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
@@ -163,6 +166,12 @@ function mockCodexAppServerInvoke(
       pluginDisplayNames?: string[]
     }>
     deviceId?: string
+    cloudLinks?: Array<{
+      localPluginName: string
+      cloudPluginId: number
+      cloudReleaseId: number
+    }>
+    unlinkError?: Error
   } = {}
 ) {
   const marketplaces = [...(options.marketplaces ?? [])]
@@ -198,6 +207,12 @@ function mockCodexAppServerInvoke(
     }
     if (command === 'local_executor_ensure_started') {
       return Promise.resolve({ running: true, ready: true, deviceId: options.deviceId })
+    }
+    if (command === 'local_executor_read_plugin_cloud_links') {
+      return Promise.resolve(options.cloudLinks ?? [])
+    }
+    if (command === 'local_executor_unlink_plugin_release' && options.unlinkError) {
+      return Promise.reject(options.unlinkError)
     }
     if (command !== 'local_executor_request') return Promise.resolve(undefined)
 
@@ -329,6 +344,7 @@ function mockSystemSkillsFetch(
     enabled: boolean
     installedSkillId: number | null
     canPublish: boolean
+    canSharePersonalPlugins: boolean
     marketplaceInstalled: boolean
     marketplaceDeviceState: 'installed' | 'failed' | 'pending'
     marketplaceInstallError: string
@@ -337,10 +353,20 @@ function mockSystemSkillsFetch(
     installedMarketplaceLogo: string
     marketplaceCount: number
     marketplaceConnectorSlug: string
+    marketplaceHasSkill: boolean
+    marketplaceVisibility: 'personal' | 'workspace' | 'public'
+    marketplaceAccessRole: 'catalog' | 'owner' | 'recipient'
+    marketplaceName: string
+    marketplaceDisplayName: string
+    deviceAutoSyncSucceeds: boolean
   }> = {}
 ) {
   let marketplaceUpdateAvailable = false
   let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
+  let marketplaceDeviceState: 'installed' | 'failed' | 'pending' =
+    overrides.marketplaceDeviceState ?? 'installed'
+  let syncDeviceCalls = 0
+  const deviceAutoSyncSucceeds = Boolean(overrides.deviceAutoSyncSucceeds)
   const personalSkillsResponse = {
     items: [
       {
@@ -527,21 +553,20 @@ function mockSystemSkillsFetch(
   const buildDocumentsMarketplacePlugin = () => ({
     id: 101,
     remotePluginId: 'openai-documents',
-    name: 'documents',
-    displayName: 'Documents',
+    name: overrides.marketplaceName ?? 'documents',
+    displayName: overrides.marketplaceDisplayName ?? 'Documents',
     description: 'Create and edit document artifacts',
     version: '1.0.0',
     author: 'OpenAI',
-    visibility: 'public',
+    visibility: overrides.marketplaceVisibility ?? 'public',
+    accessRole: overrides.marketplaceAccessRole,
+    grantUserCount: overrides.marketplaceAccessRole === 'owner' ? 4 : undefined,
+    grantNamespaceCount: overrides.marketplaceAccessRole === 'owner' ? 0 : undefined,
     sourceProvider: 'codex',
     sourceLabel: 'Codex 官方',
     featured: false,
-    installed:
-      cloudMarketplacePluginInstalled &&
-      (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
-    enabled:
-      cloudMarketplacePluginInstalled &&
-      (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
+    installed: cloudMarketplacePluginInstalled && marketplaceDeviceState === 'installed',
+    enabled: cloudMarketplacePluginInstalled && marketplaceDeviceState === 'installed',
     installedPluginId: cloudMarketplacePluginInstalled ? 101 : null,
     interface: {
       displayName: 'Documents',
@@ -557,7 +582,15 @@ function mockSystemSkillsFetch(
       tags: ['docs'],
     },
     components: {
-      skills: [],
+      skills: overrides.marketplaceHasSkill
+        ? [
+            {
+              name: 'documents',
+              description: 'Create and edit documents',
+              path: '/skills/documents',
+            },
+          ]
+        : [],
       commands: [],
       apps: [
         {
@@ -587,13 +620,11 @@ function mockSystemSkillsFetch(
       ? {
           deviceId: 'current-device',
           desiredReleaseId: 1001,
-          actualReleaseId: overrides.marketplaceDeviceState === 'installed' ? 1001 : null,
-          state: overrides.marketplaceDeviceState ?? 'installed',
-          errorCode: overrides.marketplaceDeviceState === 'failed' ? 'PLUGIN_SYNC_FAILED' : null,
+          actualReleaseId: marketplaceDeviceState === 'installed' ? 1001 : null,
+          state: marketplaceDeviceState,
+          errorCode: marketplaceDeviceState === 'failed' ? 'PLUGIN_SYNC_FAILED' : null,
           errorMessage:
-            overrides.marketplaceDeviceState === 'failed'
-              ? 'Codex App Server rejected install'
-              : null,
+            marketplaceDeviceState === 'failed' ? 'Codex App Server rejected install' : null,
           attemptCount: 1,
           lastSyncAt: null,
           updatedAt: '2026-07-25T12:00:00',
@@ -630,7 +661,7 @@ function mockSystemSkillsFetch(
       apiVersion: 'agent.wecode.io/v1',
       kind: 'InstalledPlugin',
       metadata: {
-        name: 'documents',
+        name: marketplaceRow.name,
         namespace: 'default',
         labels: { id: '101' },
       },
@@ -638,24 +669,24 @@ function mockSystemSkillsFetch(
         source: {
           type: 'marketplace',
           providerKey: 'wegent-market',
-          pluginKey: 'documents',
+          pluginKey: marketplaceRow.name,
           catalogItemId: 'openai-documents',
           marketplace: 'default',
         },
-        displayName: 'Documents',
+        displayName: marketplaceRow.displayName,
         description: 'Create and edit document artifacts',
         version: '1.0.0',
         enabled: true,
         installState:
-          overrides.marketplaceDeviceState === 'failed'
+          marketplaceDeviceState === 'failed'
             ? 'failed'
-            : overrides.marketplaceDeviceState === 'pending'
+            : marketplaceDeviceState === 'pending'
               ? 'not_installed'
               : 'installed',
         origin: 'market',
         sourceProvider: 'codex',
         sourceLabel: 'Codex 官方',
-        visibility: 'public',
+        visibility: marketplaceRow.visibility,
         pluginId: 101,
         releaseId: 1001,
         componentStates: {},
@@ -668,7 +699,7 @@ function mockSystemSkillsFetch(
         sourcePayload: null,
       },
       status: {
-        state: overrides.marketplaceDeviceState ?? 'installed',
+        state: marketplaceDeviceState,
         devices: [
           marketplaceRow.currentDeviceInstallation ?? {
             deviceId: 'current-device',
@@ -782,7 +813,11 @@ function mockSystemSkillsFetch(
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ canPublish: overrides.canPublish ?? false }),
+          json: () =>
+            Promise.resolve({
+              canPublish: overrides.canPublish ?? false,
+              canSharePersonalPlugins: overrides.canSharePersonalPlugins ?? true,
+            }),
         })
       }
       if (requestUrl.pathname === '/api/plugins/installed') {
@@ -792,6 +827,41 @@ function mockSystemSkillsFetch(
           json: () =>
             Promise.resolve({
               items: cloudMarketplacePluginInstalled ? [buildInstalledMarketplacePlugin()] : [],
+            }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed/sync-device') {
+        syncDeviceCalls += 1
+        if (deviceAutoSyncSucceeds) {
+          marketplaceDeviceState = 'installed'
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              deviceId: requestUrl.searchParams.get('device_id') || 'current-device',
+              pendingCount: 1,
+              sync: {
+                success: deviceAutoSyncSucceeds,
+                device_id: 'current-device',
+                mode: 'replace',
+                skills: [],
+                plugins: deviceAutoSyncSucceeds
+                  ? [{ id: '101', status: 'synced' }]
+                  : [{ id: '101', status: 'failed', error: 'still broken' }],
+                mcps: [],
+                errors: [],
+                synced: deviceAutoSyncSucceeds ? 1 : 0,
+                failed: deviceAutoSyncSucceeds ? 0 : 1,
+                skipped: 0,
+                results: [
+                  {
+                    device_id: 'current-device',
+                    success: deviceAutoSyncSucceeds,
+                  },
+                ],
+              },
             }),
         })
       }
@@ -898,6 +968,7 @@ function mockSystemSkillsFetch(
     publishMarketplaceUpdate: () => {
       marketplaceUpdateAvailable = true
     },
+    getSyncDeviceCalls: () => syncDeviceCalls,
   }
 }
 
@@ -919,6 +990,9 @@ describe('PluginsWorkspace', () => {
     window.localStorage.clear()
     window.sessionStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    clearPluginMarketplaceCache()
+    clearPluginDeviceAutoSyncAttempts()
+    clearLocalCodexPluginsReadStateCache()
     mockSystemSkillsFetch()
   })
 
@@ -1359,13 +1433,14 @@ describe('PluginsWorkspace', () => {
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'failed',
+      deviceAutoSyncSucceeds: false,
     })
     mockCodexAppServerInvoke({ deviceId: 'current-device' })
 
     render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent(
-      '重试安装'
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
     )
     expect(screen.queryByTestId('plugins-installed-strip-item-101')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
@@ -1382,7 +1457,38 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('shows pending marketplace installation as syncing and prevents duplicate installs', async () => {
+  test('auto-syncs account installs onto the current device once per session', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'failed',
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    const firstRender = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/sync-device?device_id=current-device',
+      expect.objectContaining({ method: 'POST' })
+    )
+    await waitFor(() => {
+      expect(screen.queryByText('重试安装')).not.toBeInTheDocument()
+      expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    })
+    firstRender.unmount()
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(1)
+  })
+
+  test('offers retry when pending gaps remain after auto-sync settles', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1391,18 +1497,18 @@ describe('PluginsWorkspace', () => {
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: false,
     })
     mockCodexAppServerInvoke({ deviceId: 'current-device' })
 
-    render(<PluginsWorkspace />)
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    const action = await screen.findByTestId('plugin-marketplace-install-101')
-    expect(action).toHaveTextContent('同步中...')
-    expect(action).toHaveAttribute('role', 'status')
-
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
+    )
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
-    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('同步中...')
-    expect(screen.getByTestId('plugin-detail-toggle-101')).toBeDisabled()
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('重试安装')
+    expect(screen.getByTestId('plugin-detail-toggle-101')).not.toBeDisabled()
   })
 
   test('clears search and distribution from the empty marketplace state', async () => {
@@ -1473,6 +1579,70 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
     )
+  })
+
+  test('keeps local uninstall settled when cloud-link cleanup fails', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'documents-local-id',
+              name: 'documents',
+              displayName: 'Documents',
+              description: 'Create and edit document artifacts',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['documents'],
+      cloudLinks: [
+        {
+          localPluginName: 'documents',
+          cloudPluginId: 101,
+          cloudReleaseId: 1001,
+        },
+      ],
+      unlinkError: new Error('Cloud link registry is read-only'),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/101?device_id=current-device',
+        expect.objectContaining({ method: 'DELETE' })
+      )
+    )
+    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents-local-id' })
+    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@personal' })
+    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@wework-personal' })
+    expect(invoke).toHaveBeenCalledWith('local_executor_unlink_plugin_release', {
+      marketplacePath: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+      localPluginName: 'documents',
+    })
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
+    expect(
+      await screen.findByText(
+        /Documents 已从本机卸载，但部分清理失败.*Cloud link registry is read-only/
+      )
+    ).toBeInTheDocument()
   })
 
   test('uninstalls a local Codex plugin even when cloud installs own the installed list', async () => {
@@ -1590,6 +1760,40 @@ describe('PluginsWorkspace', () => {
         params: expect.objectContaining({ method: 'plugin/read' }),
       })
     )
+  })
+
+  test('does not reload the marketplace when a plugin component is toggled', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceHasSkill: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+    const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+    const marketplaceRequestsBefore = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input]) => String(input).includes('/api/plugins/marketplace')).length
+
+    await userEvent.click(toggle)
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('operation_failed', {
+        operation: 'plugin_toggle',
+      })
+    )
+
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).includes('/api/plugins/marketplace'))
+    ).toHaveLength(marketplaceRequestsBefore)
   })
 
   test('does not merge a local plugin into a cloud item by display name', async () => {
@@ -1818,6 +2022,51 @@ describe('PluginsWorkspace', () => {
     expect(notice).toHaveTextContent('GitHub OAuth is not configured')
     expect(notice).toHaveAttribute('data-notice-kind', 'error')
     expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装插件')
+  })
+
+  test('shows publish-new-version for personal owners before local created install hydrates', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'openai-official',
+          displayName: 'OpenAI 官方市场',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: '101',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Owner market install only',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['dev-tools'],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-detail-manage-access')).toHaveTextContent('管理权限')
+    await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
+    expect(screen.getByTestId('plugin-detail-edit-101')).toHaveTextContent('继续编辑')
+    expect(screen.getByTestId('plugin-detail-menu-publish-101')).toHaveTextContent('发布新版本')
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {

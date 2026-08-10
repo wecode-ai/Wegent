@@ -3,11 +3,26 @@ import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import {
   automationDraftFromAutomation,
+  automationWorkspaceTarget,
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   emptyAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
+
+describe('automationWorkspaceTarget', () => {
+  test('uses a selected project workspace', () => {
+    expect(automationWorkspaceTarget(' /repo/wework ')).toEqual({
+      workspacePath: '/repo/wework',
+    })
+  })
+
+  test('creates an independent chat workspace when no project is selected', () => {
+    expect(automationWorkspaceTarget('')).toEqual({
+      standaloneChatWorkspace: true,
+    })
+  })
+})
 
 function project(name: string, roots: string[], workspacePaths: string[]): RuntimeProjectWork {
   return {

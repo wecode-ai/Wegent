@@ -45,11 +45,18 @@ interface UserTurn {
 
 interface MessageTurnMarker extends UserTurn {
   targetTop: number | null
+  visibleTop: number | null
+  visibleBottom: number | null
 }
 
 interface PendingScrollTarget {
   navigationId: string
   messageIndex: number
+}
+
+interface TurnVisibilityBounds {
+  top: number
+  bottom: number
 }
 
 export function MessageTurnNavigation({
@@ -64,7 +71,7 @@ export function MessageTurnNavigation({
 }: MessageTurnNavigationProps) {
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
-  const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
+  const [activeMarkerIds, setActiveMarkerIds] = useState<string[]>([])
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
@@ -148,48 +155,29 @@ export function MessageTurnNavigation({
     turnNavigationRef.current = turnNavigation
   }, [messages, turnNavigation, userTurnsSignature])
 
-  const updateActiveMarker = useCallback(
-    (
-      nextMarkers: MessageTurnMarker[],
-      reason = 'unknown',
-      anchorByMessageId?: ReadonlyMap<string, HTMLElement>
-    ) => {
+  const updateActiveMarkers = useCallback(
+    (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
       void reason
       const scroller = scrollRef.current
       if (!scroller || nextMarkers.length === 0) {
-        setActiveMarkerId(null)
+        setActiveMarkerIds([])
         return
       }
 
-      const mountedMessageMarker = findActiveMarkerFromMountedMessages(
-        nextMarkers,
-        messagesRef.current,
-        anchorByMessageId,
-        scroller
+      const viewportTop = scroller.scrollTop
+      const viewportBottom = viewportTop + scroller.clientHeight
+      const nextActiveMarkerIds = nextMarkers
+        .filter(
+          marker =>
+            marker.visibleTop !== null &&
+            marker.visibleBottom !== null &&
+            marker.visibleBottom > viewportTop &&
+            marker.visibleTop < viewportBottom
+        )
+        .map(marker => marker.id)
+      setActiveMarkerIds(current =>
+        equalStringArrays(current, nextActiveMarkerIds) ? current : nextActiveMarkerIds
       )
-      if (mountedMessageMarker) {
-        setActiveMarkerId(mountedMessageMarker.id)
-        return
-      }
-
-      const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
-      const loadedMarkers = nextMarkers.filter(
-        (marker): marker is MessageTurnMarker & { targetTop: number } => marker.targetTop !== null
-      )
-      if (loadedMarkers.length === 0) {
-        return
-      }
-
-      let activeMarker = loadedMarkers[0]
-      for (const marker of loadedMarkers) {
-        if (marker.targetTop !== null && marker.targetTop <= currentPosition) {
-          activeMarker = marker
-        } else {
-          break
-        }
-      }
-
-      setActiveMarkerId(activeMarker.id)
     },
     [scrollRef]
   )
@@ -202,19 +190,29 @@ export function MessageTurnNavigation({
       if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
-        setActiveMarkerId(null)
+        setActiveMarkerIds([])
         return
       }
 
       const scrollerRect = scroller.getBoundingClientRect()
       const anchorByMessageId = getMessageAnchorById(content)
+      const visibilityByTurnId = getTurnVisibilityBounds(
+        userTurns,
+        messagesRef.current,
+        anchorByMessageId,
+        scroller,
+        scrollerRect
+      )
       const nextMarkers = userTurns.map(turn => {
         const anchor = anchorByMessageId.get(turn.id)
+        const visibleBounds = visibilityByTurnId.get(turn.id)
         if (!anchor) {
           return {
             ...turn,
             loaded: false,
             targetTop: null,
+            visibleTop: visibleBounds?.top ?? null,
+            visibleBottom: visibleBounds?.bottom ?? null,
           }
         }
 
@@ -224,14 +222,17 @@ export function MessageTurnNavigation({
           ...turn,
           loaded: true,
           targetTop,
+          visibleTop: visibleBounds?.top ?? targetTop,
+          visibleBottom:
+            visibleBounds?.bottom ?? scroller.scrollTop + anchorRect.bottom - scrollerRect.top,
         }
       })
 
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
-      updateActiveMarker(nextMarkers, reason, anchorByMessageId)
+      updateActiveMarkers(nextMarkers, reason)
     },
-    [contentRef, scrollRef, updateActiveMarker]
+    [contentRef, scrollRef, updateActiveMarkers]
   )
 
   const scheduleCalculateMarkers = useCallback(
@@ -259,7 +260,6 @@ export function MessageTurnNavigation({
     if (!scroller || !targetMessageId || !anchor) return
 
     scrollToMessageId(scroller, targetMessageId)
-    setActiveMarkerId(targetMessageId)
     setLoadingMarkerId(current => (current === pendingScrollTarget.navigationId ? null : current))
     setPendingScrollTarget(null)
     finishNavigationLoad(onNavigationLoadStateChange)
@@ -278,8 +278,8 @@ export function MessageTurnNavigation({
     if (!scroller || !content) return
 
     // Mounted anchors are recalculated by observers; raw scroll events reuse
-    // measured user targets and preserve the last valid virtualized marker.
-    const handleScroll = () => updateActiveMarker(markersRef.current, 'scroll')
+    // their measured bounds to update which conversation turns intersect the viewport.
+    const handleScroll = () => updateActiveMarkers(markersRef.current, 'scroll')
     const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', handleResize)
@@ -309,12 +309,13 @@ export function MessageTurnNavigation({
         timerRef.current = null
       }
     }
-  }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
+  }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarkers])
 
   const handleMarkerClick = useCallback(
     async (marker: MessageTurnMarker) => {
       const scroller = scrollRef.current
       if (!scroller) return
+      const activeMarkerId = activeMarkerIds[0] ?? null
 
       const currentAnchor = findMessageAnchor(contentRef, marker.id)
       logTurnNavigation('marker-click', {
@@ -346,7 +347,6 @@ export function MessageTurnNavigation({
           }
         }
         scrollToMessageId(scroller, marker.id, 'smooth')
-        setActiveMarkerId(marker.id)
         return
       }
 
@@ -387,7 +387,7 @@ export function MessageTurnNavigation({
       }
     },
     [
-      activeMarkerId,
+      activeMarkerIds,
       contentRef,
       messages,
       onLoadTurnNavigationItem,
@@ -435,7 +435,7 @@ export function MessageTurnNavigation({
       >
         <div className="relative w-full" style={{ height: `${navigationHeight}px` }}>
           {markers.map((marker, index) => {
-            const isActive = activeMarkerId === marker.id
+            const isActive = activeMarkerIds.includes(marker.id)
             const isLoading = loadingMarkerId === marker.id
             const hoverDistance =
               hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
@@ -549,9 +549,7 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
         typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${
-        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
-      }`,
+      cursor: null,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -577,7 +575,7 @@ function buildUserTurnsFromNavigation(
       messageIndex: item.messageIndex,
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
       responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
-      cursor: item.cursor ?? `offset:${item.messageIndex}`,
+      cursor: item.cursor ?? null,
       loaded: Boolean(loadedTurn),
     }
   })
@@ -763,70 +761,6 @@ function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement
   return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
 }
 
-function findActiveMarkerFromMountedMessages(
-  markers: MessageTurnMarker[],
-  messages: WorkbenchMessage[],
-  anchorByMessageId: ReadonlyMap<string, HTMLElement> | undefined,
-  scroller: HTMLDivElement
-): MessageTurnMarker | null {
-  if (!anchorByMessageId || anchorByMessageId.size === 0) return null
-
-  const messagePositionById = buildMessageTimelinePositions(messages)
-  const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
-  let currentMessageIndex: number | null = null
-  let currentMessageTop = Number.NEGATIVE_INFINITY
-  let firstMountedMessageIndex: number | null = null
-  let firstMountedMessageTop = Number.POSITIVE_INFINITY
-
-  anchorByMessageId.forEach((anchor, messageId) => {
-    const messagePosition = messagePositionById.get(messageId)
-    if (messagePosition === undefined) return
-
-    const targetTop = getMessageAnchorTargetTop(scroller, anchor)
-    if (targetTop < firstMountedMessageTop) {
-      firstMountedMessageTop = targetTop
-      firstMountedMessageIndex = messagePosition
-    }
-    if (targetTop <= currentPosition && targetTop > currentMessageTop) {
-      currentMessageTop = targetTop
-      currentMessageIndex = messagePosition
-    }
-  })
-
-  const viewportMessageIndex = currentMessageIndex ?? firstMountedMessageIndex
-  if (viewportMessageIndex === null) return null
-
-  let activeMarker: MessageTurnMarker | null = null
-  for (const marker of markers) {
-    if (marker.messageIndex > viewportMessageIndex) break
-    activeMarker = marker
-  }
-  return activeMarker
-}
-
-function buildMessageTimelinePositions(messages: WorkbenchMessage[]): Map<string, number> {
-  const positions = new Map<string, number>()
-  let nextMessageIndex: number | null = null
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (Number.isFinite(message.runtimeMessageIndex)) {
-      nextMessageIndex = message.runtimeMessageIndex as number
-      positions.set(message.id, nextMessageIndex)
-      continue
-    }
-
-    // A persisted page can start with an assistant message whose preceding user
-    // message belongs to the previous page. Keep it in the absolute transcript
-    // coordinate system by placing it immediately before the next indexed row.
-    if (nextMessageIndex !== null) {
-      positions.set(message.id, nextMessageIndex - 0.5)
-    }
-  }
-
-  return positions
-}
-
 function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor?.getBoundingClientRect()
@@ -855,6 +789,94 @@ function getMessageAnchorById(content: HTMLElement) {
     }
   })
   return anchors
+}
+
+function getTurnVisibilityBounds(
+  turns: UserTurn[],
+  messages: WorkbenchMessage[],
+  anchorByMessageId: ReadonlyMap<string, HTMLElement>,
+  scroller: HTMLDivElement,
+  scrollerRect: DOMRect
+): Map<string, TurnVisibilityBounds> {
+  const boundsByTurnId = new Map<string, TurnVisibilityBounds>()
+  const messagePositionById = buildMessageTimelinePositions(messages)
+
+  anchorByMessageId.forEach((anchor, messageId) => {
+    const messagePosition = messagePositionById.get(messageId)
+    if (messagePosition === undefined) return
+    const turn = findTurnForMessagePosition(turns, messagePosition)
+    if (!turn) return
+
+    const anchorRect = anchor.getBoundingClientRect()
+    const top = scroller.scrollTop + anchorRect.top - scrollerRect.top
+    const bottom = scroller.scrollTop + anchorRect.bottom - scrollerRect.top
+    const current = boundsByTurnId.get(turn.id)
+    boundsByTurnId.set(turn.id, {
+      top: current ? Math.min(current.top, top) : top,
+      bottom: current ? Math.max(current.bottom, bottom) : bottom,
+    })
+  })
+
+  return boundsByTurnId
+}
+
+function buildMessageTimelinePositions(messages: WorkbenchMessage[]): Map<string, number> {
+  const positions = messages.map(message =>
+    Number.isFinite(message.runtimeMessageIndex) ? (message.runtimeMessageIndex as number) : null
+  )
+  if (positions.every(position => position === null)) {
+    return new Map(messages.map((message, index) => [message.id, index]))
+  }
+
+  let segmentStart = 0
+  while (segmentStart < positions.length) {
+    if (positions[segmentStart] !== null) {
+      segmentStart += 1
+      continue
+    }
+
+    let segmentEnd = segmentStart + 1
+    while (segmentEnd < positions.length && positions[segmentEnd] === null) {
+      segmentEnd += 1
+    }
+    const previousPosition = segmentStart > 0 ? positions[segmentStart - 1] : null
+    const nextPosition = segmentEnd < positions.length ? positions[segmentEnd] : null
+    const segmentLength = segmentEnd - segmentStart
+
+    for (let offset = 0; offset < segmentLength; offset += 1) {
+      if (previousPosition !== null && nextPosition !== null) {
+        positions[segmentStart + offset] =
+          previousPosition +
+          ((nextPosition - previousPosition) * (offset + 1)) / (segmentLength + 1)
+      } else if (previousPosition !== null) {
+        positions[segmentStart + offset] = previousPosition + (offset + 1) / (segmentLength + 1)
+      } else if (nextPosition !== null) {
+        positions[segmentStart + offset] =
+          nextPosition - (segmentLength - offset) / (segmentLength + 1)
+      }
+    }
+    segmentStart = segmentEnd
+  }
+
+  return new Map(
+    messages.flatMap((message, index) => {
+      const position = positions[index]
+      return position === null ? [] : [[message.id, position] as const]
+    })
+  )
+}
+
+function findTurnForMessagePosition(turns: UserTurn[], messagePosition: number): UserTurn | null {
+  let currentTurn: UserTurn | null = null
+  for (const turn of turns) {
+    if (turn.messageIndex > messagePosition) break
+    currentTurn = turn
+  }
+  return currentTurn
+}
+
+function equalStringArrays(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function finishNavigationLoad(onNavigationLoadStateChange?: (loading: boolean) => void) {

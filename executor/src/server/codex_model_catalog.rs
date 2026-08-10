@@ -475,6 +475,8 @@ fn merge_capability_models(catalog: &mut Value) {
 }
 
 fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&str>) -> Value {
+    // Codex uses this capability to keep deferred App schemas out of the initial
+    // request. Wire-level compatibility is handled separately by the local proxy.
     let mut entry = json!({
         "slug": slug,
         "display_name": display_name,
@@ -509,7 +511,7 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text", "image"],
-        "supports_search_tool": false,
+        "supports_search_tool": true,
         "use_responses_lite": false,
         "auto_review_model_override": null,
         "tool_mode": null,
@@ -538,8 +540,10 @@ mod tests {
         assert_eq!(models[0]["context_window"], 1_048_576);
         assert_eq!(models[0]["default_reasoning_level"], "low");
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
+        assert_eq!(models[0]["supports_search_tool"], true);
         assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
         assert_eq!(models[1]["context_window"], 262_144);
+        assert_eq!(models[1]["supports_search_tool"], true);
     }
 
     #[test]
@@ -557,6 +561,7 @@ mod tests {
         assert_eq!(model["apply_patch_tool_type"], "freeform");
         assert_eq!(model["supports_parallel_tool_calls"], true);
         assert_eq!(model["multi_agent_version"], "v2");
+        assert_eq!(model["supports_search_tool"], true);
         assert_eq!(model["visibility"], "none");
         assert_eq!(model["input_modalities"], json!(["text"]));
 
@@ -580,6 +585,7 @@ mod tests {
         assert_eq!(pro_model["apply_patch_tool_type"], "freeform");
         assert_eq!(pro_model["supports_parallel_tool_calls"], true);
         assert_eq!(pro_model["multi_agent_version"], "v2");
+        assert_eq!(pro_model["supports_search_tool"], true);
         assert_eq!(pro_model["visibility"], "none");
         assert_eq!(pro_model["input_modalities"], json!(["text"]));
     }
@@ -602,6 +608,7 @@ mod tests {
             .expect("wework gpt-5.6-sol entry");
         assert_eq!(sol["apply_patch_tool_type"], "freeform");
         assert_eq!(sol["supports_parallel_tool_calls"], false);
+        assert_eq!(sol["supports_search_tool"], true);
         assert_eq!(sol["visibility"], "none");
     }
 
@@ -621,6 +628,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing official model {slug}"));
             assert_eq!(model["visibility"], "list");
             assert_eq!(model["priority"], priority);
+            assert_eq!(model["supports_search_tool"], true);
         }
 
         for slug in [

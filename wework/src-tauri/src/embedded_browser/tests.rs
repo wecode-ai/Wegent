@@ -10,16 +10,17 @@ use std::{
 };
 
 use super::{
-    bridge_navigation_url, bridge_request_authorized, browser_file_url_from_path,
-    browser_open_action, browser_webview_url, consume_approved_agent_risk,
-    directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
-    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
-    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
-    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
-    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
-    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
-    script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
-    update_logical_entry_if_native_matches, wait_for_browser_ready, DirectoryEntry,
+    available_logical_entry, bridge_navigation_url, bridge_request_authorized,
+    browser_file_url_from_path, browser_open_action, browser_webview_url,
+    consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
+    download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
+    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
+    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
+    register_agent_approval, register_preview_source, relabel_logical_entry,
+    remove_logical_entry_if_native_matches, resolve_browser_navigation_url, script_browser_action,
+    script_resolve_inspect_target, script_semantic_inspect, should_block_local_file_preview,
+    should_record_loaded_url, should_replay_browser_open_request,
+    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer, DirectoryEntry,
     EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
     EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
     EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
@@ -328,6 +329,29 @@ fn opening_route_is_hidden_from_public_access_but_available_to_native_callbacks(
 }
 
 #[test]
+fn hidden_route_exposes_page_state_without_becoming_bridge_ready() {
+    let entries = HashMap::from([(
+        "workspace-browser".to_string(),
+        (
+            "https://example.test/",
+            EmbeddedBrowserReadiness::Opening,
+            true,
+        ),
+    )]);
+
+    assert_eq!(
+        ready_logical_entry(&entries, "workspace-browser", |entry| entry.1).unwrap_err(),
+        EMBEDDED_BROWSER_NOT_READY_ERROR
+    );
+    assert_eq!(
+        available_logical_entry(&entries, "workspace-browser", |entry| entry.2)
+            .unwrap()
+            .0,
+        "https://example.test/"
+    );
+}
+
+#[test]
 fn bridge_open_waits_for_an_opening_route_without_requesting_again() {
     assert_eq!(
         browser_open_action(Some(EmbeddedBrowserReadiness::Opening)),
@@ -344,6 +368,22 @@ fn bridge_open_waits_for_an_opening_route_without_requesting_again() {
 }
 
 #[test]
+fn bridge_replays_pending_open_requests_only_while_no_route_is_registered() {
+    assert!(!should_replay_browser_open_request(0, None));
+    assert!(!should_replay_browser_open_request(4, None));
+    assert!(should_replay_browser_open_request(5, None));
+    assert!(should_replay_browser_open_request(10, None));
+    assert!(!should_replay_browser_open_request(
+        5,
+        Some(EmbeddedBrowserReadiness::Opening)
+    ));
+    assert!(!should_replay_browser_open_request(
+        5,
+        Some(EmbeddedBrowserReadiness::Ready)
+    ));
+}
+
+#[test]
 fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
     let readiness = Arc::new(Mutex::new(EmbeddedBrowserReadiness::Opening));
     let waiter_readiness = Arc::clone(&readiness);
@@ -352,7 +392,7 @@ fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
 
     let waiter = thread::spawn(move || {
         let mut first_check = true;
-        wait_for_browser_ready(
+        wait_for_browser_ready_with_observer(
             || {
                 if first_check {
                     first_check = false;
@@ -362,6 +402,7 @@ fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
             },
             100,
             Duration::from_millis(1),
+            |_, _| Ok(()),
         )
     });
 

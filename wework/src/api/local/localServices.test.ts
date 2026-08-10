@@ -7,6 +7,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -684,6 +685,58 @@ describe('createLocalAppServices', () => {
       })
     ).rejects.toThrow('workspacePath is required')
     expect(request).not.toHaveBeenCalled()
+  })
+
+  test('persists projectless automations as standalone chat workspaces', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.automations.create') {
+          return { automation: data.automation }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.automationApi?.createAutomation({
+      source: 'local',
+      name: 'Projectless automation',
+      prompt: 'Say hello',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'local-device',
+        standaloneChatWorkspace: true,
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Say hello',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      {
+        automation: expect.objectContaining({
+          taskPayload: expect.objectContaining({
+            standaloneChatWorkspace: true,
+            executionRequest: expect.objectContaining({
+              standalone_chat_workspace: true,
+            }),
+          }),
+        }),
+      },
+      'local-device'
+    )
+    const automationPayload = request.mock.calls[0]?.[1]?.automation.taskPayload
+    expect(automationPayload).not.toHaveProperty('workspacePath')
+    expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
   })
 
   test('creates a git worktree from the current branch before creating a local runtime task', async () => {
@@ -1707,6 +1760,8 @@ describe('createLocalAppServices', () => {
           reasoning: { effort: 'high' },
         })
       )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
     }
   )
 
@@ -2796,6 +2851,67 @@ describe('createLocalAppServices', () => {
       args: ['image.png', '0'],
       timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
+
+  test('reverts local runtime file changes through the owning device command', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { success: true, status: 'reverted' },
+      stderr: '',
+      error: null,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        version: '1.9.0',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const fileChanges: TurnFileChangesSummary = {
+      version: 1,
+      status: 'active',
+      artifact_id: 'turn-file-changes/codex/turn-1',
+      device_id: 'device-uuid',
+      workspace_path: '/Users/me/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'README.md',
+          change_type: 'modified',
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      revertible: true,
+    }
+
+    const response = await services.runtimeWorkApi?.revertRuntimeFileChanges({
+      address: {
+        deviceId: 'device-uuid',
+        taskId: 'runtime-1',
+        workspacePath: '/Users/me/project',
+      },
+      fileChanges,
+    })
+
+    expect(response?.fileChanges).toMatchObject({
+      status: 'reverted',
+      artifact_id: fileChanges.artifact_id,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'turn_file_changes_revert',
+      path: '/Users/me/project',
+      args: ['turn-file-changes/codex/turn-1'],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
     })
   })
 })

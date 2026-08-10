@@ -1176,6 +1176,7 @@ function UserMessage({
       {!editing && (
         <MessageHoverActions
           message={message}
+          copyContent={displayContent}
           align="right"
           visible={areHoverActionsVisible}
           onEdit={editable ? onStartEdit : undefined}
@@ -1510,12 +1511,14 @@ function MessageImageAttachmentPreview({
 
 function MessageHoverActions({
   message,
+  copyContent = message.content,
   align,
   visible,
   onEdit,
   onFork,
 }: {
   message: WorkbenchMessage
+  copyContent?: string
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
@@ -1537,7 +1540,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(message.content).then(() => {
+    void copyText(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
@@ -2233,59 +2236,22 @@ function generatedImageAttachment(image: GeneratedImageArtifact, index: number):
 
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
-    if (block.type !== 'tool') return []
-    if (block.toolName === 'image_generation') {
-      const payload = block.renderPayload
-      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
-      const imageBase64 = Reflect.get(payload, 'imageBase64')
-      if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-      const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
-      return [
-        {
-          id: block.id,
-          src: imageBase64.startsWith('data:')
-            ? imageBase64
-            : `data:image/png;base64,${imageBase64}`,
-          alt:
-            typeof revisedPrompt === 'string' && revisedPrompt.trim()
-              ? revisedPrompt
-              : 'Generated image',
-        },
-      ]
-    }
-
-    if (block.toolName !== 'view_image') return []
+    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
     const payload = block.renderPayload
-    const toolInput =
-      typeof Reflect.get(block, 'toolInput') === 'object' && Reflect.get(block, 'toolInput')
-        ? (Reflect.get(block, 'toolInput') as Record<string, unknown>)
-        : null
-    const candidates: Array<unknown> = [
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'dataUrl') : null,
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'imageBase64') : null,
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'src') : null,
-      toolInput?.dataUrl,
-      toolInput?.imageBase64,
-      toolInput?.path,
-      toolInput?.file_path,
-      toolInput?.image_path,
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const imageBase64 = Reflect.get(payload, 'imageBase64')
+    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    return [
+      {
+        id: block.id,
+        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+        alt:
+          typeof revisedPrompt === 'string' && revisedPrompt.trim()
+            ? revisedPrompt
+            : 'Generated image',
+      },
     ]
-    for (const candidate of candidates) {
-      if (typeof candidate !== 'string' || !candidate.trim()) continue
-      const src = candidate.startsWith('data:')
-        ? candidate
-        : candidate.startsWith('/') || candidate.includes('://')
-          ? candidate
-          : `data:image/png;base64,${candidate}`
-      return [
-        {
-          id: block.id,
-          src,
-          alt: 'Viewed image',
-        },
-      ]
-    }
-    return []
   })
 }
 

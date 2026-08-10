@@ -93,7 +93,13 @@ class LoopNode(Base):
     device_id = Column(String(100), nullable=True)
     is_default = Column(Boolean, nullable=True)
     task_user_id = Column(Integer, nullable=True)
-    assignee_agent_id = Column(String(64), nullable=True, index=True)
+    assignee_agent_id = Column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Assigned project chat agent ID; empty when unassigned",
+    )
     task_id = Column(String(255), nullable=True)
     task_title = Column(String(255), nullable=True)
     backend_task_id = Column(
@@ -132,6 +138,7 @@ class LoopNode(Base):
         Index("idx_loop_items_project_type", "cloud_project_id", "resource_type"),
         Index("idx_loop_items_parent_type", "parent_id", "resource_type", "sort_order"),
         Index("idx_loop_items_project_path", "cloud_project_id", "path"),
+        Index("idx_loop_items_assignee_agent_id", "assignee_agent_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 

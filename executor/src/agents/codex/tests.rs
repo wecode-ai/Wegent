@@ -492,7 +492,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn native_responses_upstream_preserves_custom_tools_by_default() {
+fn explicit_third_party_responses_upstream_bridges_app_tools_by_default() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -503,6 +503,25 @@ fn native_responses_upstream_preserves_custom_tools_by_default() {
     );
 
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+}
+
+#[test]
+fn explicit_upstream_reads_native_app_tool_capabilities() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "native-responses-model",
+            "upstream_api_format": "openai-responses",
+            "native_tool_search": true,
+            "native_namespace_tools": true
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
 }
 
 #[test]
@@ -773,7 +792,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_provider_preserves_native_responses_tools() {
+fn user_configured_third_party_responses_provider_bridges_app_tools() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -797,6 +816,31 @@ fn user_configured_provider_preserves_native_responses_tools() {
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_honors_native_app_tool_capabilities() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-openai-native-app-tools");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"native-responses\"\n[model_providers.native-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = true\nnative_namespace_tools = true\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream =
+        configured_codex_provider("native-responses", None).expect("configured provider");
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1327,7 +1371,7 @@ fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
 }
 
 #[test]
-fn goal_created_during_turn_keeps_notification_reader_alive() {
+fn goal_created_during_turn_allows_the_current_run_to_settle() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1349,7 +1393,8 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
         }))
         .expect("turn completion should produce an outcome");
 
-    assert!(should_wait_for_goal_continuation(&outcome, &state));
+    assert!(!should_wait_for_goal_continuation(&outcome, &state, false));
+    assert!(should_wait_for_goal_continuation(&outcome, &state, true));
 }
 
 #[test]
@@ -1801,10 +1846,136 @@ fn turn_start_params_includes_output_schema() {
 }
 
 #[test]
-fn thread_start_uses_codex_default_history_mode() {
+fn thread_start_uses_paginated_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
-    assert!(params.get("historyMode").is_none());
+    assert_eq!(params["historyMode"], "paginated");
+}
+
+#[test]
+fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
+    let plan = codex_thread_plan(
+        Some("  direct-thread  "),
+        Some("fork-thread"),
+        Some("/tmp/fork.jsonl"),
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Direct(thread_id) => assert_eq!(thread_id, "direct-thread"),
+        CodexThreadStart::Request { operation, .. } => {
+            panic!("expected direct thread, got {operation}")
+        }
+    }
+    assert!(plan.fork_requested);
+    assert!(plan.resume_requested);
+}
+
+#[test]
+fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
+    let plan = codex_thread_plan(
+        Some("   "),
+        Some("fork-thread"),
+        Some("/tmp/fork.jsonl"),
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/fork");
+            assert_eq!(params["threadId"], "fork-thread");
+            assert_eq!(params["path"], "/tmp/fork.jsonl");
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected fork request, got direct thread {thread_id}")
+        }
+    }
+}
+
+#[test]
+fn codex_thread_plan_selects_resume_when_fork_is_absent() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/resume");
+            assert_eq!(params["threadId"], "resume-thread");
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected resume request, got direct thread {thread_id}")
+        }
+    }
+    assert!(plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
+fn codex_thread_plan_starts_new_thread_without_identifiers() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        None,
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected start request, got direct thread {thread_id}")
+        }
+    }
+    assert!(!plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
+fn thread_id_from_response_validates_provider_and_requires_thread_id() {
+    assert_eq!(
+        thread_id_from_response(
+            "thread/start",
+            &json!({
+                "thread": {
+                    "id": "thread-1",
+                    "modelProvider": "provider-1"
+                }
+            }),
+            Some("provider-1"),
+        )
+        .unwrap(),
+        "thread-1"
+    );
+    assert!(thread_id_from_response(
+        "thread/resume",
+        &json!({"thread": {"modelProvider": "provider-1"}}),
+        Some("provider-1"),
+    )
+    .unwrap_err()
+    .contains("did not return thread.id"));
+    assert!(thread_id_from_response(
+        "thread/fork",
+        &json!({
+            "thread": {
+                "id": "thread-2",
+                "modelProvider": "provider-2"
+            }
+        }),
+        Some("provider-1"),
+    )
+    .unwrap_err()
+    .contains("unexpected model provider"));
 }
 
 #[test]
@@ -2163,10 +2334,7 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         ])
     );
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
-    assert_eq!(
-        config["features.code_mode.direct_only_tool_namespaces"],
-        json!([WEWORK_BROWSER_MCP_SERVER_NAME])
-    );
+    assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.command"],
         env::current_exe().unwrap().display().to_string()

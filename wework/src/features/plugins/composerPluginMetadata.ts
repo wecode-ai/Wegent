@@ -138,7 +138,8 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
     name: displayName,
     description:
       interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
-    logoUrl: resolveInstalledPluginLogoUrl(plugin) || null,
+    logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light') || null,
+    logoUrlDark: resolveInstalledPluginLogoUrl(plugin, 'dark') || null,
     isAccessible: true,
     isEnabled: true,
     pluginDisplayNames: [displayName],
@@ -169,7 +170,8 @@ export function enrichComposerApps(
           name: plugin.spec.displayName || app.name,
           description:
             interfaceData?.shortDescription || plugin.spec.description || app.description || null,
-          logoUrl: resolveInstalledPluginLogoUrl(plugin) || app.logoUrl || null,
+          logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light') || app.logoUrl || null,
+          logoUrlDark: resolveInstalledPluginLogoUrl(plugin, 'dark') || app.logoUrlDark || null,
           pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
             (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
           ),

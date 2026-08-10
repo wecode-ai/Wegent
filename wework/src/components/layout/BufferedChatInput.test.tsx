@@ -1,5 +1,6 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { BufferedChatInput } from './BufferedChatInput'
 
@@ -43,6 +44,123 @@ describe('BufferedChatInput', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue('queued message')
+    })
+  })
+
+  test('keeps the submitted draft when an async send is rejected', async () => {
+    let resolveSubmission: (accepted: boolean) => void = () => undefined
+    const onDraftEdit = vi.fn()
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmission = resolve
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('retry this message')
+      return (
+        <BufferedChatInput
+          value={value}
+          onChange={setValue}
+          onDraftEdit={onDraftEdit}
+          onSubmit={onSubmit}
+          disabled={false}
+        />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    resolveSubmission(false)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('retry this message')
+    })
+    expect(onDraftEdit).not.toHaveBeenCalled()
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), ' updated')
+    expect(onDraftEdit).toHaveBeenCalled()
+  })
+
+  test('restores the submitted draft when an async send promise rejects', async () => {
+    let rejectSubmission: (error: Error) => void = () => undefined
+    const unhandledRejection = vi.fn()
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectSubmission = reject
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('retry rejected promise')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    window.addEventListener('unhandledrejection', unhandledRejection)
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    rejectSubmission(new Error('send failed'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('retry rejected promise')
+    })
+    await Promise.resolve()
+    expect(unhandledRejection).not.toHaveBeenCalled()
+    window.removeEventListener('unhandledrejection', unhandledRejection)
+  })
+
+  test('keeps a newer draft when an earlier async send promise rejects', async () => {
+    let rejectSubmission: (error: Error) => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectSubmission = reject
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'newer draft')
+    rejectSubmission(new Error('send failed'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('newer draft')
+    })
+  })
+
+  test('clears only the draft accepted by an async send', async () => {
+    let resolveSubmission: (accepted: boolean) => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmission = resolve
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('accepted message')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    resolveSubmission(true)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('')
     })
   })
 

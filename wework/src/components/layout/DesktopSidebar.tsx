@@ -484,6 +484,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
 const SIDEBAR_RUNNING_SPINNER_CLASS =
   'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
+const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
+  'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -3328,6 +3330,7 @@ export function DesktopSidebar({
                 sidebarCollapsed={false}
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
+                buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
               />
             </div>
           )}
@@ -3339,6 +3342,7 @@ export function DesktopSidebar({
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}
                     className="gap-0"
+                    buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
                   />
                 )}
                 {onOpenSearch && (
@@ -3409,21 +3413,20 @@ export function DesktopSidebar({
             data-scrolled={sidebarScrolled}
             onScroll={event => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
             className={cn(
-              'scrollbar-none relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              'relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
               sidebarScrolled &&
-                '[mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]'
+                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
+              !sidebarScrolled && 'scrollbar-none'
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={AlarmClock}
-                  label={t('workbench.automation', '已安排')}
-                  testId="automation-button"
-                  selected={activeItem === 'automation'}
-                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-                />
-              )}
+              <DesktopSidebarNavItem
+                icon={AlarmClock}
+                label={t('workbench.automation', '已安排')}
+                testId="automation-button"
+                selected={activeItem === 'automation'}
+                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+              />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
                   icon={Sparkles}

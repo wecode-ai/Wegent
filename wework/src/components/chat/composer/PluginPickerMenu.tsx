@@ -7,9 +7,11 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { pluginNameInitial, resolvePluginLogo } from '@/components/plugins/plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
 import {
   getComposerApps,
   publishComposerApps,
@@ -41,9 +43,12 @@ function ComposerPluginIcon({
   initialClassName: string
   testId: string
 }) {
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const logo = resolvePluginLogo({
     pluginKey: composerAppPluginKey(app),
     logo: app.logoUrl,
+    logoDark: app.logoUrlDark,
+    appearanceMode,
   })
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
   const showInitial = logo.isGenericFallback || failedLogoUrl === logo.url
@@ -81,6 +86,7 @@ export function PluginPickerMenu({
   onListLocalApps,
 }: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -195,57 +201,63 @@ export function PluginPickerMenu({
 
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        data-testid="composer-plugin-picker-button"
-        disabled={disabled}
-        aria-expanded={open}
-        aria-label={t('workbench.composer_plugins', '插件')}
-        className={[
-          'flex items-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
-          iconOnly
-            ? 'h-7 w-7 justify-center rounded-lg px-0'
-            : 'h-7 gap-2 rounded-lg bg-muted/70 px-3 text-sm',
-        ].join(' ')}
-        onClick={() => {
-          if (disabled) return
-          if (!open) {
-            // Ask slash to re-publish first — `/` may already have apps in React
-            // state while this menu's store was emptied by HMR or a failed refresh.
-            requestComposerAppsSync()
-            if (!applySharedApps()) {
-              if (onListLocalApps) {
-                setLoading(true)
-                setReloadToken(token => token + 1)
+      <Tooltip
+        label={t('workbench.composer_plugins', '插件')}
+        align="start"
+        testId="composer-plugin-picker-tooltip"
+      >
+        <button
+          type="button"
+          data-testid="composer-plugin-picker-button"
+          disabled={disabled}
+          aria-expanded={open}
+          aria-label={t('workbench.composer_plugins', '插件')}
+          className={[
+            'flex items-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
+            iconOnly
+              ? 'h-7 w-7 justify-center rounded-lg px-0'
+              : 'h-7 gap-2 rounded-lg bg-muted/70 px-3 text-sm',
+          ].join(' ')}
+          onClick={() => {
+            if (disabled) return
+            if (!open) {
+              // Ask slash to re-publish first — `/` may already have apps in React
+              // state while this menu's store was emptied by HMR or a failed refresh.
+              requestComposerAppsSync()
+              if (!applySharedApps()) {
+                if (onListLocalApps) {
+                  setLoading(true)
+                  setReloadToken(token => token + 1)
+                }
               }
             }
-          }
-          setOpen(!open)
-        }}
-      >
-        {iconOnly ? (
-          <Puzzle className="h-4 w-4" />
-        ) : (
-          <>
-            <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
-            <span
-              className="flex -space-x-1"
-              data-testid="composer-plugin-preview-icons"
-              aria-hidden="true"
-            >
-              {apps.slice(0, 3).map(app => (
-                <ComposerPluginIcon
-                  key={app.id}
-                  app={app}
-                  testId={`composer-plugin-preview-icon-${app.id}`}
-                  className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
-                  initialClassName="scale-75 text-xs font-medium leading-none text-text-secondary"
-                />
-              ))}
-            </span>
-          </>
-        )}
-      </button>
+            setOpen(!open)
+          }}
+        >
+          {iconOnly ? (
+            <Puzzle className="h-4 w-4" />
+          ) : (
+            <>
+              <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
+              <span
+                className="flex -space-x-1"
+                data-testid="composer-plugin-preview-icons"
+                aria-hidden="true"
+              >
+                {apps.slice(0, 3).map(app => (
+                  <ComposerPluginIcon
+                    key={app.id}
+                    app={app}
+                    testId={`composer-plugin-preview-icon-${app.id}`}
+                    className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
+                    initialClassName="scale-75 text-xs font-medium leading-none text-text-secondary"
+                  />
+                ))}
+              </span>
+            </>
+          )}
+        </button>
+      </Tooltip>
 
       {open && (
         <div
@@ -277,6 +289,8 @@ export function PluginPickerMenu({
                 const logo = resolvePluginLogo({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
+                  logoDark: app.logoUrlDark,
+                  appearanceMode,
                 })
                 return (
                   <button

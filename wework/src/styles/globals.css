@@ -614,6 +614,15 @@ button:disabled {
     padding: 0;
   }
 
+  [data-theme='dark'] .plugin-management-logo {
+    background: rgb(245 245 247);
+    border-color: rgb(0 0 0 / 0.08);
+  }
+
+  [data-theme='dark'] .plugin-management-logo.plugin-logo-provided {
+    padding: 2px;
+  }
+
   .plugin-management-logo img {
     display: block;
     width: 100%;
@@ -623,6 +632,11 @@ button:disabled {
 
   .plugin-management-logo.plugin-logo-provided img {
     object-fit: cover;
+  }
+
+  [data-theme='dark'] .plugin-management-logo.plugin-logo-provided img {
+    object-fit: contain;
+    border-radius: 9px;
   }
 
   .composer-mention-node,
@@ -1826,6 +1840,17 @@ button.plugin-installed-strip-item:focus-visible::after {
   padding: 0;
 }
 
+[data-theme='dark'] .plugin-market-card-logo,
+[data-theme='dark'] .plugin-installed-strip-logo {
+  background-color: rgb(245 245 247);
+  border-color: rgb(0 0 0 / 0.08);
+}
+
+[data-theme='dark'] .plugin-market-card-logo.plugin-logo-provided,
+[data-theme='dark'] .plugin-installed-strip-logo.plugin-logo-provided {
+  padding: 2px;
+}
+
 .plugin-installed-strip-logo {
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.035);
   pointer-events: none;
@@ -1842,6 +1867,12 @@ button.plugin-installed-strip-item:focus-visible::after {
 .plugin-market-card-logo.plugin-logo-provided img,
 .plugin-installed-strip-logo.plugin-logo-provided img {
   object-fit: cover;
+}
+
+[data-theme='dark'] .plugin-market-card-logo.plugin-logo-provided img,
+[data-theme='dark'] .plugin-installed-strip-logo.plugin-logo-provided img {
+  object-fit: contain;
+  border-radius: 8px;
 }
 
 .plugin-installed-strip-logo img {
@@ -1880,6 +1911,17 @@ button.plugin-installed-strip-item:focus-visible::after {
   padding: 0;
 }
 
+[data-theme='dark'] .plugin-detail-header-logo,
+[data-theme='dark'] .plugin-detail-prompt-logo {
+  background-color: rgb(245 245 247);
+  border-color: rgb(0 0 0 / 0.08);
+}
+
+[data-theme='dark'] .plugin-detail-header-logo.plugin-logo-provided,
+[data-theme='dark'] .plugin-detail-prompt-logo.plugin-logo-provided {
+  padding: 2px;
+}
+
 .plugin-detail-header-logo img,
 .plugin-detail-prompt-logo img {
   display: block;
@@ -1891,6 +1933,12 @@ button.plugin-installed-strip-item:focus-visible::after {
 .plugin-detail-header-logo.plugin-logo-provided img,
 .plugin-detail-prompt-logo.plugin-logo-provided img {
   object-fit: cover;
+}
+
+[data-theme='dark'] .plugin-detail-header-logo.plugin-logo-provided img,
+[data-theme='dark'] .plugin-detail-prompt-logo.plugin-logo-provided img {
+  object-fit: contain;
+  border-radius: 10px;
 }
 
 .plugin-installed-strip {
@@ -2357,6 +2405,15 @@ button.plugin-market-reveal-button:focus-visible {
   padding: 0;
 }
 
+[data-theme='dark'] .plugin-market-reveal-logo {
+  background-color: rgb(245 245 247);
+  border-color: rgb(0 0 0 / 0.08);
+}
+
+[data-theme='dark'] .plugin-market-reveal-logo.plugin-logo-provided {
+  padding: 1px;
+}
+
 .plugin-market-reveal-logo img {
   display: block;
   width: 100%;
@@ -2366,6 +2423,11 @@ button.plugin-market-reveal-button:focus-visible {
 
 .plugin-market-reveal-logo.plugin-logo-provided img {
   object-fit: cover;
+}
+
+[data-theme='dark'] .plugin-market-reveal-logo.plugin-logo-provided img {
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .plugin-market-reveal-copy {

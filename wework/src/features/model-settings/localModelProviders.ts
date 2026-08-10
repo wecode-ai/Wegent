@@ -15,7 +15,13 @@ import {
   type LocalModelWebSearchMode,
 } from './localModelSettings'
 
-export type LocalModelProviderProfileId = 'custom' | 'deepseek' | 'glm' | 'kimi' | 'kimi-coding'
+export type LocalModelProviderProfileId =
+  | 'custom'
+  | 'deepseek'
+  | 'glm'
+  | 'kimi'
+  | 'kimi-coding'
+  | 'minimax'
 
 export interface LocalModelProviderProfile {
   id: LocalModelProviderProfileId
@@ -25,6 +31,7 @@ export interface LocalModelProviderProfile {
   apiFormat: LocalModelApiFormat
   requestPath: string
   modelsPath?: string
+  modelsApiKeyHeader?: 'Authorization' | 'X-Api-Key'
   allowedModelIds?: readonly string[]
   toolProfile: LocalModelToolProfile
   group?: string
@@ -155,6 +162,30 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     },
   },
   {
+    id: 'minimax',
+    displayName: 'MiniMax',
+    description: 'MiniMax Anthropic-compatible API',
+    baseUrl: 'https://api.minimax.io/anthropic',
+    apiFormat: 'anthropic-messages',
+    requestPath: '/v1/messages',
+    modelsPath: '/v1/models',
+    modelsApiKeyHeader: 'X-Api-Key',
+    toolProfile: 'function',
+    group: 'MiniMax',
+    contextWindow: 204_800,
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    modelDefaults: {
+      'MiniMax-M2.7': { contextWindow: 204_800 },
+      'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
+      'MiniMax-M2.5': { contextWindow: 204_800 },
+      'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
+      'MiniMax-M2.1': { contextWindow: 204_800 },
+      'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
+      'MiniMax-M2': { contextWindow: 204_800 },
+    },
+  },
+  {
     id: 'custom',
     displayName: 'Custom',
     description: 'Configure any compatible model endpoint',
@@ -224,7 +255,10 @@ export async function discoverProviderModels(
       `${profile.baseUrl.replace(/\/+$/, '')}/${profile.modelsPath.replace(/^\/+/, '')}`,
       {
         method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        headers:
+          profile.modelsApiKeyHeader === 'X-Api-Key'
+            ? { 'X-Api-Key': apiKey.trim() }
+            : { Authorization: `Bearer ${apiKey.trim()}` },
         signal: controller.signal,
       }
     )

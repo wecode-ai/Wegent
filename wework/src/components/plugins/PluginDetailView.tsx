@@ -10,12 +10,14 @@ import {
   Sparkles,
   TerminalSquare,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
+import { useOptionalAppearance } from '@/features/appearance'
+import type { ResolvedAppearanceMode } from '@/features/appearance/types'
 import { resolvePluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
@@ -47,7 +49,11 @@ interface PluginDetailViewProps {
   pluginVisibility?: 'personal' | 'workspace' | 'public' | null
   shareGrantUserCount?: number
   shareGrantNamespaceCount?: number
+  manageAccessLabel?: string
   onManageAccess?: () => void
+  menuPublishLabel?: string
+  onMenuPublish?: () => void
+  menuPublishDisabled?: boolean
   submissionStatus?:
     | 'uploading'
     | 'scanning'
@@ -181,11 +187,13 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
   ]
 }
 
-function installedPluginLogo(plugin: InstalledPluginItem) {
+function installedPluginLogo(plugin: InstalledPluginItem, appearanceMode: ResolvedAppearanceMode) {
   return resolvePluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
     logo: plugin.raw.spec.interface?.logo,
+    logoDark: plugin.raw.spec.interface?.logoDark,
     composerIcon: plugin.raw.spec.interface?.composerIcon,
+    appearanceMode,
   })
 }
 
@@ -438,7 +446,11 @@ export function PluginDetailView({
   pluginVisibility = null,
   shareGrantUserCount = 0,
   shareGrantNamespaceCount = 0,
+  manageAccessLabel,
   onManageAccess,
+  menuPublishLabel,
+  onMenuPublish,
+  menuPublishDisabled = false,
   submissionStatus = null,
   submissionReviewNote = null,
   isExternalSource = false,
@@ -448,8 +460,21 @@ export function PluginDetailView({
   actionMenuBeforePrimary = true,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
+  const actionMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isActionMenuOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!actionMenuRef.current?.contains(event.target as Node)) {
+        setIsActionMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isActionMenuOpen])
   const raw = plugin.raw
   const isInstalled = raw.spec.installState === 'installed'
   const distributionLabel =
@@ -521,23 +546,25 @@ export function PluginDetailView({
             className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
             onClick={onManageAccess}
           >
-            {t('workbench.plugins_manage_access', '管理权限')}
+            {manageAccessLabel || t('workbench.plugins_manage_access', '管理权限')}
           </button>
         )}
       </div>
     </section>
   )
-  const logo = installedPluginLogo(plugin)
+  const logo = installedPluginLogo(plugin, appearanceMode)
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
   const guideExamples = pluginGuideExamples(plugin)
   const deviceSummary = pluginDeviceSummary(plugin)
   const PrimaryActionIcon =
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
-  const showActionMenu = showUninstall || Boolean(onEditAction)
+  const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
+  const showActionMenu =
+    showUninstall || Boolean(onEditAction) || Boolean(onMenuPublish) || showMenuCopy
 
   const actionMenu = showActionMenu ? (
-    <div className="relative">
+    <div ref={actionMenuRef} className="relative">
       <button
         type="button"
         aria-label={t('workbench.plugins_actions', '插件操作')}
@@ -551,7 +578,7 @@ export function PluginDetailView({
       {isActionMenuOpen && (
         <div
           data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border/30 bg-background p-1 shadow-lg"
+          className="absolute right-0 top-[calc(100%+7px)] z-30 min-w-[10.5rem] rounded-xl border border-border/30 bg-background p-1 shadow-lg"
         >
           {onEditAction && (
             <button
@@ -564,6 +591,34 @@ export function PluginDetailView({
               }}
             >
               {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
+            </button>
+          )}
+          {onMenuPublish && (
+            <button
+              type="button"
+              disabled={menuPublishDisabled}
+              data-testid={`plugin-detail-menu-publish-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onMenuPublish()
+              }}
+            >
+              {menuPublishLabel || t('workbench.plugins_publish_new_version', '发布新版本')}
+            </button>
+          )}
+          {showMenuCopy && (
+            <button
+              type="button"
+              disabled={tertiaryActionDisabled}
+              data-testid={`plugin-detail-menu-copy-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onTertiaryAction?.()
+              }}
+            >
+              {tertiaryActionLabel}
             </button>
           )}
           {showUninstall && (
@@ -605,18 +660,6 @@ export function PluginDetailView({
         onClick={onSecondaryAction}
       >
         {secondaryActionLabel}
-      </button>
-    ) : null
-  const tertiaryActionButton =
-    tertiaryActionLabel && onTertiaryAction ? (
-      <button
-        type="button"
-        disabled={tertiaryActionDisabled}
-        data-testid={`plugin-detail-tertiary-${plugin.id}`}
-        className="plugin-detail-action-secondary"
-        onClick={onTertiaryAction}
-      >
-        {tertiaryActionLabel}
       </button>
     ) : null
 
@@ -762,7 +805,6 @@ export function PluginDetailView({
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
             {actionMenuBeforePrimary ? (
               <>
-                {tertiaryActionButton}
                 {secondaryActionButton}
                 {actionMenu}
                 {primaryActionButton}
@@ -771,7 +813,6 @@ export function PluginDetailView({
               <>
                 {primaryActionButton}
                 {secondaryActionButton}
-                {tertiaryActionButton}
                 {actionMenu}
               </>
             )}

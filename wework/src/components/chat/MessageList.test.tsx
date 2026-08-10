@@ -304,6 +304,42 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
+  test('does not render viewed images as final message artifacts', () => {
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-view-image',
+            role: 'assistant',
+            content: 'The screenshot is visible in the tool details.',
+            status: 'done',
+            createdAt: '2026-08-08T10:00:01Z',
+            blocks: [
+              {
+                id: 'view-image-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'view_image',
+                toolInput: { path: '/tmp/screenshot.png' },
+                toolOutput: { image_url: imageUrl },
+                renderPayload: {
+                  dataUrl: imageUrl,
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('generated-image-gallery')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('generated-image')).not.toBeInTheDocument()
+  })
+
   test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
@@ -3288,6 +3324,37 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
+  test('copies only the visible request from Codex user messages with file mentions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-copy',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/me/.wework/workspace/attachments/draft/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    expect(writeText).toHaveBeenCalledWith('分析下这个图片')
   })
 
   test('renders Codex local non-image file mentions as compact file chips', () => {
