@@ -3167,6 +3167,10 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('replaces the central message area with an OpenCode harness session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalHarnessMock
+      .mockResolvedValueOnce('local-harness-1')
+      .mockResolvedValueOnce('local-harness-2')
     listLocalHarnessesMock.mockResolvedValue([
       {
         id: 'opencode',
@@ -3240,16 +3244,46 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-harness-opencode-option')).toHaveTextContent(
+      '新建 OpenCode 会话 · 实验性'
+    )
 
     fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
     expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/github_wegent',
+          diagnosticContext: expect.objectContaining({
+            workspacePath: '/workspace/github_wegent',
+          }),
+        })
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-add-harness-opencode-option'))
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          harnessId: 'opencode',
+          prompt: '',
+          cwd: '/workspace/github_wegent',
+        })
+      )
+    )
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
+    expect(screen.getByTestId('local-harness-session-row-local-harness-2')).toBeInTheDocument()
+    expect(
+      screen.getAllByTestId('embedded-local-terminal').find(element => !element.hidden)
+    ).toHaveAttribute('data-session-id', 'local-harness-2')
 
     await userEvent.click(screen.getByTestId('central-harness-close-button'))
 
-    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-1'))
+    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-2'))
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
   })

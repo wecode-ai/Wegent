@@ -303,6 +303,9 @@ async function verifyHarnessWorkbenchChrome({
   await control.command('waitFor', bottomPanelSelector, {
     timeoutMs,
   })
+  await control.command('waitFor', '[data-testid="workspace-terminal-window"]', {
+    timeoutMs,
+  })
   assert.equal(
     await control.command('getAttribute', bottomPanelSelector, {
       value: 'aria-hidden',
@@ -515,11 +518,34 @@ export async function createDesktopScenario({
         { model: 'kimi-k3', protocol: 'chat' },
         { model: 'deepseek-v4-pro', protocol: 'responses' },
       ])
+
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-launcher"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-add-harness-opencode-option"]')
+      await waitForFile(
+        join(homePath, OPEN_CODE_ARGS_FILE),
+        '--model\nwework-messages/wework-selected\n',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="workbench-pane-task-title"]', {
+        text: 'OpenCode',
+        timeoutMs: uiTimeoutMs,
+      })
+      const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        multiSessionSnapshot.testIds.filter(testId =>
+          testId.startsWith('local-harness-session-row-local-terminal-')
+        ).length >= 2,
+        'The workspace did not retain multiple harness sessions'
+      )
+      await captureWorkbench(control, 'local-harness-15-multiple-sessions.png')
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await captureWorkbench(control, 'local-harness-15-session-closed.png')
+      await captureWorkbench(control, 'local-harness-16-session-closed.png')
     },
 
     diagnostics() {
