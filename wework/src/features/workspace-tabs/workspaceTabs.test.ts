@@ -15,7 +15,7 @@ const labels = {
   auxiliaryRoutes: {
     plugins: '插件',
     sites: '站点',
-    automations: '自动化',
+    automations: '已安排',
     cloud: '云端工作',
     apps: '应用',
   },
@@ -61,6 +61,9 @@ describe('workspaceTabs', () => {
 
   test('uses localized labels for auxiliary routes', () => {
     expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/plugins' }).title).toBe('插件')
+    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/automations' }).title).toBe(
+      '已安排'
+    )
     expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/cloud-work' }).title).toBe(
       '云端工作'
     )

@@ -390,7 +390,6 @@
     "workspace_tab_auxiliary": "工作区",
     "workspace_tab_plugins": "插件",
     "workspace_tab_sites": "应用",
-    "workspace_tab_automations": "自动化",
     "workspace_tab_cloud": "云端工作",
     "workspace_tab_apps": "应用",
     "workspace_tab_close": "关闭 {{title}}",
