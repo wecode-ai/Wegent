@@ -80,13 +80,11 @@ function formatDuration(seconds: number): string {
 function VideoSegmentCard({
   segment,
   playUrl,
-  coverUrl,
   mimeType,
   fallbackTitle,
 }: {
   segment: VideoSegment
   playUrl: string
-  coverUrl: string | null
   mimeType: string
   fallbackTitle: string
 }) {
@@ -186,6 +184,14 @@ function VideoSegmentCard({
     if (Number.isFinite(video.duration) && video.duration > 0) {
       setMediaDuration(video.duration)
     }
+    // Seek to segment start on first metadata load. bounds may still be null
+    // at this point (it derives from mediaDuration which we just set), so use
+    // the raw segment value directly. resolveVideoSegmentBounds will clamp on
+    // the next render if needed.
+    if (segment.start_sec >= 0 && segment.start_sec < video.duration) {
+      video.currentTime = segment.start_sec
+      setPosition(0)
+    }
   }
 
   return (
@@ -201,7 +207,6 @@ function VideoSegmentCard({
       <div className={`relative bg-black ${isFullscreen ? 'flex min-h-0 flex-1' : ''}`}>
         <video
           ref={videoRef}
-          poster={coverUrl ?? undefined}
           preload="metadata"
           playsInline
           onLoadedMetadata={handleLoadedMetadata}
@@ -311,7 +316,7 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
   const { t } = useTranslation('chat')
   const segments = source.segments ?? []
   const documentId = source.document_id ?? 0
-  const { playUrl, coverUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
+  const { playUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
     documentId,
     documentId > 0 && segments.length > 0
   )
@@ -351,7 +356,6 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
           key={segment.id ?? `${segment.start_sec}-${segment.end_sec}`}
           segment={segment}
           playUrl={playUrl}
-          coverUrl={coverUrl}
           mimeType={mimeType}
           fallbackTitle={t('sourceReferences.videoSegment')}
         />

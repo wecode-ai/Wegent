@@ -6,10 +6,10 @@
  * Video viewer for video-type KB documents (multimodal pipeline).
  *
  * Mirrors MultimodalImagePreview, but instead of fetching an authenticated
- * blob, it resolves a browser-reachable signed CDN URL via the
- * video-play-url endpoint (show_batch + get_ssig_url on the backend). The
- * <video> element then reaches Weibo CDN directly — the backend proxies no
- * bytes. The stored fid doubles as the media_id (verified empirically).
+ * blob, it resolves a browser-reachable OSS signed URL via the
+ * video-play-url endpoint (downloadlink API on the backend). The
+ * <video> element then reaches OSS directly — the backend proxies no
+ * bytes.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -36,8 +36,6 @@ export function isVideoDocument(
 
 interface PlayUrlResponse {
   url: string
-  cover_url?: string | null
-  duration?: number | null
   mime_type?: string
 }
 
@@ -47,7 +45,6 @@ export function useVideoPlayUrl(
   enabled: boolean
 ): {
   playUrl: string | null
-  coverUrl: string | null
   mimeType: string
   isLoading: boolean
   notReady: boolean
@@ -55,7 +52,6 @@ export function useVideoPlayUrl(
   retry: () => void
 } {
   const [playUrl, setPlayUrl] = useState<string | null>(null)
-  const [coverUrl, setCoverUrl] = useState<string | null>(null)
   const [mimeType, setMimeType] = useState('video/mp4')
   const [isLoading, setIsLoading] = useState(enabled)
   const [notReady, setNotReady] = useState(false)
@@ -65,7 +61,6 @@ export function useVideoPlayUrl(
 
   useEffect(() => {
     setPlayUrl(null)
-    setCoverUrl(null)
     setMimeType('video/mp4')
     setNotReady(false)
     setHasError(false)
@@ -99,7 +94,6 @@ export function useVideoPlayUrl(
         }
         if (isMounted) {
           setPlayUrl(url.toString())
-          setCoverUrl(data.cover_url ?? null)
           setMimeType(data.mime_type ?? 'video/mp4')
         }
       } catch (error) {
@@ -117,7 +111,7 @@ export function useVideoPlayUrl(
     }
   }, [documentId, enabled, requestVersion])
 
-  return { playUrl, coverUrl, mimeType, isLoading, notReady, hasError, retry }
+  return { playUrl, mimeType, isLoading, notReady, hasError, retry }
 }
 
 /**
@@ -136,7 +130,7 @@ export function MultimodalVideoPreview({
   endSec?: number
 }) {
   const { t } = useTranslation('knowledge')
-  const { playUrl, coverUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
+  const { playUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
     documentId,
     true
   )
@@ -212,7 +206,6 @@ export function MultimodalVideoPreview({
   return (
     <video
       ref={videoRef}
-      poster={coverUrl ?? undefined}
       controls
       preload="metadata"
       onTimeUpdate={handleTimeUpdate}
