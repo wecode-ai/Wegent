@@ -18,7 +18,7 @@ const labels = {
   auxiliaryRoutes: {
     plugins: '插件',
     sites: '站点',
-    automations: '自动化',
+    automations: '已安排',
     cloud: '云端工作',
     apps: '应用',
   },

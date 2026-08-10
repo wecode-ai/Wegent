@@ -391,7 +391,6 @@
     "workspace_tab_auxiliary": "Workspace",
     "workspace_tab_plugins": "Plugins",
     "workspace_tab_sites": "Applications",
-    "workspace_tab_automations": "Automations",
     "workspace_tab_cloud": "Cloud work",
     "workspace_tab_apps": "Apps",
     "workspace_tab_close": "Close {{title}}",
