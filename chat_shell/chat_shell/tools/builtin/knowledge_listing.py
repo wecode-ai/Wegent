@@ -564,8 +564,18 @@ class KnowledgeListDocumentsTool(BaseTool):
     external_knowledge_refs: list[dict[str, Any]] = Field(default_factory=list)
     user_id: int = 0
     user_name: Optional[str] = None
+    external_knowledge_actor_user_id: Optional[int] = None
+    external_knowledge_actor_user_name: Optional[str] = None
     auth_token: str = ""
     _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
+
+    def _external_actor_user_id(self) -> int:
+        """Return the external actor without owner/sender fallback."""
+        if not self.external_knowledge_actor_user_id:
+            raise ValueError(
+                "external_knowledge_actor_user_id is required for external listing"
+            )
+        return self.external_knowledge_actor_user_id
 
     def _run(
         self,
@@ -816,12 +826,12 @@ class KnowledgeListDocumentsTool(BaseTool):
 
         request_data: dict[str, Any] = {
             "external_knowledge_refs": self.external_knowledge_refs,
-            "user_id": self.user_id,
+            "user_id": self._external_actor_user_id(),
             "limit": limit,
             "offset": offset,
         }
-        if self.user_name is not None:
-            request_data["user_name"] = self.user_name
+        if self.external_knowledge_actor_user_name is not None:
+            request_data["user_name"] = self.external_knowledge_actor_user_name
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(

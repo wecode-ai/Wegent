@@ -16,6 +16,8 @@ const mockToast = jest.fn()
 const mockT = (key: string, params?: Record<string, unknown>) => {
   if (key === 'knowledgeBinding.count') return `${params?.count ?? 0} bound`
   if (key === 'knowledgeBinding.externalKnowledge') return 'External knowledge source'
+  if (key === 'knowledgeBinding.selectedExternalTargets')
+    return `${params?.count ?? 0} selected targets`
   if (key === 'knowledgeBinding.title') return 'Knowledge Sources'
   if (key === 'knowledgeBinding.empty') return 'No knowledge sources bound'
   if (key === 'knowledgeBinding.loadFailed') return 'Failed to load knowledge sources'
@@ -24,6 +26,8 @@ const mockT = (key: string, params?: Record<string, unknown>) => {
   if (key === 'knowledgeBinding.remove') return `Remove ${params?.name ?? ''}`
   if (key === 'knowledgeBinding.removeSuccess') return `Removed ${params?.name ?? ''}`
   if (key === 'knowledgeBinding.removeFailed') return 'Failed to remove knowledge source'
+  if (key === 'knowledgeBinding.warningUnsupportedBinding')
+    return 'Whole source already covers this child target'
   if (key === 'groupChat.knowledge.add') return 'Add'
   if (key === 'groupChat.knowledge.boundBy') return `Bound by ${params?.name ?? ''}`
   if (key === 'common:actions.done') return 'Done'
@@ -42,6 +46,7 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/features/knowledge/externalKnowledgeSourceRegistry', () => ({
   getExternalKnowledgeSource: jest.fn(() => ({ shortLabel: 'AP' })),
+  registerExternalKnowledgeSource: jest.fn(),
 }))
 
 jest.mock('@/apis/task-knowledge-base', () => ({
@@ -118,6 +123,17 @@ describe('TaskKnowledgeBindingPanel', () => {
     expect(screen.getByText('External knowledge source')).toBeInTheDocument()
   })
 
+  it('keeps the binding list as the scrollable region', async () => {
+    render(<TaskKnowledgeBindingPanel taskId={71} onClose={jest.fn()} />)
+
+    const list = await screen.findByTestId('task-knowledge-binding-list')
+
+    expect(list).toHaveClass('min-h-0')
+    expect(list).toHaveClass('flex-1')
+    expect(list).toHaveClass('overflow-y-auto')
+    expect(screen.getByRole('button', { name: 'Done' }).parentElement).toHaveClass('shrink-0')
+  })
+
   it('removes an internal knowledge binding through the existing task KB API', async () => {
     render(<TaskKnowledgeBindingPanel taskId={71} />)
 
@@ -130,7 +146,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     fireEvent.click(removeButton)
 
     await waitFor(() => {
-      expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'test-mcp', 'default')
+      expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'test-mcp', 'default', 1)
     })
     await waitFor(() => {
       expect(screen.queryByText('测试mcp')).not.toBeInTheDocument()
@@ -141,11 +157,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     render(<TaskKnowledgeBindingPanel taskId={71} />)
 
     await screen.findByText('测试1111')
-    fireEvent.click(
-      screen.getByTestId(
-        'task-knowledge-binding-remove-external:ap:explicit:lib-1:knowledge_base:source'
-      )
-    )
+    fireEvent.click(screen.getByTestId('task-knowledge-binding-remove-external:ap:explicit:lib-1'))
 
     await waitFor(() => {
       expect(mockRemoveExternalKnowledgeRef).toHaveBeenCalledWith(71, externalRef)
@@ -153,6 +165,91 @@ describe('TaskKnowledgeBindingPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText('测试1111')).not.toBeInTheDocument()
     })
+  })
+
+  it('groups external document bindings and removes every ref in the group', async () => {
+    const documentRefs = [
+      {
+        provider: 'ap',
+        mode: 'explicit',
+        id: 'lib-1',
+        name: '测试1111',
+        scope: 'organization',
+        target_type: 'document' as const,
+        node_id: 'node-1',
+        document_id: 'doc-1',
+        target_name: 'A.md',
+      },
+      {
+        provider: 'ap',
+        mode: 'explicit',
+        id: 'lib-1',
+        name: '测试1111',
+        scope: 'organization',
+        target_type: 'document' as const,
+        node_id: 'node-2',
+        document_id: 'doc-2',
+        target_name: 'B.md',
+      },
+    ]
+    mockGetBoundExternalKnowledgeRefs.mockResolvedValue({
+      items: documentRefs,
+      total: 2,
+    })
+    mockRemoveExternalKnowledgeRef
+      .mockResolvedValueOnce({ message: 'ok', items: [documentRefs[1]], total: 1 })
+      .mockResolvedValueOnce({ message: 'ok', items: [], total: 0 })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    await screen.findByText('测试1111')
+    expect(screen.getByText('2 selected targets')).toBeInTheDocument()
+    expect(screen.queryByText('B.md')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('task-knowledge-binding-remove-external:ap:explicit:lib-1'))
+
+    await waitFor(() => {
+      expect(mockRemoveExternalKnowledgeRef).toHaveBeenCalledTimes(2)
+      expect(mockRemoveExternalKnowledgeRef).toHaveBeenNthCalledWith(1, 71, documentRefs[0])
+      expect(mockRemoveExternalKnowledgeRef).toHaveBeenNthCalledWith(2, 71, documentRefs[1])
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('测试1111')).not.toBeInTheDocument()
+    })
+  })
+
+  it('exposes full long source and target names for grouped external bindings', async () => {
+    const sourceName = 'AP 企业知识库 2026 年度跨部门集成联调与权限验收说明资料全集'
+    const targetName = '项目资料 / 需求说明 / 2026 年度权限验收说明最终版.docx'
+    mockGetBoundExternalKnowledgeRefs.mockResolvedValue({
+      items: [
+        {
+          provider: 'ap',
+          mode: 'explicit',
+          id: 'lib-1',
+          name: sourceName,
+          scope: 'organization',
+          target_type: 'document' as const,
+          node_id: 'node-1',
+          document_id: 'doc-1',
+          target_name: targetName,
+        },
+      ],
+      total: 1,
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    const externalRow = await screen.findByTestId(
+      'task-knowledge-binding-external:ap:explicit:lib-1'
+    )
+    expect(externalRow).not.toHaveAttribute('title')
+    expect(externalRow).toHaveAttribute('aria-label', `${sourceName} / ${targetName}`)
+    expect(screen.getByText(sourceName)).toHaveClass('truncate')
+    expect(screen.queryByText(targetName)).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('task-knowledge-binding-remove-external:ap:explicit:lib-1')
+    ).toHaveClass('shrink-0')
   })
 
   it('keeps internal knowledge management available when external bindings fail to load', async () => {
@@ -176,10 +273,113 @@ describe('TaskKnowledgeBindingPanel', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Remove 测试mcp' }))
       await waitFor(() => {
-        expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'test-mcp', 'default')
+        expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'test-mcp', 'default', 1)
       })
     } finally {
       consoleWarn.mockRestore()
     }
+  })
+
+  it('renders and unbinds a scope-only internal knowledge binding by stable ID', async () => {
+    mockGetBoundKnowledgeBases.mockResolvedValue({
+      items: [
+        {
+          ...internalKnowledgeBase,
+          id: 2,
+          name: 'scoped-only',
+          display_name: 'Scoped only',
+          scope_restricted: true,
+          document_ids: [11],
+        },
+      ],
+      total: 1,
+      max_limit: 10,
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Scoped only' }))
+    await waitFor(() => {
+      expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'scoped-only', 'default', 2)
+    })
+  })
+
+  it('shows a clear whole-versus-child conflict warning', async () => {
+    mockGetBoundExternalKnowledgeRefs.mockResolvedValue({
+      items: [externalRef],
+      total: 1,
+      context_warnings: [
+        {
+          type: 'external_knowledge',
+          reason: 'unsupported_binding',
+          id: 'lib-1',
+          name: 'Child document',
+          message: 'generic backend text',
+        },
+      ],
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    expect(await screen.findByText(/Whole source already covers this child target/)).toBeVisible()
+  })
+
+  it('filters local state by kb.id when unbinding, not name+namespace', async () => {
+    mockGetBoundKnowledgeBases.mockResolvedValue({
+      items: [
+        { ...internalKnowledgeBase, id: 1, name: 'same-name', display_name: 'First KB' },
+        { ...internalKnowledgeBase, id: 2, name: 'same-name', display_name: 'Second KB' },
+      ],
+      total: 2,
+      max_limit: 10,
+    })
+    mockUnbindKnowledgeBase.mockResolvedValue({
+      message: 'ok',
+      kb_name: 'same-name',
+      kb_namespace: 'default',
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    expect(await screen.findByText('First KB')).toBeInTheDocument()
+    expect(screen.getByText('Second KB')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove First KB' }))
+
+    await waitFor(() => {
+      expect(mockUnbindKnowledgeBase).toHaveBeenCalledWith(71, 'same-name', 'default', 1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('First KB')).not.toBeInTheDocument()
+      expect(screen.getByText('Second KB')).toBeInTheDocument()
+    })
+  })
+
+  it('falls back to name+namespace filter when id is missing', async () => {
+    mockGetBoundKnowledgeBases.mockResolvedValue({
+      items: [
+        {
+          ...internalKnowledgeBase,
+          id: undefined as unknown as number,
+          name: 'legacy',
+          display_name: 'Legacy KB',
+        },
+      ],
+      total: 1,
+      max_limit: 10,
+    })
+    mockUnbindKnowledgeBase.mockResolvedValue({
+      message: 'ok',
+      kb_name: 'legacy',
+      kb_namespace: 'default',
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Legacy KB' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Legacy KB')).not.toBeInTheDocument()
+    })
   })
 })

@@ -25,10 +25,22 @@ from app.services.adapters.pipeline_context import (
     build_pipeline_context_prompt,
     normalize_context_passing,
 )
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
+
+
+def _team_member_bot_matches(member, bot: Kind) -> bool:
+    """Return True when a Team member's botRef points to the given Bot.
+
+    Stable IDs are authoritative. Only legacy refs without an ID fall back to
+    name + namespace matching.
+    """
+    if getattr(member.botRef, "id", None) is not None:
+        return member.botRef.id == bot.id
+    return member.botRef.name == bot.name and member.botRef.namespace == bot.namespace
 
 
 class PipelineStageService:
@@ -51,13 +63,14 @@ class PipelineStageService:
         """Parse task JSON to Task CRD."""
         return Task.model_validate(task.json)
 
-    def _get_bot_by_ref(
-        self, db: Session, user_id: int, namespace: str, name: str
-    ) -> Optional[Kind]:
-        """Get bot using unified kindReader."""
-        return kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.BOT, namespace, name
-        )
+    def _get_bot_by_ref(self, db: Session, user_id: int, ref) -> Optional[Kind]:
+        """Get a Bot by stable ref with legacy compatibility."""
+        return resolve_kind_reference(
+            db,
+            kind="Bot",
+            ref=ref,
+            actor_user_id=user_id,
+        ).resource
 
     def _get_bot_by_id(self, db: Session, bot_id: int) -> Optional[Kind]:
         """Get bot by ID using unified kindReader."""
@@ -254,12 +267,15 @@ class PipelineStageService:
         Returns:
             Team Kind object or None if not found
         """
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-
-        return kindReader.get_by_name_and_namespace(
-            db, task.user_id, KindType.TEAM, team_namespace, team_name
-        )
+        # The reference resolver only uses name/namespace for legacy Tasks.
+        # For ID-backed Tasks it validates the immutable identity, snapshot,
+        # active state and the Team's normal share/group access policy.
+        return resolve_kind_reference(
+            db,
+            kind="Team",
+            ref=task_crd.spec.teamRef,
+            actor_user_id=task.user_id,
+        ).resource
 
     def pipeline_confirm(
         self,
@@ -375,14 +391,12 @@ class PipelineStageService:
         current_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            current_member.botRef.namespace,
-            current_member.botRef.name,
+            current_member.botRef,
         )
         next_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            next_member.botRef.namespace,
-            next_member.botRef.name,
+            next_member.botRef,
         )
 
         if not next_bot:
@@ -505,14 +519,12 @@ class PipelineStageService:
         current_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            current_member.botRef.namespace,
-            current_member.botRef.name,
+            current_member.botRef,
         )
         next_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            next_member.botRef.namespace,
-            next_member.botRef.name,
+            next_member.botRef,
         )
         if not next_bot:
             logger.error(
@@ -628,10 +640,7 @@ class PipelineStageService:
             # Find the stage index for this bot
             current_stage_index = None
             for i, member in enumerate(team_crd.spec.members):
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
+                if _team_member_bot_matches(member, bot):
                     current_stage_index = i
                     break
 
@@ -743,8 +752,7 @@ class PipelineStageService:
         current_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            current_member.botRef.namespace,
-            current_member.botRef.name,
+            current_member.botRef,
         )
 
         if not current_bot:

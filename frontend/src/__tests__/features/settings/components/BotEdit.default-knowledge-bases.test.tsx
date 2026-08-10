@@ -153,6 +153,75 @@ jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => {
   return MockPromptFineTuneDialog
 })
 
+jest.mock('@/features/settings/components/knowledge/AgentDefaultKnowledgeScopeSelector', () => ({
+  AgentDefaultKnowledgeScopeSelector: function MockAgentDefaultKnowledgeScopeSelector({
+    defaultKnowledgeBaseRefs,
+    onDefaultKnowledgeBaseRefsChange,
+    defaultExternalKnowledgeRefs,
+    onDefaultExternalKnowledgeRefsChange,
+    allowedSources,
+    allowedGroupNamespaces,
+    allowExternalKnowledge,
+    disabled,
+  }: {
+    defaultKnowledgeBaseRefs: Array<{ id: number; name: string }>
+    onDefaultKnowledgeBaseRefsChange: (value: Array<{ id: number; name: string }>) => void
+    defaultExternalKnowledgeRefs: unknown[]
+    onDefaultExternalKnowledgeRefsChange: (value: unknown[]) => void
+    allowedSources?: string[]
+    allowedGroupNamespaces?: string[]
+    allowExternalKnowledge?: boolean
+    disabled?: boolean
+  }) {
+    return (
+      <div
+        data-testid="agent-default-knowledge-scope-selector"
+        data-allowed-sources={allowedSources?.join(',') || ''}
+        data-allowed-groups={allowedGroupNamespaces?.join(',') || ''}
+        data-allow-external={allowExternalKnowledge === false ? 'false' : 'true'}
+        data-disabled={disabled ? 'true' : 'false'}
+      >
+        {defaultKnowledgeBaseRefs.map(ref => (
+          <span key={ref.id} data-testid={`agent-default-knowledge-scope-chip-internal-${ref.id}`}>
+            {ref.name}
+          </span>
+        ))}
+        {defaultExternalKnowledgeRefs.map((_, index) => (
+          <span key={index} data-testid={`agent-default-knowledge-scope-chip-external-${index}`} />
+        ))}
+        <button
+          type="button"
+          data-testid="agent-default-knowledge-scope-add-runbooks"
+          onClick={() =>
+            onDefaultKnowledgeBaseRefsChange([
+              ...defaultKnowledgeBaseRefs,
+              { id: 202, name: 'Runbooks' },
+            ])
+          }
+        >
+          Add Runbooks
+        </button>
+        <button
+          type="button"
+          data-testid="agent-default-knowledge-scope-remove-101"
+          onClick={() =>
+            onDefaultKnowledgeBaseRefsChange(defaultKnowledgeBaseRefs.filter(ref => ref.id !== 101))
+          }
+        >
+          Remove Product Docs
+        </button>
+        <button
+          type="button"
+          data-testid="agent-default-knowledge-scope-clear-external"
+          onClick={() => onDefaultExternalKnowledgeRefsChange([])}
+        >
+          Clear external
+        </button>
+      </div>
+    )
+  },
+}))
+
 jest.mock('@/components/ui/select', () => ({
   Select: ({
     children,
@@ -402,7 +471,9 @@ describe('BotEdit default knowledge bases', () => {
   test('loads existing bot default knowledge bases into the form', async () => {
     renderBotEdit()
 
-    expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('agent-default-knowledge-scope-chip-internal-101')
+    ).toBeInTheDocument()
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
   })
 
@@ -501,21 +572,18 @@ describe('BotEdit default knowledge bases', () => {
     await waitFor(() => {
       expect(mockedGetPublicShells).toHaveBeenCalled()
     })
-    expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-default-knowledge-scope-selector')).not.toBeInTheDocument()
   })
 
   test('shows only organization knowledge bases for public non-Dify bots', async () => {
     renderBotEdit({}, { scope: 'public' })
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-group-group')).not.toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+    const selector = await screen.findByTestId('agent-default-knowledge-scope-selector')
+    expect(selector).toHaveAttribute('data-allowed-sources', 'organization')
+    expect(selector).toHaveAttribute('data-allow-external', 'false')
   })
 
-  test('shows only current group and organization knowledge bases for group bots', async () => {
+  test('shows every owner-accessible source for group bots', async () => {
     renderBotEdit(
       {
         namespace: 'platform',
@@ -524,71 +592,61 @@ describe('BotEdit default knowledge bases', () => {
       { scope: 'group', groupName: 'platform' }
     )
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-    expect(screen.getByText('Ops guides')).toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
-    expect(screen.queryByText('Growth experiments')).not.toBeInTheDocument()
+    const selector = await screen.findByTestId('agent-default-knowledge-scope-selector')
+    expect(selector).toHaveAttribute('data-allowed-sources', 'personal,group,organization')
+    expect(selector).toHaveAttribute('data-allowed-groups', '')
   })
 
-  test('renders popover-based selector with grouped metadata', async () => {
+  test('renders one unified default knowledge scope selector', async () => {
     renderBotEdit()
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.queryByTestId('default-knowledge-base-selected-section')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-available-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-popover')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-search-input')).toBeInTheDocument()
-
-    expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
-    expect(screen.getAllByTestId('default-knowledge-base-group-group')).toHaveLength(2)
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-
-    expect(screen.getByText('Ops guides')).toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
-    expect(screen.getByText('Shared support answers')).toBeInTheDocument()
-    expect(screen.getAllByText('Group').length).toBeGreaterThan(0)
-    expect(screen.getByText('Organization')).toBeInTheDocument()
-    expect(screen.getByText('Shared')).toBeInTheDocument()
-    expect(screen.getByText('Platform')).toBeInTheDocument()
-    expect(screen.getByText('4 documents')).toBeInTheDocument()
-    expect(screen.getByText('6 documents')).toBeInTheDocument()
-    expect(screen.getAllByText(/Updated 2026-04-02/).length).toBeGreaterThan(0)
+    expect(await screen.findByTestId('agent-default-knowledge-scope-selector')).toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('default-external-knowledge-selector')).not.toBeInTheDocument()
   })
 
   test('allows adding and removing multiple knowledge bases', async () => {
     renderBotEdit()
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+    await screen.findByTestId('agent-default-knowledge-scope-chip-internal-101')
+    fireEvent.click(await screen.findByTestId('agent-default-knowledge-scope-add-runbooks'))
 
-    const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
-    fireEvent.change(searchInput, { target: { value: 'Runbooks' } })
+    expect(
+      screen.getByTestId('agent-default-knowledge-scope-chip-internal-101')
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('agent-default-knowledge-scope-chip-internal-202')
+    ).toBeInTheDocument()
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-option-202'))
-
-    expect(screen.getByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-chip-202')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-101'))
+    fireEvent.click(screen.getByTestId('agent-default-knowledge-scope-remove-101'))
 
     await waitFor(() => {
-      expect(screen.queryByTestId('default-knowledge-base-chip-101')).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId('agent-default-knowledge-scope-chip-internal-101')
+      ).not.toBeInTheDocument()
     })
-    expect(screen.getByTestId('default-knowledge-base-chip-202')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('agent-default-knowledge-scope-chip-internal-202')
+    ).toBeInTheDocument()
   })
 
   test('includes default_knowledge_base_refs in save payload', async () => {
-    renderBotEdit()
+    renderBotEdit({
+      default_knowledge_base_refs: [
+        { id: 101, name: 'Product Docs' },
+        { id: 202, name: 'Runbooks' },
+      ],
+      default_external_knowledge_refs: [
+        {
+          provider: 'ap',
+          mode: 'explicit',
+          id: 'risk',
+          name: 'AP Risk Rules',
+        },
+      ],
+    })
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
-    fireEvent.change(searchInput, { target: { value: 'Runbooks' } })
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-option-202'))
+    await screen.findByTestId('agent-default-knowledge-scope-chip-internal-202')
 
     fireEvent.click(screen.getByTestId('save-button'))
 
@@ -599,6 +657,14 @@ describe('BotEdit default knowledge bases', () => {
           default_knowledge_base_refs: [
             { id: 101, name: 'Product Docs' },
             { id: 202, name: 'Runbooks' },
+          ],
+          default_external_knowledge_refs: [
+            {
+              provider: 'ap',
+              mode: 'explicit',
+              id: 'risk',
+              name: 'AP Risk Rules',
+            },
           ],
         })
       )

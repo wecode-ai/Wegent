@@ -38,9 +38,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }

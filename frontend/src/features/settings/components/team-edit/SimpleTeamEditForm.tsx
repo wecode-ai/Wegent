@@ -23,13 +23,14 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 import McpConfigSection from '@/features/settings/components/McpConfigSection'
-import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
+import { AgentDefaultKnowledgeScopeSelector } from '@/features/settings/components/knowledge/AgentDefaultKnowledgeScopeSelector'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
+import type { ExternalKnowledgeRef } from '@/types/context'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
@@ -79,6 +80,8 @@ interface SimpleTeamEditFormProps {
   onReloadSkills: () => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
+  defaultExternalKnowledgeRefs: ExternalKnowledgeRef[]
+  onDefaultExternalKnowledgeRefsChange: (value: ExternalKnowledgeRef[]) => void
   mcpConfig: string
   onMcpConfigChange: (value: string) => void
   mcpAgentType?: McpAgentType
@@ -87,6 +90,7 @@ interface SimpleTeamEditFormProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  popoverContainer?: HTMLElement | null
 }
 
 function SimpleSection({
@@ -169,6 +173,8 @@ export default function SimpleTeamEditForm({
   onReloadSkills,
   defaultKnowledgeBaseRefs,
   onDefaultKnowledgeBaseRefsChange,
+  defaultExternalKnowledgeRefs,
+  onDefaultExternalKnowledgeRefsChange,
   mcpConfig,
   onMcpConfigChange,
   mcpAgentType,
@@ -177,6 +183,7 @@ export default function SimpleTeamEditForm({
   toast,
   scope,
   groupName,
+  popoverContainer,
 }: SimpleTeamEditFormProps) {
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
@@ -493,21 +500,16 @@ export default function SimpleTeamEditForm({
           </SimpleConfigRow>
 
           <SimpleConfigRow
-            label={t('common:bot.default_knowledge_bases')}
-            description={t('settings:team.simple.core.knowledge_description')}
+            label={t('settings:team.simple.core.default_knowledge_scope.label')}
+            description={t('settings:team.simple.core.default_knowledge_scope.description')}
           >
-            <KnowledgeBaseMultiSelector
-              value={defaultKnowledgeBaseRefs}
-              onChange={onDefaultKnowledgeBaseRefsChange}
-              helperText={null}
-              allowedSources={
-                scope === 'group'
-                  ? groupName
-                    ? ['group', 'organization']
-                    : ['organization']
-                  : ['personal', 'group', 'organization']
-              }
-              allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
+            <AgentDefaultKnowledgeScopeSelector
+              defaultKnowledgeBaseRefs={defaultKnowledgeBaseRefs}
+              onDefaultKnowledgeBaseRefsChange={onDefaultKnowledgeBaseRefsChange}
+              defaultExternalKnowledgeRefs={defaultExternalKnowledgeRefs}
+              onDefaultExternalKnowledgeRefsChange={onDefaultExternalKnowledgeRefsChange}
+              allowedSources={['personal', 'group', 'organization']}
+              popoverContainer={popoverContainer}
             />
           </SimpleConfigRow>
 

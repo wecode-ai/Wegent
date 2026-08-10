@@ -6,10 +6,20 @@
 
 import React, { ReactNode } from 'react'
 import { Database, Table2 } from 'lucide-react'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+
+interface ExternalKnowledgeContextGroup {
+  key: string
+  sourceName: string
+  providerLabel?: string | null
+  targetCount: number
+  targetNames: string[]
+  isWholeSource: boolean
+}
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -20,25 +30,48 @@ interface ContextPreviewBaseProps {
   icon: ReactNode
   /** Primary text (filename, KB name, etc.) */
   title: string
+  fullTitle?: string
   /** Secondary text (file size, document count, etc.) */
   subtitle?: string
+  fullSubtitle?: string
   /** Optional className for customization */
   className?: string
 }
 
-function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
+function ContextPreviewBase({
+  icon,
+  title,
+  fullTitle,
+  subtitle,
+  fullSubtitle,
+  className = '',
+}: ContextPreviewBaseProps) {
+  const titleText = fullTitle ?? title
   return (
-    <div
-      className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
-    >
-      <div className="text-2xl flex-shrink-0">{icon}</div>
-      <div className="flex-1 min-w-0 overflow-hidden">
-        <div className="font-medium text-sm truncate" title={title}>
-          {title}
+    <LongTextTooltip content={titleText}>
+      <div
+        className={`mb-2 flex max-w-[min(320px,100%)] items-center gap-3 rounded-lg border border-border bg-muted p-3 ${className}`}
+        aria-label={titleText}
+      >
+        <div className="text-2xl flex-shrink-0">{icon}</div>
+        <div className="flex-1 min-w-0 overflow-hidden">
+          <TruncatedText
+            text={title}
+            tooltipText={titleText}
+            focusable={false}
+            className="text-sm font-medium"
+          />
+          {subtitle && (
+            <TruncatedText
+              text={subtitle}
+              tooltipText={fullSubtitle ?? subtitle}
+              focusable={false}
+              className="text-xs text-text-muted"
+            />
+          )}
         </div>
-        {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
       </div>
-    </div>
+    </LongTextTooltip>
   )
 }
 
@@ -70,18 +103,91 @@ export function ContextBadgeList({
     return null
   }
 
+  const displayItems = buildContextDisplayItems(contexts)
+
   return (
     <div className="flex flex-wrap gap-2 mb-3">
-      {contexts.map(context => (
-        <ContextBadgeItem
-          key={`${context.context_type}-${context.id}`}
-          context={context}
-          onReselect={onContextReselect}
-          shareToken={shareToken}
-        />
-      ))}
+      {displayItems.map(item =>
+        item.kind === 'external_group' ? (
+          <ExternalKnowledgeGroupBadge key={item.group.key} group={item.group} />
+        ) : (
+          <ContextBadgeItem
+            key={`${item.context.context_type}-${item.context.id}`}
+            context={item.context}
+            onReselect={onContextReselect}
+            shareToken={shareToken}
+          />
+        )
+      )}
     </div>
   )
+}
+
+type ContextDisplayItem =
+  | { kind: 'context'; context: SubtaskContextBrief }
+  | { kind: 'external_group'; group: ExternalKnowledgeContextGroup }
+
+function buildContextDisplayItems(contexts: SubtaskContextBrief[]): ContextDisplayItem[] {
+  const items: ContextDisplayItem[] = []
+  const externalGroups = new Map<string, ExternalKnowledgeContextGroup>()
+
+  for (const context of contexts) {
+    if (context.context_type !== 'external_knowledge') {
+      items.push({ kind: 'context', context })
+      continue
+    }
+
+    const key = buildExternalContextGroupKey(context)
+    const targetName = getExternalTargetName(context)
+    const existing = externalGroups.get(key)
+    if (existing) {
+      if (targetName) existing.targetNames.push(targetName)
+      existing.targetCount += isWholeExternalContext(context) ? 0 : 1
+      existing.isWholeSource = existing.isWholeSource || isWholeExternalContext(context)
+      continue
+    }
+
+    externalGroups.set(key, {
+      key,
+      sourceName: getExternalSourceName(context),
+      providerLabel: context.external_provider_label ?? context.external_provider?.toUpperCase(),
+      targetCount: isWholeExternalContext(context) ? 0 : 1,
+      targetNames: targetName ? [targetName] : [],
+      isWholeSource: isWholeExternalContext(context),
+    })
+  }
+
+  for (const group of externalGroups.values()) {
+    items.push({ kind: 'external_group', group })
+  }
+
+  return items
+}
+
+function buildExternalContextGroupKey(context: SubtaskContextBrief): string {
+  const ref = context.external_ref
+  const provider = ref?.provider ?? context.external_provider ?? 'external'
+  const mode = ref?.mode ?? context.external_mode ?? 'explicit'
+  const id = ref?.id ?? context.external_id ?? 'all'
+  return `external:${provider}:${mode}:${id}`
+}
+
+function getExternalSourceName(context: SubtaskContextBrief): string {
+  return (
+    context.external_source_name ??
+    context.external_ref?.name ??
+    context.external_id ??
+    context.name
+  )
+}
+
+function getExternalTargetName(context: SubtaskContextBrief): string | undefined {
+  return context.external_target_name ?? context.external_ref?.target_name ?? context.name
+}
+
+function isWholeExternalContext(context: SubtaskContextBrief): boolean {
+  const targetType = context.external_ref?.target_type ?? context.external_target_type
+  return !targetType || targetType === 'knowledge_base'
 }
 
 /**
@@ -190,27 +296,31 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   )
 }
 
-function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+function ExternalKnowledgeGroupBadge({ group }: { group: ExternalKnowledgeContextGroup }) {
   const { t } = useTranslation('knowledge')
-  const targetLabel =
-    context.external_target_type === 'document'
-      ? t('picker.target.document')
-      : context.external_target_type === 'folder'
-        ? t('picker.target.folder')
-        : t('picker.target.knowledgeBase')
-  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
-    .filter(Boolean)
-    .join(' · ')
+  const selectionLabel = group.isWholeSource
+    ? t('picker.allDocuments')
+    : t('picker.selectedDocuments', { count: group.targetCount })
+  const subtitle = [group.providerLabel, selectionLabel].filter(Boolean).join(' · ')
+  const details = group.targetNames
+    .map(targetName => `${group.sourceName} / ${targetName}`)
+    .join('\n')
 
   return (
-    <div>
-      <ContextPreviewBase
-        icon={<Database className="text-primary" />}
-        title={context.name}
-        subtitle={subtitle}
-      />
-    </div>
+    <ContextPreviewBase
+      icon={<Database className="text-primary" />}
+      title={group.sourceName}
+      fullTitle={details || group.sourceName}
+      subtitle={subtitle}
+      fullSubtitle={subtitle}
+    />
   )
+}
+
+function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+  const item = buildContextDisplayItems([context])[0]
+  if (item?.kind !== 'external_group') return null
+  return <ExternalKnowledgeGroupBadge group={item.group} />
 }
 
 /**
@@ -259,7 +369,7 @@ function TableBadge({
       className={isClickable ? 'cursor-pointer' : undefined}
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
-      title={title}
+      aria-label={title}
     >
       <ContextPreviewBase
         icon={<Table2 className="text-blue-500" />}

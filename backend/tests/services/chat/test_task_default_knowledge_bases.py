@@ -52,7 +52,11 @@ def _make_bot(name: str, ghost_name: str):
     return bot
 
 
-def _make_ghost(name: str, refs: list[dict]):
+def _make_ghost(
+    name: str,
+    refs: list[dict],
+    external_refs: list[dict] | None = None,
+):
     ghost = Mock()
     ghost.json = {
         "kind": "Ghost",
@@ -62,6 +66,7 @@ def _make_ghost(name: str, refs: list[dict]):
             "systemPrompt": "hello",
             "mcpServers": {},
             "defaultKnowledgeBaseRefs": refs,
+            "defaultExternalKnowledgeRefs": external_refs or [],
         },
         "status": {"state": "Available"},
     }
@@ -79,65 +84,17 @@ def _make_kb(kb_id: int, name: str):
     return kb
 
 
-def test_team_default_refs_batch_load_bots_and_ghosts():
-    from app.services.chat.task_default_knowledge_bases import (
-        _iter_team_member_default_knowledge_base_ids,
+def _patch_accessible_kbs(kb_map: dict[int, Mock]):
+    return patch(
+        "app.services.chat.knowledge_binding_resolver."
+        "KnowledgeShareService.get_accessible_resources_by_ids",
+        side_effect=lambda _db, resource_ids, _user_id: {
+            kb_id: kb_map[kb_id] for kb_id in resource_ids if kb_id in kb_map
+        },
     )
 
-    db = Mock()
-    team = _make_team()
-    bots = {
-        ("default", "bot-one"): _make_bot("bot-one", "ghost-one"),
-        ("default", "bot-two"): _make_bot("bot-two", "ghost-two"),
-    }
-    ghosts = {
-        ("default", "ghost-one"): _make_ghost(
-            "ghost-one", [{"id": 11, "name": "Product Docs"}]
-        ),
-        ("default", "ghost-two"): _make_ghost(
-            "ghost-two", [{"id": 22, "name": "Runbooks"}]
-        ),
-    }
 
-    with patch(
-        "app.services.chat.task_default_knowledge_bases.batch_load_kinds_by_refs",
-        side_effect=[bots, ghosts],
-    ) as batch_load:
-        result = _iter_team_member_default_knowledge_base_ids(db, team)
-
-    assert result == [11, 22]
-    assert batch_load.call_count == 2
-
-
-def test_build_initial_task_knowledge_base_refs_persists_only_explicit_selection():
-    from app.services.chat.task_default_knowledge_bases import (
-        build_initial_task_knowledge_base_refs,
-    )
-
-    db = Mock()
-    team = _make_team()
-    user = _make_user()
-    kb_map = {
-        11: _make_kb(11, "Product Docs"),
-        22: _make_kb(22, "Runbooks"),
-        33: _make_kb(33, "Release Notes"),
-    }
-
-    with patch(
-        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-        side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
-    ):
-        refs = build_initial_task_knowledge_base_refs(
-            db=db,
-            user=user,
-            team=team,
-            knowledge_base_id=33,
-        )
-
-    assert [ref["id"] for ref in refs] == [33]
-
-
-def test_build_initial_task_knowledge_base_refs_does_not_snapshot_agent_defaults():
+def test_build_initial_task_knowledge_base_refs_collects_only_ghost_defaults():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_base_refs,
     )
@@ -151,16 +108,151 @@ def test_build_initial_task_knowledge_base_refs_does_not_snapshot_agent_defaults
     }
 
     with patch(
-        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-        side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
+        "app.services.chat.knowledge_binding_resolver."
+        "KnowledgeBindingResolver._iter_team_member_ghosts",
+        return_value=[
+            _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
+            _make_ghost("ghost-two", [{"id": 22, "name": "Runbooks"}]),
+        ],
     ):
-        refs = build_initial_task_knowledge_base_refs(
-            db=db,
-            user=user,
-            team=team,
-        )
+        with _patch_accessible_kbs(kb_map):
+            refs = build_initial_task_knowledge_base_refs(
+                db=db,
+                user=user,
+                team=team,
+            )
 
-    assert refs == []
+    assert [ref["id"] for ref in refs] == [11, 22]
+
+
+def test_default_knowledge_uses_team_owner_when_execution_user_differs():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_knowledge_bindings,
+    )
+
+    db = Mock()
+    team = _make_team()
+    owner = _make_user()
+    current_user = Mock()
+    current_user.id = 42
+    current_user.user_name = "bob"
+    db.query.return_value.filter.return_value.first.return_value = owner
+    kb_map = {
+        11: _make_kb(11, "Owner Docs"),
+    }
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost(
+                "ghost-one",
+                [{"id": 11, "name": "Owner Docs"}],
+            ),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    with patch(
+        "app.services.chat.knowledge_binding_resolver."
+        "KnowledgeBindingResolver._iter_team_member_ghosts",
+        return_value=[
+            _make_ghost("ghost-one", [{"id": 11, "name": "Owner Docs"}]),
+            _make_ghost("ghost-two", []),
+        ],
+    ):
+        with _patch_accessible_kbs(kb_map) as get_kbs:
+            bindings = build_initial_task_knowledge_bindings(
+                db=db,
+                user=current_user,
+                team=team,
+            )
+
+    assert [ref["id"] for ref in bindings["knowledge_base_refs"]] == [11]
+    assert get_kbs.call_args.args[2] == team.user_id
+
+
+def test_build_initial_task_bindings_preserves_scoped_internal_defaults():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_knowledge_bindings,
+    )
+
+    db = Mock()
+    team = _make_team()
+    user = _make_user()
+    kb_map = {
+        11: _make_kb(11, "Product Docs"),
+    }
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost(
+                "ghost-one",
+                [
+                    {
+                        "id": 11,
+                        "name": "Product Docs",
+                        "document_ids": [1001],
+                        "document_names": ["Install Guide"],
+                        "scope_restricted": True,
+                    }
+                ],
+            ),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    with patch(
+        "app.services.chat.knowledge_binding_resolver."
+        "KnowledgeBindingResolver._iter_team_member_ghosts",
+        return_value=[
+            _make_ghost(
+                "ghost-one",
+                [
+                    {
+                        "id": 11,
+                        "name": "Product Docs",
+                        "document_ids": [1001],
+                        "document_names": ["Install Guide"],
+                        "scope_restricted": True,
+                    }
+                ],
+            ),
+            _make_ghost("ghost-two", []),
+        ],
+    ):
+        with patch(
+            "app.services.knowledge.folder_service."
+            "KnowledgeFolderService.resolve_document_ids_for_scope",
+            return_value=[1001],
+        ):
+            with _patch_accessible_kbs(kb_map):
+                bindings = build_initial_task_knowledge_bindings(
+                    db=db,
+                    user=user,
+                    team=team,
+                )
+
+    assert bindings["knowledge_base_refs"] == [
+        {
+            "id": 11,
+            "name": "Product Docs",
+            "boundBy": "alice",
+            "boundAt": bindings["knowledge_base_refs"][0]["boundAt"],
+            "namespace": "default",
+            "scopeRestricted": True,
+            "explicitDocumentIds": [1001],
+            "folderIds": None,
+            "includeSubfolders": True,
+        }
+    ]
+    assert bindings["knowledge_base_scopes"] == bindings["knowledge_base_refs"]
 
 
 def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
@@ -173,217 +265,21 @@ def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
     user = _make_user()
 
     with patch(
-        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-        side_effect=lambda _db, _user_id, kb_id: (
-            _make_kb(11, "Product Docs") if kb_id == 11 else None
-        ),
+        "app.services.chat.knowledge_binding_resolver."
+        "KnowledgeBindingResolver._iter_team_member_ghosts",
+        return_value=[
+            _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
+            _make_ghost("ghost-two", [{"id": 22, "name": "Secret Docs"}]),
+        ],
     ):
-        refs = build_initial_task_knowledge_base_refs(
-            db=db,
-            user=user,
-            team=team,
-            knowledge_base_id=22,
-        )
+        with _patch_accessible_kbs({11: _make_kb(11, "Product Docs")}):
+            refs = build_initial_task_knowledge_base_refs(
+                db=db,
+                user=user,
+                team=team,
+            )
 
-    assert refs == []
-
-
-def test_resolve_task_defaults_uses_current_agent_configuration():
-    from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_ids,
-    )
-
-    db = Mock()
-    task = SimpleNamespace(json={"kind": "Task"})
-    task_crd = SimpleNamespace()
-    team = SimpleNamespace(id=42, user_id=9)
-
-    with (
-        patch(
-            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
-            return_value=task,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
-            return_value=task_crd,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11, 22, 11],
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
-            return_value={11, 22},
-        ) as get_accessible_ids,
-    ):
-        result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
-
-    assert result == [11, 22]
-    get_accessible_ids.assert_called_once_with(
-        db,
-        user_id=team.user_id,
-        candidate_ids=[11, 22],
-    )
-
-
-def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
-    from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_ids,
-    )
-
-    db = Mock()
-    task = SimpleNamespace(json={"kind": "Task"})
-    team = SimpleNamespace(id=42, user_id=9)
-
-    with (
-        patch(
-            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
-            return_value=task,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
-            return_value=SimpleNamespace(),
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11, 22],
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
-            return_value={11},
-        ),
-    ):
-        result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
-
-    assert result == [11]
-
-
-def test_resolve_public_team_defaults_uses_public_acl_context():
-    from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_ids,
-    )
-
-    db = Mock()
-    task = SimpleNamespace(json={"kind": "Task"})
-    team = SimpleNamespace(id=42, user_id=0)
-
-    with (
-        patch(
-            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
-            return_value=task,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
-            return_value=SimpleNamespace(),
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11],
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
-            return_value={11},
-        ) as get_accessible_ids,
-    ):
-        result = resolve_task_default_knowledge_base_ids(
-            db,
-            task_id=100,
-            user_id=7,
-        )
-
-    assert result == [11]
-    get_accessible_ids.assert_called_once_with(
-        db,
-        user_id=0,
-        candidate_ids=[11],
-    )
-
-
-def test_task_default_read_user_is_knowledge_base_owner():
-    from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_read_user_id,
-    )
-
-    team = SimpleNamespace(user_id=9)
-    knowledge_base = SimpleNamespace(user_id=23)
-    with (
-        patch(
-            "app.services.chat.task_default_knowledge_bases._resolve_task_default_knowledge_bases",
-            return_value=(team, [11]),
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases._get_active_knowledge_base",
-            return_value=knowledge_base,
-        ),
-    ):
-        access_user_id = resolve_task_default_knowledge_base_read_user_id(
-            Mock(),
-            task_id=100,
-            user_id=7,
-            knowledge_base_id=11,
-        )
-
-    assert access_user_id == knowledge_base.user_id
-
-
-def test_resolve_task_defaults_requires_agent_access():
-    from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_ids,
-    )
-
-    db = Mock()
-    task = SimpleNamespace(json={"kind": "Task"})
-    team = SimpleNamespace(id=42)
-
-    with (
-        patch(
-            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
-            return_value=task,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
-            return_value=SimpleNamespace(),
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
-            return_value=team,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
-            return_value=None,
-        ),
-        patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids"
-        ) as iter_defaults,
-    ):
-        result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
-
-    assert result == []
-    iter_defaults.assert_not_called()
+    assert [ref["id"] for ref in refs] == [11]
 
 
 def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
@@ -401,11 +297,22 @@ def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
     )
 
     with patch(
-        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-        return_value=[
-            {"id": 11, "name": "Product Docs", "boundBy": "alice"},
-            {"id": 22, "name": "Runbooks", "boundBy": "alice"},
-        ],
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_bindings",
+        return_value={
+            "knowledge_base_refs": [
+                {"id": 11, "name": "Product Docs", "boundBy": "alice"},
+                {"id": 22, "name": "Runbooks", "boundBy": "alice"},
+            ],
+            "external_knowledge_refs": [
+                {
+                    "provider": "demo-source",
+                    "mode": "explicit",
+                    "id": "kb-1",
+                    "name": "External Docs",
+                }
+            ],
+            "context_warnings": [],
+        },
     ):
         task = create_new_task(
             db=test_db,
@@ -415,3 +322,154 @@ def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
         )
 
     assert [ref["id"] for ref in task.json["spec"]["knowledgeBaseRefs"]] == [11, 22]
+    assert task.json["spec"]["externalKnowledgeRefs"][0]["id"] == "kb-1"
+
+
+def test_build_initial_task_bindings_skips_invalid_external_default_with_warning():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_knowledge_bindings,
+    )
+    from app.services.rag.sources import ExternalRefValidationError
+
+    db = Mock()
+    team = _make_team()
+    user = _make_user()
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost(
+                "ghost-one",
+                [],
+                [
+                    {
+                        "provider": "demo-source",
+                        "mode": "explicit",
+                        "id": "kb-invalid",
+                        "name": "Invalid External",
+                    }
+                ],
+            ),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    with (
+        patch(
+            "app.services.chat.knowledge_binding_resolver."
+            "KnowledgeBindingResolver._iter_team_member_ghosts",
+            return_value=[
+                _make_ghost(
+                    "ghost-one",
+                    [],
+                    [
+                        {
+                            "provider": "demo-source",
+                            "mode": "explicit",
+                            "id": "kb-invalid",
+                            "name": "Invalid External",
+                        }
+                    ],
+                ),
+                _make_ghost("ghost-two", []),
+            ],
+        ),
+        patch(
+            "app.services.chat.external_knowledge_refs.validate_external_knowledge_refs",
+            side_effect=ExternalRefValidationError(
+                "raw provider failure",
+                reason="not_configured",
+            ),
+        ),
+    ):
+        result = build_initial_task_knowledge_bindings(db=db, user=user, team=team)
+
+    assert result["external_knowledge_refs"] == []
+    assert result["context_warnings"] == [
+        {
+            "type": "external_knowledge",
+            "reason": "not_configured",
+            "provider": "demo-source",
+            "id": "kb-invalid",
+            "message": (
+                "External knowledge source is not configured for the current user."
+            ),
+            "metadata": {
+                "canonicalKey": "external:demo-source:explicit:kb-invalid:knowledge_base:::"
+            },
+            "name": "Invalid External",
+        }
+    ]
+
+
+def test_missing_team_owner_materializes_no_defaults_without_sender_fallback():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_knowledge_bindings,
+    )
+
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    team = _make_team()
+    sender = Mock(id=42, user_name="member")
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost(
+                "ghost-one",
+                [{"id": 11, "name": "Owner Docs"}],
+                [
+                    {
+                        "provider": "demo-source",
+                        "mode": "explicit",
+                        "id": "owner-external",
+                    }
+                ],
+            ),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    with (
+        patch(
+            "app.services.chat.knowledge_binding_resolver."
+            "KnowledgeBindingResolver._iter_team_member_ghosts",
+            return_value=[
+                _make_ghost(
+                    "ghost-one",
+                    [{"id": 11, "name": "Owner Docs"}],
+                    [
+                        {
+                            "provider": "demo-source",
+                            "mode": "explicit",
+                            "id": "owner-external",
+                        }
+                    ],
+                ),
+                _make_ghost("ghost-two", []),
+            ],
+        ),
+        patch(
+            "app.services.chat.knowledge_binding_resolver."
+            "KnowledgeShareService.get_accessible_resources_by_ids"
+        ) as accessible,
+    ):
+        result = build_initial_task_knowledge_bindings(
+            db=db,
+            user=sender,
+            team=team,
+        )
+
+    assert result["knowledge_base_refs"] == []
+    assert result["external_knowledge_refs"] == []
+    assert {warning["reason"] for warning in result["context_warnings"]} == {
+        "actor_not_found"
+    }
+    assert len(result["context_warnings"]) == 2
+    accessible.assert_not_called()

@@ -17,6 +17,7 @@ from app.schemas.prompt_optimization import (
     PromptSource,
 )
 from app.services.group_permission import get_effective_role_in_group
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers import kindReader
 from app.services.readers.kinds import KindType
 from app.stores.tasks import task_store
@@ -142,13 +143,12 @@ def assemble_team_prompt(
 
     for index, member in enumerate(team_crd.spec.members or []):
         # Get bot
-        bot = kindReader.get_by_name_and_namespace(
-            db=db,
-            user_id=team.user_id,
-            kind=KindType.BOT,
-            namespace=member.botRef.namespace,
-            name=member.botRef.name,
-        )
+        bot = resolve_kind_reference(
+            db,
+            kind="Bot",
+            ref=member.botRef,
+            actor_user_id=team.user_id,
+        ).resource
 
         if not bot:
             continue
@@ -157,13 +157,12 @@ def assemble_team_prompt(
 
         # Get ghost
         if bot_crd.spec and bot_crd.spec.ghostRef:
-            ghost = kindReader.get_by_name_and_namespace(
-                db=db,
-                user_id=team.user_id,
-                kind=KindType.GHOST,
-                namespace=bot_crd.spec.ghostRef.namespace,
-                name=bot_crd.spec.ghostRef.name,
-            )
+            ghost = resolve_kind_reference(
+                db,
+                kind="Ghost",
+                ref=bot_crd.spec.ghostRef,
+                actor_user_id=team.user_id,
+            ).resource
 
             if ghost and ghost.json:
                 ghost_crd = Ghost.model_validate(ghost.json)

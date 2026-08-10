@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 # MCP tool names for DingTalk Docs
 MCP_TOOL_LIST_NODES = "list_nodes"
-MCP_TOOL_SEARCH_DOCUMENTS = "search_documents"
 
 # Maximum recursion depth for folder traversal
 MAX_RECURSION_DEPTH = 10

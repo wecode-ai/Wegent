@@ -29,10 +29,13 @@ export interface ExternalKnowledgeRef {
   name?: string
   scope?: string
   target_type?: 'knowledge_base' | 'folder' | 'document'
+  workspace_id?: string
   node_id?: string
   document_id?: string
   parent_id?: string
   target_name?: string
+  boundBy?: string
+  boundAt?: string
 }
 
 /**

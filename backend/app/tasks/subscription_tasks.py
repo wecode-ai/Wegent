@@ -452,7 +452,6 @@ def _link_subscription_knowledge_bases(
             attachment_ids=None,
             contexts=contexts,
             task=None,  # Skip syncing to task level since this is a subscription task
-            user_name=None,
         )
         logger.info(
             f"[_link_subscription_knowledge_bases] Linked {len(linked_ids)} KB contexts "

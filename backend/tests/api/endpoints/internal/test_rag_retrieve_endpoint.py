@@ -16,6 +16,8 @@ from app.services.rag.runtime_specs import (
 from app.services.rag.sources import (
     ExternalKnowledgeDocument,
     ExternalKnowledgeDocumentListResult,
+    RetrievalSourceResult,
+    RetrievalSourceStatus,
     RetrievalSourceSummary,
     retrieval_source_registry,
 )
@@ -25,6 +27,9 @@ from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
+)
+from tests.utils.external_knowledge_test_provider import (
+    UpstreamExternalKnowledgeTestProvider,
 )
 
 
@@ -169,6 +174,45 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     assert "source_summaries" not in body
     mock_persist.assert_called_once()
     mock_transform.assert_awaited_once()
+
+
+def test_internal_retrieve_keeps_unscoped_kbs_when_scopes_are_partial(test_client):
+    """A partial scope list must not drop other requested knowledge bases."""
+    payload = {
+        "query": "mixed sources",
+        "knowledge_base_ids": [10, 20],
+        "knowledge_base_scopes": [
+            {
+                "knowledge_base_id": 10,
+                "scope_restricted": True,
+                "document_ids": [101],
+            }
+        ],
+        "route_mode": "rag_retrieval",
+    }
+
+    with patch(
+        "app.api.endpoints.internal.rag._execute_scoped_retrieve",
+        new_callable=AsyncMock,
+        return_value={
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+            "total_estimated_tokens": 0,
+        },
+    ) as execute_scoped:
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    _, kwargs = execute_scoped.await_args
+    assert kwargs["scopes"][0].knowledge_base_id == 10
+    assert kwargs["scopes"][0].scope_restricted is True
+    assert kwargs["scopes"][1].knowledge_base_id == 20
+    assert kwargs["scopes"][1].scope_restricted is False
 
 
 def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_client):
@@ -587,6 +631,114 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
     assert mock_persist.call_args.kwargs["records"] == internal_records
 
 
+def test_internal_retrieve_isolates_dingtalk_failure_from_ap_and_internal_hits(
+    test_client, monkeypatch
+):
+    dingtalk = AsyncMock()
+    dingtalk.name = "dingtalk"
+    dingtalk.retrieve = AsyncMock(
+        return_value=RetrievalSourceResult(
+            records=[],
+            summary=RetrievalSourceSummary(
+                provider="dingtalk",
+                searched_source_ids=[],
+                ignored_source_ids=[],
+                source_statuses=[
+                    RetrievalSourceStatus(
+                        provider="dingtalk",
+                        source_id="wiki-space-1",
+                        status="failed",
+                    )
+                ],
+            ),
+            warnings=["DingTalk Docs MCP tool is unavailable"],
+        )
+    )
+    ap = AsyncMock()
+    ap.name = "ap"
+    ap.retrieve = AsyncMock(
+        return_value=RetrievalSourceResult(
+            records=[
+                RetrieveRecord(
+                    content="AP result",
+                    title="AP document",
+                    source_type="ap",
+                    source_id="ap-kb-1",
+                )
+            ],
+            summary=RetrievalSourceSummary(
+                provider="ap",
+                searched_source_ids=["ap-kb-1"],
+                ignored_source_ids=[],
+                source_statuses=[
+                    RetrievalSourceStatus(
+                        provider="ap",
+                        source_id="ap-kb-1",
+                        status="hit",
+                        record_count=1,
+                        citation_count=1,
+                    )
+                ],
+            ),
+        )
+    )
+    monkeypatch.setitem(retrieval_source_registry._providers, "dingtalk", dingtalk)
+    monkeypatch.setitem(retrieval_source_registry._providers, "ap", ap)
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "Internal result",
+                        "title": "Internal document",
+                        "knowledge_base_id": 1,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json={
+                "query": "roadmap",
+                "user_id": 7,
+                "knowledge_base_ids": [1],
+                "external_knowledge_refs": [
+                    {
+                        "provider": "dingtalk",
+                        "mode": "explicit",
+                        "id": "wiki-space-1",
+                    },
+                    {"provider": "ap", "mode": "explicit", "id": "ap-kb-1"},
+                ],
+                "route_mode": "rag_retrieval",
+            },
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [record["content"] for record in body["records"]] == [
+        "Internal result",
+        "AP result",
+    ]
+    summaries = {summary["provider"]: summary for summary in body["source_summaries"]}
+    assert summaries["dingtalk"]["source_statuses"][0]["status"] == "failed"
+    assert summaries["ap"]["source_statuses"][0]["citation_count"] == 1
+    dingtalk.retrieve.assert_awaited_once()
+    ap.retrieve.assert_awaited_once()
+
+
 def test_internal_retrieve_requires_user_id_for_external_refs(test_client):
     response = test_client.post(
         "/api/internal/rag/retrieve",
@@ -604,6 +756,43 @@ def test_internal_retrieve_requires_user_id_for_external_refs(test_client):
         response.json()["detail"]
         == "user_id is required for external knowledge retrieval"
     )
+
+
+def test_internal_retrieve_uses_registered_test_provider_http_path(
+    test_client,
+    monkeypatch,
+):
+    monkeypatch.setitem(
+        retrieval_source_registry._providers,
+        "test-external",
+        UpstreamExternalKnowledgeTestProvider(),
+    )
+
+    response = test_client.post(
+        "/api/internal/rag/retrieve",
+        json={
+            "query": "roadmap",
+            "user_id": 7,
+            "external_knowledge_refs": [
+                {
+                    "provider": "test-external",
+                    "mode": "explicit",
+                    "id": "virtual-kb",
+                    "name": "Virtual Test KB",
+                }
+            ],
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "rag_retrieval"
+    assert body["total"] == 1
+    assert body["records"][0]["content"] == "roadmap result for user 7"
+    assert body["records"][0]["source_type"] == "test-external"
+    assert body["records"][0]["source_id"] == "virtual-kb"
+    assert body["source_summaries"][0]["searched_source_ids"] == ["virtual-kb"]
 
 
 def test_internal_list_documents_requires_user_id_for_external_refs(test_client):
@@ -624,6 +813,43 @@ def test_internal_list_documents_requires_user_id_for_external_refs(test_client)
         response.json()["detail"]
         == "user_id is required for external knowledge document listing"
     )
+
+
+def test_internal_list_documents_uses_registered_test_provider_http_path(
+    test_client,
+    monkeypatch,
+):
+    monkeypatch.setitem(
+        retrieval_source_registry._providers,
+        "test-external",
+        UpstreamExternalKnowledgeTestProvider(),
+    )
+
+    response = test_client.post(
+        "/api/internal/knowledge/list-documents",
+        json={
+            "user_id": 7,
+            "external_knowledge_refs": [
+                {
+                    "provider": "test-external",
+                    "mode": "explicit",
+                    "id": "virtual-kb",
+                    "name": "Virtual Test KB",
+                }
+            ],
+            "limit": 20,
+            "offset": 0,
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_returned"] == 1
+    assert body["documents"][0]["provider"] == "test-external"
+    assert body["documents"][0]["source_id"] == "virtual-kb"
+    assert body["documents"][0]["document_id"] == "doc-1"
+    assert body["pagination_scope"] == "per_provider"
 
 
 def test_internal_list_documents_reports_per_provider_pagination_scope(

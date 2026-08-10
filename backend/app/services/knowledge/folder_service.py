@@ -557,13 +557,16 @@ class KnowledgeFolderService:
 
         ``folder_ids=[0]`` means root-level documents only.  Folder ``0`` is
         not a real tree node and is never expanded to the whole knowledge base.
+
+        A scope may restrict by folders only, by documents only, or by both;
+        the unused dimension is passed as ``None``.  Only a scope that selects
+        nothing at all is rejected, so a folder-only scope whose folders happen
+        to be empty resolves to ``[]`` rather than raising.
         """
         KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
 
-        if folder_ids == []:
-            raise ValueError("folder_ids must not be empty")
-        if document_ids == []:
-            raise ValueError("document_ids must not be empty")
+        if not folder_ids and not document_ids:
+            raise ValueError("scope must specify at least one folder or document")
 
         resolved_ids: list[int] = []
         seen_document_ids: set[int] = set()

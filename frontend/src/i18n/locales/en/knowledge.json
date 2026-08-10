@@ -43,10 +43,12 @@
     "selectKnowledgeBase": "Select a knowledge base to view documents",
     "selectWholeKb": "Select KB",
     "selected": "Selected",
+    "allDocuments": "All documents",
     "selectedDocuments": "{{count}} documents selected",
     "selectedFolders": "{{count}} folders selected, including subfolders",
     "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
+    "contentUnavailable": "Not available for content retrieval",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
   },

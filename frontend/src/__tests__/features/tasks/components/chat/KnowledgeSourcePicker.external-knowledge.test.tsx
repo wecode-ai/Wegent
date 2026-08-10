@@ -10,22 +10,6 @@ jest.mock('@/apis/knowledge', () => ({
   listDocuments: jest.fn(),
 }))
 
-jest.mock('@/features/tasks/components/chat/DingTalkDocContextSelector', () => ({
-  useDingTalkDocTrees: () => ({ loading: false, error: null, roots: [] }),
-}))
-
-jest.mock('@/features/tasks/components/chat/DingTalkKnowledgePicker', () => ({
-  countDingTalkNodes: jest.fn(() => 0),
-  DingTalkDocsRootRow: () => null,
-  DingTalkDocumentColumn: () => null,
-  DingTalkWikispaceRows: () => null,
-  useDingTalkKnowledgeSelection: () => ({
-    selectedIds: new Set(),
-    toggleNode: jest.fn(),
-    toggleNodeList: jest.fn(),
-  }),
-}))
-
 function externalContext(ref: ExternalKnowledgeRef): ContextItem {
   return {
     type: 'external_knowledge',

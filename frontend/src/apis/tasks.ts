@@ -142,13 +142,15 @@ export interface PublicContextData {
   document_count?: number
   // External knowledge fields
   external_provider?: string | null
-  external_mode?: string | null
-  external_id?: string | null
-  external_scope?: string | null
+  external_provider_label?: string | null
+  external_source_name?: string | null
+  external_target_name?: string | null
   external_target_type?: 'knowledge_base' | 'folder' | 'document' | null
-  external_node_id?: string | null
-  external_document_id?: string | null
-  external_parent_id?: string | null
+  retrieval_status?: {
+    searched: boolean
+    ignored: boolean
+    warning_reason?: string | null
+  } | null
   // Table fields
   document_id?: number
   source_config?: {

@@ -29,6 +29,7 @@ import {
   type KnowledgeBaseDefaultRef,
   type PipelineContextPassing,
 } from '@/types/api'
+import type { ExternalKnowledgeRef } from '@/types/context'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -352,7 +353,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >([])
+  const [simpleDefaultExternalKnowledgeRefs, setSimpleDefaultExternalKnowledgeRefs] = useState<
+    ExternalKnowledgeRef[]
+  >([])
   const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
+  const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null)
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -482,6 +487,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
+      setSimpleDefaultExternalKnowledgeRefs(fullLeaderBot?.default_external_knowledge_refs || [])
       setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
         fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
@@ -548,6 +554,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
       setSimpleDefaultKnowledgeBaseRefs([])
+      setSimpleDefaultExternalKnowledgeRefs([])
       setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
@@ -908,6 +915,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
           availableSkills: simpleAllSkills,
           defaultKnowledgeBaseRefs: simpleDefaultKnowledgeBaseRefs,
+          defaultExternalKnowledgeRefs: simpleDefaultExternalKnowledgeRefs,
           mcpServers: parsedMcpServers,
         },
         name,
@@ -1271,6 +1279,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     <>
       <Dialog open={open} onOpenChange={open => !open && onClose()}>
         <DialogContent
+          ref={setDialogContent}
           className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
           preventOutsideClick={editingBotDrawerVisible}
           data-testid="team-edit-dialog"
@@ -1355,6 +1364,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 onReloadSkills={reloadSimpleSkills}
                 defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
                 onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                defaultExternalKnowledgeRefs={simpleDefaultExternalKnowledgeRefs}
+                onDefaultExternalKnowledgeRefsChange={setSimpleDefaultExternalKnowledgeRefs}
                 mcpConfig={simpleMcpConfig}
                 onMcpConfigChange={setSimpleMcpConfig}
                 mcpAgentType={simpleMcpAgentType}
@@ -1363,6 +1374,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 toast={toast}
                 scope={scope}
                 groupName={groupName}
+                popoverContainer={dialogContent}
               />
             ) : (
               <>
@@ -1415,6 +1427,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   botEditRef={botEditRef}
                   scope={scope}
                   groupName={groupName}
+                  popoverContainer={dialogContent}
                   requireConfirmationMap={requireConfirmationMap}
                   setRequireConfirmationMap={setRequireConfirmationMap}
                   contextPassingMap={contextPassingMap}
