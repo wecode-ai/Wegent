@@ -2726,7 +2726,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('解决分支冲突')
 
     await act(async () => {
-      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      cloudRuntimeWork.resolve(localRuntimeWork)
     })
 
     await waitFor(() =>

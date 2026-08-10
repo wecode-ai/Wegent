@@ -445,7 +445,9 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult?.status === 'fulfilled'
             ? {
                 status: 'fulfilled' as const,
-                value: filterRemovedRuntimeProjects(runtimeWorkResult.value),
+                value: applyRuntimeTaskTitleOverrides(
+                  filterRemovedRuntimeProjects(runtimeWorkResult.value)
+                ),
               }
             : runtimeWorkResult
         if (filteredRuntimeWorkResult?.status === 'fulfilled') {
