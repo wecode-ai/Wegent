@@ -128,6 +128,10 @@ export interface DingTalkDocContext extends BaseContextItem {
   dingtalk_node_id: string
   /** DingTalk node source to disambiguate docs and wikispace selections */
   source: 'docs' | 'wikispace'
+  /** Stable identity of the DingTalk knowledge base containing this node */
+  workspace_id?: string
+  /** Display name of the DingTalk knowledge base containing this node */
+  workspace_name?: string
 }
 
 /**
