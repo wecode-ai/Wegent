@@ -105,8 +105,6 @@ export default function HistoryManageDialog({
 
   // Selected tasks for batch delete
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set())
-  // Whether user has opted to select ALL tasks (including unloaded pages)
-  const [isSelectingAll, setIsSelectingAll] = useState(false)
 
   // Is deleting
   const [isDeleting, setIsDeleting] = useState(false)
@@ -117,7 +115,6 @@ export default function HistoryManageDialog({
 
   // Pagination state - load data independently
   const [allTasks, setAllTasks] = useState<Task[]>([])
-  const [total, setTotal] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(true)
@@ -153,7 +150,6 @@ export default function HistoryManageDialog({
           setAllTasks(prev => [...prev, ...result.items])
         } else {
           setAllTasks(result.items)
-          setTotal(result.total)
         }
         setNextCursor(result.next_cursor || null)
         setHasMore(result.has_more ?? false)
@@ -175,7 +171,6 @@ export default function HistoryManageDialog({
       setFilterTypes(savedTypes)
       setCurrentPage(1)
       setAllTasks([])
-      setIsSelectingAll(false)
       setSelectedTaskIds(initialTaskId ? new Set([initialTaskId]) : new Set())
       loadTasks(1, false, savedTypes)
     }
@@ -190,7 +185,6 @@ export default function HistoryManageDialog({
 
   // Save filter types when changed and reload
   const handleFilterChange = (type: HistoryFilterType) => {
-    setIsSelectingAll(false)
     setFilterTypes(prev => {
       let newTypes: HistoryFilterType[]
       if (prev.includes(type)) {
@@ -231,13 +225,11 @@ export default function HistoryManageDialog({
   useEffect(() => {
     if (!open) {
       setSelectedTaskIds(new Set())
-      setIsSelectingAll(false)
     }
   }, [open])
 
   // Toggle task selection
   const toggleTaskSelection = (taskId: number) => {
-    setIsSelectingAll(false)
     setSelectedTaskIds(prev => {
       const next = new Set(prev)
       if (next.has(taskId)) {
@@ -256,7 +248,6 @@ export default function HistoryManageDialog({
 
   // Deselect all
   const deselectAll = () => {
-    setIsSelectingAll(false)
     setSelectedTaskIds(new Set())
   }
 
@@ -266,28 +257,22 @@ export default function HistoryManageDialog({
 
   // Handle the select-all / deselect-all toggle
   const handleSelectAllToggle = () => {
-    if (isSelectingAll || allLoadedSelected) {
+    if (allLoadedSelected) {
       deselectAll()
     } else {
       selectAll()
     }
   }
 
-  // Delete selected tasks (or all if isSelectingAll)
+  // Delete selected tasks
   const handleDeleteSelected = useCallback(async () => {
-    if (selectedTaskIds.size === 0 && !isSelectingAll) return
+    if (selectedTaskIds.size === 0) return
 
     setIsDeleting(true)
     try {
-      if (isSelectingAll) {
-        await deleteAllPersonalTasksInBatches()
-        setIsSelectingAll(false)
-        setSelectedTaskIds(new Set())
-      } else {
-        const ids = Array.from(selectedTaskIds)
-        await deleteTaskIdsInBatches(ids)
-        setSelectedTaskIds(new Set())
-      }
+      const ids = Array.from(selectedTaskIds)
+      await deleteTaskIdsInBatches(ids)
+      setSelectedTaskIds(new Set())
       setAllTasks([])
       loadTasks(1, false)
       refreshPersonalTasks()
@@ -296,14 +281,7 @@ export default function HistoryManageDialog({
     } finally {
       setIsDeleting(false)
     }
-  }, [
-    selectedTaskIds,
-    isSelectingAll,
-    deleteAllPersonalTasksInBatches,
-    deleteTaskIdsInBatches,
-    loadTasks,
-    refreshPersonalTasks,
-  ])
+  }, [selectedTaskIds, deleteTaskIdsInBatches, loadTasks, refreshPersonalTasks])
 
   // Handle clear all button
   const handleClearAll = useCallback(async () => {
@@ -312,7 +290,6 @@ export default function HistoryManageDialog({
     try {
       await deleteAllPersonalTasksInBatches()
       setSelectedTaskIds(new Set())
-      setIsSelectingAll(false)
       setAllTasks([])
       loadTasks(1, false)
       refreshPersonalTasks()
@@ -334,7 +311,6 @@ export default function HistoryManageDialog({
           next.delete(taskId)
           return next
         })
-        setTotal(prev => Math.max(0, prev - 1))
         refreshPersonalTasks()
       } catch (error) {
         console.error('Failed to delete task:', error)
@@ -424,7 +400,7 @@ export default function HistoryManageDialog({
     )
   }
 
-  const activeCount = isSelectingAll ? total : selectedTaskIds.size
+  const activeCount = selectedTaskIds.size
 
   return (
     <>
@@ -481,7 +457,7 @@ export default function HistoryManageDialog({
                 className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
                 data-testid="history-select-all-toggle"
               >
-                {isSelectingAll || (allLoadedSelected && filteredTasks.length > 0) ? (
+                {allLoadedSelected && filteredTasks.length > 0 ? (
                   <CheckSquare className="w-4 h-4 text-primary" />
                 ) : (
                   <Square className="w-4 h-4" />
@@ -492,17 +468,6 @@ export default function HistoryManageDialog({
                     : t('history:actions.select_all')}
                 </span>
               </button>
-
-              {/* Select all across pages prompt */}
-              {allLoadedSelected && hasMore && !isSelectingAll && (
-                <button
-                  onClick={() => setIsSelectingAll(true)}
-                  className="text-xs text-primary hover:underline transition-colors"
-                  data-testid="history-select-all-pages-button"
-                >
-                  {t('history:actions.select_all_count', { count: total })}
-                </button>
-              )}
             </div>
 
             {activeCount > 0 && (
@@ -534,7 +499,7 @@ export default function HistoryManageDialog({
             ) : (
               <div className="space-y-1">
                 {filteredTasks.map(task => {
-                  const isSelected = isSelectingAll || selectedTaskIds.has(task.id)
+                  const isSelected = selectedTaskIds.has(task.id)
                   return (
                     <div
                       key={task.id}
@@ -609,7 +574,7 @@ export default function HistoryManageDialog({
           {/* Footer info */}
           <div className="flex-shrink-0 pt-2 border-t border-border">
             <p className="text-xs text-text-muted text-center">
-              {t('common:tasks.total_count', { count: total || filteredTasks.length })}
+              {t('common:tasks.total_count', { count: filteredTasks.length })}
             </p>
           </div>
         </DialogContent>

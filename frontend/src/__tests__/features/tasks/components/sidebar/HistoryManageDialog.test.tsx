@@ -66,7 +66,8 @@ describe('HistoryManageDialog', () => {
     window.localStorage.clear()
     mockedTaskApis.getPersonalTasksLite.mockResolvedValue({
       items: [createTask(1), createTask(2)],
-      total: 2,
+      next_cursor: null,
+      has_more: false,
     })
     mockedTaskApis.bulkDeleteTasks.mockResolvedValue({
       message: 'deleted',
