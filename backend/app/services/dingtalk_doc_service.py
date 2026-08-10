@@ -306,11 +306,16 @@ class DingTalkDocService:
         sync_time: datetime,
         db: Session,
         source: DingTalkNodeSource = DOCS_SOURCE,
+        preserve_workspace_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         """Sync fetched nodes to the database.
 
         Compares with existing records and performs add/update/delete operations.
         Only operates on nodes with the given source value.
+
+        Rows whose workspace_id is in preserve_workspace_ids are never
+        deactivated: their knowledge base could not be listed in this run,
+        so absence from the fetched snapshot is not proof of removal.
         """
         source_value = DingTalkDocService._normalize_source(source)
         added = 0
@@ -338,6 +343,12 @@ class DingTalkDocService:
 
         for existing in existing_active:
             if existing.dingtalk_node_id not in dingtalk_node_ids:
+                if preserve_workspace_ids and existing.workspace_id in (
+                    preserve_workspace_ids
+                ):
+                    # The owning knowledge base failed to list in this run;
+                    # keep its previously synced rows active.
+                    continue
                 existing.is_active = False
                 existing.updated_at = sync_time
                 deleted += 1
