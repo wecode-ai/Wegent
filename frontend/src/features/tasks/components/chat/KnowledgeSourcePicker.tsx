@@ -768,7 +768,7 @@ export function KnowledgeSourcePicker({
       replaceContexts([existing.id, ...childContexts.map(ctx => ctx.id)], [])
       return
     }
-    const ref = source.toRef
+    const ref: ExternalKnowledgeRef = source.toRef
       ? source.toRef(kb)
       : {
           provider: source.providerId,
