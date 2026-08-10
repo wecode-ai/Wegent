@@ -3016,7 +3016,9 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
 
     resolveLocalList?.({ marketplaces: [] })
-    expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+    })
   })
 
   test('paints cloud installed strip even when marketplace catalog is still empty', async () => {
@@ -3056,7 +3058,9 @@ describe('PluginsWorkspace', () => {
       status: 200,
       json: () => Promise.resolve({ items: [] }),
     })
-    expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+    })
   })
 
   test('sends remote plugin id for remote marketplace install', async () => {

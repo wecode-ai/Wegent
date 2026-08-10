@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.api.endpoints.installed_plugins import (
     _can_publish,
@@ -932,8 +933,8 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
 
 
 def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
-    test_db, test_user
-):
+    test_db: Session, test_user: User
+) -> None:
     owner = User(
         user_name="other-plugin-owner",
         password_hash=test_user.password_hash,
@@ -985,8 +986,13 @@ def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
     statements: list[str] = []
 
     def before_cursor_execute(
-        _conn, _cursor, statement, _parameters, _context, _executemany
-    ):
+        _conn: object,
+        _cursor: object,
+        statement: str | bytes,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
         statements.append(str(statement))
 
     bind = test_db.get_bind()

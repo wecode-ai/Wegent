@@ -3876,12 +3876,24 @@ fn list_personal_marketplace_plugins(
 
     let manifest_path = root.join(".agents/plugins/marketplace.json");
     if manifest_path.is_file() {
-        for name in marketplace_plugin_names(&manifest_path)? {
-            let plugin_root = root.join("plugins").join(&name);
-            by_name.insert(
-                name.clone(),
-                personal_plugin_summary_from_root(&name, &plugin_root, false),
-            );
+        // Invalid marketplace.json must not abort directory/cache scans — those
+        // still return installable personal plugins for first paint.
+        match marketplace_plugin_names(&manifest_path) {
+            Ok(names) => {
+                for name in names {
+                    let plugin_root = root.join("plugins").join(&name);
+                    by_name.insert(
+                        name.clone(),
+                        personal_plugin_summary_from_root(&name, &plugin_root, false),
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Wework] personal marketplace.json skipped at {}: {error}",
+                    manifest_path.display()
+                );
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
   clearLocalCodexPluginsReadStateCache,
@@ -118,6 +118,10 @@ describe('local codex plugin readState cache', () => {
       if (command === 'local_executor_link_plugin_release') return null
       throw new Error(`Unexpected invoke ${command}`)
     })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   test('linkPersonalPluginRelease drops TTL cache so the next readState reloads', async () => {

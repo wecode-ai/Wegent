@@ -1334,11 +1334,15 @@ async function readState(
   if (!params.refresh && cachedState && cachedStateParamsKey === paramsKey) {
     const loadPromise = loadReadStateSnapshot(params, paramsKey)
     inflightReadState.set(paramsKey, loadPromise)
-    void loadPromise.finally(() => {
-      if (inflightReadState.get(paramsKey) === loadPromise) {
-        inflightReadState.delete(paramsKey)
-      }
-    })
+    void loadPromise
+      .catch(error => {
+        console.warn('[Wework] background local Codex plugin refresh failed', error)
+      })
+      .finally(() => {
+        if (inflightReadState.get(paramsKey) === loadPromise) {
+          inflightReadState.delete(paramsKey)
+        }
+      })
     return withFilteredMarketplaceItems(cachedState, params.query)
   }
 

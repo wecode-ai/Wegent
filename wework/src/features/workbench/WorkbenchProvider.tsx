@@ -1752,7 +1752,6 @@ export function WorkbenchProvider({
         let apps = await loadComposerPluginApps({
           listCodexApps: () => localPluginApi.listApps(),
           readLocalInstalledPlugins: async () => {
-            const response = await localPluginApi.listInstalledPlugins()
             currentComposerDeviceId =
               peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
               peekLocalCodexPluginsReadState()?.deviceId ||
@@ -1765,7 +1764,16 @@ export function WorkbenchProvider({
                 currentComposerDeviceId = null
               }
             }
-            return response.items
+            try {
+              const response = await localPluginApi.listInstalledPlugins()
+              currentComposerDeviceId =
+                peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
+                peekLocalCodexPluginsReadState()?.deviceId ||
+                currentComposerDeviceId
+              return response.items
+            } catch {
+              return []
+            }
           },
           listCloudInstalledPlugins: () =>
             cloudPluginApi
