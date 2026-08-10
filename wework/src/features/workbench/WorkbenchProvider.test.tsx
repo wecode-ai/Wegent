@@ -983,6 +983,18 @@ function ProjectSendProbe() {
       >
         open cli local-device workspace
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace(
+            'device-cloud',
+            '/workspace/cloud',
+            'Cloud Workspace'
+          )
+        }
+      >
+        open cloud standalone workspace
+      </button>
       <button type="button" onClick={() => paneSession.setInput('修复 CI')}>
         set input
       </button>
@@ -6039,6 +6051,48 @@ describe('WorkbenchProvider runtime tasks', () => {
         message: '修复 CI',
       })
     )
+  })
+
+  test('keeps the opened cloud standalone workspace device after a work list refresh', async () => {
+    const cloudDevice = createDevice({
+      id: 21,
+      device_id: 'device-cloud',
+      name: 'Cloud Device',
+      device_type: 'cloud',
+    })
+    const localDevice = createDevice({
+      id: 22,
+      device_id: 'device-local',
+      name: 'This Mac',
+      device_type: 'local',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      openRuntimeWorkspace: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-cloud',
+        workspacePath: '/workspace/cloud',
+        runtime: 'codex',
+      }),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([cloudDevice, localDevice]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(screen.getByText('open cloud standalone workspace'))
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-cloud')
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('/workspace/cloud')
+
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-cloud')
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('/workspace/cloud')
   })
 
   test('opens a standalone runtime project first without refreshing the runtime list', async () => {
