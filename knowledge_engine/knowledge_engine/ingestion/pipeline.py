@@ -72,17 +72,31 @@ class IngestionResult:
 class MarkdownEnhancementTransform(TransformComponent):
     """Apply deterministic markdown weak-section merge before final chunking."""
 
+    # This field participates in the ingestion cache key. It prevents a
+    # re-index from reusing nodes created before video chapters were preserved.
+    transform_version: str = "preserve-video-chapters-v1"
+
     def __call__(
         self,
         nodes: Sequence[BaseNode],
         **kwargs: Any,
     ) -> Sequence[BaseNode]:
         del kwargs
-        return enhance_markdown_nodes(list(nodes))
+        materialized = list(nodes)
+        # Video chapters are already intentional semantic boundaries. Merging
+        # short chapters would collapse distinct time ranges into one node.
+        if any(
+            str((node.metadata or {}).get("filename", "")).lower().endswith(".video")
+            for node in materialized
+        ):
+            return materialized
+        return enhance_markdown_nodes(materialized)
 
 
 class VideoSegmentMetadataTransform(TransformComponent):
     """Attach video chapter timestamps before final sentence splitting."""
+
+    transform_version: str = "video-segment-metadata-v2"
 
     def __call__(
         self,

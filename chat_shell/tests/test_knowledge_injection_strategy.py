@@ -436,6 +436,41 @@ class TestKnowledgeBaseTool:
         assert result_dict["chunks_used"] == 1
 
     @pytest.mark.asyncio
+    async def test_format_direct_injection_result_adds_video_segments(self):
+        tool = KnowledgeBaseTool()
+        injection_result = {
+            "injected_content": "Video content",
+            "chunks_used": [
+                {
+                    "content": (
+                        "### 章节 1：开场 ([00:00:06 - 00:00:15])\n"
+                        "> **本段摘要**：视频开场内容。"
+                    ),
+                    "source": "811.video.md",
+                    "score": 0.9,
+                    "knowledge_base_id": 211,
+                    "document_id": 811,
+                    "metadata": {
+                        "video_segment_id": "segment_6_15",
+                        "video_start_sec": 6,
+                        "video_end_sec": 15,
+                    },
+                }
+            ],
+            "decision_details": {"strategy": "all_or_nothing"},
+        }
+
+        result = json.loads(
+            await tool._format_direct_injection_result(injection_result, "query")
+        )
+
+        source = result["sources"][0]
+        assert source["source_type"] == "wegent_video_segment"
+        assert source["document_id"] == 811
+        assert source["segments"][0]["start_sec"] == 6
+        assert source["segments"][0]["end_sec"] == 15
+
+    @pytest.mark.asyncio
     async def test_format_rag_result(self):
         """Test _format_rag_result."""
         tool = KnowledgeBaseTool()
@@ -471,6 +506,8 @@ class TestKnowledgeBaseTool:
                         "video_segment_id": "segment_10_20",
                         "video_start_sec": 10,
                         "video_end_sec": 20,
+                        "video_segment_title": "元数据中的片段标题",
+                        "video_segment_description": "元数据中的片段摘要。",
                     },
                 },
                 {
@@ -489,18 +526,13 @@ class TestKnowledgeBaseTool:
         assert result["sources"][0]["source_type"] == "wegent_video_segment"
         assert result["sources"][0]["document_id"] == 123
         assert result["sources"][0]["segments"][0]["start_sec"] == 10
-        assert result["sources"][0]["segments"][0]["title"] == "张凌赫的机场广播趣事"
+        assert result["sources"][0]["segments"][0]["title"] == "元数据中的片段标题"
         assert result["sources"][0]["segments"][0]["description"] == (
-            "回顾机场广播催促登机的经典事件。"
+            "元数据中的片段摘要。"
         )
 
     @pytest.mark.asyncio
-    async def test_format_rag_result_supports_uuid_document_id(self):
-        """document_id may be a UUID string (ES-backed KBs), not an int.
-
-        The video-segment upgrade must still fire so the reference is not
-        downgraded to a plain text card.
-        """
+    async def test_format_rag_result_does_not_upgrade_non_integer_document_id(self):
         tool = KnowledgeBaseTool()
         uuid_doc_id = "fa6d3616-a5a6-4b9b-8cec-a0a4171ae13e"
         kb_chunks = {
@@ -525,10 +557,9 @@ class TestKnowledgeBaseTool:
         result = json.loads(await tool._format_rag_result(kb_chunks, "query", 1))
 
         assert len(result["sources"]) == 1
-        assert result["sources"][0]["source_type"] == "wegent_video_segment"
+        assert result["sources"][0]["source_type"] is None
         assert result["sources"][0]["document_id"] == uuid_doc_id
-        assert result["sources"][0]["segments"][0]["start_sec"] == 0
-        assert result["sources"][0]["segments"][0]["end_sec"] == 6
+        assert "segments" not in result["sources"][0]
 
     @pytest.mark.asyncio
     async def test_restricted_mode_no_rag_does_not_recommend_document_tools(self):

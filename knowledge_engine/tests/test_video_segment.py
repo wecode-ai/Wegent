@@ -6,6 +6,7 @@ from llama_index.core.schema import TextNode
 
 from knowledge_engine.ingestion.video_segment import (
     enrich_video_segment_nodes,
+    extract_video_segment_copy,
     extract_video_segment_metadata,
 )
 
@@ -40,6 +41,21 @@ def test_extract_video_segment_metadata_accepts_mixed_bracket_format() -> None:
 
     assert metadata["video_start_sec"] == 15
     assert metadata["video_end_sec"] == 37
+
+
+def test_extract_video_segment_metadata_accepts_unicode_range_separator() -> None:
+    metadata = extract_video_segment_metadata("### 章节 2 [00:15–00:37]\n后续内容")
+
+    assert metadata["video_start_sec"] == 15
+    assert metadata["video_end_sec"] == 37
+
+
+def test_extract_video_segment_metadata_ignores_body_timestamp() -> None:
+    metadata = extract_video_segment_metadata(
+        "正文提到了 [00:00:05 - 00:00:10]\n但这不是章节标题"
+    )
+
+    assert metadata is None
 
 
 def test_enrich_video_segment_nodes_is_limited_to_video_documents() -> None:
@@ -79,3 +95,30 @@ def test_extract_video_segment_metadata_rejects_invalid_range() -> None:
         )
         is None
     )
+
+
+def test_extract_video_segment_copy_preserves_title_and_summary() -> None:
+    copy = extract_video_segment_copy(
+        "### 章节 2：引入 Agent 的提效与业务收益 ([02:58:00 - 04:59:00])\n"
+        "> **本段摘要**：量化介绍 Agent 的业务收益。"
+    )
+
+    assert copy == {
+        "video_segment_title": "引入 Agent 的提效与业务收益",
+        "video_segment_description": "量化介绍 Agent 的业务收益。",
+    }
+
+
+def test_enrich_video_segment_nodes_copies_display_metadata_to_parent() -> None:
+    node = TextNode(
+        text=(
+            "### 章节 1：课程导入 ([00:00:00 - 00:01:00])\n"
+            "> **本段摘要**：介绍课程背景。"
+        ),
+        metadata={"filename": "813.video"},
+    )
+
+    enrich_video_segment_nodes([node])
+
+    assert node.metadata["video_segment_title"] == "课程导入"
+    assert node.metadata["video_segment_description"] == "介绍课程背景。"

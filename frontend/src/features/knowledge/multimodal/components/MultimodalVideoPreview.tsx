@@ -12,11 +12,13 @@
  * bytes. The stored fid doubles as the media_id (verified empirically).
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { isVideoExtension } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * Detect if a document is a video-type multimodal document.
@@ -49,38 +51,61 @@ export function useVideoPlayUrl(
   mimeType: string
   isLoading: boolean
   notReady: boolean
+  hasError: boolean
+  retry: () => void
 } {
   const [playUrl, setPlayUrl] = useState<string | null>(null)
   const [coverUrl, setCoverUrl] = useState<string | null>(null)
   const [mimeType, setMimeType] = useState('video/mp4')
   const [isLoading, setIsLoading] = useState(enabled)
   const [notReady, setNotReady] = useState(false)
+  const [hasError, setHasError] = useState(false)
+  const [requestVersion, setRequestVersion] = useState(0)
+  const retry = useCallback(() => setRequestVersion(version => version + 1), [])
 
   useEffect(() => {
-    if (!enabled) return
+    setPlayUrl(null)
+    setCoverUrl(null)
+    setMimeType('video/mp4')
+    setNotReady(false)
+    setHasError(false)
+    if (!enabled) {
+      setIsLoading(false)
+      return
+    }
     let isMounted = true
+    const controller = new AbortController()
     const resolve = async () => {
       setIsLoading(true)
-      setNotReady(false)
       try {
         const token = getToken()
         const response = await fetch(`/api/knowledge-documents/${documentId}/video-play-url`, {
           method: 'GET',
           headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+          signal: controller.signal,
         })
         if (!response.ok) {
           // 409 = video exists but not playable yet (transcoding in progress).
-          if (response.status === 409 && isMounted) setNotReady(true)
+          if (response.status === 409) {
+            if (isMounted) setNotReady(true)
+            return
+          }
           throw new Error(`Failed to resolve video URL: ${response.status}`)
         }
         const data = (await response.json()) as PlayUrlResponse
+        const url = new URL(data.url)
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+          throw new Error('Unsupported video URL protocol')
+        }
         if (isMounted) {
-          setPlayUrl(data.url)
+          setPlayUrl(url.toString())
           setCoverUrl(data.cover_url ?? null)
           setMimeType(data.mime_type ?? 'video/mp4')
         }
-      } catch {
-        // Error state is reflected by playUrl staying null after loading.
+      } catch (error) {
+        if (isMounted && !(error instanceof DOMException && error.name === 'AbortError')) {
+          setHasError(true)
+        }
       } finally {
         if (isMounted) setIsLoading(false)
       }
@@ -88,10 +113,11 @@ export function useVideoPlayUrl(
     resolve()
     return () => {
       isMounted = false
+      controller.abort()
     }
-  }, [documentId, enabled])
+  }, [documentId, enabled, requestVersion])
 
-  return { playUrl, coverUrl, mimeType, isLoading, notReady }
+  return { playUrl, coverUrl, mimeType, isLoading, notReady, hasError, retry }
 }
 
 /**
@@ -109,7 +135,11 @@ export function MultimodalVideoPreview({
   startSec?: number
   endSec?: number
 }) {
-  const { playUrl, coverUrl, mimeType, isLoading, notReady } = useVideoPlayUrl(documentId, true)
+  const { t } = useTranslation('knowledge')
+  const { playUrl, coverUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
+    documentId,
+    true
+  )
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -143,18 +173,38 @@ export function MultimodalVideoPreview({
 
   if (notReady) {
     return (
-      <div className="flex items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
+      <div className="flex flex-col items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
         <AlertCircle className="h-4 w-4" />
-        <span>视频转码中，请稍后重试</span>
+        <span>{t('document.multimodal.videoPreview.notReady')}</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={retry}
+          data-testid="video-preview-retry"
+        >
+          {t('document.multimodal.videoPreview.retry')}
+        </Button>
       </div>
     )
   }
 
   if (!playUrl) {
     return (
-      <div className="flex items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
+      <div className="flex flex-col items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
         <AlertCircle className="h-4 w-4" />
-        <span>{name}</span>
+        <span>{hasError ? t('document.multimodal.videoPreview.loadFailed') : name}</span>
+        {hasError && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={retry}
+            data-testid="video-preview-retry"
+          >
+            {t('document.multimodal.videoPreview.retry')}
+          </Button>
+        )}
       </div>
     )
   }
@@ -162,7 +212,6 @@ export function MultimodalVideoPreview({
   return (
     <video
       ref={videoRef}
-      src={playUrl}
       poster={coverUrl ?? undefined}
       controls
       preload="metadata"

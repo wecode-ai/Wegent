@@ -1653,6 +1653,7 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 source_index += 1
 
+        self._upgrade_video_source_references(source_references, chunks_used)
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )
@@ -1792,12 +1793,14 @@ class KnowledgeBaseTool(BaseTool):
             start_sec = metadata.get("video_start_sec")
             end_sec = metadata.get("video_end_sec")
             document_id = chunk.get("document_id")
-            # start_sec/end_sec must be ints (frontend seeks by seconds);
-            # document_id may be an int OR a UUID string depending on the
-            # storage backend, so only require it to be a non-empty value.
+            # Playback resolves an internal KnowledgeDocument by its integer ID.
             if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
                 continue
-            if not document_id:
+            if (
+                not isinstance(document_id, int)
+                or isinstance(document_id, bool)
+                or document_id <= 0
+            ):
                 continue
             if start_sec < 0 or end_sec <= start_sec:
                 continue
@@ -1810,8 +1813,12 @@ class KnowledgeBaseTool(BaseTool):
             seen_segments.add(segment_key)
             source["source_type"] = "wegent_video_segment"
             source["document_id"] = document_id
-            segment_title, segment_description = _extract_video_segment_copy(
+            fallback_title, fallback_description = _extract_video_segment_copy(
                 chunk.get("content", "")
+            )
+            segment_title = metadata.get("video_segment_title") or fallback_title
+            segment_description = (
+                metadata.get("video_segment_description") or fallback_description
             )
             source.setdefault("segments", []).append(
                 {

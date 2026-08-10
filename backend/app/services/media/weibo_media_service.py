@@ -238,22 +238,16 @@ class WeiboMediaService:
 
             if not data.get("succ"):
                 logger.warning(
-                    "[weibo_media] Download-link API returned failure: %s", data
+                    "[weibo_media] Download-link API returned failure for fid=%s", fid
                 )
                 return None
 
             video_url = data.get("url") or (data.get("urls") or [None])[0]
             if not video_url:
-                logger.warning(
-                    "[weibo_media] No URL in response for fid=%s: %s", fid, data
-                )
+                logger.warning("[weibo_media] No URL in response for fid=%s", fid)
                 return None
 
-            logger.info(
-                "[weibo_media] Successfully got video URL for fid=%s: %s...",
-                fid,
-                video_url[:80],
-            )
+            logger.info("[weibo_media] Successfully resolved video URL for fid=%s", fid)
             return video_url
         except Exception as exc:
             logger.error(

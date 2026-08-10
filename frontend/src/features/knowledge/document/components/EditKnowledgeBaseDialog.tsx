@@ -19,6 +19,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -80,6 +81,7 @@ export function EditKnowledgeBaseDialog({
   // enabled=false alongside the (non-blank) prompt text.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const effectiveMultimodalEnabled = multimodalFeatureEnabled && multimodalAnalysisEnabled
+  const { reviewVideoPrompt, videoTimestampPromptWarningDialog } = useVideoTimestampPromptGuard()
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({})
@@ -207,59 +209,65 @@ export function EditKnowledgeBaseDialog({
       return
     }
 
-    try {
-      // Build update data
-      // Filter out empty guided questions
-      const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
-      const kb = fullKnowledgeBase
-      const updateData: KnowledgeBaseUpdate = {
-        name: name.trim(),
-        description: description.trim(), // Allow empty string to clear description
-        direct_access_requirement: directAccessRequirement,
-        summary_enabled: summaryEnabled,
-        summary_model_ref: summaryEnabled ? summaryModelRef : null,
-        ...buildMultimodalSubmitFields(),
-        // For edit, send "" (never null) so the backend always applies the value:
-        // a blank string clears the override (revert to system default).
-        multimodal_analysis_video_prompt: effectiveMultimodalEnabled
-          ? multimodalVideoPrompt || ''
-          : '',
-        multimodal_analysis_image_prompt: effectiveMultimodalEnabled
-          ? multimodalImagePrompt || ''
-          : '',
-        guided_questions: validGuidedQuestions,
-        max_calls_per_conversation: maxCalls,
-        exempt_calls_before_check: exemptCalls,
+    const submit = async (reviewedVideoPrompt: string | null) => {
+      try {
+        // Build update data
+        // Filter out empty guided questions
+        const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
+        const kb = fullKnowledgeBase
+        const updateData: KnowledgeBaseUpdate = {
+          name: name.trim(),
+          description: description.trim(), // Allow empty string to clear description
+          direct_access_requirement: directAccessRequirement,
+          summary_enabled: summaryEnabled,
+          summary_model_ref: summaryEnabled ? summaryModelRef : null,
+          ...buildMultimodalSubmitFields(),
+          // For edit, send "" (never null) so the backend always applies the value:
+          // a blank string clears the override (revert to system default).
+          multimodal_analysis_video_prompt: effectiveMultimodalEnabled
+            ? reviewedVideoPrompt || ''
+            : '',
+          multimodal_analysis_image_prompt: effectiveMultimodalEnabled
+            ? multimodalImagePrompt || ''
+            : '',
+          guided_questions: validGuidedQuestions,
+          max_calls_per_conversation: maxCalls,
+          exempt_calls_before_check: exemptCalls,
+        }
+
+        // Add retrieval config update if advanced settings were modified
+        if (kb?.retrieval_config && retrievalConfig) {
+          const retrievalConfigUpdate: RetrievalConfigUpdate = {}
+
+          // Only include fields that can be updated (exclude retriever and embedding_config)
+          if (retrievalConfig.retrieval_mode !== undefined) {
+            retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
+          }
+          if (retrievalConfig.top_k !== undefined) {
+            retrievalConfigUpdate.top_k = retrievalConfig.top_k
+          }
+          if (retrievalConfig.score_threshold !== undefined) {
+            retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
+          }
+          if (retrievalConfig.hybrid_weights !== undefined) {
+            retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
+          }
+
+          // Only add retrieval_config if there are changes
+          if (Object.keys(retrievalConfigUpdate).length > 0) {
+            updateData.retrieval_config = retrievalConfigUpdate
+          }
+        }
+
+        await onSubmit(updateData)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('common:error'))
       }
-
-      // Add retrieval config update if advanced settings were modified
-      if (kb?.retrieval_config && retrievalConfig) {
-        const retrievalConfigUpdate: RetrievalConfigUpdate = {}
-
-        // Only include fields that can be updated (exclude retriever and embedding_config)
-        if (retrievalConfig.retrieval_mode !== undefined) {
-          retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
-        }
-        if (retrievalConfig.top_k !== undefined) {
-          retrievalConfigUpdate.top_k = retrievalConfig.top_k
-        }
-        if (retrievalConfig.score_threshold !== undefined) {
-          retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
-        }
-        if (retrievalConfig.hybrid_weights !== undefined) {
-          retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
-        }
-
-        // Only add retrieval_config if there are changes
-        if (Object.keys(retrievalConfigUpdate).length > 0) {
-          updateData.retrieval_config = retrievalConfigUpdate
-        }
-      }
-
-      await onSubmit(updateData)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('common:error'))
     }
+
+    reviewVideoPrompt(effectiveMultimodalEnabled ? multimodalVideoPrompt : null, result =>
+      submit(result.prompt)
+    )
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -420,6 +428,7 @@ export function EditKnowledgeBaseDialog({
         knowledgeBase={fullKnowledgeBase}
         onSuccess={handleTypeConverted}
       />
+      {videoTimestampPromptWarningDialog}
     </>
   )
 }

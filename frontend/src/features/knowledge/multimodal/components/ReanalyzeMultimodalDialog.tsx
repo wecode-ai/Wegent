@@ -21,6 +21,7 @@ import { ApiError } from '@/apis/client'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { MultimodalPromptEditor } from './MultimodalPromptEditor'
+import { useVideoTimestampPromptGuard } from '../hooks/useVideoTimestampPromptGuard'
 
 interface ReanalyzeMultimodalDialogProps {
   open: boolean
@@ -44,6 +45,7 @@ export function ReanalyzeMultimodalDialog({
   const { t } = useTranslation('knowledge')
   const [promptValue, setPromptValue] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const { reviewVideoPrompt, videoTimestampPromptWarningDialog } = useVideoTimestampPromptGuard()
 
   // Derive the document's media type from its name/extension. Normalize the
   // extension to a single leading dot (the stored value may or may not have one).
@@ -76,29 +78,40 @@ export function ReanalyzeMultimodalDialog({
 
   const kbPrompt = mediaType === 'video' ? kbVideoPrompt : kbImagePrompt
 
-  const handleSubmit = async () => {
-    setSubmitting(true)
-    try {
-      // Always send the current working text (even if unchanged from the
-      // inherited value): a blank value clears the document override (revert
-      // to KB default), a real string persists it. This keeps the document's
-      // stored prompt explicit and visible.
-      const result = await reindexDocument(doc.id, {
-        multimodal_analysis_prompt: promptValue ?? '',
-      })
-      if (!result.success) {
-        throw new Error(result.message || t('document.multimodal.reanalyzeFailed'))
+  const handleSubmit = () => {
+    const submit = async (reviewedPrompt: string) => {
+      setSubmitting(true)
+      try {
+        // Always send the current working text (even if unchanged from the
+        // inherited value): a blank value clears the document override (revert
+        // to KB default), a real string persists it. This keeps the document's
+        // stored prompt explicit and visible.
+        const result = await reindexDocument(doc.id, {
+          multimodal_analysis_prompt: reviewedPrompt,
+        })
+        if (!result.success) {
+          throw new Error(result.message || t('document.multimodal.reanalyzeFailed'))
+        }
+        toast({ description: t('document.multimodal.reanalyzeSuccess') })
+        onOpenChange(false)
+        onReanalyzed?.()
+      } catch (err) {
+        const message =
+          err instanceof ApiError ? err.message : t('document.multimodal.reanalyzeFailed')
+        toast({ description: message, variant: 'destructive' })
+      } finally {
+        setSubmitting(false)
       }
-      toast({ description: t('document.multimodal.reanalyzeSuccess') })
-      onOpenChange(false)
-      onReanalyzed?.()
-    } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : t('document.multimodal.reanalyzeFailed')
-      toast({ description: message, variant: 'destructive' })
-    } finally {
-      setSubmitting(false)
     }
+
+    if (mediaType !== 'video') {
+      void submit(promptValue ?? '')
+      return
+    }
+    const effectivePrompt = promptValue?.trim() ? promptValue : kbVideoPrompt
+    reviewVideoPrompt(effectivePrompt, result =>
+      submit(result.injected ? (result.prompt ?? '') : (promptValue ?? ''))
+    )
   }
 
   return (
@@ -147,6 +160,7 @@ export function ReanalyzeMultimodalDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {videoTimestampPromptWarningDialog}
     </Dialog>
   )
 }

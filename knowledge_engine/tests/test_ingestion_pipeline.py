@@ -142,6 +142,43 @@ def test_build_ingestion_result_preserves_video_chapter_time_metadata() -> None:
     assert timed_nodes[0].metadata["video_end_sec"] == 65
 
 
+def test_short_video_chapters_keep_distinct_time_metadata() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "### 预告片演员真名 ([00:00:00 - 00:00:06])\n"
+                    "> **本段摘要**：介绍演员真名。\n正文。\n\n---\n\n"
+                    "### 张凌赫误机趣事 ([00:00:06 - 00:00:15])\n"
+                    "> **本段摘要**：介绍机场广播趣事。\n正文。\n\n---\n\n"
+                    "### 林允使用本名 ([00:00:15 - 00:00:37])\n"
+                    "> **本段摘要**：介绍林允本名。\n正文。"
+                ),
+                metadata={"filename": "811.video"},
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    timed_nodes = [
+        node for node in result.index_nodes if "video_start_sec" in node.metadata
+    ]
+    assert [
+        (
+            node.metadata["video_start_sec"],
+            node.metadata["video_end_sec"],
+            node.metadata["video_segment_title"],
+        )
+        for node in timed_nodes
+    ] == [
+        (0, 6, "预告片演员真名"),
+        (6, 15, "张凌赫误机趣事"),
+        (15, 37, "林允使用本名"),
+    ]
+
+
 @pytest.mark.parametrize("file_extension", [".md", ".txt"])
 def test_build_ingestion_result_auto_unitizes_qa_documents(
     file_extension: str,

@@ -46,7 +46,7 @@ import {
   MAX_BATCH_FILES,
   type FileUploadStatus,
 } from '@/hooks/useBatchAttachment'
-import { MAX_FILE_SIZE } from '@/apis/attachments'
+import { isVideoFileName, MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
 import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants'
 import type { Attachment } from '@/types/api'
@@ -64,6 +64,7 @@ import {
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
 import type { DocumentCreationResult } from '../utils/document-creation'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
@@ -164,6 +165,7 @@ export function DocumentUpload({
   // a disabled pipeline.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const multimodalAnalysisEnabled = multimodalAnalysisEnabledProp && multimodalFeatureEnabled
+  const { reviewVideoPrompt, videoTimestampPromptWarningDialog } = useVideoTimestampPromptGuard()
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -338,33 +340,56 @@ export function DocumentUpload({
 
     if (successfulAttachments.length === 0) return
 
-    setIsConfirming(true)
-    try {
-      const results = await onUploadComplete(
-        successfulAttachments,
-        splitterConfig,
-        // Per-media-type prompt overrides collected by the
-        // UploadMultimodalPromptSettings child; null when the queue has no
-        // multimodal files → each document inherits the KB default.
-        multimodalPrompts ?? undefined
-      )
-      applyDocumentCreationResults(results)
+    const submit = async (prompts: UploadMultimodalPrompts | null) => {
+      setIsConfirming(true)
+      try {
+        const results = await onUploadComplete(
+          successfulAttachments,
+          splitterConfig,
+          // Per-media-type prompt overrides collected by the
+          // UploadMultimodalPromptSettings child; null when the queue has no
+          // multimodal files → each document inherits the KB default.
+          prompts ?? undefined
+        )
+        applyDocumentCreationResults(results)
 
-      const createdAttachmentIds = new Set(
-        results.filter(result => result.documentId !== undefined).map(result => result.attachmentId)
-      )
-      const targetedFiles = state.files.filter(file => !targetFileIds || targetFileIds.has(file.id))
-      const hasRemainingTargetFiles = targetedFiles.some(
-        file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
-      )
-      if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
-        handleClose()
+        const createdAttachmentIds = new Set(
+          results
+            .filter(result => result.documentId !== undefined)
+            .map(result => result.attachmentId)
+        )
+        const targetedFiles = state.files.filter(
+          file => !targetFileIds || targetFileIds.has(file.id)
+        )
+        const hasRemainingTargetFiles = targetedFiles.some(
+          file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
+        )
+        if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
+          handleClose()
+        }
+      } catch {
+        // Error handled by parent
+      } finally {
+        setIsConfirming(false)
       }
-    } catch {
-      // Error handled by parent
-    } finally {
-      setIsConfirming(false)
     }
+
+    const includesVideo = successfulAttachments.some(({ file, attachment }) =>
+      isVideoFileName(attachment.filename || file.name)
+    )
+    if (!multimodalAnalysisEnabled || !includesVideo) {
+      await submit(multimodalPrompts)
+      return
+    }
+
+    const effectiveVideoPrompt = multimodalPrompts?.video?.trim()
+      ? multimodalPrompts.video
+      : multimodalVideoPrompt
+    reviewVideoPrompt(effectiveVideoPrompt, result =>
+      submit(
+        result.injected ? { ...(multimodalPrompts ?? {}), video: result.prompt } : multimodalPrompts
+      )
+    )
   }
 
   const handleRetryFile = async (id: string) => {
@@ -1476,6 +1501,7 @@ export function DocumentUpload({
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         {renderContent()}
       </DialogContent>
+      {videoTimestampPromptWarningDialog}
     </Dialog>
   )
 }

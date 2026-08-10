@@ -26,7 +26,10 @@ from app.core import security
 from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.services.media.weibo_media_service import weibo_media_service
-from wecode.api.knowledge_video_download import _get_kb_video_attachment
+from wecode.api.knowledge_video_download import (
+    _get_kb_video_attachment,
+    _safe_video_mime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,5 +97,5 @@ async def resolve_video_play_url(
     )
     return VideoPlayUrlResponse(
         url=play_url,
-        mime_type="video/mp4",
+        mime_type=_safe_video_mime(context.mime_type),
     )

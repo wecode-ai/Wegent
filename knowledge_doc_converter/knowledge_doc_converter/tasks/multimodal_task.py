@@ -437,8 +437,8 @@ def convert_multimodal_task(
                     mime_type=content_type,
                     prompt=prompt,
                 )
-        except PermanentError as exc:
-            if (
+        except (PermanentError, TransientError) as exc:
+            if isinstance(exc, PermanentError) and (
                 "safety" in str(exc).lower()
                 or exc.error_class == "gemini_empty_response"
             ):

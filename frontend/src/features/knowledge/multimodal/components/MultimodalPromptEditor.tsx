@@ -11,6 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { getMultimodalDefaultPrompts } from '@/apis/knowledge'
 import { resolveEffectivePrompt, type PromptSource } from '../utils/resolveMultimodalPrompt'
+import { MAX_MULTIMODAL_PROMPT_LENGTH } from '../utils/videoTimestampPromptGuard'
 
 /**
  * Maximum length (chars) for a custom multimodal analysis prompt. Enforced in
@@ -18,8 +19,6 @@ import { resolveEffectivePrompt, type PromptSource } from '../utils/resolveMulti
  * all three entry points (KB create/edit, upload advanced settings, per-doc
  * re-analyze) since they all render this editor.
  */
-const MAX_PROMPT_LENGTH = 2000
-
 interface MultimodalPromptEditorProps {
   /**
    * Media type this editor is for. In the KB form there are two editors
@@ -168,7 +167,7 @@ export function MultimodalPromptEditor({
         value={workingText}
         onChange={e => handleTextChange(e.target.value)}
         rows={6}
-        maxLength={MAX_PROMPT_LENGTH}
+        maxLength={MAX_MULTIMODAL_PROMPT_LENGTH}
         placeholder={t('document.multimodal.promptPlaceholder')}
         data-testid={`multimodal-prompt-textarea-${idSuffix ?? mediaType}`}
         className="bg-base font-mono text-xs"
@@ -182,10 +181,12 @@ export function MultimodalPromptEditor({
         <span
           className={cn(
             'text-xs tabular-nums',
-            workingText.length > MAX_PROMPT_LENGTH * 0.9 ? 'text-amber-600' : 'text-text-muted'
+            workingText.length > MAX_MULTIMODAL_PROMPT_LENGTH * 0.9
+              ? 'text-amber-600'
+              : 'text-text-muted'
           )}
         >
-          {workingText.length}/{MAX_PROMPT_LENGTH}
+          {workingText.length}/{MAX_MULTIMODAL_PROMPT_LENGTH}
         </span>
       </div>
     </div>

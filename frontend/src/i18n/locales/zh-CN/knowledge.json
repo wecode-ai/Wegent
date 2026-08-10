@@ -878,7 +878,21 @@
       "reanalyze": "重新分析",
       "reanalyzing": "重新分析中...",
       "reanalyzeSuccess": "已开始重新分析",
-      "reanalyzeFailed": "重新分析失败"
+      "reanalyzeFailed": "重新分析失败",
+      "videoPreview": {
+        "notReady": "视频转码中，请稍后重试",
+        "loadFailed": "视频加载失败，请检查网络或访问权限",
+        "retry": "重试"
+      },
+      "timestampGuard": {
+        "title": "视频提示词可能缺少时间段要求",
+        "description": "当前提示词未明确要求每个视频片段输出开始和结束时间，后续引用可能无法定位到准确片段。你可以注入建议约束，也可以跳过并继续提交。",
+        "conflictDescription": "当前提示词可能明确排除了时间戳要求，后续引用可能无法定位到准确片段。请确认后注入建议约束，或跳过并继续提交。",
+        "injectAndContinue": "注入约束并继续",
+        "continueAnyway": "仍然继续",
+        "returnToEdit": "返回编辑",
+        "injectionTooLong": "注入后将超过提示词长度限制，请返回编辑并缩短原提示词。"
+      }
     }
   },
   "add_repository": "添加仓库",
