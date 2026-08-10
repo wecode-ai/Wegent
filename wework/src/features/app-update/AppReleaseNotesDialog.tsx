@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -13,13 +14,59 @@ interface AppReleaseNotesDialogProps {
   onClose: () => void
 }
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ')
+
 export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleaseNotesDialogProps) {
   const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEscapeKey(onClose, open)
+
+  useEffect(() => {
+    if (!open) return
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const frameId = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
+  }, [open])
 
   if (!open) return null
 
   const closeLabel = t('workbench.app_release_notes_close', '关闭更新日志')
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return
+
+    const focusableElements = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
+    )
+    if (focusableElements.length === 0) {
+      event.preventDefault()
+      dialogRef.current?.focus()
+      return
+    }
+
+    const firstElement = focusableElements[0]
+    const lastElement = focusableElements[focusableElements.length - 1]
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault()
+      lastElement.focus()
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault()
+      firstElement.focus()
+    }
+  }
 
   return createPortal(
     <div
@@ -30,13 +77,17 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
       }}
     >
       <div
+        ref={dialogRef}
         data-testid="app-release-notes-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="app-release-notes-dialog-title"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
         className="relative flex max-h-[min(720px,calc(100dvh-32px))] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-text-primary shadow-2xl"
       >
         <button
+          ref={closeButtonRef}
           type="button"
           data-testid="app-release-notes-dialog-close"
           aria-label={closeLabel}

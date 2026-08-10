@@ -690,27 +690,39 @@ describe('DesktopSidebar', () => {
     renderSidebar({}, undefined, {
       installedReleaseNotes: {
         version: '0.2.0',
-        body: '## Changes\n\n- Added the new changelog card.',
+        body: '## Changes\n\n- Added the new changelog card.\n\n[Learn more](https://example.com)',
       },
     })
 
     const card = screen.getByTestId('sidebar-release-notes-card')
     const account = screen.getByTestId('settings-button')
+    const openButton = screen.getByTestId('sidebar-release-notes-open')
     expect(card.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(card).toHaveTextContent('Wework 已更新至 v0.2.0')
     expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('sidebar-release-notes-open'))
+    await userEvent.click(openButton)
 
     expect(screen.getByTestId('app-release-notes-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('app-release-notes-content')).toHaveTextContent(
       'Added the new changelog card.'
     )
+    const closeButton = screen.getByTestId('app-release-notes-dialog-close')
+    const releaseNotesLink = screen.getByRole('link', { name: 'Learn more' })
+    await waitFor(() => expect(closeButton).toHaveFocus())
 
-    await userEvent.click(screen.getByTestId('app-release-notes-dialog-close'))
+    await userEvent.tab()
+    expect(releaseNotesLink).toHaveFocus()
+    await userEvent.tab()
+    expect(closeButton).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(releaseNotesLink).toHaveFocus()
+
+    await userEvent.click(closeButton)
 
     expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('sidebar-release-notes-card')).toBeInTheDocument()
+    expect(openButton).toHaveFocus()
   })
 
   test('dismisses the installed release notes card only from its close action', async () => {
