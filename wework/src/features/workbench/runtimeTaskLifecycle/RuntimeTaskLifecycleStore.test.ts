@@ -113,6 +113,17 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('keeps terminal executor snapshots idle even when running remains true', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const terminalTask = task({ running: true, status: 'complete' })
+
+    store.syncRuntimeWork(runtimeWork(terminalTask))
+    store.syncRuntimeWork(runtimeWork(terminalTask))
+
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+  })
+
   test('rejects a snapshot when a newer send starts before the response arrives', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))

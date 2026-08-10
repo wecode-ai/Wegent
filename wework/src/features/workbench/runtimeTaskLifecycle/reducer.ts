@@ -9,17 +9,22 @@ export function reduceRuntimeTaskLifecycle(
       const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
+      const terminalStatus = isTerminalTaskStatus(event.task.status)
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        (!isTerminalTaskStatus(event.task.status) || hasIdentifiedActiveTurn)
+        (!terminalStatus || hasIdentifiedActiveTurn)
       if (shouldIgnoreStaleSnapshot) return state
 
       const executionPhase =
-        snapshotRunning === null ? state.executionPhase : snapshotRunning ? 'running' : 'idle'
-      const turnPhase = snapshotRunning === false ? 'idle' : state.turnPhase
-      const activeTurnId = snapshotRunning === false ? null : state.activeTurnId
+        terminalStatus || snapshotRunning === false
+          ? 'idle'
+          : snapshotRunning === true
+            ? 'running'
+            : state.executionPhase
+      const turnPhase = terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
+      const activeTurnId = terminalStatus || snapshotRunning === false ? null : state.activeTurnId
 
       return {
         ...state,
@@ -33,7 +38,7 @@ export function reduceRuntimeTaskLifecycle(
         expectedExecutorRunning:
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
-          (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))
+          (snapshotRunning === expectedRunning || terminalStatus)
             ? null
             : expectedRunning,
       }
