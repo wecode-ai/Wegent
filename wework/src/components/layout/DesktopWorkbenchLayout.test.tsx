@@ -4805,24 +4805,69 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens the right workspace new tab menu as an anchored popup in Tauri', async () => {
-    renderWorkspacePanelLayout()
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    const previousTauriEventPluginInternals = (
+      window as typeof window & {
+        __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
+      }
+    ).__TAURI_EVENT_PLUGIN_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {
+        transformCallback: vi.fn(() => 1),
+        unregisterCallback: vi.fn(),
+        invoke: vi.fn(async (command: string) => {
+          if (command === 'embedded_browser_pending_open_requests') return []
+          return null
+        }),
+      },
+    })
+    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+      configurable: true,
+      value: { unregisterListener: vi.fn() },
+    })
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    let unmount: (() => void) | undefined
+    try {
+      ;({ unmount } = renderWorkspacePanelLayout())
 
-    const newTabButton = screen.getByTestId('right-workspace-new-tab-button')
-    ;(window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+      await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
 
-    await userEvent.click(newTabButton)
-
-    const menu = screen.getByTestId('right-workspace-new-tab-menu')
-    expect(menu).toBeInTheDocument()
-    expect(within(menu).getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
-    expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
-    expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
-    expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
-    expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
-    expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
+      const menu = screen.getByTestId('right-workspace-new-tab-menu')
+      expect(menu).toBeInTheDocument()
+      expect(within(menu).getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+      expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
+      expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
+      expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
+      expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
+      expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
+    } finally {
+      unmount?.()
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+      if (previousTauriEventPluginInternals === undefined) {
+        delete (
+          window as typeof window & {
+            __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
+          }
+        ).__TAURI_EVENT_PLUGIN_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+          configurable: true,
+          value: previousTauriEventPluginInternals,
+        })
+      }
+    }
   })
 
   test('opens terminal in the right workspace panel from the right add menu', async () => {
