@@ -174,7 +174,7 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
-const E2E_TRANSCRIPT_PAGE_SIZE = 49
+const E2E_TRANSCRIPT_PAGE_SIZE = 20
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
 const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
@@ -1753,7 +1753,8 @@ async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
   restartDesktopApp,
-  expectedTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT
+  expectedTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT,
+  expectedConversationTurnCount = expectedTurnCount
 ) {
   const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
@@ -1784,6 +1785,59 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+    const expectedMessageCount = expectedConversationTurnCount * 2
+    const paginationStartedAt = Date.now()
+    let paginatedSnapshot
+    while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      if (
+        paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
+        paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+      ) {
+        break
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.equal(
+      paginatedSnapshot?.pane?.messageSummary.total,
+      expectedMessageCount,
+      'Loading the older transcript page duplicated or dropped conversation messages'
+    )
+    assert.equal(
+      paginatedSnapshot.pane.messageSummary.byRole.user,
+      expectedConversationTurnCount,
+      'Loading the older transcript page changed the user-message count'
+    )
+    assert.equal(
+      paginatedSnapshot.pane.messageSummary.byRole.assistant,
+      expectedConversationTurnCount,
+      'Loading the older transcript page changed the assistant-message count'
+    )
+
+    const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.15' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await assertDesktopComposerDocked(
+      control,
+      await getSingleElementMetrics(
+        control,
+        scrollerSelector,
+        'The paginated conversation after scrolling upward'
+      ),
+      'The composer after scrolling upward in a paginated conversation'
+    )
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.75' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await assertDesktopComposerDocked(
+      control,
+      await getSingleElementMetrics(
+        control,
+        scrollerSelector,
+        'The paginated conversation after scrolling downward'
+      ),
+      'The composer after scrolling downward in a paginated conversation'
+    )
+    await captureVerificationScreenshot(control, 'turn-navigation-00-paginated-scroll-stable.png')
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
@@ -2483,6 +2537,23 @@ async function getSingleElementMetrics(control, selector, description) {
   const metrics = await getElementMetrics(control, selector)
   assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
   return metrics[0]
+}
+
+async function assertDesktopComposerDocked(control, scrollerMetrics, description) {
+  const composerMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`,
+    description
+  )
+  assert.ok(
+    composerMetrics.top >= scrollerMetrics.top && composerMetrics.bottom <= scrollerMetrics.bottom,
+    `${description} was outside the conversation viewport`
+  )
+  const bottomGap = scrollerMetrics.bottom - composerMetrics.bottom
+  assert.ok(
+    bottomGap >= 0 && bottomGap <= 32,
+    `${description} drifted ${bottomGap}px above the conversation viewport bottom`
+  )
 }
 
 async function waitForBottomMetrics(control, selector, description, timeoutMs = 1_500) {
@@ -6875,7 +6946,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
-  await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
+  await reopenCurrentTurnNavigationTask(
+    control,
+    composerSelector,
+    restartDesktopApp,
+    TURN_NAVIGATION_REGRESSION_TURN_COUNT,
+    TURN_NAVIGATION_REGRESSION_TURN_COUNT + 1
+  )
   await verifyTurnNavigationTracksVisibleTurnMessages(control)
   return taskRowTestId
 }
