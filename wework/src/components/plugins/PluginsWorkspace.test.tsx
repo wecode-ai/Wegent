@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
 import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
-import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
+import {
+  clearPluginMarketplaceCache,
+  setPluginMarketplaceCache,
+} from '@/features/plugins/pluginMarketplaceCache'
+import { resetLocalExecutorStateForTests } from '@/tauri/localExecutor'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
@@ -993,6 +997,7 @@ describe('PluginsWorkspace', () => {
     clearPluginMarketplaceCache()
     clearPluginDeviceAutoSyncAttempts()
     clearLocalCodexPluginsReadStateCache()
+    resetLocalExecutorStateForTests()
     mockSystemSkillsFetch()
   })
 
@@ -1215,17 +1220,25 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
+    const marketplaceFetchesBeforeSearch = vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace')).length
 
     await userEvent.type(screen.getByTestId('plugins-search-input'), 'missing')
 
     expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
     expect(screen.queryByText('Documents')).not.toBeInTheDocument()
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/marketplace?q=missing',
-        expect.objectContaining({ method: 'GET' })
-      )
-    )
+    // Search is client-side over the already-loaded catalog; typing must not refetch.
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace')).length
+    ).toBe(marketplaceFetchesBeforeSearch)
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).includes('/api/plugins/marketplace?q='))
+    ).toBe(false)
   })
 
   test('filters marketplace plugins by the prototype distribution tabs', async () => {
@@ -1627,21 +1640,17 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Superpowers')).toBeInTheDocument()
-    await userEvent.click(
-      screen.getByTestId('plugin-marketplace-actions-openai-official:superpowers-local-id')
-    )
-    await userEvent.click(
-      screen.getByTestId('plugin-marketplace-uninstall-openai-official:superpowers-local-id')
-    )
+    await userEvent.click(screen.getByTestId('plugin-marketplace-actions-superpowers-local-id'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-superpowers-local-id'))
     expect(screen.getByTestId('plugin-uninstall-confirm-button')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
     expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'superpowers-local-id' })
     expect(
-      await screen.findByTestId('plugin-marketplace-install-openai-official:superpowers-local-id')
+      await screen.findByTestId('plugin-marketplace-install-superpowers-local-id')
     ).toHaveTextContent('安装')
     expect(
-      screen.queryByTestId('plugin-marketplace-actions-openai-official:superpowers-local-id')
+      screen.queryByTestId('plugin-marketplace-actions-superpowers-local-id')
     ).not.toBeInTheDocument()
   })
 
@@ -2117,7 +2126,7 @@ describe('PluginsWorkspace', () => {
     expectCodexAppServerRequest('plugin/list', { cwds: null })
   })
 
-  test('renders Codex upstream marketplaces after the cloud marketplace', async () => {
+  test('treats the OpenAI curated remote marketplace as a built-in source', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2137,12 +2146,65 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
-    expect(screen.getByTestId('plugins-marketplace-tab-openai-curated-remote')).toHaveTextContent(
-      'OpenAI 官方市场'
-    )
+    expect(
+      screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')
+    ).not.toBeInTheDocument()
     expectCodexAppServerRequest('plugin/list', {
       cwds: null,
     })
+  })
+
+  test('keeps openai-curated plugins under the OpenAI official filter', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          displayName: 'Codex official',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: 'linear',
+              name: 'linear',
+              displayName: 'Linear',
+              description: 'Official Linear plugin',
+            },
+          ],
+        },
+        {
+          name: 'awesome-codex-plugins',
+          displayName: 'Awesome Codex Plugins',
+          path: 'https://github.com/example/awesome-codex-plugins',
+          plugins: [
+            {
+              id: 'superpowers',
+              name: 'superpowers',
+              displayName: 'SuperPowers',
+              description: 'Community plugin',
+            },
+          ],
+        },
+      ],
+    })
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-openai-curated')).not.toBeInTheDocument()
+    expect(screen.queryByText('Codex official')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+    expect(screen.getByText('Linear')).toBeInTheDocument()
+    expect(screen.queryByText('SuperPowers')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-marketplace-tab-awesome-codex-plugins'))
+    expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+    expect(screen.queryByText('Linear')).not.toBeInTheDocument()
   })
 
   test('merges plugins from all local Codex marketplaces into one catalog', async () => {
@@ -2418,6 +2480,495 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-loading')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-no-marketplace-welcome')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
+  })
+
+  test('paints local Codex plugins before a slow cloud marketplace responds', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          displayName: 'Codex official',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: 'linear',
+              name: 'linear',
+              displayName: 'Linear',
+              description: 'Official Linear plugin',
+            },
+          ],
+        },
+      ],
+    })
+
+    let resolveMarketplace: ((value: Response) => void) | null = null
+    const pendingMarketplace = new Promise<Response>(resolve => {
+      resolveMarketplace = resolve
+    })
+    const previousFetch = vi.mocked(fetch)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        const requestUrl = new URL(url, 'http://localhost')
+        if (requestUrl.pathname === '/api/plugins/marketplace') {
+          return pendingMarketplace
+        }
+        return previousFetch(url, init)
+      })
+    )
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cloud Only Plugin')).not.toBeInTheDocument()
+
+    resolveMarketplace?.({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        items: [
+          {
+            id: 999,
+            remotePluginId: 'cloud-only',
+            name: 'cloud-only',
+            displayName: 'Cloud Only Plugin',
+            description: 'Cloud catalog plugin',
+            version: '1.0.0',
+            author: 'Wegent',
+            visibility: 'public',
+            featured: false,
+            installed: false,
+            enabled: false,
+            installedPluginId: null,
+            sourceType: 'marketplace',
+            sourceProvider: 'wegent',
+            sourceLabel: 'Wework',
+            ownerUserId: 1,
+            interface: {
+              displayName: 'Cloud Only Plugin',
+              shortDescription: 'Cloud catalog plugin',
+              logo: null,
+              composerIcon: null,
+              brandColor: null,
+              category: 'Productivity',
+              defaultPrompt: [],
+              homepageUrl: null,
+              supportUrl: null,
+              categories: ['productivity'],
+              tags: [],
+            },
+            components: {
+              skills: [],
+              commands: [],
+              apps: [],
+              agents: [],
+              hooks: [],
+              mcps: [],
+              lsps: [],
+              monitors: [],
+              bins: [],
+              connectors: [],
+            },
+            manifest: {},
+            latestReleaseId: 1,
+          },
+        ],
+      }),
+    } as Response)
+
+    expect(await screen.findByText('Cloud Only Plugin')).toBeInTheDocument()
+    expect(screen.getByText('Linear')).toBeInTheDocument()
+  })
+
+  test('paints personal-created plugins from disk before Codex plugin/list returns', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [],
+    })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_initialize_bundled_plugin_marketplace') {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path: '/tmp/wework-personal',
+          pluginCount: 1,
+        })
+      }
+      if (command === 'local_executor_list_personal_marketplace_plugins') {
+        return Promise.resolve({
+          marketplaceId: 'wework-personal',
+          marketplacePath: '/tmp/wework-personal',
+          plugins: [
+            {
+              name: 'my-notes',
+              version: '0.1.0',
+              displayName: 'My Notes',
+              description: 'Personal notes plugin',
+              logo: null,
+              category: 'Productivity',
+              pluginPath: '/tmp/wework-personal/plugins/my-notes',
+            },
+          ],
+        })
+      }
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-personal'))
+    expect(await screen.findByText('My Notes')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+
+    resolveLocalList?.({ marketplaces: [] })
+  })
+
+  test('paints disk personal plugins even when a cloud marketplace cache already exists', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setPluginMarketplaceCache({
+      cacheKey: '/api|cloud-token',
+      marketplaceItems: [
+        {
+          id: 42,
+          remotePluginId: '42',
+          name: 'cloud-docs',
+          displayName: 'Cloud Docs',
+          description: 'Cloud only',
+          version: '1.0.0',
+          author: null,
+          visibility: 'public',
+          featured: false,
+          installed: false,
+          enabled: false,
+          sourceType: 'marketplace',
+          sourceProvider: 'wegent',
+          latestReleaseId: 7,
+          components: {
+            skills: [],
+            commands: [],
+            apps: [],
+            agents: [],
+            mcps: [],
+            hooks: [],
+            lsps: [],
+            monitors: [],
+            bins: [],
+          },
+          manifest: {},
+          ownerUserId: 1,
+        },
+      ],
+      installedPlugins: [],
+      marketplaces: [
+        {
+          key: 'cloud:default',
+          id: 'default',
+          name: 'Wework 云端市场',
+          kind: 'cloud',
+        },
+      ],
+      selectedMarketplaceKey: 'cloud:default',
+      deviceId: 'local-device',
+      canPublish: true,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [],
+    })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_list_personal_marketplace_plugins') {
+        return Promise.resolve({
+          marketplaceId: 'wework-personal',
+          marketplacePath: '/tmp/wework-personal',
+          plugins: [
+            {
+              name: 'cached-notes',
+              version: '0.1.0',
+              displayName: 'Cached Notes',
+              description: 'Should paint despite catalog cache',
+              logo: null,
+              category: 'Productivity',
+              pluginPath: '/tmp/wework-personal/plugins/cached-notes',
+              installed: true,
+            },
+          ],
+        })
+      }
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-personal'))
+    expect(await screen.findByText('Cached Notes')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+
+    resolveLocalList?.({ marketplaces: [] })
+  })
+
+  test('paints cloud marketplace plugins before a slow local Codex readState responds', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          displayName: 'Codex official',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: 'linear',
+              name: 'linear',
+              displayName: 'Linear',
+              description: 'Official Linear plugin',
+            },
+          ],
+        },
+      ],
+    })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+    expect(screen.queryByText('Linear')).not.toBeInTheDocument()
+
+    resolveLocalList?.({
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          path: 'https://github.com/openai/plugins',
+          interface: { displayName: 'Codex official' },
+          plugins: [
+            {
+              id: 'linear',
+              remotePluginId: 'linear',
+              localVersion: '1.0.0',
+              name: 'linear',
+              installed: false,
+              enabled: false,
+              installPolicy: 'AVAILABLE',
+              authPolicy: 'ON_USE',
+              interface: {
+                displayName: 'Linear',
+                shortDescription: 'Official Linear plugin',
+                longDescription: 'Official Linear plugin',
+                logo: null,
+                composerIcon: null,
+                brandColor: null,
+                category: 'Productivity',
+                defaultPrompt: [],
+                homepageUrl: null,
+                supportUrl: null,
+                categories: ['productivity'],
+                tags: [],
+              },
+              components: {
+                skills: [],
+                commands: [],
+                apps: [],
+                agents: [],
+                hooks: [],
+                mcps: [],
+                lsps: [],
+                monitors: [],
+                bins: [],
+                connectors: [],
+              },
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    expect(screen.getByText('Documents')).toBeInTheDocument()
+    expectCodexAppServerRequest('plugin/list', { marketplaceKinds: ['local'] })
+  })
+
+  test('paints local installed strip when Codex readState arrives after cloud catalog', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      installedPluginNames: ['linear'],
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          displayName: 'Codex official',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: 'linear',
+              name: 'linear',
+              displayName: 'Linear',
+              description: 'Official Linear plugin',
+            },
+          ],
+        },
+      ],
+    })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string; params?: Record<string, unknown> }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-installed-strip-empty')).toBeInTheDocument()
+
+    resolveLocalList?.({
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          path: 'https://github.com/openai/plugins',
+          interface: { displayName: 'Codex official' },
+          plugins: [
+            {
+              id: 'linear',
+              remotePluginId: 'linear',
+              localVersion: '1.0.0',
+              name: 'linear',
+              installed: true,
+              enabled: true,
+              installPolicy: 'AVAILABLE',
+              authPolicy: 'ON_USE',
+              interface: {
+                displayName: 'Linear',
+                shortDescription: 'Official Linear plugin',
+                longDescription: 'Official Linear plugin',
+                logo: null,
+                composerIcon: null,
+                brandColor: null,
+                category: 'Productivity',
+                defaultPrompt: [],
+                homepageUrl: null,
+                supportUrl: null,
+                categories: ['productivity'],
+                tags: [],
+              },
+              components: {
+                skills: [],
+                commands: [],
+                apps: [],
+                agents: [],
+                hooks: [],
+                mcps: [],
+                lsps: [],
+                monitors: [],
+                bins: [],
+                connectors: [],
+              },
+            },
+          ],
+        },
+      ],
+    })
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByTestId('plugins-installed-strip-empty')).not.toBeInTheDocument()
+    })
   })
 
   test('sends remote plugin id for remote marketplace install', async () => {

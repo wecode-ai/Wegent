@@ -27,7 +27,7 @@ import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
@@ -39,7 +39,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
@@ -1745,16 +1745,28 @@ export function WorkbenchProvider({
 
       const loadGeneration = localAppsLoadGenerationRef.current
       const loadPromise = (async () => {
-        // Cloud installs must not depend on Codex readState succeeding — that was
-        // wiping the toolbar plugin button whenever local plugin state failed.
+        // Composer only needs installed membership. Never await Codex plugin/list
+        // here — it reconciles for ~10s and stalls turns on the shared app-server
+        // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
         let apps = await loadComposerPluginApps({
           listCodexApps: () => localPluginApi.listApps(),
-          readLocalInstalledPlugins: () =>
-            localPluginApi.readState().then(state => {
-              currentComposerDeviceId = state.deviceId
-              return state.installedPlugins
-            }),
+          readLocalInstalledPlugins: async () => {
+            const response = await localPluginApi.listInstalledPlugins()
+            currentComposerDeviceId =
+              peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
+              peekLocalCodexPluginsReadState()?.deviceId ||
+              null
+            if (!currentComposerDeviceId) {
+              try {
+                const status = await ensureLocalExecutorStarted()
+                currentComposerDeviceId = status.deviceId?.trim() || null
+              } catch {
+                currentComposerDeviceId = null
+              }
+            }
+            return response.items
+          },
           listCloudInstalledPlugins: () =>
             cloudPluginApi
               .listInstalledPlugins(currentComposerDeviceId ?? undefined)
