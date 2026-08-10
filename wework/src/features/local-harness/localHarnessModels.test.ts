@@ -30,6 +30,7 @@ describe('localHarnessModels', () => {
 
     expect(listLocalHarnessModelOptions('opencode', models)).toHaveLength(2)
     expect(listLocalHarnessModelOptions('claude_code', models)).toHaveLength(2)
+    expect(listLocalHarnessModelOptions('kimi_code', models)).toHaveLength(2)
   })
 
   it('carries the current Wework model options into harness routing', () => {
@@ -72,7 +73,34 @@ describe('localHarnessModels', () => {
       proxyToken: 'route-token',
       env: {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/route-token',
-        ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
+        ANTHROPIC_API_KEY: 'wework-local-router',
+      },
+    })
+  })
+
+  it('routes Kimi Code through the same local Anthropic Messages endpoint', () => {
+    const modelWithLimits: UnifiedModel = {
+      ...localModel,
+      contextWindow: 262_144,
+      maxOutputTokens: 32_768,
+    }
+    const [option] = listLocalHarnessModelOptions('kimi_code', [modelWithLimits])
+    const launch = harnessLaunchThroughMessagesProxy('kimi_code', option, {
+      token: 'route-token',
+      baseUrl: 'http://127.0.0.1:1234/v1/harness-router/route-token',
+    })
+
+    expect(launch).toEqual({
+      modelId: '__kimi_env_model__',
+      proxyToken: 'route-token',
+      env: {
+        KIMI_MODEL_NAME: 'wework-selected',
+        KIMI_MODEL_PROVIDER_TYPE: 'anthropic',
+        KIMI_MODEL_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/route-token',
+        KIMI_MODEL_API_KEY: 'wework-local-router',
+        KIMI_MODEL_DISPLAY_NAME: 'Local Model',
+        KIMI_MODEL_MAX_CONTEXT_SIZE: '262144',
+        KIMI_MODEL_MAX_OUTPUT_SIZE: '32768',
       },
     })
   })

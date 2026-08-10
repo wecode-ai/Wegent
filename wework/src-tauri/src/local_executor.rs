@@ -610,6 +610,13 @@ fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
     local_executor_runtime_dir_path()
 }
 
+fn bundled_plugin_marketplace_path() -> Result<PathBuf, String> {
+    Ok(local_executor_home_path()?
+        .join("capabilities")
+        .join("bundled-marketplaces")
+        .join(WEWORK_PERSONAL_MARKETPLACE_ID))
+}
+
 fn local_executor_isolation_enabled() -> Result<bool, String> {
     if let Ok(value) = std::env::var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV) {
         return match value.trim() {
@@ -1568,10 +1575,7 @@ fn initialize_bundled_plugin_marketplace(
         .map_err(|error| format!("failed to resolve WeWork resources: {error}"))?
         .join(BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME)
         .join(WEWORK_PERSONAL_MARKETPLACE_ID);
-    let destination = local_executor_runtime_home_path()?
-        .join("capabilities")
-        .join("bundled-marketplaces")
-        .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+    let destination = bundled_plugin_marketplace_path()?;
     let initialized = initialize_bundled_plugin_marketplace_from_paths(&source, &destination)?;
     log::info!(
         "Initialized WeWork bundled plugin marketplace: id={}, path={}, plugins={}",
@@ -2735,7 +2739,7 @@ fn plugin_source_path_from_marketplace_json(
     None
 }
 
-fn resolve_local_plugin_root(
+pub(crate) fn resolve_local_plugin_root(
     marketplace_path: &Path,
     plugin_name: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
@@ -2768,7 +2772,8 @@ fn resolve_local_plugin_root(
         if !seen.insert(normalized.clone()) {
             continue;
         }
-        if normalized.join(".codex-plugin/plugin.json").is_file()
+        if normalized.join("plugin.json").is_file()
+            || normalized.join(".codex-plugin/plugin.json").is_file()
             || normalized.join(".claude-plugin/plugin.json").is_file()
         {
             return Ok((marketplace_root, normalized));
@@ -3052,6 +3057,7 @@ fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Res
     let (_marketplace_root, plugin_root) =
         resolve_local_plugin_root(marketplace_path, normalized_name)?;
     let manifest_path = [
+        plugin_root.join("plugin.json"),
         plugin_root.join(".codex-plugin/plugin.json"),
         plugin_root.join(".claude-plugin/plugin.json"),
     ]
@@ -4774,6 +4780,45 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         assert_eq!(
             local_executor_runtime_home_path().expect("shared home should resolve"),
             home
+        );
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
+    }
+
+    #[test]
+    fn bundled_plugin_marketplace_path_is_stable_across_runtime_isolation() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+        let home = PathBuf::from("/tmp/wework-stable-plugin-marketplace");
+        let expected = home
+            .join("capabilities")
+            .join("bundled-marketplaces")
+            .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &home);
+        std::env::remove_var(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "true");
+        assert_ne!(
+            local_executor_runtime_home_path().expect("isolated runtime home should resolve"),
+            home
+        );
+        assert_eq!(
+            bundled_plugin_marketplace_path().expect("marketplace path should resolve"),
+            expected
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "false");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("shared runtime home should resolve"),
+            home
+        );
+        assert_eq!(
+            bundled_plugin_marketplace_path().expect("marketplace path should remain stable"),
+            expected
         );
 
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);

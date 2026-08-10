@@ -17,6 +17,7 @@ import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
@@ -31,6 +32,7 @@ import {
   openLocalWorkspace,
   startLocalHarness,
   startLocalTerminal,
+  updateLocalHarnessSessionTitle,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
@@ -288,8 +290,10 @@ vi.mock('@/lib/local-terminal', () => ({
   listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
   localPathExists: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  resolveLocalHarnessPluginRoots: vi.fn().mockResolvedValue([]),
   startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
+  updateLocalHarnessSessionTitle: vi.fn(),
 }))
 
 vi.mock('@pierre/diffs/react', async () => {
@@ -470,6 +474,7 @@ const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalHarnessMock = vi.mocked(startLocalHarness)
+const updateLocalHarnessSessionTitleMock = vi.mocked(updateLocalHarnessSessionTitle)
 const resolveLocalHarnessLaunchMock = vi.fn()
 const unregisterHarnessProxyMock = vi.fn()
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
@@ -623,16 +628,29 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalHarnessMock.mockResolvedValue('local-harness-1')
+    updateLocalHarnessSessionTitleMock.mockResolvedValue(undefined)
     resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
-      modelId: harnessId === 'claude_code' ? 'wework-selected' : 'wework-messages/wework-selected',
+      modelId:
+        harnessId === 'claude_code'
+          ? 'wework-selected'
+          : harnessId === 'kimi_code'
+            ? '__kimi_env_model__'
+            : 'wework-messages/wework-selected',
       proxyToken: 'proxy-token',
       env:
         harnessId === 'claude_code'
           ? {
               ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
-              ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
+              ANTHROPIC_API_KEY: 'wework-local-router',
             }
-          : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
+          : harnessId === 'kimi_code'
+            ? {
+                KIMI_MODEL_NAME: 'wework-selected',
+                KIMI_MODEL_PROVIDER_TYPE: 'anthropic',
+                KIMI_MODEL_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+                KIMI_MODEL_API_KEY: 'wework-local-router',
+              }
+            : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
     }))
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
@@ -874,6 +892,7 @@ describe('DesktopWorkbenchLayout', () => {
     codeCommentContexts?: unknown[]
     subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
+    runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
     isRuntimeTranscriptLoading?: boolean
@@ -1100,6 +1119,7 @@ describe('DesktopWorkbenchLayout', () => {
           resolveLaunch: resolveLocalHarnessLaunchMock,
           unregisterProxy: unregisterHarnessProxyMock,
         },
+        ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },
       state,
       isStartupReady: true,
@@ -3179,6 +3199,15 @@ describe('DesktopWorkbenchLayout', () => {
         version: '1.0.0',
       },
     ])
+    const listLocalSkills = vi.fn().mockResolvedValue([
+      {
+        name: 'github',
+        description: 'GitHub plugin',
+        path: '/Users/test/.wework/plugins/github/1.0.0/skills/github/SKILL.md',
+        source: 'codex',
+        plugin_name: 'github',
+      },
+    ])
 
     render(
       <DesktopWorkbenchLayout
@@ -3187,11 +3216,13 @@ describe('DesktopWorkbenchLayout', () => {
         projectChat={{
           ...baseProps.projectChat,
           models: [harnessTestModel, secondHarnessTestModel],
+          listLocalSkills,
         }}
       />
     )
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('workbench-harness-experimental-badge')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('workbench-harness-selector'))
     const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
     await waitFor(() => expect(openCodeOption).not.toBeDisabled())
@@ -3224,14 +3255,23 @@ describe('DesktopWorkbenchLayout', () => {
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'opencode',
         prompt: '检查当前项目',
+        isPrimary: true,
+        projectId: 1,
         cwd: '/workspace/github_wegent',
         executablePath: null,
         args: ['--model', 'wework-messages/wework-selected'],
+        pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
         proxyToken: 'proxy-token',
-        env: { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
+        modelKey: 'wework:runtime:::local-model%3Asecond',
+        resumeSessionId: undefined,
+        env: {
+          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
       })
     )
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(listLocalSkills).toHaveBeenCalled()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
       'data-session-id',
@@ -3240,12 +3280,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('检查当前项目')
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('close-local-harness-session-local-harness-1')
+    ).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-add-harness-opencode-option')).toHaveTextContent(
-      '新建 OpenCode 会话 · 实验性'
+    expect(screen.getByTestId('workspace-add-harness-option')).toHaveTextContent(
+      '新建 Harness 会话 · 实验性'
     )
 
     fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
@@ -3264,21 +3308,37 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
 
-    await userEvent.click(screen.getByTestId('workspace-add-harness-opencode-option'))
+    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    expect(screen.getByTestId('harness-session-picker')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('harness-session-picker-option-opencode'))
     await waitFor(() =>
       expect(startLocalHarnessMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
           harnessId: 'opencode',
           prompt: '',
+          isPrimary: false,
+          projectId: 1,
           cwd: '/workspace/github_wegent',
+          pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
         })
       )
     )
     expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
     expect(screen.getByTestId('local-harness-session-row-local-harness-2')).toBeInTheDocument()
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      await screen.findByTestId('local-harness-session-row-local-harness-1')
+    )
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      screen.getByTestId('local-harness-session-row-local-harness-2')
+    )
+    expect(screen.getByTestId('runtime-chat-section')).not.toContainElement(
+      screen.getByTestId('local-harness-session-row-local-harness-1')
+    )
     expect(
       screen.getAllByTestId('embedded-local-terminal').find(element => !element.hidden)
     ).toHaveAttribute('data-session-id', 'local-harness-2')
+    expect(screen.getByTestId('central-harness-close-button')).toBeInTheDocument()
+    expect(screen.getByTestId('close-local-harness-session-local-harness-2')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('central-harness-close-button'))
 
@@ -3286,6 +3346,80 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
+  })
+
+  test('prepares a project worktree before starting the primary OpenCode session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+    const prepareWorktree = vi.fn().mockResolvedValue({
+      success: true,
+      deviceId: 'device-1',
+      path: '/workspace/worktrees/harness-1/github_wegent',
+      worktree: {
+        deviceId: 'device-1',
+        worktreeId: 'harness-1',
+        path: '/workspace/worktrees/harness-1/github_wegent',
+        repositoryName: 'github_wegent',
+        sourcePath: '/workspace/github_wegent',
+        state: 'active',
+        conversations: [],
+      },
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '在独立工作树中修复问题' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+        projectWork={{
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/harness-runtime',
+        }}
+        runtimeWorkApi={
+          { prepareWorktree } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+        }
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    await userEvent.click(screen.getByTestId('workbench-harness-option-opencode'))
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(prepareWorktree).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        sourcePath: '/workspace/github_wegent',
+        worktreeId: expect.stringMatching(/^harness-/),
+        ref: 'feature/harness-runtime',
+      })
+    )
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          harnessId: 'opencode',
+          prompt: '在独立工作树中修复问题',
+          isPrimary: true,
+          projectId: 1,
+          cwd: '/workspace/worktrees/harness-1/github_wegent',
+        })
+      )
+    )
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      await screen.findByTestId('local-harness-session-row-local-harness-1')
+    )
   })
 
   test('restores active native harness sessions after a WebView reload', async () => {
@@ -3297,6 +3431,10 @@ describe('DesktopWorkbenchLayout', () => {
         title: '继续修复测试',
         cwd: '/workspace/github_wegent',
         created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: 'wework:runtime:::local-model%3Atest',
       },
     ])
 
@@ -3313,6 +3451,72 @@ describe('DesktopWorkbenchLayout', () => {
       'data-session-id',
       'local-terminal-restored'
     )
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+  })
+
+  test('resumes an inactive persisted harness session with the same Wework session id', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    const listLocalSkills = vi.fn().mockRejectedValue(new Error('must not reload plugins'))
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.18.16',
+      },
+    ])
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-persisted',
+        harness_id: 'opencode',
+        title: '重启后继续修复',
+        cwd: '/workspace/github_wegent',
+        created_at: 1234,
+        is_primary: true,
+        project_id: 1,
+        active: false,
+        model_key: harnessTestModel.key,
+        plugin_roots: ['/Users/test/.wework/plugins/github/1.0.0'],
+      },
+    ])
+    startLocalHarnessMock.mockResolvedValue('local-harness-persisted')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel], listLocalSkills }}
+      />
+    )
+
+    expect(
+      await screen.findByTestId('local-harness-session-row-local-harness-persisted')
+    ).toHaveTextContent('重启后继续修复')
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '',
+        isPrimary: true,
+        projectId: 1,
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: ['--model', 'wework-messages/wework-selected'],
+        pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
+        proxyToken: 'proxy-token',
+        modelKey: 'wework:runtime:::local-model%3Atest',
+        resumeSessionId: 'local-harness-persisted',
+        env: {
+          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
+      })
+    )
+    expect(listLocalSkills).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-harness-persisted'
+    )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('重启后继续修复')
   })
 
   test('starts Claude Code with its configured permission mode and arguments', async () => {
@@ -3350,13 +3554,19 @@ describe('DesktopWorkbenchLayout', () => {
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'claude_code',
         prompt: '分析并修复测试失败',
+        isPrimary: true,
+        projectId: 1,
         cwd: '/workspace/github_wegent',
         executablePath: null,
         args: ['--model', 'wework-selected'],
+        pluginRoots: [],
         proxyToken: 'proxy-token',
+        modelKey: 'wework:runtime:::local-model%3Atest',
+        resumeSessionId: undefined,
         env: {
           ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
-          ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
+          ANTHROPIC_API_KEY: 'wework-local-router',
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
         },
       })
     )
@@ -3399,11 +3609,19 @@ describe('DesktopWorkbenchLayout', () => {
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'opencode',
         prompt: '检查当前工作区',
+        isPrimary: true,
+        projectId: null,
         cwd: '/workspace/current-wework',
         executablePath: null,
         args: ['--model', 'wework-messages/wework-selected'],
+        pluginRoots: [],
         proxyToken: 'proxy-token',
-        env: { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
+        modelKey: 'wework:runtime:::local-model%3Atest',
+        resumeSessionId: undefined,
+        env: {
+          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
       })
     )
 
@@ -3414,18 +3632,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-    expect(screen.getByTestId('central-harness-terminal')).not.toBeVisible()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-1'))
 
     await waitFor(() => expect(screen.getByTestId('central-harness-terminal')).toBeVisible())
 
-    await userEvent.click(screen.getByTestId('central-harness-close-button'))
-
-    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-1'))
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
     expect(
-      screen.queryByTestId('local-harness-session-row-local-harness-1')
+      screen.queryByTestId('close-local-harness-session-local-harness-1')
     ).not.toBeInTheDocument()
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
   })
 
   test('closes the settings menu when clicking outside it', async () => {

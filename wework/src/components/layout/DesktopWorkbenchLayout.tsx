@@ -43,6 +43,7 @@ import {
   closeLocalTerminal,
   isLocalHarnessAvailable,
   listLocalHarnessSessions,
+  updateLocalHarnessSessionTitle,
 } from '@/lib/local-terminal'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
@@ -147,6 +148,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
           title: session.title,
           cwd: session.cwd,
           createdAt: session.created_at,
+          isPrimary: session.is_primary,
+          projectId: session.project_id,
+          active: session.active,
+          modelKey: session.model_key,
+          pluginRoots: session.plugin_roots?.length ? session.plugin_roots : undefined,
           proxyToken: session.proxy_token,
         }))
         setLocalHarnessSessions(current => [
@@ -204,6 +210,20 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     ])
     setActiveLocalHarnessSessionId(session.sessionId)
   }, [])
+  const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
+    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
+    if (!normalized) return
+    setLocalHarnessSessions(current =>
+      current.map(session =>
+        session.sessionId === sessionId && session.title !== normalized
+          ? { ...session, title: normalized }
+          : session
+      )
+    )
+    void updateLocalHarnessSessionTitle(sessionId, normalized).catch(error => {
+      console.warn('Failed to persist local Harness session title:', error)
+    })
+  }, [])
   const openLocalHarnessSession = useCallback((sessionId: string) => {
     setActiveLocalHarnessSessionId(sessionId)
     navigateTo('/')
@@ -221,12 +241,35 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     },
     [localHarnessSessions, services?.localHarnessModelApi]
   )
+  const markLocalHarnessSessionInactive = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current =>
+        current.map(session =>
+          session.sessionId === sessionId
+            ? { ...session, active: false, proxyToken: undefined }
+            : session
+        )
+      )
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
   const closeLocalHarnessSession = useCallback(
     async (sessionId: string) => {
+      if (
+        localHarnessSessions.some(session => session.sessionId === sessionId && session.isPrimary)
+      ) {
+        return
+      }
       await closeLocalTerminal(sessionId)
       removeLocalHarnessSession(sessionId)
     },
-    [removeLocalHarnessSession]
+    [localHarnessSessions, removeLocalHarnessSession]
   )
   const createPermanentWorktree = useCallback(
     async ({
@@ -867,8 +910,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}
+              onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
               onLocalHarnessSessionClose={closeLocalHarnessSession}
-              onLocalHarnessSessionExit={removeLocalHarnessSession}
+              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />
           </div>
         </div>

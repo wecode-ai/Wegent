@@ -96,6 +96,22 @@ async function readFileWhenReady(path, timeoutMs) {
   assert.fail(`Timed out waiting for harness evidence in ${path}`)
 }
 
+async function waitForFileSatisfying(path, validate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let lastError = null
+  while (Date.now() < deadline) {
+    try {
+      const value = await readFile(path, 'utf8')
+      validate(value)
+      return value
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw lastError ?? new Error(`Timed out waiting for harness evidence in ${path}`)
+}
+
 async function probeMessagesProxy(url, prompt) {
   const response = await fetch(url, {
     method: 'POST',
@@ -434,7 +450,7 @@ export async function createDesktopScenario({
       })
       await control.command(
         'waitFor',
-        '[data-testid^="local-harness-session-row-local-terminal-"]',
+        '[data-testid^="local-harness-session-row-local-harness-"]',
         { timeoutMs: uiTimeoutMs }
       )
       await captureWorkbench(control, 'local-harness-07-opencode-running.png')
@@ -471,13 +487,18 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid^="local-harness-session-row-local-terminal-"]')
+      await control.command('click', '[data-testid^="local-harness-session-row-local-harness-"]')
       await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
       await captureWorkbench(control, 'local-harness-09-opencode-restored.png')
-      await control.command('click', '[data-testid="central-harness-close-button"]')
+      const restoredPrimarySnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        !restoredPrimarySnapshot.testIds.includes('central-harness-close-button'),
+        'The primary OpenCode session exposed a close action'
+      )
+      await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -500,9 +521,32 @@ export async function createDesktopScenario({
         captureWorkbench: capturePage,
         screenshot: 'local-harness-14-claude-code-workbench-panels.png',
       })
-      await waitForFile(
+      await waitForFileSatisfying(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
-        '--permission-mode\nplan\n--verbose\n--model\nwework-selected\nReview the current project\n',
+        value => {
+          const args = value.trim().split('\n')
+          assert.deepEqual(args.slice(0, 5), [
+            '--permission-mode',
+            'plan',
+            '--verbose',
+            '--model',
+            'wework-selected',
+          ])
+          assert.equal(args[5], '--plugin-dir')
+          assert.match(
+            args[6],
+            /\/harness-adapters\/claude_code\/[0-9a-f]{16}$/,
+            'Claude Code did not receive its Agent Plugins adapter'
+          )
+          assert.equal(args[7], '--session-id')
+          assert.match(
+            args[8],
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+            'Claude Code did not receive a resumable session UUID'
+          )
+          assert.equal(args[9], 'Review the current project')
+          assert.equal(args.length, 10)
+        },
         uiTimeoutMs
       )
       await waitForFile(join(homePath, CLAUDE_CODE_ENV_FILE), 'claude-settings\n', uiTimeoutMs)
@@ -523,7 +567,11 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="right-workspace-launcher"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-add-harness-opencode-option"]')
+      await control.command('click', '[data-testid="workspace-add-harness-option"]')
+      await control.command('waitFor', '[data-testid="harness-session-picker"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="harness-session-picker-option-opencode"]')
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
         '--model\nwework-messages/wework-selected\n',
@@ -536,7 +584,7 @@ export async function createDesktopScenario({
       const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         multiSessionSnapshot.testIds.filter(testId =>
-          testId.startsWith('local-harness-session-row-local-terminal-')
+          testId.startsWith('local-harness-session-row-local-harness-')
         ).length >= 2,
         'The workspace did not retain multiple harness sessions'
       )

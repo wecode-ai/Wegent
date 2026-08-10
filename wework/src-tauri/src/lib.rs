@@ -1,3 +1,4 @@
+mod agent_plugins;
 mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
@@ -660,7 +661,7 @@ fn default_harness_permission_mode() -> String {
 }
 
 fn default_local_harness_preferences() -> Vec<LocalHarnessPreference> {
-    ["opencode", "claude_code"]
+    ["opencode", "claude_code", "kimi_code"]
         .into_iter()
         .map(|id| LocalHarnessPreference {
             id: id.to_string(),
@@ -4368,7 +4369,7 @@ mod tests {
             model_key: Some("  wework:user:default:42:glm  ".to_string()),
         }]);
 
-        assert_eq!(preferences.len(), 2);
+        assert_eq!(preferences.len(), 3);
         assert_eq!(preferences[0].id, "opencode");
         assert!(preferences[0].enabled);
         assert_eq!(preferences[1].id, "claude_code");
@@ -4387,6 +4388,9 @@ mod tests {
             preferences[1].model_key.as_deref(),
             Some("wework:user:default:42:glm")
         );
+        assert_eq!(preferences[2].id, "kimi_code");
+        assert!(preferences[2].enabled);
+        assert_eq!(preferences[2].permission_mode, "default");
     }
 
     #[cfg(desktop)]
@@ -5105,9 +5109,11 @@ pub fn run() {
             local_terminal::get_local_terminal_snapshot,
             local_terminal::list_local_harnesses,
             local_terminal::list_local_harness_sessions,
+            local_terminal::resolve_local_harness_plugin_roots,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_harness,
             local_terminal::start_local_terminal,
+            local_terminal::update_local_harness_session_title,
             local_terminal::write_local_terminal,
             #[cfg(desktop)]
             popout_window::dismiss_popout_window,

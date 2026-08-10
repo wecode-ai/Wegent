@@ -11,6 +11,7 @@ import {
   normalizeLocalHarnessPreferences,
   parseLocalHarnessArgs,
   parseLocalHarnessEnv,
+  LOCAL_HARNESS_IDS,
   type ClaudeCodePermissionMode,
   type LocalHarnessId,
   type LocalHarnessPreference,
@@ -118,7 +119,7 @@ export function HarnessSettingsPage() {
 
   const save = async () => {
     const nextPreferences: LocalHarnessPreference[] = []
-    for (const id of ['opencode', 'claude_code'] as const) {
+    for (const id of LOCAL_HARNESS_IDS) {
       const draft = drafts[id]
       const parsedEnv = parseLocalHarnessEnv(draft.envText)
       if (parsedEnv.error) {
@@ -195,7 +196,7 @@ export function HarnessSettingsPage() {
       />
 
       <div className="space-y-5">
-        {(['opencode', 'claude_code'] as const).map(id => {
+        {LOCAL_HARNESS_IDS.map(id => {
           const draft = drafts[id]
           const descriptor = descriptors.find(item => item.id === id)
           const label = localHarnessLabel(id)
@@ -255,7 +256,9 @@ export function HarnessSettingsPage() {
                           },
                         }))
                       }
-                      placeholder={id === 'claude_code' ? 'claude' : 'opencode'}
+                      placeholder={
+                        id === 'claude_code' ? 'claude' : id === 'kimi_code' ? 'kimi' : 'opencode'
+                      }
                       className="h-8 w-72 rounded-lg border border-border bg-background px-2.5 text-sm text-text-primary outline-none focus:border-focus max-sm:w-full"
                     />
                   }

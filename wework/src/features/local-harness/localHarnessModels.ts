@@ -92,8 +92,26 @@ export function harnessLaunchThroughMessagesProxy(
       proxyToken: registration.token,
       env: {
         ANTHROPIC_BASE_URL: registration.baseUrl,
-        ANTHROPIC_AUTH_TOKEN: 'wework-local-router',
         ANTHROPIC_API_KEY: 'wework-local-router',
+      },
+    }
+  }
+  if (harnessId === 'kimi_code') {
+    return {
+      modelId: '__kimi_env_model__',
+      proxyToken: registration.token,
+      env: {
+        KIMI_MODEL_NAME: HARNESS_MODEL_ALIAS,
+        KIMI_MODEL_PROVIDER_TYPE: 'anthropic',
+        KIMI_MODEL_BASE_URL: registration.baseUrl,
+        KIMI_MODEL_API_KEY: 'wework-local-router',
+        KIMI_MODEL_DISPLAY_NAME: option.label,
+        ...(option.model.contextWindow
+          ? { KIMI_MODEL_MAX_CONTEXT_SIZE: String(option.model.contextWindow) }
+          : {}),
+        ...(option.model.maxOutputTokens
+          ? { KIMI_MODEL_MAX_OUTPUT_SIZE: String(option.model.maxOutputTokens) }
+          : {}),
       },
     }
   }

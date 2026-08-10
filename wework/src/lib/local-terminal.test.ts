@@ -16,6 +16,7 @@ import {
   openLocalWorkspace,
   resizeLocalTerminal,
   startLocalTerminal,
+  updateLocalHarnessSessionTitle,
   writeLocalTerminal,
 } from './local-terminal'
 
@@ -384,6 +385,24 @@ describe('local-terminal', () => {
     })
   })
 
+  test('persists a generated Harness session title in native session metadata', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
+    setNavigatorValue('platform', 'Linux x86_64')
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue(undefined)
+
+    await updateLocalHarnessSessionTitle('local-harness-1', 'Greeting')
+
+    expect(invokeMock).toHaveBeenCalledWith('update_local_harness_session_title', {
+      sessionId: 'local-harness-1',
+      title: 'Greeting',
+    })
+  })
+
   test('listens to embedded local terminal native events', async () => {
     const unlisten = vi.fn()
     listenMock.mockResolvedValue(unlisten)
@@ -486,7 +505,28 @@ describe('local-terminal', () => {
 
     await connectLocalTerminal('local-terminal-1', outputHandler, vi.fn())
 
-    expect(outputHandler.mock.calls.map(([payload]) => payload.data)).toEqual(['history', 'live'])
+    expect(outputHandler.mock.calls.map(([payload, source]) => [payload.data, source])).toEqual([
+      ['history', 'snapshot'],
+      ['live', 'live'],
+    ])
+  })
+
+  test('signals snapshot completion when the terminal has no buffered output', async () => {
+    const outputHandler = vi.fn()
+    invokeMock.mockImplementation(async command => {
+      if (command === 'get_local_terminal_snapshot') {
+        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
+      }
+      return undefined
+    })
+
+    await connectLocalTerminal('local-terminal-1', outputHandler, vi.fn())
+
+    expect(outputHandler).toHaveBeenCalledOnce()
+    expect(outputHandler).toHaveBeenCalledWith(
+      { session_id: 'local-terminal-1', sequence: 0, data: '' },
+      'snapshot'
+    )
   })
 
   test('ignores exit events from other local terminal sessions', async () => {

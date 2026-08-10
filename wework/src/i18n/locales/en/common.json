@@ -151,6 +151,8 @@
     "harness_unavailable": "{{name}} (not installed)",
     "harness_start_unavailable": "{{name}} cannot start in the current workspace",
     "harness_start_failed": "Failed to start runtime",
+    "harness_session_picker_title": "New harness session",
+    "harness_session_picker_description": "Choose a coding tool to start in the current workspace.",
     "harness_settings_title": "Harnesses",
     "harness_settings_description": "Configure local coding tools that Wework can launch directly. Models come from Wework model settings and use its local Messages router for proxy and cloud-model access.",
     "harness_settings_detection_failed": "Harness detection failed",

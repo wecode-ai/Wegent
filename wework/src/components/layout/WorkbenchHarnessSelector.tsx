@@ -35,7 +35,9 @@ export function WorkbenchHarnessSelector({
       triggerLabel={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="max-w-40 truncate">{selectedLabel}</span>
-          <ExperimentalBadge testId="workbench-harness-experimental-badge" />
+          {runtime !== 'codex' && (
+            <ExperimentalBadge testId="workbench-harness-experimental-badge" />
+          )}
         </span>
       }
       placement="bottom-end"

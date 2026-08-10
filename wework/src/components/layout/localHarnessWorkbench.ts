@@ -6,5 +6,10 @@ export interface LocalHarnessWorkbenchSession {
   title: string
   cwd: string
   createdAt: number
+  isPrimary: boolean
+  projectId: number | null
+  active: boolean
+  modelKey?: string | null
+  pluginRoots?: string[]
   proxyToken?: string
 }

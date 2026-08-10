@@ -94,7 +94,17 @@ export interface LocalHarnessSessionDescriptor {
   title: string
   cwd: string
   created_at: number
+  is_primary: boolean
+  project_id: number | null
+  active: boolean
+  model_key?: string | null
+  plugin_roots?: string[]
   proxy_token?: string
+}
+
+export interface LocalHarnessPluginLocation {
+  marketplacePath: string
+  pluginName: string
 }
 
 export interface LocalTerminalSnapshot {
@@ -106,9 +116,14 @@ export interface LocalTerminalSnapshot {
 export interface StartLocalHarnessOptions extends StartLocalTerminalOptions {
   harnessId: LocalHarnessId
   prompt: string
+  isPrimary: boolean
+  projectId: number | null
   executablePath?: string | null
   args?: string[]
+  pluginRoots?: string[]
   proxyToken?: string
+  modelKey?: string | null
+  resumeSessionId?: string | null
 }
 
 export interface LocalTerminalOutputPayload {
@@ -191,6 +206,22 @@ export async function listLocalHarnessSessions(): Promise<LocalHarnessSessionDes
   return invoke<LocalHarnessSessionDescriptor[]>('list_local_harness_sessions')
 }
 
+export async function resolveLocalHarnessPluginRoots(
+  locations: LocalHarnessPluginLocation[]
+): Promise<string[]> {
+  if (!isLocalHarnessAvailable() || locations.length === 0) return []
+
+  return invoke<string[]>('resolve_local_harness_plugin_roots', { locations })
+}
+
+export async function updateLocalHarnessSessionTitle(
+  sessionId: string,
+  title: string
+): Promise<void> {
+  if (!isLocalHarnessAvailable()) return
+  await invoke('update_local_harness_session_title', { sessionId, title })
+}
+
 export async function getLocalTerminalSnapshot(sessionId: string): Promise<LocalTerminalSnapshot> {
   return invoke<LocalTerminalSnapshot>('get_local_terminal_snapshot', { sessionId })
 }
@@ -198,13 +229,18 @@ export async function getLocalTerminalSnapshot(sessionId: string): Promise<Local
 export async function startLocalHarness({
   harnessId,
   prompt,
+  isPrimary,
+  projectId,
   executablePath,
   args,
+  pluginRoots,
   cwd,
   rows,
   cols,
   env,
   proxyToken,
+  modelKey,
+  resumeSessionId,
 }: StartLocalHarnessOptions): Promise<string> {
   if (!isLocalHarnessAvailable()) {
     throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
@@ -215,22 +251,32 @@ export async function startLocalHarness({
   const payload: {
     harnessId: LocalHarnessId
     prompt: string
+    isPrimary: boolean
+    projectId: number | null
     executablePath: string | null
     args: string[]
+    pluginRoots: string[]
     cwd: string | null
     rows?: number
     cols?: number
     env?: Record<string, string>
     proxyToken?: string
+    modelKey: string | null
+    resumeSessionId: string | null
   } = {
     harnessId,
     prompt,
+    isPrimary,
+    projectId,
     executablePath: executablePath?.trim() || null,
     args: args ?? [],
+    pluginRoots: pluginRoots ?? [],
     cwd: trimmedCwd || null,
     rows,
     cols,
     proxyToken: proxyToken?.trim() || undefined,
+    modelKey: modelKey?.trim() || null,
+    resumeSessionId: resumeSessionId?.trim() || null,
   }
   if (normalizedEnv) {
     payload.env = normalizedEnv
@@ -466,6 +512,7 @@ export function listenLocalTerminalExit(
 }
 
 type LocalTerminalConnectionStage = 'listen-output' | 'listen-exit' | 'snapshot' | 'attach'
+export type LocalTerminalOutputSource = 'snapshot' | 'live'
 
 function logLocalTerminalConnectionFailure(
   sessionId: string,
@@ -484,7 +531,7 @@ function logLocalTerminalConnectionFailure(
 
 export async function connectLocalTerminal(
   sessionId: string,
-  onOutput: (payload: LocalTerminalOutputPayload) => void,
+  onOutput: (payload: LocalTerminalOutputPayload, source: LocalTerminalOutputSource) => void,
   onExit: (payload: LocalTerminalExitPayload) => void,
   diagnosticContext?: LocalTerminalDiagnosticContext
 ): Promise<UnlistenFn> {
@@ -500,7 +547,7 @@ export async function connectLocalTerminal(
       return
     }
     lastSequence = payload.sequence
-    onOutput(payload)
+    onOutput(payload, 'live')
   }
   let outputUnlisten: UnlistenFn
   try {
@@ -536,9 +583,7 @@ export async function connectLocalTerminal(
   try {
     const snapshot = await getLocalTerminalSnapshot(sessionId)
     lastSequence = snapshot.sequence
-    if (snapshot.data) {
-      onOutput(snapshot)
-    }
+    onOutput(snapshot, 'snapshot')
     snapshotLoaded = true
     pendingOutput.sort((left, right) => left.sequence - right.sequence).forEach(handleOutput)
     console.info('Local terminal connection stage succeeded', {

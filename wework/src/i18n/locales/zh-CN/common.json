@@ -152,6 +152,8 @@
     "harness_unavailable": "{{name}}（未安装）",
     "harness_start_unavailable": "当前工作区无法启动 {{name}}",
     "harness_start_failed": "启动运行工具失败",
+    "harness_session_picker_title": "新建 Harness 会话",
+    "harness_session_picker_description": "选择要在当前工作区中启动的编码工具。",
     "harness_settings_title": "运行工具",
     "harness_settings_description": "配置 Wework 中可直接启动的本地编码工具。模型统一来自 Wework 模型设置，并通过本地 Messages 路由使用代理与云端模型能力。",
     "harness_settings_detection_failed": "运行工具检测失败",

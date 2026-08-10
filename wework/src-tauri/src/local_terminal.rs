@@ -1,15 +1,16 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
-use crate::{normalized_non_empty, process_environment};
+use crate::{agent_plugins, normalized_non_empty, process_environment};
 
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
@@ -18,7 +19,10 @@ const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
 const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 const OPEN_CODE_HARNESS_ID: &str = "opencode";
 const CLAUDE_CODE_HARNESS_ID: &str = "claude_code";
+const KIMI_CODE_HARNESS_ID: &str = "kimi_code";
+const HARNESS_SESSIONS_FILE: &str = "local-harness-sessions.json";
 const MAX_TERMINAL_SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
+static HARNESS_SESSION_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 enum HarnessPromptMode {
@@ -33,15 +37,17 @@ struct LocalHarnessDefinition {
     version_args: &'static [&'static str],
     home_relative_paths: &'static [&'static str],
     prompt_mode: HarnessPromptMode,
+    resume_args: &'static [&'static str],
 }
 
-const LOCAL_HARNESSES: [LocalHarnessDefinition; 2] = [
+const LOCAL_HARNESSES: [LocalHarnessDefinition; 3] = [
     LocalHarnessDefinition {
         id: OPEN_CODE_HARNESS_ID,
         executable: "opencode",
         version_args: &["--version"],
         home_relative_paths: &[".opencode/bin/opencode"],
         prompt_mode: HarnessPromptMode::Flag("--prompt"),
+        resume_args: &["--continue"],
     },
     LocalHarnessDefinition {
         id: CLAUDE_CODE_HARNESS_ID,
@@ -53,6 +59,15 @@ const LOCAL_HARNESSES: [LocalHarnessDefinition; 2] = [
             ".claude/bin/claude",
         ],
         prompt_mode: HarnessPromptMode::Positional,
+        resume_args: &["--continue"],
+    },
+    LocalHarnessDefinition {
+        id: KIMI_CODE_HARNESS_ID,
+        executable: "kimi",
+        version_args: &["--version"],
+        home_relative_paths: &[".local/bin/kimi", ".kimi-code/bin/kimi"],
+        prompt_mode: HarnessPromptMode::Flag("--prompt"),
+        resume_args: &["--continue"],
     },
 ];
 
@@ -66,16 +81,28 @@ pub struct LocalHarnessDescriptor {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalHarnessPluginLocation {
+    marketplace_path: String,
+    plugin_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartLocalHarnessRequest {
     harness_id: String,
     prompt: String,
+    is_primary: bool,
+    project_id: Option<i64>,
     executable_path: Option<String>,
     args: Option<Vec<String>>,
     cwd: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
     env: Option<HashMap<String, String>>,
+    plugin_roots: Option<Vec<String>>,
     proxy_token: Option<String>,
+    model_key: Option<String>,
+    resume_session_id: Option<String>,
 }
 
 struct PtyProcessSpec {
@@ -106,22 +133,44 @@ struct LocalHarnessSessionMetadata {
     title: String,
     cwd: String,
     created_at: u64,
+    is_primary: bool,
+    project_id: Option<i64>,
     proxy_token: Option<String>,
+    model_key: Option<String>,
+    native_session_id: Option<String>,
+    plugin_roots: Vec<String>,
 }
 
 struct LocalHarnessLaunchMetadata {
     harness_id: String,
     title: String,
+    is_primary: bool,
+    project_id: Option<i64>,
     proxy_token: Option<String>,
+    model_key: Option<String>,
+    created_at: u64,
+    native_session_id: Option<String>,
+    plugin_roots: Vec<String>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct LocalHarnessSessionDescriptor {
     session_id: String,
     harness_id: String,
     title: String,
     cwd: String,
     created_at: u64,
+    is_primary: bool,
+    project_id: Option<i64>,
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    model_key: Option<String>,
+    #[serde(default)]
+    native_session_id: Option<String>,
+    #[serde(default)]
+    plugin_roots: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     proxy_token: Option<String>,
 }
 
@@ -179,10 +228,38 @@ fn current_timestamp_millis() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn new_uuid_v4() -> Result<String, String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|error| format!("Failed to generate Harness session UUID: {error}"))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    ))
+}
+
 fn harness_session_title(id: &str, prompt: &str) -> String {
     let fallback = match id {
         OPEN_CODE_HARNESS_ID => "OpenCode",
         CLAUDE_CODE_HARNESS_ID => "Claude Code",
+        KIMI_CODE_HARNESS_ID => "Kimi Code",
         _ => id,
     };
     prompt
@@ -191,6 +268,113 @@ fn harness_session_title(id: &str, prompt: &str) -> String {
         .find(|line| !line.is_empty())
         .map(|line| line.chars().take(80).collect())
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn harness_sessions_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join(HARNESS_SESSIONS_FILE))
+        .map_err(|error| format!("Failed to resolve Harness session storage: {error}"))
+}
+
+fn harness_session_store_lock() -> &'static Mutex<()> {
+    HARNESS_SESSION_STORE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn read_persisted_harness_sessions_unlocked(
+    app: &tauri::AppHandle,
+) -> Result<Vec<LocalHarnessSessionDescriptor>, String> {
+    let path = harness_sessions_path(app)?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let content =
+        fs::read(&path).map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    serde_json::from_slice(&content).map_err(|error| {
+        format!(
+            "Invalid Harness session storage {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn read_persisted_harness_sessions(
+    app: &tauri::AppHandle,
+) -> Result<Vec<LocalHarnessSessionDescriptor>, String> {
+    let _guard = harness_session_store_lock()
+        .lock()
+        .map_err(|_| "Failed to lock Harness session storage".to_string())?;
+    read_persisted_harness_sessions_unlocked(app)
+}
+
+fn write_persisted_harness_sessions_unlocked(
+    app: &tauri::AppHandle,
+    sessions: &[LocalHarnessSessionDescriptor],
+) -> Result<(), String> {
+    let path = harness_sessions_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Harness session storage has no parent".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    let temporary = parent.join(format!(
+        ".{HARNESS_SESSIONS_FILE}.{}.tmp",
+        std::process::id()
+    ));
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(sessions)
+            .map_err(|error| format!("Failed to encode Harness sessions: {error}"))?,
+    )
+    .map_err(|error| format!("Failed to write {}: {error}", temporary.display()))?;
+    if cfg!(windows) && path.exists() {
+        fs::remove_file(&path)
+            .map_err(|error| format!("Failed to replace {}: {error}", path.display()))?;
+    }
+    fs::rename(&temporary, &path)
+        .map_err(|error| format!("Failed to install {}: {error}", path.display()))
+}
+
+fn upsert_persisted_harness_session(
+    app: &tauri::AppHandle,
+    descriptor: LocalHarnessSessionDescriptor,
+) -> Result<(), String> {
+    let _guard = harness_session_store_lock()
+        .lock()
+        .map_err(|_| "Failed to lock Harness session storage".to_string())?;
+    let mut sessions = read_persisted_harness_sessions_unlocked(app)?;
+    sessions.retain(|session| session.session_id != descriptor.session_id);
+    sessions.push(LocalHarnessSessionDescriptor {
+        active: false,
+        proxy_token: None,
+        ..descriptor
+    });
+    sessions.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    write_persisted_harness_sessions_unlocked(app, &sessions)
+}
+
+fn remove_persisted_harness_session(
+    app: &tauri::AppHandle,
+    session_id: &str,
+) -> Result<(), String> {
+    let _guard = harness_session_store_lock()
+        .lock()
+        .map_err(|_| "Failed to lock Harness session storage".to_string())?;
+    let mut sessions = read_persisted_harness_sessions_unlocked(app)?;
+    let original_len = sessions.len();
+    sessions.retain(|session| session.session_id != session_id);
+    if sessions.len() == original_len {
+        return Ok(());
+    }
+    write_persisted_harness_sessions_unlocked(app, &sessions)
+}
+
+fn new_harness_session_id(state: &LocalTerminalState) -> String {
+    format!(
+        "local-harness-{}-{}",
+        current_timestamp_millis(),
+        state.next_id.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn append_bounded_scrollback(scrollback: &mut String, data: &str) {
@@ -392,14 +576,37 @@ pub fn list_local_harnesses(
 }
 
 #[tauri::command]
+pub fn resolve_local_harness_plugin_roots(
+    locations: Vec<LocalHarnessPluginLocation>,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    locations
+        .into_iter()
+        .filter_map(|location| {
+            let marketplace_path = PathBuf::from(location.marketplace_path.trim());
+            let plugin_name = location.plugin_name.trim();
+            if marketplace_path.as_os_str().is_empty() || plugin_name.is_empty() {
+                return None;
+            }
+            let (_, root) =
+                crate::local_executor::resolve_local_plugin_root(&marketplace_path, plugin_name)
+                    .ok()?;
+            let root = root.display().to_string();
+            seen.insert(root.clone()).then_some(root)
+        })
+        .collect()
+}
+
+#[tauri::command]
 pub fn list_local_harness_sessions(
+    app: tauri::AppHandle,
     state: State<'_, LocalTerminalState>,
 ) -> Result<Vec<LocalHarnessSessionDescriptor>, String> {
     let sessions = state
         .sessions
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
-    let mut descriptors = sessions
+    let active_descriptors = sessions
         .iter()
         .filter_map(|(session_id, session)| {
             let harness = session.harness.as_ref()?;
@@ -409,12 +616,66 @@ pub fn list_local_harness_sessions(
                 title: harness.title.clone(),
                 cwd: harness.cwd.clone(),
                 created_at: harness.created_at,
+                is_primary: harness.is_primary,
+                project_id: harness.project_id,
+                active: true,
+                model_key: harness.model_key.clone(),
+                native_session_id: harness.native_session_id.clone(),
+                plugin_roots: harness.plugin_roots.clone(),
                 proxy_token: harness.proxy_token.clone(),
             })
         })
         .collect::<Vec<_>>();
+    drop(sessions);
+
+    let mut descriptors = read_persisted_harness_sessions(&app)?;
+    for active in active_descriptors {
+        if let Some(existing) = descriptors
+            .iter_mut()
+            .find(|descriptor| descriptor.session_id == active.session_id)
+        {
+            *existing = active;
+        } else {
+            descriptors.push(active);
+        }
+    }
     descriptors.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     Ok(descriptors)
+}
+
+#[tauri::command]
+pub fn update_local_harness_session_title(
+    app: tauri::AppHandle,
+    state: State<'_, LocalTerminalState>,
+    session_id: String,
+    title: String,
+) -> Result<(), String> {
+    let normalized = title.trim().chars().take(80).collect::<String>();
+    if normalized.is_empty() {
+        return Ok(());
+    }
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    if let Some(harness) = sessions
+        .get_mut(&session_id)
+        .and_then(|session| session.harness.as_mut())
+    {
+        harness.title = normalized.clone();
+    }
+    drop(sessions);
+
+    let _store_guard = harness_session_store_lock()
+        .lock()
+        .map_err(|_| "Failed to lock Harness session storage".to_string())?;
+    let mut persisted = read_persisted_harness_sessions_unlocked(&app)?;
+    let session = persisted
+        .iter_mut()
+        .find(|session| session.session_id == session_id)
+        .ok_or_else(|| format!("Harness session not found: {session_id}"))?;
+    session.title = normalized;
+    write_persisted_harness_sessions_unlocked(&app, &persisted)
 }
 
 #[tauri::command]
@@ -629,7 +890,23 @@ pub fn start_local_harness(
     state: State<'_, LocalTerminalState>,
     request: StartLocalHarnessRequest,
 ) -> Result<String, String> {
-    let definition = local_harness_definition(request.harness_id.trim())
+    let resume_record = request
+        .resume_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|session_id| {
+            read_persisted_harness_sessions(&app)?
+                .into_iter()
+                .find(|session| session.session_id == session_id)
+                .ok_or_else(|| format!("Harness session not found: {session_id}"))
+        })
+        .transpose()?;
+    let harness_id = resume_record
+        .as_ref()
+        .map(|record| record.harness_id.as_str())
+        .unwrap_or_else(|| request.harness_id.trim());
+    let definition = local_harness_definition(harness_id)
         .ok_or_else(|| format!("Unsupported local harness: {}", request.harness_id))?;
     let executable =
         resolve_local_harness_executable(definition, request.executable_path.as_deref())
@@ -639,26 +916,148 @@ pub fn start_local_harness(
                     definition.executable
                 )
             })?;
-    let args = harness_launch_args(definition, request.args, &request.prompt);
-    start_pty_process(
-        app,
+    let session_id = resume_record
+        .as_ref()
+        .map(|record| record.session_id.clone())
+        .unwrap_or_else(|| new_harness_session_id(&state));
+    let native_session_id = match definition.id {
+        CLAUDE_CODE_HARNESS_ID => resume_record
+            .as_ref()
+            .and_then(|record| record.native_session_id.clone())
+            .map(Ok)
+            .unwrap_or_else(new_uuid_v4)?,
+        _ => String::new(),
+    };
+    let cwd = request
+        .cwd
+        .clone()
+        .or_else(|| resume_record.as_ref().map(|record| record.cwd.clone()));
+    let mut env = request.env.unwrap_or_default();
+    let mut configured_args = request.args.unwrap_or_default();
+    let plugin_roots = request
+        .plugin_roots
+        .filter(|roots| !roots.is_empty())
+        .or_else(|| {
+            resume_record
+                .as_ref()
+                .map(|record| record.plugin_roots.clone())
+        })
+        .unwrap_or_default();
+    let accept_bypass_permissions = definition.id == CLAUDE_CODE_HARNESS_ID
+        && (configured_args
+            .iter()
+            .any(|arg| arg == "--dangerously-skip-permissions")
+            || configured_args
+                .windows(2)
+                .any(|args| args[0] == "--permission-mode" && args[1] == "bypassPermissions"));
+    let plugin_adapter = agent_plugins::prepare_harness_plugin_adapter(
+        &app,
+        definition.id,
+        &session_id,
+        cwd.as_deref(),
+        &plugin_roots,
+        &env,
+        accept_bypass_permissions,
+    )?;
+    env.extend(plugin_adapter.env);
+    configured_args.extend(plugin_adapter.args);
+    if resume_record.is_some() {
+        if definition.id == CLAUDE_CODE_HARNESS_ID {
+            configured_args.extend(["--resume".to_string(), native_session_id.clone()]);
+        } else {
+            configured_args.extend(definition.resume_args.iter().map(|value| value.to_string()));
+        }
+    } else if definition.id == CLAUDE_CODE_HARNESS_ID {
+        configured_args.extend(["--session-id".to_string(), native_session_id.clone()]);
+    }
+    let args = harness_launch_args(
+        definition,
+        Some(configured_args),
+        resume_record
+            .as_ref()
+            .map_or(request.prompt.as_str(), |_| ""),
+    );
+    let title = resume_record
+        .as_ref()
+        .map(|record| record.title.clone())
+        .unwrap_or_else(|| harness_session_title(definition.id, &request.prompt));
+    let created_at = resume_record
+        .as_ref()
+        .map(|record| record.created_at)
+        .unwrap_or_else(current_timestamp_millis);
+    let is_primary = resume_record
+        .as_ref()
+        .map(|record| record.is_primary)
+        .unwrap_or(request.is_primary);
+    let project_id = resume_record
+        .as_ref()
+        .and_then(|record| record.project_id)
+        .or(request.project_id);
+    let model_key = request
+        .model_key
+        .and_then(normalized_non_empty)
+        .or_else(|| {
+            resume_record
+                .as_ref()
+                .and_then(|record| record.model_key.clone())
+        });
+    let proxy_token = request.proxy_token.and_then(normalized_non_empty);
+    let result = start_pty_process(
+        app.clone(),
         &state,
-        request.cwd,
+        cwd.clone(),
         request.rows,
         request.cols,
-        request.env,
+        (!env.is_empty()).then_some(env),
         PtyProcessSpec {
             program: executable.display().to_string(),
             args,
         },
         Some(LocalHarnessLaunchMetadata {
             harness_id: definition.id.to_string(),
-            title: harness_session_title(definition.id, &request.prompt),
-            proxy_token: request.proxy_token.and_then(normalized_non_empty),
+            title: title.clone(),
+            is_primary,
+            project_id,
+            proxy_token: proxy_token.clone(),
+            model_key: model_key.clone(),
+            created_at,
+            native_session_id: (!native_session_id.is_empty()).then_some(native_session_id.clone()),
+            plugin_roots: plugin_roots.clone(),
         }),
         None,
         None,
-    )
+        Some(session_id.clone()),
+    );
+    let started_session_id = result?;
+    let persisted = LocalHarnessSessionDescriptor {
+        session_id: started_session_id.clone(),
+        harness_id: definition.id.to_string(),
+        title,
+        cwd: normalized_cwd(cwd)?.unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .display()
+                .to_string()
+        }),
+        created_at,
+        is_primary,
+        project_id,
+        active: false,
+        model_key,
+        native_session_id: (!native_session_id.is_empty()).then_some(native_session_id),
+        plugin_roots,
+        proxy_token: None,
+    };
+    if let Err(error) = upsert_persisted_harness_session(&app, persisted) {
+        if let Ok(mut sessions) = state.sessions.lock() {
+            if let Some(mut session) = sessions.remove(&started_session_id) {
+                let _ = session.child.kill();
+                let _ = session.child.wait();
+            }
+        }
+        return Err(error);
+    }
+    Ok(started_session_id)
 }
 
 fn start_pty_shell(
@@ -686,6 +1085,7 @@ fn start_pty_shell(
         None,
         task_id,
         workspace_path,
+        None,
     )
 }
 
@@ -700,6 +1100,7 @@ fn start_pty_process(
     harness: Option<LocalHarnessLaunchMetadata>,
     task_id: Option<String>,
     workspace_path: Option<String>,
+    session_id_override: Option<String>,
 ) -> Result<String, String> {
     let cwd = normalized_cwd(cwd)?;
     let diagnostic_cwd = cwd.clone();
@@ -731,6 +1132,12 @@ fn start_pty_process(
         command.arg(arg);
     }
     configure_terminal_environment(&mut command);
+    if harness
+        .as_ref()
+        .is_some_and(|metadata| metadata.harness_id == CLAUDE_CODE_HARNESS_ID)
+    {
+        command.env_remove("ANTHROPIC_AUTH_TOKEN");
+    }
     configure_terminal_extra_environment(&mut command, normalized_extra_env(env));
     if let Some(cwd) = cwd {
         command.cwd(cwd);
@@ -743,7 +1150,7 @@ fn start_pty_process(
     drop(pair.slave);
 
     let (attach_sender, attach_receiver) = mpsc::sync_channel(1);
-    let session_id = next_session_id(state);
+    let session_id = session_id_override.unwrap_or_else(|| next_session_id(state));
     let session = LocalTerminalSession {
         master: pair.master,
         writer,
@@ -755,8 +1162,13 @@ fn start_pty_process(
             harness_id: metadata.harness_id,
             title: metadata.title,
             cwd: effective_cwd,
-            created_at: current_timestamp_millis(),
+            created_at: metadata.created_at,
+            is_primary: metadata.is_primary,
+            project_id: metadata.project_id,
             proxy_token: metadata.proxy_token,
+            model_key: metadata.model_key,
+            native_session_id: metadata.native_session_id,
+            plugin_roots: metadata.plugin_roots,
         }),
         output_sequence: 0,
         scrollback: String::new(),
@@ -990,6 +1402,7 @@ pub fn resize_local_terminal(
 
 #[tauri::command]
 pub fn close_local_terminal(
+    app: tauri::AppHandle,
     state: State<'_, LocalTerminalState>,
     session_id: String,
     task_id: Option<String>,
@@ -1000,7 +1413,9 @@ pub fn close_local_terminal(
         .sessions
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    let mut remove_persisted = false;
     if let Some(mut session) = sessions.remove(&session_id) {
+        remove_persisted = session.harness.is_some();
         log::info!(
             "Tauri local terminal close requested: host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}, reason={:?}",
             std::process::id(),
@@ -1028,6 +1443,14 @@ pub fn close_local_terminal(
             workspace_path,
             reason
         );
+    }
+    drop(sessions);
+    if remove_persisted
+        || read_persisted_harness_sessions(&app)?
+            .iter()
+            .any(|session| session.session_id == session_id)
+    {
+        remove_persisted_harness_session(&app, &session_id)?;
     }
 
     Ok(())
@@ -1091,6 +1514,30 @@ mod tests {
                 prompt
             ),
             vec!["--permission-mode", "plan", prompt]
+        );
+    }
+
+    #[test]
+    fn launches_kimi_code_with_the_prompt_flag() {
+        let prompt = "verify Wework plugins";
+
+        assert_eq!(
+            harness_launch_args(
+                local_harness_definition(KIMI_CODE_HARNESS_ID).unwrap(),
+                Some(vec![
+                    "--model".into(),
+                    "__kimi_env_model__".into(),
+                    "--auto".into(),
+                ]),
+                prompt
+            ),
+            vec![
+                "--model",
+                "__kimi_env_model__",
+                "--auto",
+                "--prompt",
+                prompt
+            ]
         );
     }
 

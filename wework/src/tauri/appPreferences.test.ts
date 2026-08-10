@@ -75,6 +75,14 @@ const mergedDefaultPreferences = {
       env: {},
       permissionMode: 'default',
     },
+    {
+      id: 'kimi_code',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
   ],
 }
 

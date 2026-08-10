@@ -1,4 +1,4 @@
-export type LocalHarnessId = 'opencode' | 'claude_code'
+export type LocalHarnessId = 'opencode' | 'claude_code' | 'kimi_code'
 
 export type ClaudeCodePermissionMode = 'default' | 'plan' | 'bypass'
 
@@ -12,7 +12,7 @@ export interface LocalHarnessPreference {
   modelKey?: string | null
 }
 
-export const LOCAL_HARNESS_IDS: LocalHarnessId[] = ['opencode', 'claude_code']
+export const LOCAL_HARNESS_IDS: LocalHarnessId[] = ['opencode', 'claude_code', 'kimi_code']
 
 export const defaultLocalHarnessPreferences: LocalHarnessPreference[] = LOCAL_HARNESS_IDS.map(
   id => ({
@@ -26,7 +26,29 @@ export const defaultLocalHarnessPreferences: LocalHarnessPreference[] = LOCAL_HA
 )
 
 export function localHarnessLabel(id: LocalHarnessId): string {
-  return id === 'claude_code' ? 'Claude Code' : 'OpenCode'
+  if (id === 'claude_code') return 'Claude Code'
+  if (id === 'kimi_code') return 'Kimi Code'
+  return 'OpenCode'
+}
+
+export function isMeaningfulLocalHarnessTitle(id: LocalHarnessId, title: string): boolean {
+  const normalized = title.trim().replace(/\s+/g, ' ')
+  if (!normalized) return false
+
+  const genericTitles =
+    id === 'opencode'
+      ? ['OpenCode', 'OpenCode TUI']
+      : id === 'claude_code'
+        ? ['Claude', 'Claude Code']
+        : ['Kimi', 'Kimi Code']
+  return !genericTitles.some(generic => normalized.toLowerCase() === generic.toLowerCase())
+}
+
+export function localHarnessPluginRootFromSkillPath(skillPath: string): string | null {
+  const normalized = skillPath.trim().replaceAll('\\', '/')
+  const markerIndex = normalized.lastIndexOf('/skills/')
+  if (markerIndex <= 0 || !normalized.endsWith('/SKILL.md')) return null
+  return normalized.slice(0, markerIndex)
 }
 
 export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPreference[] {

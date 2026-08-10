@@ -44,6 +44,12 @@ describe('HarnessSettingsPage', () => {
         executable_path: '/usr/local/bin/claude',
         version: '2.1.0',
       },
+      {
+        id: 'kimi_code',
+        installed: true,
+        executable_path: '/usr/local/bin/kimi',
+        version: '1.0.0',
+      },
     ])
     updateAppPreferencesMock.mockImplementation(async patch => ({
       ...defaultAppPreferences,
@@ -58,6 +64,7 @@ describe('HarnessSettingsPage', () => {
       expect(listLocalHarnessesMock).toHaveBeenCalledWith({
         opencode: null,
         claude_code: null,
+        kimi_code: null,
       })
     )
     expect(screen.getByTestId('harness-settings-opencode')).toHaveTextContent('1.2.3')
@@ -101,6 +108,14 @@ describe('HarnessSettingsPage', () => {
               AWS_REGION: 'us-west-2',
             },
             permissionMode: 'plan',
+          },
+          {
+            id: 'kimi_code',
+            enabled: true,
+            executablePath: null,
+            args: [],
+            env: {},
+            permissionMode: 'default',
           },
         ],
       })
