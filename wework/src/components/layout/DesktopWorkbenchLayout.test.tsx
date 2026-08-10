@@ -8294,6 +8294,26 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('exposes the task-scoped browser label before the browser panel mounts', () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activePane().queryByTestId('workspace-browser-panel')).not.toBeInTheDocument()
+    expect(activePane().getByTestId('desktop-workbench-content')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser-runtime-a'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(activePane().queryByTestId('workspace-browser-panel')).not.toBeInTheDocument()
+    expect(activePane().getByTestId('desktop-workbench-content')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser-runtime-b'
+    )
+  })
+
   test('does not reuse a migrated default browser label after switching panes', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const tauriInvokeMock = vi.fn(async (command: string) => {

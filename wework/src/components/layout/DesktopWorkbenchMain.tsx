@@ -2484,6 +2484,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
+          data-embedded-browser-label={defaultEmbeddedBrowserLabel}
           className={cn(
             'relative grid h-full min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
             hasConversation

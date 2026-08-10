@@ -12,8 +12,8 @@ const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
 const TRANSIENT_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="transient-notice"]`
-const BROWSER_PANEL_LABEL_SELECTOR =
-  '[data-testid="workspace-browser-panel"][data-embedded-browser-label]'
+const WORKBENCH_BROWSER_LABEL_SELECTOR =
+  '[data-testid="desktop-workbench-content"][data-embedded-browser-label]'
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
 const REDIRECT_PATH = '/embedded-browser-agent-redirect'
@@ -50,7 +50,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
 
 async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
-  const selector = `${scopeSelector} ${BROWSER_PANEL_LABEL_SELECTOR}`
+  const selector = `${scopeSelector} ${WORKBENCH_BROWSER_LABEL_SELECTOR}`
   await control.command('waitFor', selector, { timeoutMs })
   return control.command('getAttribute', selector, { value: 'data-embedded-browser-label' })
 }
