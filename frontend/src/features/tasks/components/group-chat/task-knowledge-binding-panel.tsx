@@ -48,7 +48,7 @@ interface TaskKnowledgeBindingPanelProps {
 function externalRefKey(ref: ExternalKnowledgeRef) {
   const targetType = ref.target_type ?? 'knowledge_base'
   const targetId = ref.node_id ?? ref.document_id ?? 'source'
-  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+  return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
 }
 
 function providerBadgeLabel(provider: string) {
@@ -57,7 +57,7 @@ function providerBadgeLabel(provider: string) {
 }
 
 function externalDisplayName(ref: ExternalKnowledgeRef) {
-  return ref.name ?? ref.id ?? ref.provider
+  return ref.name ?? ref.id
 }
 
 function externalTargetName(ref: ExternalKnowledgeRef) {

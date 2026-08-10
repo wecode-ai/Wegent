@@ -610,3 +610,45 @@ class TestResolveRequestPreloadSkills:
                 "url": "${{backend_url}}/mcp/knowledge/sse",
             }
         ]
+
+    def test_provider_runtime_skill_is_resolved_as_public(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        request = ExecutionRequest(
+            preload_skills=["dingtalk-docs"],
+            user_selected_skills=["dingtalk-docs"],
+            bot=[{"shell_type": "Chat", "skills": [], "mcp_servers": []}],
+        )
+        captured = {}
+
+        def fake_get_bot_skills(**kwargs):
+            captured.update(kwargs)
+            return (
+                [{"name": "dingtalk-docs"}],
+                ["dingtalk-docs"],
+                ["dingtalk-docs"],
+                {
+                    "dingtalk-docs": {
+                        "skill_id": 101,
+                        "namespace": "default",
+                        "is_public": True,
+                    }
+                },
+            )
+
+        builder._get_bot_skills = fake_get_bot_skills
+
+        result = builder.resolve_request_preload_skills(
+            request=request,
+            bot=SimpleNamespace(name="chat-bot"),
+            team=SimpleNamespace(namespace="default"),
+            user=SimpleNamespace(id=7, preferences="{}"),
+        )
+
+        assert captured["user_preload_skills"] == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+        assert result.skill_names == ["dingtalk-docs"]

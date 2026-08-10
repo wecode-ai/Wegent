@@ -117,11 +117,13 @@ function isAllowedGenerationFormat(format: string, formats: string[]): boolean {
 }
 
 function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
-  if (!context.external_provider || !context.external_mode) return null
+  if (!context.external_provider || context.external_mode !== 'explicit' || !context.external_id) {
+    return null
+  }
   return {
     provider: context.external_provider,
-    mode: context.external_mode,
-    id: context.external_id ?? undefined,
+    mode: 'explicit',
+    id: context.external_id,
     name: context.name,
     scope: context.external_scope ?? undefined,
     target_type: context.external_target_type ?? undefined,
@@ -135,9 +137,9 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
   const targetType = ref.target_type ?? 'knowledge_base'
   if (targetType !== 'knowledge_base') {
     const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
-    return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+    return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
   }
-  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+  return `external:${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 /** Generation mode type - video or image */

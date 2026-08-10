@@ -35,9 +35,14 @@ def normalize_external_knowledge_refs(raw_refs: list | None) -> list[dict[str, A
                 ExternalKnowledgeRef.model_validate(ref).model_dump(exclude_none=True)
             )
         except Exception:
+            safe_ref = ref if isinstance(ref, dict) else {}
             logger.warning(
-                "Ignoring invalid external knowledge ref: %s",
-                ref,
+                "Ignoring invalid external knowledge ref: "
+                "provider=%s mode=%s id=%s target_type=%s",
+                safe_ref.get("provider"),
+                safe_ref.get("mode"),
+                safe_ref.get("id"),
+                safe_ref.get("target_type"),
                 exc_info=True,
             )
     return normalized_refs

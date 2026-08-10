@@ -395,6 +395,12 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
             )
         })
         .unwrap_or_else(|| request.prompt.clone());
+    if let Some(selected_knowledge_prompt) = selected_knowledge_prompt(request) {
+        prompt = crate::prompt_enrichment::inject_selected_knowledge_prompt(
+            &prompt,
+            selected_knowledge_prompt,
+        );
+    }
     let emphasis = crate::services::skill_deployer::build_skill_emphasis_prompt(
         &user_selected_skills(request),
     );
@@ -402,6 +408,16 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
         prompt = append_text_to_vision_prompt(&prompt, &emphasis, true);
     }
     prompt
+}
+
+fn selected_knowledge_prompt(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("selected_knowledge_prompt")
+        .or_else(|| request.extra.get("selectedKnowledgePrompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn interactive_form_answer_query(request: &ExecutionRequest) -> Option<String> {

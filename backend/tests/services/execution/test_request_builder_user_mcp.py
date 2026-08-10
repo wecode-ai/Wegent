@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services import mcp_provider_registry
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
@@ -210,6 +211,18 @@ class TestUserScopedMcpInjection:
             },
         ]
 
+    def test_dingtalk_link_preserves_conditional_provider_skill_loading(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        user = SimpleNamespace(preferences="{}")
+
+        preload_skills = builder._inject_conditional_provider_skills(
+            user=user,
+            message="https://alidocs.dingtalk.com/i/nodes/abc123",
+            preload_skills=[],
+        )
+
+        assert [skill["name"] for skill in preload_skills] == ["dingtalk-docs"]
+
     def test_injects_table_skill_when_message_mentions_dingtalk_sheet(self, test_db):
         builder = TaskRequestBuilder(test_db)
         user = SimpleNamespace(preferences="{}")
@@ -375,6 +388,64 @@ class TestUserScopedMcpInjection:
         assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
             skill_data["prompt"]
         )
+
+    def test_build_skill_data_keeps_system_managed_mcp_without_user_config(
+        self, test_db, monkeypatch
+    ):
+        monkeypatch.setitem(
+            mcp_provider_registry.MCP_PROVIDER_REGISTRY,
+            "demo",
+            {
+                "provider_id": "demo",
+                "display_name": "示例知识",
+                "configuration_mode": "system",
+                "message_keywords": ("示例知识",),
+                "services": {
+                    "knowledge": {
+                        "service_id": "knowledge",
+                        "server_name": "demo_knowledge",
+                        "detail_url": "https://example.com/knowledge",
+                        "skill_name": "demo-knowledge",
+                        "display_name": "示例知识库",
+                        "message_keywords": ("知识库",),
+                    }
+                },
+            },
+        )
+        builder = TaskRequestBuilder(test_db)
+        skill = SimpleNamespace(
+            id=102,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "demo-knowledge", "namespace": "default"},
+                "spec": {
+                    "description": "Demo knowledge runtime skill",
+                    "prompt": "Use the system-managed demo MCP.",
+                    "bindShells": ["Chat", "ClaudeCode"],
+                    "mcpServers": {
+                        "demo_knowledge": {
+                            "type": "streamable-http",
+                            "url": "${{backend_url}}/mcp/demo-knowledge/sse",
+                            "headers": {"Authorization": "Bearer ${{task_token}}"},
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = builder._build_skill_data(
+            skill, user=SimpleNamespace(preferences="{}")
+        )
+
+        assert skill_data["mcpServers"] == {
+            "demo_knowledge": {
+                "type": "streamable-http",
+                "url": "${{backend_url}}/mcp/demo-knowledge/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"},
+            }
+        }
+        assert "Configuration Required" not in skill_data["prompt"]
 
     def test_build_skill_data_does_not_rewrite_non_public_skill_named_like_runtime_skill(
         self, test_db

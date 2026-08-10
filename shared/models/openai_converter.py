@@ -18,7 +18,6 @@ Usage:
 """
 
 import logging
-from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest
@@ -200,6 +199,8 @@ class OpenAIRequestConverter:
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "external_knowledge_refs": request.external_knowledge_refs,
+            "selected_knowledge_prompt": request.selected_knowledge_prompt,
+            "provider_native_knowledge": request.provider_native_knowledge,
             "knowledge_base_scopes": [
                 {
                     "knowledge_base_id": scope.knowledge_base_id,
@@ -372,6 +373,11 @@ class OpenAIRequestConverter:
             knowledge_base_ids=metadata.get("knowledge_base_ids"),
             document_ids=metadata.get("document_ids"),
             external_knowledge_refs=metadata.get("external_knowledge_refs"),
+            selected_knowledge_prompt=metadata.get("selected_knowledge_prompt", "")
+            or "",
+            provider_native_knowledge=bool(
+                metadata.get("provider_native_knowledge", False)
+            ),
             knowledge_base_scopes=_coerce_knowledge_base_scopes(
                 metadata.get("knowledge_base_scopes")
             ),

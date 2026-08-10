@@ -43,6 +43,7 @@ import type {
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+import { buildDingTalkKnowledgeRef } from './selectedKnowledge'
 
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
@@ -527,7 +528,20 @@ export function useChatStreamHandlers({
               document_id: ref.document_id,
               parent_id: ref.parent_id,
               target_name: ref.target_name,
+              resource_url: ref.resource_url,
             },
+          })
+        })
+
+      snapshotContexts
+        .filter(
+          (ctx): ctx is import('@/types/context').DingTalkDocContext => ctx.type === 'dingtalk_doc'
+        )
+        .map(buildDingTalkKnowledgeRef)
+        .forEach(ref => {
+          contextItems.push({
+            type: 'external_knowledge',
+            data: { ...ref },
           })
         })
 
@@ -538,18 +552,6 @@ export function useChatStreamHandlers({
           .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
           .join('\n\n---\n\n')
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-      }
-
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-      if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
-          })
-          .join('\n')
-        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
       }
 
       const queueAttachmentIds = queueMessageContexts.flatMap(

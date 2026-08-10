@@ -161,9 +161,9 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
   const targetType = ref.target_type ?? 'knowledge_base'
   if (targetType !== 'knowledge_base') {
     const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
-    return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+    return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
   }
-  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+  return `external:${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 function supportsExternalKnowledgeBaseSelection(source: ExternalKnowledgeSource) {
