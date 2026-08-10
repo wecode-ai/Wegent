@@ -38,6 +38,17 @@ def get_image_provider(protocol: str, model_config: Dict[str, Any]) -> ImageProv
             image_config=model_config.get("imageConfig", {}),
         )
 
+    if protocol == "gpt-image":
+        from .gpt_image import GptImageProvider
+
+        return GptImageProvider(
+            base_url=model_config.get("base_url"),
+            api_key=model_config.get("api_key"),
+            model=model_config.get("model_id"),
+            image_config=model_config.get("imageConfig", {}),
+            default_headers=model_config.get("default_headers"),
+        )
+
     raise ValueError(f"Unknown image provider: {protocol}")
 
 

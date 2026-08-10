@@ -38,6 +38,7 @@ from app.api.ws.events import (
     ChatSendAck,
     ChatSendPayload,
     ClientEvents,
+    GenerateParams,
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
@@ -93,6 +94,27 @@ from shared.telemetry.context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams]:
+    """Restore persisted generation options when retrying the same user message."""
+    result = getattr(user_subtask, "result", None)
+    if not isinstance(result, dict):
+        return None
+
+    video_config = result.get("video_config")
+    if isinstance(video_config, dict):
+        return GenerateParams(
+            resolution=video_config.get("resolution"),
+            ratio=video_config.get("ratio"),
+            duration=video_config.get("duration"),
+            generation_mode_id=video_config.get("generation_mode_id"),
+        )
+
+    image_config = result.get("image_config")
+    if isinstance(image_config, dict):
+        return GenerateParams(size=image_config.get("size"))
+    return None
 
 
 def _apply_artifact_node_scope(
@@ -858,6 +880,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "resolution": payload.generate_params.resolution,
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
+                    "generation_mode_id": payload.generate_params.generation_mode_id,
+                    "size": payload.generate_params.size,
                 }
 
             execution_workspace = None
@@ -1891,6 +1915,7 @@ def _prepare_chat_retry_dispatch(
         team_id=team.id,
         message=user_message,
         attachment_id=attachment_id,
+        generate_params=_get_retry_generate_params(user_subtask),
         force_override_bot_model=model_id,
         force_override_bot_model_type=model_type,
         is_group_chat=False,

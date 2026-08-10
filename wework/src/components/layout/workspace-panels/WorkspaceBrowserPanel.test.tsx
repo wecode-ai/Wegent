@@ -41,10 +41,12 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   openEmbeddedBrowser: vi.fn(),
   pauseEmbeddedBrowserDownload: vi.fn(),
   readEmbeddedBrowserPageState: vi.fn(),
+  relabelEmbeddedBrowser: vi.fn(),
   reloadEmbeddedBrowser: vi.fn(),
   resumeEmbeddedBrowserDownload: vi.fn(),
   resolveEmbeddedBrowserAgentApproval: vi.fn(),
   setEmbeddedBrowserAgentControlPaused: vi.fn(),
+  setEmbeddedBrowserActiveTab: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -157,6 +159,10 @@ describe('WorkspaceBrowserPanel', () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser'
+    )
     const input = screen.getByTestId('workspace-browser-url-input')
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)
@@ -1166,8 +1172,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: 'https://example.test/',
         }}
@@ -1219,8 +1227,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: 'https://example.test/',
         }}
@@ -1258,8 +1268,10 @@ describe('WorkspaceBrowserPanel', () => {
   test('opens an external request in a hidden browser while the panel is inactive', async () => {
     mockBrowserHostRect()
     const openRequest = {
-      id: 1,
-      requestId: 1,
+      id: 'test-2',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
       label: 'workspace-browser',
       url: 'https://example.test/',
     }
@@ -1309,8 +1321,10 @@ describe('WorkspaceBrowserPanel', () => {
         })
     )
     const openRequest = {
-      id: 1,
-      requestId: 1,
+      id: 'test-3',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
       label: 'workspace-browser',
       url: 'https://example.test/',
     }
@@ -1348,16 +1362,13 @@ describe('WorkspaceBrowserPanel', () => {
     expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
-  test('closes an owned native browser by identity when the panel unmounts', async () => {
+  test('does not close an owned native browser when the panel unmounts', async () => {
     const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
     await screen.findByTestId('workspace-browser-native-view')
 
     view.unmount()
 
-    expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
-      'workspace-browser-runtime-1',
-      'workspace-browser-native-1'
-    )
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
   test('ignores a stale close event for a replacement native browser', async () => {
@@ -1785,8 +1796,10 @@ describe('WorkspaceBrowserPanel', () => {
       <WorkspaceBrowserPanel
         active
         openRequest={{
-          id: 1,
-          requestId: 1,
+          id: 'test-2',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
           label: 'workspace-browser',
           url: extensionUrl,
         }}

@@ -69,6 +69,10 @@ SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
 MEDIA_UNDERSTANDING_MCP_MOUNT_PATH = "/mcp/media-understanding"
 MEDIA_UNDERSTANDING_MCP_TRANSPORT_PATH = "/sse"
+IMAGE_MCP_MOUNT_PATH = "/mcp/image"
+IMAGE_MCP_TRANSPORT_PATH = "/sse"
+VIDEO_MCP_MOUNT_PATH = "/mcp/video"
+VIDEO_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -539,6 +543,16 @@ media_understanding_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
+# ============== Generation MCP Servers ==============
+
+image_mcp_server = FastMCP(
+    "wegent-image-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
 _media_understanding_request_token_info: contextvars.ContextVar[
     Optional[TaskTokenInfo]
 ] = contextvars.ContextVar("_media_understanding_request_token_info", default=None)
@@ -566,6 +580,47 @@ def _register_media_understanding_tools() -> None:
 def ensure_media_understanding_tools_registered() -> None:
     """Ensure media understanding MCP tools are registered."""
     _register_media_understanding_tools()
+
+
+video_mcp_server = FastMCP(
+    "wegent-video-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_image_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_image_request_token_info", default=None)
+)
+_video_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_video_request_token_info", default=None)
+)
+_image_tools_registered = False
+_video_tools_registered = False
+
+
+def ensure_image_tools_registered() -> None:
+    global _image_tools_registered
+    if _image_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import image_generation  # noqa: F401
+
+    count = register_tools_to_server(image_mcp_server, "image")
+    logger.info("[MCP:Image] Registered %s tools", count)
+    _image_tools_registered = True
+
+
+def ensure_video_tools_registered() -> None:
+    global _video_tools_registered
+    if _video_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import video_generation  # noqa: F401
+
+    count = register_tools_to_server(video_mcp_server, "video")
+    logger.info("[MCP:Video] Registered %s tools", count)
+    _video_tools_registered = True
 
 
 # ============== Starlette App Factory ==============
@@ -635,6 +690,27 @@ _MEDIA_UNDERSTANDING_MCP_SPEC = McpAppSpec(
     log_prefix="MediaUnderstanding",
     include_root_metadata=True,
 )
+
+_IMAGE_MCP_SPEC = McpAppSpec(
+    name="image",
+    service_name="wegent-image-mcp",
+    mount_path=IMAGE_MCP_MOUNT_PATH,
+    transport_path=IMAGE_MCP_TRANSPORT_PATH,
+    server=image_mcp_server,
+    token_context=_image_request_token_info,
+    log_prefix="Image",
+)
+
+_VIDEO_MCP_SPEC = McpAppSpec(
+    name="video",
+    service_name="wegent-video-mcp",
+    mount_path=VIDEO_MCP_MOUNT_PATH,
+    transport_path=VIDEO_MCP_TRANSPORT_PATH,
+    server=video_mcp_server,
+    token_context=_video_request_token_info,
+    log_prefix="Video",
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
@@ -642,6 +718,8 @@ MCP_APP_SPECS = (
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
     _MEDIA_UNDERSTANDING_MCP_SPEC,
+    _IMAGE_MCP_SPEC,
+    _VIDEO_MCP_SPEC,
 )
 
 MCP_CONTEXT_SERVER_NAMES = frozenset(
@@ -651,6 +729,8 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "prompt_optimization",
         "subscription",
         "media",
+        "image",
+        "video",
     }
 )
 
@@ -688,6 +768,10 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_subscription_tools_registered()
     elif spec.name == "media":
         ensure_media_understanding_tools_registered()
+    elif spec.name == "image":
+        ensure_image_tools_registered()
+    elif spec.name == "video":
+        ensure_video_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:

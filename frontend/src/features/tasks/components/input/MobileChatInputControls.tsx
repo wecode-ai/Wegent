@@ -15,7 +15,8 @@ import React, {
 } from 'react'
 import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
-import type { Model } from '../selector/ModelSelector'
+import ModelSelector, { type Model } from '../selector/ModelSelector'
+import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
 import MobileRepositorySelector from '../selector/MobileRepositorySelector'
 import MobileBranchSelector from '../selector/MobileBranchSelector'
@@ -51,6 +52,7 @@ import { getChatSendState } from './chatSendState'
 import { isDingTalkAudioSupported } from '@/dingtalk/lib/dingtalk-sdk'
 import { useTranslation } from '@/hooks/useTranslation'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
+import type { VideoGenerationMode } from '@/apis/models'
 
 const MOBILE_ACTION_MENU_WIDTH = 224
 const MOBILE_ACTION_MENU_MARGIN = 12
@@ -105,6 +107,13 @@ export interface MobileChatInputControlsProps {
   attachments?: Attachment[]
   onFileSelect: (files: File | File[]) => void
   onAttachmentAdd?: (attachment: Attachment) => void
+  attachmentAccept?: string
+  videoGenerationModes?: VideoGenerationMode[]
+  selectedVideoGenerationMode?: string
+  onVideoGenerationModeChange?: (modeId: string) => void
+  selectedVideoModel?: Model | null
+  onVideoModelChange?: (model: Model) => void
+  isVideoModelsLoading?: boolean
 
   // State flags
   isStreaming: boolean
@@ -114,6 +123,7 @@ export interface MobileChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  submitBlockedReason?: string | null
   hasAttachments?: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
@@ -183,6 +193,13 @@ export function MobileChatInputControls({
   attachments = [],
   onFileSelect,
   onAttachmentAdd = () => {},
+  attachmentAccept,
+  videoGenerationModes = [],
+  selectedVideoGenerationMode,
+  onVideoGenerationModeChange,
+  selectedVideoModel,
+  onVideoModelChange,
+  isVideoModelsLoading = false,
   isStreaming,
   isStopping,
   hasMessages,
@@ -190,6 +207,7 @@ export function MobileChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  submitBlockedReason,
   hasAttachments = false,
   canQueueMessage = false,
   canSendGuidance = false,
@@ -214,7 +232,10 @@ export function MobileChatInputControls({
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
-  const showAttachmentAction = supportsAttachments(selectedTeam)
+  const isGenerationMode = taskType === 'image' || taskType === 'video'
+  const showAttachmentAction = isGenerationMode
+    ? selectedVideoGenerationMode !== 'first_last_frame'
+    : supportsAttachments(selectedTeam)
   const showSkillAction = availableSkills.length > 0 && Boolean(onToggleSkill)
   const filteredTeams = useMemo(
     () => filterTeamsByMode(teams, teamModeFilter),
@@ -372,6 +393,7 @@ export function MobileChatInputControls({
             isLoading={false}
             ariaLabel="Queue message"
             compact
+            disabledReason={submitBlockedReason}
           />
         </div>
       )
@@ -383,6 +405,7 @@ export function MobileChatInputControls({
         disabled={sendState.isPrimaryDisabled}
         isLoading={false}
         compact
+        disabledReason={submitBlockedReason}
       />
     )
   }
@@ -428,6 +451,7 @@ export function MobileChatInputControls({
                     <AttachmentButton
                       onFileSelect={onFileSelect}
                       disabled={isStreaming}
+                      accept={attachmentAccept}
                       triggerVariant="menu-item"
                     />
                   )}
@@ -525,6 +549,28 @@ export function MobileChatInputControls({
       <div
         className={`ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}
       >
+        {!isVoiceMode && taskType === 'video' && onVideoGenerationModeChange && (
+          <VideoGenerationModeSelector
+            modes={videoGenerationModes}
+            value={selectedVideoGenerationMode}
+            onChange={onVideoGenerationModeChange}
+            disabled={isStreaming}
+          />
+        )}
+        {!isVoiceMode && taskType === 'video' && onVideoModelChange && (
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <ModelSelector
+              selectedModel={selectedVideoModel ?? null}
+              setSelectedModel={model => model && onVideoModelChange(model)}
+              forceOverride={false}
+              setForceOverride={() => {}}
+              selectedTeam={null}
+              disabled={isStreaming}
+              isLoading={isVideoModelsLoading}
+              modelCategoryType="video"
+            />
+          </div>
+        )}
         {!isVoiceMode && canSwitchTeam && selectedTeamForDisplay && onTeamChange && (
           <div
             className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
@@ -540,7 +586,7 @@ export function MobileChatInputControls({
             />
           </div>
         )}
-        {!isVoiceMode && selectedTeam && (
+        {!isVoiceMode && selectedTeam && !isGenerationMode && (
           <div
             className={`flex-1 min-w-0 max-w-[112px] overflow-hidden ${shouldHideSideControls ? 'opacity-50 pointer-events-none' : ''}`}
           >

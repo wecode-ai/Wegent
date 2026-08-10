@@ -32,6 +32,7 @@ const ALLOWED_EXTERNAL_PATHS = [
   '/api/auth/oauth/callback', // OAuth callback
   '/api/flows/webhook/', // Flow webhook triggers from external systems
   '/api/tasks/', // Task endpoints (e.g. remote-workspace file downloads with token auth)
+  '/api/attachments/download/shared', // Signed attachment downloads for model providers
 ]
 
 /**
