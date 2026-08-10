@@ -4572,12 +4572,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('bg-background')
     expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
 
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
-    expect(browserTab).toHaveTextContent(/^weibo.com$/)
+    expect(browserTab).toHaveTextContent(/^example.com$/)
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'https://example.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
   })
