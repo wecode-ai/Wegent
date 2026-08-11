@@ -9,6 +9,7 @@ import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
+  Attachment,
   DeleteDeviceWorkspaceRequest,
   DeleteDeviceWorkspaceResponse,
   DeviceCommandResponse,
@@ -289,7 +290,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
         family,
         ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
-        ...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+        reasoningEfforts,
         ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
         controls: ['speed'],
         sortOrder: 20,
@@ -1157,10 +1158,11 @@ type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   original_filename: string
   file_size: number
   mime_type: string
+  status: Attachment['status']
   subtask_id: string
   file_extension: string
-  local_path: string
-  local_preview_url: string
+  local_path?: string
+  local_preview_url?: string
   text_length?: number
   text_preview?: string
 }
@@ -1174,7 +1176,7 @@ function localRuntimeAttachments(
 
   attachments.forEach(attachment => {
     const localPath = stringValue(attachment.local_path)
-    if (!localPath) return
+    if (!localPath && attachment.id <= 0) return
 
     runtimeAttachments.push({
       id: attachment.id,
@@ -1182,10 +1184,15 @@ function localRuntimeAttachments(
       original_filename: attachment.filename,
       file_size: attachment.file_size,
       mime_type: attachment.mime_type,
+      status: attachment.status,
       subtask_id: attachment.subtask_id ?? subtaskId,
       file_extension: attachment.file_extension,
-      local_path: localPath,
-      local_preview_url: attachment.local_preview_url ?? localPath,
+      ...(localPath
+        ? {
+            local_path: localPath,
+            local_preview_url: attachment.local_preview_url ?? localPath,
+          }
+        : {}),
       ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
       ...(attachment.text_preview ? { text_preview: attachment.text_preview } : {}),
     })
@@ -2585,6 +2592,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     updateGlobalImNotification() {
       return cloudConnectionRequired('updateGlobalImNotification')
+    },
+    updateImNotificationPresence() {
+      return cloudConnectionRequired('updateImNotificationPresence')
     },
     subscribeRuntimeTaskNotifications() {
       return cloudConnectionRequired('subscribeRuntimeTaskNotifications')

@@ -2000,6 +2000,16 @@ button.plugin-route-back-button:hover {
   margin: 0 0 8px;
 }
 
+.plugin-market-category-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.plugin-market-category-section + .plugin-market-reveal-button {
+  margin-top: 4px;
+}
+
 .plugin-market-catalog-after-strip .plugin-market-section-head {
   margin-top: 0;
 }

@@ -37,14 +37,11 @@ impl RuntimeWorkRpcHandler {
         ) {
             return;
         }
-        let Some(item) = notification
-            .params
-            .get("item")
-            .filter(|item| item.is_object())
-        else {
+        let item = notification_item(notification.params);
+        if !item.is_object() {
             return;
-        };
-        let Some(item_id) = string_field(item, "id") else {
+        }
+        let Some(item_id) = string_field(&item, "id") else {
             return;
         };
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
@@ -62,9 +59,18 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
         {
-            *existing = item.clone();
+            let created_at = existing
+                .get("createdAt")
+                .or_else(|| existing.get("created_at"))
+                .cloned();
+            *existing = item;
+            if existing.get("createdAt").is_none() && existing.get("created_at").is_none() {
+                if let (Some(object), Some(created_at)) = (existing.as_object_mut(), created_at) {
+                    object.insert("createdAt".to_owned(), created_at);
+                }
+            }
         } else {
-            transcript.items.push(item.clone());
+            transcript.items.push(item);
         }
     }
 

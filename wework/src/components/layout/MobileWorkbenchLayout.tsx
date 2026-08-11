@@ -380,51 +380,52 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 <div className="h-11 min-w-[44px]" />
               )}
             </header>
-            {isCreatingWorktree ? (
-              <WorktreeCreationStatus className="h-full pt-20" />
-            ) : (
-              <ScrollableMessageArea
-                messages={paneMessages}
-                loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
-                hasMoreBefore={paneSession.transcriptHasMoreBefore}
-                loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
-                turnNavigation={paneSession.turnNavigation}
-                loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
-                onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                onLoadFullTranscript={paneSession.loadFullTranscript}
-                loadingFullTranscript={paneSession.transcriptLoadingFullContent}
-                onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
-                onLoadTranscriptGap={paneSession.loadTranscriptGap}
-                conversationKey={
-                  currentRuntimeTask
-                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
-                    : null
-                }
-                className="h-full"
-                scrollerClassName="pb-28 pt-16"
-                devices={state.devices}
-                onRetryFailedMessage={message => {
-                  void paneSession.retryFailedMessage(message)
-                }}
-                onSwitchModelForFailedMessage={message => {
-                  pendingModelRetryRef.current = message
-                  setModelSelectorOpenSignal(signal => signal + 1)
-                }}
-                onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onEditLastUserMessage={paneSession.editLastUserMessage}
-                canEditLastUserMessage={canEditLastUserMessage}
-                onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-                onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
-                hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
-                hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
-              />
-            )}
+            <ScrollableMessageArea
+              messages={paneMessages}
+              loading={paneSession.transcriptLoading}
+              isWaitingForAssistant={
+                !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+              }
+              hasMoreBefore={paneSession.transcriptHasMoreBefore}
+              loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
+              turnNavigation={paneSession.turnNavigation}
+              loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
+              onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+              onLoadFullTranscript={paneSession.loadFullTranscript}
+              loadingFullTranscript={paneSession.transcriptLoadingFullContent}
+              onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
+              onLoadTranscriptGap={paneSession.loadTranscriptGap}
+              conversationKey={
+                currentRuntimeTask
+                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
+                  : null
+              }
+              className="h-full"
+              scrollerClassName={isCreatingWorktree ? 'pt-16' : 'pb-28 pt-16'}
+              contentFooter={
+                isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+              }
+              devices={state.devices}
+              onRetryFailedMessage={message => {
+                void paneSession.retryFailedMessage(message)
+              }}
+              onSwitchModelForFailedMessage={message => {
+                pendingModelRetryRef.current = message
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }}
+              onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+              }
+              onRevertFileChanges={(subtaskId, fileChanges) =>
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+              }
+              onEditLastUserMessage={paneSession.editLastUserMessage}
+              canEditLastUserMessage={canEditLastUserMessage}
+              onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+              hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+              hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+            />
             {!isCreatingWorktree && (
               <div
                 data-testid="mobile-chat-input-dock"

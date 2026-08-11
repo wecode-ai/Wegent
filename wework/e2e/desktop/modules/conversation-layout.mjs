@@ -776,6 +776,10 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
     /正在创建工作树|Creating worktree/,
     'The worktree creation status page did not explain the active operation'
   )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: CHECKPOINT_TASK_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const creatingSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     creatingSnapshot.testIds.includes('desktop-floating-composer-card'),

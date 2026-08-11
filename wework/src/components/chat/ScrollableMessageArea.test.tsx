@@ -163,6 +163,33 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.lastElementChild).toBe(footer)
   })
 
+  test('renders an optional content footer directly after the message list', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'Create a worktree',
+            status: 'done',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+        contentFooterClassName="content-footer-shell"
+        contentFooter={<div data-testid="creation-status">Creating worktree</div>}
+      />
+    )
+
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const messageList = screen.getByTestId('message-user').parentElement
+    const footer = screen.getByTestId('chat-message-scroll-area-content-footer')
+
+    expect(footer).toHaveClass('content-footer-shell')
+    expect(footer).toContainElement(screen.getByTestId('creation-status'))
+    expect(content.lastElementChild).toBe(footer)
+    expect(messageList?.nextElementSibling).toBe(footer)
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
