@@ -931,6 +931,66 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
+  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+    const runtimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-worktree-creating',
+    }
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: runtimeTask,
+          isSending: true,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device-1',
+                    workspacePath: '/workspace/project-alpha',
+                    workspaceKind: 'worktree',
+                    available: true,
+                    mapped: true,
+                    tasks: [
+                      {
+                        taskId: runtimeTask.taskId,
+                        workspacePath: runtimeTask.workspacePath,
+                        workspaceKind: 'worktree',
+                        title: 'Create isolated workspace',
+                        runtime: 'codex',
+                        status: 'creating',
+                        optimistic: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 1,
+          },
+        }}
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Implement the feature',
+            status: 'complete',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    expect(screen.queryByTestId('mobile-chat-input-dock')).not.toBeInTheDocument()
+    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+  })
+
   test('shows worktree branch selection in the mobile empty project controls', async () => {
     const currentProject = {
       ...baseState.projects[0],

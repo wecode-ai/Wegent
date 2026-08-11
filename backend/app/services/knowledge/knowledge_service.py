@@ -325,6 +325,10 @@ class KnowledgeService:
         if data.summary_model_ref:
             spec_kwargs["summaryModelRef"] = data.summary_model_ref
 
+        # Add executionModelRef if provided
+        if data.execution_model_ref:
+            spec_kwargs["executionModelRef"] = data.execution_model_ref
+
         # Add guidedQuestions if provided
         if data.guided_questions:
             spec_kwargs["guidedQuestions"] = data.guided_questions
@@ -898,6 +902,10 @@ class KnowledgeService:
         # Use model_fields_set to detect if the field was explicitly passed
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
+
+        # Update execution_model_ref if explicitly provided (including null to clear)
+        if "execution_model_ref" in data.model_fields_set:
+            spec["executionModelRef"] = data.execution_model_ref
 
         # Update guided_questions if explicitly provided (including null to clear)
         if "guided_questions" in data.model_fields_set:

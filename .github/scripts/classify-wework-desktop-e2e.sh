@@ -5,6 +5,8 @@ set -euo pipefail
 core_segments=(
   workspace-tabs
   priority-filter
+  automation-lifecycle
+  model-routing
   core-task-flow
   window-lifecycle
   goal-lifecycle
@@ -100,6 +102,13 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
+    wework/src/pages/AutomationsPage* | \
+      wework/src/features/automations/* | \
+      wework/src/features/todo/ProjectAutomationView.tsx | \
+      wework/src/types/automation.ts)
+      select_target "core:automation-lifecycle"
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -181,6 +190,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:model-routing"
       return
       ;;
 
