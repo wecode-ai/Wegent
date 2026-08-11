@@ -650,7 +650,14 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-model-input-modality-image'))
     await userEvent.click(screen.getByTestId('local-model-image-generation-checkbox'))
     await userEvent.click(screen.getByTestId('local-model-reasoning-level-high'))
-    await userEvent.selectOptions(screen.getByTestId('local-model-default-reasoning-input'), 'high')
+    const defaultReasoningSelect = screen.getByTestId('local-model-default-reasoning-input')
+    expect(
+      within(defaultReasoningSelect).getByRole('option', {
+        name: '高',
+      })
+    ).toHaveAttribute('value', 'high')
+    expect(within(defaultReasoningSelect).queryByRole('option', { name: 'high' })).toBeNull()
+    await userEvent.selectOptions(defaultReasoningSelect, 'high')
     await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
     await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
     await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')

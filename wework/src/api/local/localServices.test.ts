@@ -111,6 +111,7 @@ describe('createLocalAppServices', () => {
             ui: expect.objectContaining({
               family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
               familyLabel: '本地推理',
+              reasoningEfforts: [],
             }),
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
