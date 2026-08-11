@@ -253,6 +253,18 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
 不会导致汇总任务误报失败。
 
+CI 稳定性依赖以下约束：
+
+- 平台 E2E 的 MySQL 服务必须为首次初始化保留启动宽限。健康检查的
+  `start-period` 应覆盖共享 runner 上的冷启动，再通过检查间隔和重试次数判断失败；
+  不要依赖重跑掩盖初始化超时。
+- `pull_request_target` 触发的 Repository Policy 必须从受信任的 base checkout
+  运行策略脚本，但扫描目标应按 PR head 仓库和不可变的 head SHA 检出。不要依赖
+  `refs/pull/<number>/merge`，因为 PR 同步提交时这个短生命周期引用可能被替换或删除；
+  策略任务也不得执行 PR 提供的代码。
+- 桌面 E2E 遇到异步独立渲染的最终文本和附属控件时，必须分别等待目标元素出现后再
+  读取属性或断言状态。看到最终文本不代表折叠控件、时间线等关联 UI 已完成挂载。
+
 ### CI 缓存所有权
 
 大型缓存由 `main` 分支统一预热。PR 和 merge queue 可以恢复 `main` 缓存，但不会
