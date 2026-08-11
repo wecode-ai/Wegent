@@ -23,8 +23,8 @@ def test_chat_done_payload_preserves_video_segment_reference() -> None:
                             "start_sec": 6,
                             "end_sec": 15,
                             "score": 1.0,
-                            "title": "张凌赫的机场广播趣事",
-                            "description": "回顾机场广播催促登机的经典事件。",
+                            "title": "Sample video segment title",
+                            "description": "Sample video segment description.",
                         }
                     ],
                 }
@@ -40,7 +40,7 @@ def test_chat_done_payload_preserves_video_segment_reference() -> None:
             "start_sec": 6,
             "end_sec": 15,
             "score": 1.0,
-            "title": "张凌赫的机场广播趣事",
-            "description": "回顾机场广播催促登机的经典事件。",
+            "title": "Sample video segment title",
+            "description": "Sample video segment description.",
         }
     ]
