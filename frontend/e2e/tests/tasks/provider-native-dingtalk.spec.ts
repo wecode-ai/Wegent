@@ -128,7 +128,10 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
     page,
     request,
   }) => {
-    const prompt = makePrompt('007', '输出所选知识空间中每份文档的标题和唯一断言标记。')
+    const prompt = makePrompt(
+      '007',
+      '逐份读取所选知识空间中全部文档的正文，按文档标题输出唯一断言标记。'
+    )
     await scenario(request, prompt, [
       toolStep(LIST_TOOL, { workspaceId: 'space-d', pageSize: 50 }),
       toolStep(LIST_TOOL, {

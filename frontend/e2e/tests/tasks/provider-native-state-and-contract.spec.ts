@@ -15,6 +15,7 @@ import {
   getScenarioModelBodies,
   getTask,
   modelRequestText,
+  modelToolNames,
   openProviderNativeChat,
   PROVIDER_NATIVE_API_URL,
   PROVIDER_NATIVE_MOCK_URL,
@@ -162,14 +163,17 @@ test.describe('Provider-native binding state and contracts', () => {
     expect(removeResponse.status(), await removeResponse.text()).toBe(200)
     expect((await removeResponse.json()) as { total: number }).toMatchObject({ total: 0 })
 
-    const secondPrompt = makePrompt('015-after-remove', '输出之前所选钉钉文档的唯一断言标记。')
+    const secondPrompt = makePrompt('015-after-remove', '输出之前所选文档的唯一断言标记。')
     await scenario(request, secondPrompt, [{ responseContent: '当前没有已绑定的钉钉知识范围。' }])
     await page.goto(`/chat?teamId=${resources.teamId}&taskId=${taskId}`, {
       waitUntil: 'domcontentloaded',
     })
     const secondTask = await sendCurrentTask(page, request, secondPrompt, taskId)
     const bodies = await getScenarioModelBodies(request, secondPrompt)
-    expect(modelRequestText(bodies)).not.toContain('<selected_knowledge_sources>')
+    expect(modelRequestText(bodies)).not.toMatch(
+      /<selected_knowledge_sources>[\s\S]*?<\/selected_knowledge_sources>/
+    )
+    expect(modelToolNames(bodies).some(name => name.includes('dingtalk-docs'))).toBe(false)
     expect(extractExternalKnowledgeRefs(secondTask)).toHaveLength(0)
     expect(await getMcpCalls(request)).toHaveLength(0)
     expect(extractTaskAnswer(secondTask)).toContain('没有已绑定')

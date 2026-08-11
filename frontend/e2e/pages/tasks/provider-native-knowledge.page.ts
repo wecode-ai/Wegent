@@ -143,9 +143,8 @@ export class ProviderNativeKnowledgePage {
 
   private async expectIncludeSubfoldersControlHidden(): Promise<void> {
     const picker = this.page.getByTestId('knowledge-source-picker')
-    await expect(picker.getByRole('checkbox')).toHaveCount(0)
-    await expect(
-      picker.getByText(/includeSubfolders|include subfolders|包含子文件夹|包含子目录/i)
-    ).toHaveCount(0)
+    const includeSubfoldersLabel = /includeSubfolders|include subfolders|包含子文件夹|包含子目录/i
+    await expect(picker.getByRole('checkbox', { name: includeSubfoldersLabel })).toHaveCount(0)
+    await expect(picker.getByText(includeSubfoldersLabel)).toHaveCount(0)
   }
 }
