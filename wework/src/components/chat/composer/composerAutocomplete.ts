@@ -20,6 +20,7 @@ export interface SlashCommand {
   requiresEmptyComposer?: boolean
   Icon: ComponentType<{ className?: string }>
   iconUrl?: string | null
+  iconContrastPad?: boolean
   trailingIcon?: ComponentType<{ className?: string }>
   enabled?: boolean
   testId: string

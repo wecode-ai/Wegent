@@ -10,7 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
 import {
   getComposerApps,
@@ -57,7 +57,7 @@ function ComposerPluginPreviewIcons({
       aria-hidden="true"
     >
       {apps.slice(0, 3).map(app => {
-        const logo = resolvePluginLogoUrl({
+        const logo = resolvePluginLogo({
           pluginKey: composerAppPluginKey(app),
           logo: app.logoUrl,
           logoDark: app.logoUrlDark,
@@ -67,13 +67,14 @@ function ComposerPluginPreviewIcons({
           <span
             key={app.id}
             data-testid={`composer-plugin-preview-icon-${app.id}`}
-            className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
+            className={[
+              'plugin-icon-slot h-6 w-6 rounded-full border-border/30',
+              logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
           >
-            {logo ? (
-              <img src={logo} alt="" className="h-full w-full object-contain" />
-            ) : (
-              <Boxes className="h-4 w-4" />
-            )}
+            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-4 w-4" />}
           </span>
         )
       })}
@@ -276,7 +277,7 @@ export function PluginPickerMenu({
               </div>
             ) : visibleApps.length > 0 ? (
               visibleApps.slice(0, 8).map(app => {
-                const logo = resolvePluginLogoUrl({
+                const logo = resolvePluginLogo({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
                   logoDark: app.logoUrlDark,
@@ -291,7 +292,10 @@ export function PluginPickerMenu({
                     title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
-                      registerComposerMentionIcon(reference, logo)
+                      registerComposerMentionIcon(reference, {
+                        url: logo.url,
+                        contrastPad: logo.contrastPad,
+                      })
                       insertPluginReference(reference)
                       showPluginTrialGuide(displayAppName(app), app.trialTemplates)
                       const recent = JSON.parse(
@@ -304,9 +308,16 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background">
-                      {logo ? (
-                        <img src={logo} alt="" className="h-full w-full object-cover" />
+                    <span
+                      className={[
+                        'plugin-icon-slot h-[22px] w-[22px] rounded-md border-border/30',
+                        logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {logo.url ? (
+                        <img src={logo.url} alt="" />
                       ) : (
                         <Boxes className="h-3.5 w-3.5 text-text-muted" />
                       )}

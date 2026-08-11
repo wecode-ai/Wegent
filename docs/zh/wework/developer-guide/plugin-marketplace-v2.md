@@ -113,9 +113,8 @@ erDiagram
 | 精选 Codex 镜像            | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
 | 用户投稿审核通过           | `market`  | `user`           | 社区插件/作者            |
 
-> GitHub 适配包（connectors + 汉化）走「Wegent 自研 / 国内适配镜像」身份：
-> `source_type=mirror`、`source_provider=wework`、`visibility=public`，出现在
-> 「国内公开」Tab；不要再标成 `codex`。
+> OpenAI 上游镜像（含 GitHub）同步时**纯透传**官方包，不再做 connectors /
+> 汉化 / 图标改写。品牌 `logo` / `logoDark` 以官方包为准。
 
 “我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
 

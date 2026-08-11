@@ -6,16 +6,17 @@ import io
 import json
 import zipfile
 
-import pytest
+from app.services.plugin_upstream_adapter import adapt_upstream_package
 
-from app.services.plugin_upstream_adapter import (
-    OPENAI_GITHUB_ADAPTER,
-    OPENAI_GITHUB_SKILL_DESCRIPTIONS,
-    adapt_upstream_package,
+GITHUB_UPSTREAM_SKILL_PATHS = (
+    "skills/gh-address-comments/SKILL.md",
+    "skills/gh-fix-ci/SKILL.md",
+    "skills/github/SKILL.md",
+    "skills/yeet/SKILL.md",
 )
 
 
-def _github_package(*, include_icon: bool = True) -> bytes:
+def _github_package() -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr(
@@ -27,15 +28,19 @@ def _github_package(*, include_icon: bool = True) -> bytes:
                     "description": "GitHub workflows",
                     "apps": ["app_123"],
                     "mcpServers": {"github": {"command": "legacy"}},
-                    "interface": {"displayName": "GitHub"},
+                    "interface": {
+                        "displayName": "GitHub",
+                        "logo": "./assets/logo.png",
+                        "composerIcon": "./assets/github-small.svg",
+                    },
                 }
             ),
         )
         archive.writestr(".app.json", "{}")
         archive.writestr(".mcp.json", "{}")
-        if include_icon:
-            archive.writestr("assets/logo.png", b"png")
-        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+        archive.writestr("assets/logo.png", b"png")
+        archive.writestr("assets/github-small.svg", b"<svg/>")
+        for path in GITHUB_UPSTREAM_SKILL_PATHS:
             name = path.split("/")[-2]
             archive.writestr(
                 path,
@@ -47,64 +52,25 @@ def _github_package(*, include_icon: bool = True) -> bytes:
     return output.getvalue()
 
 
-def test_openai_github_adapter_rewrites_runtime_integration_deterministically():
-    package = _github_package()
-
-    first = adapt_upstream_package(
-        provider="codex",
-        marketplace_name="openai/plugins",
-        remote_plugin_id="github",
-        package=package,
-    )
-    second = adapt_upstream_package(
-        provider="codex",
-        marketplace_name="openai/plugins",
-        remote_plugin_id="github",
-        package=package,
-    )
-
-    assert first.package == second.package
-    assert first.adapter == OPENAI_GITHUB_ADAPTER
-    assert first.adapter_version == "3"
-    assert first.upstream_version == "0.1.6"
-    with zipfile.ZipFile(io.BytesIO(first.package)) as archive:
-        manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
-        assert manifest["version"] == "0.1.6+wegent.3"
-        assert manifest["connectors"] == [
-            {"slug": "github", "authPolicy": "on_install"}
-        ]
-        assert "apps" not in manifest
-        assert "mcpServers" not in manifest
-        assert manifest["interface"]["logo"] == "./assets/logo.png"
-        assert manifest["interface"]["composerIcon"] == "./assets/logo.png"
-        assert manifest["interface"]["category"] == "开发工具"
-        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items():
-            skill = archive.read(path).decode("utf-8")
-            assert f"description: {description}\n" in skill
-            assert f"# {path.split('/')[-2]}\n" in skill
-        assert ".app.json" not in archive.namelist()
-        assert ".mcp.json" not in archive.namelist()
-
-
-def test_openai_github_adapter_rejects_an_incomplete_upstream():
-    with pytest.raises(ValueError, match="assets/logo.png"):
-        adapt_upstream_package(
-            provider="codex",
-            marketplace_name="openai/plugins",
-            remote_plugin_id="github",
-            package=_github_package(include_icon=False),
-        )
-
-
-def test_unregistered_upstream_is_not_modified():
+def test_upstream_packages_are_passed_through_unchanged():
     package = _github_package()
 
     adapted = adapt_upstream_package(
         provider="codex",
-        marketplace_name="another-marketplace",
+        marketplace_name="openai/plugins",
         remote_plugin_id="github",
         package=package,
     )
 
     assert adapted.package == package
     assert adapted.adapter is None
+    assert adapted.adapter_version is None
+    assert adapted.upstream_version is None
+    with zipfile.ZipFile(io.BytesIO(adapted.package)) as archive:
+        manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
+        assert manifest["version"] == "0.1.6"
+        assert manifest["apps"] == ["app_123"]
+        assert manifest["mcpServers"] == {"github": {"command": "legacy"}}
+        assert "connectors" not in manifest
+        assert ".app.json" in archive.namelist()
+        assert ".mcp.json" in archive.namelist()
