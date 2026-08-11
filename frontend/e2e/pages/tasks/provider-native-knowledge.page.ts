@@ -42,7 +42,9 @@ export class ProviderNativeKnowledgePage {
   ): Promise<void> {
     await this.openKnowledgeBase(knowledgeBaseId, knowledgeBaseName)
     for (const documentId of documentIds) {
-      const documentNode = this.page.getByTestId(`knowledge-picker-document-node-${documentId}`)
+      const documentNode = this.page.getByTestId(
+        `knowledge-picker-document-node-document-${documentId}`
+      )
       await expect(documentNode).toBeVisible()
       await documentNode.click()
     }
