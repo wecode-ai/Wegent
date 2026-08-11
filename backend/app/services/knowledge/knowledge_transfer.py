@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
 from app.models.user import User
 from app.schemas.knowledge import TransferDocumentsResponse
 from app.schemas.namespace import GroupRole
@@ -43,6 +43,7 @@ INVALID_TRANSFER_NAMESPACE = "INVALID_TRANSFER_NAMESPACE"
 FOLDERS_NOT_FOUND = "FOLDERS_NOT_FOUND"
 DOCS_NOT_FOUND = "DOCS_NOT_FOUND"
 NOTEBOOK_DOC_LIMIT_EXCEEDED = "NOTEBOOK_DOC_LIMIT_EXCEEDED"
+GENERATED_CONTENT_READ_ONLY = "GENERATED_CONTENT_READ_ONLY"
 
 
 class KnowledgeTransferService:
@@ -731,6 +732,33 @@ class KnowledgeTransferService:
                 deleted_folder_count=0,
                 source_kb_id=source_kb_id,
                 target_kb_id=target_kb_id,
+            )
+
+        generated_document = (
+            db.query(KnowledgeDocument.id)
+            .filter(
+                KnowledgeDocument.id.in_(all_doc_ids),
+                KnowledgeDocument.kind_id == source_kb_id,
+                KnowledgeDocument.origin == ContentOrigin.GENERATED.value,
+            )
+            .first()
+        )
+        generated_folder = (
+            db.query(KnowledgeFolder.id)
+            .filter(
+                KnowledgeFolder.id.in_(descendant_folder_ids),
+                KnowledgeFolder.kind_id == source_kb_id,
+                KnowledgeFolder.origin == ContentOrigin.GENERATED.value,
+            )
+            .first()
+            if descendant_folder_ids
+            else None
+        )
+        if generated_document or generated_folder:
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Generated Code Wiki content is read-only",
+                error_code=GENERATED_CONTENT_READ_ONLY,
             )
 
         KnowledgeTransferService.validate_transfer_document_names(

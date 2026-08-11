@@ -30,7 +30,7 @@ import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
-import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
+import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
@@ -485,7 +485,7 @@ export function KnowledgeDocumentPageDesktop({
       // history.pushState and rendered the wiki as a notebook anyway.
       if (sidebar.selectedKb.kb_type === 'code_wiki') {
         return (
-          <CodeWikiReader
+          <CodeWikiWorkspace
             key={sidebar.selectedKb.id}
             wiki={sidebar.selectedKb}
             canConfigure={canConfigureSelectedCodeWiki}

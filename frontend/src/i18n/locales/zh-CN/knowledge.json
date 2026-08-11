@@ -1154,6 +1154,13 @@
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
     },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "文档管理",
+      "generatedContent": "生成内容",
+      "userContent": "用户内容",
+      "permissions": "权限管理"
+    },
     "history": {
       "title": "生成历史",
       "never": "尚未生成",

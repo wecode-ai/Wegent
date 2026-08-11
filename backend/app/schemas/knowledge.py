@@ -59,6 +59,13 @@ class DocumentSourceType(str, Enum):
     CODE = "code"
 
 
+class ContentOrigin(str, Enum):
+    """Whether knowledge content belongs to a person or the wiki projection."""
+
+    GENERATED = "generated"
+    USER = "user"
+
+
 def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
     """Refuse ``code`` on a public document create.
 
@@ -972,6 +979,7 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    origin: ContentOrigin = ContentOrigin.USER
     folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
@@ -1153,6 +1161,7 @@ class KnowledgeFolderResponse(BaseModel):
     kind_id: int
     parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
     name: str
+    origin: ContentOrigin = ContentOrigin.USER
     children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
     document_count: int = Field(
         default=0, description="Number of documents in this folder"

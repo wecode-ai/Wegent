@@ -484,6 +484,8 @@ export interface KnowledgeBaseListResponse {
 }
 
 // Knowledge Document types
+export type KnowledgeContentOrigin = 'generated' | 'user'
+
 export interface KnowledgeDocument {
   id: number
   kind_id: number
@@ -501,6 +503,8 @@ export interface KnowledgeDocument {
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
+  /** Content ownership is present on current API responses. */
+  origin?: KnowledgeContentOrigin
   folder_id: number // 0 = root level
   created_at: string
   updated_at: string
@@ -987,6 +991,8 @@ export interface KnowledgeFolder {
   kind_id: number
   parent_id: number // 0 = root level
   name: string
+  /** Content ownership is present on current API responses. */
+  origin?: KnowledgeContentOrigin
   children: KnowledgeFolder[]
   document_count: number
   direct_document_count?: number

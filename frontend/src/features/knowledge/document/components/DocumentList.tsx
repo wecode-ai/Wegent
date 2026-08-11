@@ -56,6 +56,7 @@ import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/use
 import { documentViewOf } from '@/types/knowledge'
 import type {
   KnowledgeBase,
+  KnowledgeContentOrigin,
   KnowledgeDocument,
   KnowledgeFolder,
   SplitterConfig,
@@ -219,6 +220,10 @@ interface DocumentListProps {
   isOrganization?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  /** Limit this browser to one virtual Code Wiki content root. */
+  contentOrigin?: KnowledgeContentOrigin
+  /** Render content without ordinary document or folder mutations. */
+  readOnly?: boolean
 }
 
 /** Flatten folder tree into a flat list for select dropdowns */
@@ -254,6 +259,8 @@ export function DocumentList({
   initialDocumentId,
   isOrganization = false,
   paginationEnabled = true,
+  contentOrigin,
+  readOnly = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
@@ -274,7 +281,7 @@ export function DocumentList({
     deleteFolder,
     moveDocument,
     batchMove,
-  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id, origin: contentOrigin })
 
   // Full tree index (all folders) — used for selection scope and breadcrumb
   const fullTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
@@ -316,6 +323,7 @@ export function DocumentList({
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
+    origin: contentOrigin,
   })
 
   // When searching, build a filtered folder tree containing only ancestors of matching documents.
@@ -620,7 +628,7 @@ export function DocumentList({
     void fetchFolders()
   }, [fetchFolders, refresh, refreshToken])
 
-  const canManageAnyDocuments = canUpload || canManageAllDocuments
+  const canManageAnyDocuments = !readOnly && (canUpload || canManageAllDocuments)
   const canManageDocumentArea = canManageAnyDocuments
   const canManageFolderStructure = canManageDocumentArea && !sourceWorkspace
 

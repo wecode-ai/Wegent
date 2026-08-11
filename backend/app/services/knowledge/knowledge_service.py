@@ -18,6 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.knowledge import (
+    ContentOrigin,
     DocumentIndexStatus,
     DocumentStatus,
     KnowledgeDocument,
@@ -60,7 +61,10 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
-from app.services.knowledge.content_scope import wiki_pages
+from app.services.knowledge.content_scope import (
+    assert_user_content_is_mutable,
+    wiki_pages,
+)
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base as evaluate_direct_knowledge_base_access,
@@ -1422,7 +1426,10 @@ class KnowledgeService:
         # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
         if data.folder_id and data.folder_id != 0:
             target_folder = assert_document_can_be_placed_in_folder(
-                db, knowledge_base_id, data.folder_id
+                db,
+                knowledge_base_id,
+                data.folder_id,
+                content_origin=ContentOrigin.USER,
             )
             validated_folder_id = target_folder.id
 
@@ -1454,6 +1461,7 @@ class KnowledgeService:
             ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
             source_config=source_config,
+            origin=ContentOrigin.USER.value,
         )
         db.add(document)
         db.flush()  # Flush to persist document before counting
@@ -1506,6 +1514,7 @@ class KnowledgeService:
         knowledge_base_id: int,
         user_id: int,
         folder_id: int | None = None,
+        content_origin: str | None = None,
     ) -> list[KnowledgeDocument]:
         """
         List documents in a knowledge base.
@@ -1537,6 +1546,9 @@ class KnowledgeService:
         if folder_id is not None:
             query = query.filter(KnowledgeDocument.folder_id == folder_id)
 
+        if content_origin is not None:
+            query = query.filter(KnowledgeDocument.origin == content_origin)
+
         return query.order_by(KnowledgeDocument.created_at.desc()).all()
 
     @staticmethod
@@ -1552,6 +1564,7 @@ class KnowledgeService:
         keyword: str | None = None,
         sort_by: str = "createdAt",
         sort_order: str = "desc",
+        content_origin: str | None = None,
     ) -> tuple[list[KnowledgeDocument], int]:
         """List documents with offset/limit pagination."""
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -1611,6 +1624,9 @@ class KnowledgeService:
                 query = query.filter(
                     KnowledgeDocument.name.ilike(keyword_pattern, escape="\\")
                 )
+
+        if content_origin is not None:
+            query = query.filter(KnowledgeDocument.origin == content_origin)
 
         sort_columns = {
             "name": KnowledgeDocument.name,
@@ -1684,6 +1700,8 @@ class KnowledgeService:
         if not doc:
             return None
 
+        assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
+
         # Check permission for knowledge base
         kb = (
             db.query(Kind)
@@ -1737,6 +1755,8 @@ class KnowledgeService:
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
             return DocumentDeleteResult(success=False, kb_id=None)
+
+        assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
 
         # Check permission for knowledge base
         kb = (
@@ -1908,6 +1928,8 @@ class KnowledgeService:
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
             return None
+
+        assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
 
         # Verify document is editable (TEXT type or plain text files)
         editable_extensions = [

@@ -25,7 +25,7 @@ import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useUser } from '@/features/common/UserContext'
 import { canManageKnowledgeBase, canManageNamespace } from '@/utils/namespace-permissions'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
-import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
+import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
@@ -380,7 +380,7 @@ export function KnowledgeDocumentPageMobile({
               </span>
             </div>
             {detailKb!.kb_type === 'code_wiki' ? (
-              <CodeWikiReader
+              <CodeWikiWorkspace
                 key={detailKb!.id}
                 wiki={detailKb!}
                 canConfigure={canConfigureDetailCodeWiki}
