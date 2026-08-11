@@ -574,66 +574,56 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugin-detail-get-started"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // Example cards install (when needed) and open a non-auto-send chat trial — no
+  // separate use-case guide dialog remains in the product.
   await control.command('click', '[data-testid="plugin-prompt-0"]')
-  const useCaseGuideSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('plugin-use-case-guide') &&
-      snapshot.testIds.includes('plugin-use-case-confirmation') &&
-      snapshot.testIds.includes('plugin-use-case-goal-input') &&
-      snapshot.testIds.includes('plugin-use-case-context-toggle') &&
-      snapshot.testIds.includes('plugin-use-case-draft-input') &&
-      snapshot.testIds.includes('plugin-use-case-start-button') &&
-      snapshot.text.includes('Verify the Wework desktop plugin lifecycle.'),
-    'The plugin use-case guide dialog did not show the editable task-draft flow'
-  )
-  assert.match(
-    useCaseGuideSnapshot.text,
-    /AI plugin usage guide|AI 插件使用向导/,
-    'The plugin use-case guide was not clearly identified as guidance'
-  )
-  await control.command('click', '[data-testid="plugin-use-case-context-suggestion"]')
-  await control.command('click', '[data-testid="plugin-use-case-option-complete-steps"]')
-  await control.command('click', '[data-testid="plugin-use-case-context-toggle"]')
-  await control.command('fill', '[data-testid="plugin-use-case-context-input"]', {
-    value: 'Only inspect changed files.',
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForSnapshot(
     control,
     snapshot =>
-      /Complete reversible actions and confirm before submitting or deleting|自动完成场景中的可逆操作，遇到提交或删除时先确认/.test(
-        snapshot.text
-      ) &&
-      /recent conversation|当前对话/.test(snapshot.text) &&
-      snapshot.text.includes('Only inspect changed files.'),
-    'The plugin task preview did not react to the selected preference and added context'
+      snapshot.testIds.includes('plugin-trial-template-strip') &&
+      snapshot.testIds.includes('plugin-trial-recommendation') &&
+      snapshot.text.includes('Verify the Wework desktop plugin lifecycle.'),
+    'Clicking a plugin example did not open the non-auto-send trial flow'
   )
-  await captureVerificationScreenshot(control, 'marketplace-plugins-02-use-case-guide.png')
-  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(control, 'marketplace-plugins-02-example-trial.png')
+  await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes('plugin-use-case-guide'),
-    'Escape did not close the plugin use-case guide dialog'
+    snapshot => !snapshot.testIds.includes('plugin-trial-template-strip'),
+    'Dismissing the plugin trial guide did not close the recommendation strip'
   )
-  await control.command('click', '[data-testid="plugin-detail-back-button"]')
-  await control.command('waitFor', installSelector, {
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', rowSelector, {
+    text: PLUGIN_DISPLAY_NAME,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  await control.command('click', installSelector)
-  await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  // Example click may already have installed the plugin; only run the install /
+  // connector-auth path when the install CTA is still present.
+  const afterExampleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (afterExampleSnapshot.testIds.includes(`plugin-marketplace-install-${pluginId}`)) {
+    await control.command('click', installSelector)
+    await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
   const installedSnapshot = await waitForSnapshot(
     control,
     snapshot =>
