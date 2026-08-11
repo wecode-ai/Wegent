@@ -90,6 +90,7 @@ import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
+import { LocalManagementSection } from '@wecode/features/local-executor/LocalManagementSection'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -157,6 +158,7 @@ function telemetryFeatureForPath(path: string) {
   if (path === '/cloud-work') return 'cloud_work' as const
   if (path === '/sites') return 'sites' as const
   if (path === '/automations') return 'automations' as const
+  if (path === '/local-management') return 'settings' as const
   if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
   if (path.startsWith('/project-space')) return 'project_space' as const
@@ -192,6 +194,7 @@ function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations') return <AutomationsPage />
+  if (path === '/local-management') return <LocalManagementSection />
   return null
 }
 

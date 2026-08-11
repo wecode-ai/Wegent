@@ -29,7 +29,7 @@ const packageJson = JSON.parse(
   version?: string
 }
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
-const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
+const extensionsDir = fs.existsSync(internalExtensionsDir)
   ? internalExtensionsDir
   : path.resolve(__dirname, './src/extensions')
 const internalVitePluginsPath = path.resolve(__dirname, './wecode/vitePlugins.mjs')
