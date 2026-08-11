@@ -174,7 +174,7 @@ const FILE_PANEL_ANCHOR_RESPONSE = [
 ].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
-const E2E_TRANSCRIPT_PAGE_SIZE = 49
+const E2E_TRANSCRIPT_PAGE_SIZE = 20
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
 const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
@@ -1132,6 +1132,37 @@ async function assertConversationMessageState(control, { assistantText, userText
   )
 }
 
+async function assertConversationTextOccurrences(control, expectedOccurrences) {
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  for (const [text, expectedCount] of Object.entries(expectedOccurrences)) {
+    assert.equal(
+      countTextOccurrences(transcriptText, text),
+      expectedCount,
+      `The conversation rendered "${text}" ${countTextOccurrences(
+        transcriptText,
+        text
+      )} times instead of ${expectedCount}`
+    )
+  }
+}
+
+async function assertConversationTextNotDuplicated(control, texts) {
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  for (const text of texts) {
+    const occurrenceCount = countTextOccurrences(transcriptText, text)
+    assert.ok(
+      occurrenceCount <= 1,
+      `The conversation rendered "${text}" ${occurrenceCount} times instead of at most once`
+    )
+  }
+}
+
 function assertConversationTextOrder(transcriptText, expectedTexts) {
   let previousIndex = -1
   for (const expectedText of expectedTexts) {
@@ -1753,7 +1784,8 @@ async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
   restartDesktopApp,
-  expectedTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT
+  expectedTurnCount = TURN_NAVIGATION_REGRESSION_TURN_COUNT,
+  expectedConversationTurnCount = expectedTurnCount
 ) {
   const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
@@ -1784,6 +1816,59 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+    const expectedMessageCount = expectedConversationTurnCount * 2
+    const paginationStartedAt = Date.now()
+    let paginatedSnapshot
+    while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      if (
+        paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
+        paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+      ) {
+        break
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.equal(
+      paginatedSnapshot?.pane?.messageSummary.total,
+      expectedMessageCount,
+      'Loading the older transcript page duplicated or dropped conversation messages'
+    )
+    assert.equal(
+      paginatedSnapshot.pane.messageSummary.byRole.user,
+      expectedConversationTurnCount,
+      'Loading the older transcript page changed the user-message count'
+    )
+    assert.equal(
+      paginatedSnapshot.pane.messageSummary.byRole.assistant,
+      expectedConversationTurnCount,
+      'Loading the older transcript page changed the assistant-message count'
+    )
+
+    const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.15' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await assertDesktopComposerDocked(
+      control,
+      await getSingleElementMetrics(
+        control,
+        scrollerSelector,
+        'The paginated conversation after scrolling upward'
+      ),
+      'The composer after scrolling upward in a paginated conversation'
+    )
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.75' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await assertDesktopComposerDocked(
+      control,
+      await getSingleElementMetrics(
+        control,
+        scrollerSelector,
+        'The paginated conversation after scrolling downward'
+      ),
+      'The composer after scrolling downward in a paginated conversation'
+    )
+    await captureVerificationScreenshot(control, 'turn-navigation-00-paginated-scroll-stable.png')
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
@@ -2483,6 +2568,23 @@ async function getSingleElementMetrics(control, selector, description) {
   const metrics = await getElementMetrics(control, selector)
   assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
   return metrics[0]
+}
+
+async function assertDesktopComposerDocked(control, scrollerMetrics, description) {
+  const composerMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`,
+    description
+  )
+  assert.ok(
+    composerMetrics.top >= scrollerMetrics.top && composerMetrics.bottom <= scrollerMetrics.bottom,
+    `${description} was outside the conversation viewport`
+  )
+  const bottomGap = scrollerMetrics.bottom - composerMetrics.bottom
+  assert.ok(
+    bottomGap >= 0 && bottomGap <= 32,
+    `${description} drifted ${bottomGap}px above the conversation viewport bottom`
+  )
 }
 
 async function waitForBottomMetrics(control, selector, description, timeoutMs = 1_500) {
@@ -5535,7 +5637,9 @@ async function ensureExperimentalFeaturesEnabled(control) {
   await control.command('waitFor', toggleSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  if ((await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true') {
+  if (
+    (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true'
+  ) {
     await control.command('click', toggleSelector)
     await waitForAttribute(
       control,
@@ -6087,27 +6191,31 @@ function processIsAlive(processId) {
   }
 }
 
-function macosSleepInhibitorProcessIds(appProcessId) {
+function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
-  const output = commandOutput('/bin/ps', ['-axo', 'pid=,ppid=,command='])
+  const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
   return output.split('\n').flatMap(line => {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
-    if (!match || Number(match[2]) !== appProcessId || match[3] !== '/usr/bin/caffeinate -i') {
+    const match = line
+      .trim()
+      .match(
+        /^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*PreventUserIdleSystemSleep named: "Wework local task is running"/i
+      )
+    if (!match || Number(match[1]) !== appProcessId) {
       return []
     }
-    return [Number(match[1])]
+    return [match[2]]
   })
 }
 
-async function waitForMacosSleepInhibitor(appProcessId, expectedRunning) {
+async function waitForMacosSleepAssertion(appProcessId, expectedRunning) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const processIds = macosSleepInhibitorProcessIds(appProcessId)
-    if (processIds.length > 0 === expectedRunning) return processIds
+    const assertionIds = macosSleepAssertionIds(appProcessId)
+    if (assertionIds.length > 0 === expectedRunning) return assertionIds
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(
-    `Timed out waiting for the macOS sleep inhibitor to be ${expectedRunning ? 'running' : 'stopped'}`
+    `Timed out waiting for the macOS sleep assertion to be ${expectedRunning ? 'active' : 'released'}`
   )
 }
 
@@ -6459,9 +6567,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     'Timed out waiting for the streaming response to start'
   )
   const sleepInhibitorEvidence = []
+  let runningAssertionIds = []
   if (process.platform === 'darwin') {
-    const processIds = await waitForMacosSleepInhibitor(app.pid, true)
-    sleepInhibitorEvidence.push({ stage: 'task-running', processIds })
+    runningAssertionIds = await waitForMacosSleepAssertion(app.pid, true)
+    sleepInhibitorEvidence.push({
+      stage: 'task-running',
+      assertionIds: runningAssertionIds,
+    })
   }
   const runningTaskSnapshot = await waitForSnapshot(
     control,
@@ -6517,10 +6629,15 @@ async function verifyBackgroundTaskWindowLifecycle({
       true,
       'Closing to tray terminated the executor process'
     )
-    const backgroundProcessIds = await waitForMacosSleepInhibitor(app.pid, true)
+    const backgroundAssertionIds = await waitForMacosSleepAssertion(app.pid, true)
+    assert.deepEqual(
+      backgroundAssertionIds,
+      runningAssertionIds,
+      'The macOS sleep assertion changed while the task remained active'
+    )
     sleepInhibitorEvidence.push({
       stage: 'window-closed-to-tray',
-      processIds: backgroundProcessIds,
+      assertionIds: backgroundAssertionIds,
     })
 
     await reactivateMacApplication(appIdentifier)
@@ -6629,8 +6746,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
   if (process.platform === 'darwin') {
-    const processIds = await waitForMacosSleepInhibitor(app.pid, false)
-    sleepInhibitorEvidence.push({ stage: 'task-completed', processIds })
+    const assertionIds = await waitForMacosSleepAssertion(app.pid, false)
+    sleepInhibitorEvidence.push({ stage: 'task-completed', assertionIds })
     await writeFile(
       join(resultDir, 'sleep-inhibitor-lifecycle-verification.json'),
       `${JSON.stringify({ appProcessId: app.pid, stages: sleepInhibitorEvidence }, null, 2)}\n`
@@ -6860,7 +6977,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
-  await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
+  await reopenCurrentTurnNavigationTask(
+    control,
+    composerSelector,
+    restartDesktopApp,
+    TURN_NAVIGATION_REGRESSION_TURN_COUNT,
+    TURN_NAVIGATION_REGRESSION_TURN_COUNT + 1
+  )
   await verifyTurnNavigationTracksVisibleTurnMessages(control)
   return taskRowTestId
 }
@@ -8334,6 +8457,10 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     true,
     'The active Goal released the composer during automatic continuation'
   )
+  await assertConversationTextOccurrences(control, {
+    [GOAL_IDLE_PROMPT]: 1,
+    [GOAL_IDLE_INITIAL_TEXT]: 1,
+  })
   await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
   const readyCountBeforeContinuationReload = control.readyCount
@@ -8369,6 +8496,10 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     true,
     'Reloading exposed a direct send path while the provider turn was still active'
   )
+  await assertConversationTextOccurrences(control, {
+    [GOAL_IDLE_INITIAL_TEXT]: 1,
+  })
+  await assertConversationTextNotDuplicated(control, [GOAL_IDLE_PROMPT])
   await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')

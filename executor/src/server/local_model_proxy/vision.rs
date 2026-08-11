@@ -494,7 +494,7 @@ Output only the description.{suffix}"
     )
 }
 
-fn anthropic_image_block(image_url: &str) -> Value {
+pub(super) fn anthropic_image_block(image_url: &str) -> Value {
     if let Some((media_type, data)) = parse_data_url(image_url) {
         json!({
             "type": "image",

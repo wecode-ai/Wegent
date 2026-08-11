@@ -538,6 +538,7 @@ mod tests {
             .is_some_and(|instructions| instructions.len() > 10_000
                 && !instructions.contains("based on GPT-5")));
         assert_eq!(models[0]["context_window"], 1_048_576);
+        assert_eq!(models[0]["auto_compact_token_limit"], 786_432);
         assert_eq!(models[0]["default_reasoning_level"], "low");
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
         assert_eq!(models[0]["supports_search_tool"], true);

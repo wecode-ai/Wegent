@@ -206,7 +206,11 @@ const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
 
 function renderBotEdit(
   botOverrides: Partial<Bot> = {},
-  props: { scope?: 'personal' | 'group' | 'all' | 'public'; groupName?: string } = {}
+  props: {
+    scope?: 'personal' | 'group' | 'all' | 'public'
+    groupName?: string
+    modelCategoryType?: 'llm' | 'image' | 'video'
+  } = {}
 ) {
   const bot = {
     id: 7,
@@ -242,6 +246,7 @@ function renderBotEdit(
       toast={toast}
       scope={props.scope || 'personal'}
       groupName={props.groupName}
+      modelCategoryType={props.modelCategoryType}
     />
   )
 
@@ -486,6 +491,14 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
     expect(screen.getByText('隐藏公共技能')).toBeInTheDocument()
+  })
+
+  test('loads public image models for image-bound teams', async () => {
+    renderBotEdit({}, { scope: 'public', modelCategoryType: 'image' })
+
+    await waitFor(() => {
+      expect(mockedGetPublicModels).toHaveBeenCalledWith('ClaudeCode', 'image')
+    })
   })
 
   test('hides knowledge base selector for public Dify bots', async () => {

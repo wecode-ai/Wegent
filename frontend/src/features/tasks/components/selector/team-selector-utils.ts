@@ -87,24 +87,33 @@ export function getRecentTeams(teams: Team[], recentTeamIds: number[], limit = 5
   return selected
 }
 
-export function getTeamTargetPage(team: Team, currentMode: TeamModeFilter): TeamTargetPage {
-  const bindMode = team.bind_mode || ['chat', 'code']
+export function getBindModesTargetPage(
+  bindMode: readonly string[] | undefined,
+  currentMode: TeamModeFilter
+): TeamTargetPage {
+  const effectiveBindMode = bindMode || ['chat', 'code']
   const targetMode =
-    bindMode.length === 1 ? bindMode[0] : currentMode === 'all' ? 'chat' : currentMode
+    effectiveBindMode.length === 1
+      ? effectiveBindMode[0]
+      : currentMode === 'all'
+        ? 'chat'
+        : currentMode
 
-  if (targetMode === 'task') {
-    return 'devices/chat'
+  switch (targetMode) {
+    case 'task':
+      return 'devices/chat'
+    case 'code':
+    case 'knowledge':
+    case 'video':
+    case 'image':
+      return targetMode
+    default:
+      return 'chat'
   }
+}
 
-  if (targetMode === 'video' || targetMode === 'image') {
-    return targetMode
-  }
-
-  if (targetMode === 'knowledge') {
-    return 'knowledge'
-  }
-
-  return targetMode
+export function getTeamTargetPage(team: Team, currentMode: TeamModeFilter): TeamTargetPage {
+  return getBindModesTargetPage(team.bind_mode, currentMode)
 }
 
 export function buildTeamTargetHref(targetPage: TeamTargetPage, params?: URLSearchParams): string {

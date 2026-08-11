@@ -643,7 +643,7 @@ describe('DiscoverResources', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '去编码 Coding Agent' }))
 
-    expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=83')
+    expect(mockPush).toHaveBeenCalledWith('/chat?teamId=83&agent=code')
     expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
   })
 
@@ -713,47 +713,75 @@ describe('DiscoverResources', () => {
     expect(mockToast).not.toHaveBeenCalled()
   })
 
-  it('opens an installed marketplace coding agent in code mode', async () => {
-    mockResourceLibraryApi.listListings.mockResolvedValue({
-      items: [
-        createListing({
-          id: 84,
-          resource_type: 'agent',
-          name: 'published-code-agent',
-          display_name: 'Published Code Agent',
-          publisher_user_id: 3,
-          bind_modes: ['code'],
-        }),
-      ],
-      has_more: false,
-      next_cursor: null,
-      limit: 20,
-    })
-    mockResourceLibraryApi.installListing.mockResolvedValue({
-      id: 11,
-      listing_id: 84,
-      version_id: 10,
-      user_id: 2,
-      resource_type: 'agent',
-      installed_kind_id: 14,
-      installed_reference: {
-        namespace: 'default',
-        name: 'published-code-agent',
-        team_id: 129,
-      },
-      install_status: 'installed',
-      installed_at: '2026-05-27T00:00:00',
-      updated_at: '2026-05-27T00:00:00',
-    })
+  it.each([
+    {
+      bindModes: ['code'],
+      listingId: 84,
+      teamId: 129,
+      name: 'Published Code Agent',
+      actionName: '去编码 Published Code Agent',
+      expectedHref: '/chat?teamId=129&agent=code',
+    },
+    {
+      bindModes: ['image'],
+      listingId: 85,
+      teamId: 130,
+      name: 'Published Image Agent',
+      actionName: '去对话 Published Image Agent',
+      expectedHref: '/chat?teamId=130&mode=image',
+    },
+    {
+      bindModes: ['video'],
+      listingId: 86,
+      teamId: 131,
+      name: 'Published Video Agent',
+      actionName: '去对话 Published Video Agent',
+      expectedHref: '/chat?teamId=131&mode=video',
+    },
+  ])(
+    'opens an installed marketplace agent in its bound mode',
+    async ({ bindModes, listingId, teamId, name, actionName, expectedHref }) => {
+      mockResourceLibraryApi.listListings.mockResolvedValue({
+        items: [
+          createListing({
+            id: listingId,
+            resource_type: 'agent',
+            name: `published-${bindModes[0]}-agent`,
+            display_name: name,
+            publisher_user_id: 3,
+            bind_modes: bindModes,
+          }),
+        ],
+        has_more: false,
+        next_cursor: null,
+        limit: 20,
+      })
+      mockResourceLibraryApi.installListing.mockResolvedValue({
+        id: 11,
+        listing_id: listingId,
+        version_id: 10,
+        user_id: 2,
+        resource_type: 'agent',
+        installed_kind_id: 14,
+        installed_reference: {
+          namespace: 'default',
+          name: `published-${bindModes[0]}-agent`,
+          team_id: teamId,
+        },
+        install_status: 'installed',
+        installed_at: '2026-05-27T00:00:00',
+        updated_at: '2026-05-27T00:00:00',
+      })
 
-    render(<DiscoverResources resourceType="agent" />)
+      render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去编码 Published Code Agent' }))
+      fireEvent.click(await screen.findByRole('button', { name: actionName }))
 
-    await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=129')
-    })
-  })
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith(expectedHref)
+      })
+    }
+  )
 
   it('does not offer globally available system agents to a group', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({
