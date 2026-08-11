@@ -388,6 +388,46 @@ describe('pipeline next-step helpers', () => {
     ])
   })
 
+  it('ignores invalid persisted external knowledge metadata', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 203,
+            context_type: 'external_knowledge',
+            name: 'Legacy all-access source',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'all',
+            external_id: 'kb-1',
+          },
+          {
+            id: 204,
+            context_type: 'external_knowledge',
+            name: 'Missing source ID',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_id: '   ',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems).toEqual([])
+    expect(
+      buildPipelineNextStepPayload(
+        payloadInput({
+          draft,
+          editedMessage: 'Continue',
+          selectedTextItemIds: [],
+          selectedStructuredItemIds: [],
+        })
+      ).contexts
+    ).toEqual([])
+  })
+
   it('defaults selected text items from contextPassing mode', () => {
     const noneDraft = buildPipelineNextStepDraft(
       [userMessage(), aiMessage('Plain AI summary')],

@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import make_transient
 
 from app.db.session import get_db_session
@@ -114,7 +115,19 @@ async def execute_subscription_unified(
         f"task_id={execution_data.task_id}, request_id={request_id}"
     )
 
-    request = await _build_subscription_execution_request(execution_data)
+    try:
+        request = await _build_subscription_execution_request(execution_data)
+    except HTTPException as exc:
+        logger.warning(
+            "[execute_subscription_unified] Request build rejected: "
+            "subscription_id=%s, execution_id=%s, task_id=%s, status_code=%s",
+            execution_data.subscription_id,
+            execution_data.execution_id,
+            execution_data.task_id,
+            exc.status_code,
+        )
+        await _emit_subscription_terminal_failure(execution_data, exc)
+        return
     if not request:
         return
 
@@ -141,6 +154,30 @@ async def execute_subscription_unified(
             request=request,
             execution_data=execution_data,
         )
+
+
+async def _emit_subscription_terminal_failure(
+    execution_data: SubscriptionExecutionData,
+    exc: HTTPException,
+) -> None:
+    """Persist and publish a request-build failure through the normal emitter path."""
+    from app.services.execution.emitters import SSEResultEmitter, StatusUpdatingEmitter
+
+    wrapped = SSEResultEmitter(
+        task_id=execution_data.task_id,
+        subtask_id=execution_data.subtask_id,
+    )
+    emitter = StatusUpdatingEmitter(
+        wrapped,
+        task_id=execution_data.task_id,
+        subtask_id=execution_data.subtask_id,
+    )
+    detail = exc.detail if isinstance(exc.detail, str) else "Execution request rejected"
+    await emitter.emit_error(
+        execution_data.task_id,
+        execution_data.subtask_id,
+        detail,
+    )
 
 
 async def _build_subscription_execution_request(

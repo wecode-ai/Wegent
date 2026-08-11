@@ -83,6 +83,18 @@ def test_round_trip_preserves_selected_knowledge_context():
     assert converted.provider_native_knowledge is True
 
 
+def test_string_false_does_not_enable_provider_native_knowledge() -> None:
+    converted = OpenAIRequestConverter.to_execution_request(
+        {
+            "model": "test-model",
+            "input": "hello",
+            "metadata": {"provider_native_knowledge": "false"},
+        }
+    )
+
+    assert converted.provider_native_knowledge is False
+
+
 def test_round_trip_preserves_interactive_form_answer():
     request = ExecutionRequest(
         interactive_form_answer={

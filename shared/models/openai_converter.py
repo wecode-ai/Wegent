@@ -375,8 +375,8 @@ class OpenAIRequestConverter:
             external_knowledge_refs=metadata.get("external_knowledge_refs"),
             selected_knowledge_prompt=metadata.get("selected_knowledge_prompt", "")
             or "",
-            provider_native_knowledge=bool(
-                metadata.get("provider_native_knowledge", False)
+            provider_native_knowledge=(
+                metadata.get("provider_native_knowledge") is True
             ),
             knowledge_base_scopes=_coerce_knowledge_base_scopes(
                 metadata.get("knowledge_base_scopes")

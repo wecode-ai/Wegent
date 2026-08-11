@@ -10,7 +10,7 @@ import pytest
 from app.services.chat.trigger import lifecycle
 
 
-def test_log_e2e_terminal_result_includes_full_answer_and_result(
+def test_log_e2e_terminal_result_redacts_answer_and_result(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -40,13 +40,12 @@ def test_log_e2e_terminal_result_includes_full_answer_and_result(
         "task_id": 101,
         "subtask_id": 202,
         "status": "COMPLETED",
-        "answer_text": "最终回答\nWEGENT-A1-NEW-2026",
-        "error": None,
-        "result": {
-            "value": "最终回答\nWEGENT-A1-NEW-2026",
-            "sources": [{"document_id": "Doc-A1"}],
-        },
+        "result_present": True,
+        "answer_length": len("最终回答\nWEGENT-A1-NEW-2026"),
+        "error_present": False,
     }
+    assert "WEGENT-A1-NEW-2026" not in record.getMessage()
+    assert "Doc-A1" not in record.getMessage()
 
 
 class _SessionManager:

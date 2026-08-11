@@ -34,8 +34,8 @@ def extract_skill_mcp_servers(
                 continue
             result.append(
                 {
-                    "name": resolve_skill_mcp_name(skill_name, server_name),
                     **server_config,
+                    "name": resolve_skill_mcp_name(skill_name, server_name),
                 }
             )
     return result

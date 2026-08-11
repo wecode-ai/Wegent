@@ -193,15 +193,18 @@ function findToolScenario(request: ModelRequest | null): ToolScenario | undefine
 
 function resolveToolName(request: ModelRequest | null, requestedName: string): string {
   const tools = Array.isArray(request?.tools) ? request.tools : []
+  const toolNames: string[] = []
   for (const tool of tools) {
     if (!tool || typeof tool !== 'object') continue
     const candidate = tool as { function?: { name?: string }; name?: string }
     const name = candidate.function?.name || candidate.name
-    if (name === requestedName || name?.endsWith(requestedName)) {
-      return name
-    }
+    if (name) toolNames.push(name)
   }
-  return requestedName
+  return (
+    toolNames.find(name => name === requestedName) ??
+    toolNames.find(name => name.endsWith(requestedName)) ??
+    requestedName
+  )
 }
 
 function extractContextToken(text: string): string | null {
@@ -306,6 +309,7 @@ function writeStreamingToolCalls(
         {
           index: 0,
           delta: {
+            role: 'assistant',
             tool_calls: toolCalls.map((toolCall, index) => ({
               index,
               id: `mock_tool_${Date.now()}_${index}`,

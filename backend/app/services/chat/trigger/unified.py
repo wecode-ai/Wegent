@@ -1009,7 +1009,7 @@ async def build_execution_request(
             from app.schemas.kind import Team as TeamCRD
 
             team_crd = TeamCRD.model_validate(team.json)
-            bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
+            bot = builder.get_bot_for_subtask(assistant_subtask, team, team_crd)
             if bot:
                 request = builder.resolve_request_preload_skills(
                     request=request,

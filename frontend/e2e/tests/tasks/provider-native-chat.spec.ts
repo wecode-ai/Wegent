@@ -498,19 +498,23 @@ test.describe('Provider-native Wegent knowledge access', () => {
   }
 
   async function waitForBackendTerminal(request: APIRequestContext, taskId: number): Promise<void> {
-    await expect
-      .poll(
-        async () => {
-          const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
-            headers: authHeaders(),
-          })
-          if (response.status() !== 200) return `HTTP_${response.status()}`
-          const runtime = (await response.json()) as RuntimeCheckResponse
-          return runtime.task_status.toUpperCase()
-        },
-        { message: `Task ${taskId} should complete`, timeout: 60000 }
-      )
-      .toMatch(/^COMPLETED/)
+    const deadline = Date.now() + 60000
+    let status = 'UNKNOWN'
+    while (Date.now() < deadline) {
+      const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
+        headers: authHeaders(),
+      })
+      status =
+        response.status() === 200
+          ? ((await response.json()) as RuntimeCheckResponse).task_status.toUpperCase()
+          : `HTTP_${response.status()}`
+      if (status.startsWith('COMPLETED')) return
+      if (status.startsWith('FAILED') || status.startsWith('CANCELLED')) {
+        throw new Error(`Task ${taskId} reached terminal status ${status}`)
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    expect(status, `Task ${taskId} should complete`).toMatch(/^COMPLETED/)
   }
 
   async function collectEvidence(request: APIRequestContext, taskId: number, prompt: string) {

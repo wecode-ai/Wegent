@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.subscription.unified_executor import (
     SubscriptionExecutionData,
@@ -212,3 +213,43 @@ async def test_unified_executor_closes_loader_session_before_sse_execution(
         await execute_subscription_unified(execution_data=execution_data)
 
     sse_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unified_executor_routes_request_build_http_error_to_terminal_failure() -> (
+    None
+):
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    error = HTTPException(status_code=400, detail="Provider MCP is unavailable")
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            AsyncMock(side_effect=error),
+        ),
+        patch(
+            "app.services.subscription.unified_executor._emit_subscription_terminal_failure",
+            AsyncMock(),
+        ) as failure_mock,
+    ):
+        await execute_subscription_unified(execution_data)
+
+    failure_mock.assert_awaited_once_with(execution_data, error)

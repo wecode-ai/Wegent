@@ -184,7 +184,7 @@ class TaskRequestBuilder:
         # Get bot for this subtask
         # In pipeline mode, subtask.bot_ids contains the specific bot for this stage
         # Otherwise, use the first bot from team members
-        bot = self._get_bot_for_subtask(subtask, team, team_crd)
+        bot = self.get_bot_for_subtask(subtask, team, team_crd)
         if not bot:
             raise ValueError(f"No bot found for team {team.name}")
 
@@ -759,7 +759,7 @@ class TaskRequestBuilder:
     # Bot Resolution (from ChatConfigBuilder)
     # =========================================================================
 
-    def _get_bot_for_subtask(
+    def get_bot_for_subtask(
         self, subtask: Subtask, team: Kind, team_crd: Team
     ) -> Kind | None:
         """Get the bot for a specific subtask.

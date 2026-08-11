@@ -58,14 +58,15 @@ def _log_e2e_terminal_result(
         return
 
     result_payload = result if isinstance(result, dict) else {}
+    answer = result_payload.get("value")
     payload = {
         "event": "answer_completed",
         "task_id": task_id,
         "subtask_id": subtask_id,
         "status": status,
-        "answer_text": result_payload.get("value", ""),
-        "error": error,
-        "result": result_payload,
+        "result_present": bool(result_payload),
+        "answer_length": len(answer) if isinstance(answer, str) else 0,
+        "error_present": bool(error),
     }
     logger.info(
         "[PROVIDER_NATIVE_E2E] %s",

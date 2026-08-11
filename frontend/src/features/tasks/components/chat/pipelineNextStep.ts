@@ -84,6 +84,15 @@ function buildTextItemId(message: PipelineNextStepMessage, kind: PipelineNextSte
   return `${kind}:${message.id}`
 }
 
+function isExplicitExternalKnowledgeContext(context: SubtaskContextBrief): boolean {
+  return (
+    context.context_type === 'external_knowledge' &&
+    Boolean(context.external_provider) &&
+    context.external_mode === 'explicit' &&
+    Boolean(context.external_id?.trim())
+  )
+}
+
 function getStructuredItemId(context: SubtaskContextBrief): string | null {
   if (context.context_type === 'attachment') {
     return `attachment:${context.id}`
@@ -104,17 +113,13 @@ function getStructuredItemId(context: SubtaskContextBrief): string | null {
     return `table:${context.document_id}`
   }
 
-  if (
-    context.context_type === 'external_knowledge' &&
-    context.external_provider &&
-    context.external_mode
-  ) {
+  if (isExplicitExternalKnowledgeContext(context)) {
     const targetType = context.external_target_type ?? 'knowledge_base'
     const targetId =
       targetType === 'knowledge_base'
-        ? (context.external_id ?? 'all')
+        ? context.external_id
         : (context.external_node_id ?? context.external_document_id ?? 'unknown')
-    return `external_knowledge:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}:${targetType}:${targetId}`
+    return `external_knowledge:${context.external_provider}:explicit:${context.external_id}:${targetType}:${targetId}`
   }
 
   return null
@@ -330,16 +335,12 @@ function toBackendContext(
     }
   }
 
-  if (
-    context.context_type === 'external_knowledge' &&
-    context.external_provider &&
-    context.external_mode
-  ) {
+  if (isExplicitExternalKnowledgeContext(context)) {
     return {
       type: 'external_knowledge',
       data: {
         provider: context.external_provider,
-        mode: context.external_mode,
+        mode: 'explicit',
         id: context.external_id,
         name: context.name,
         scope: context.external_scope,

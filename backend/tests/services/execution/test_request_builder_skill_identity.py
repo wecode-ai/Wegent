@@ -29,7 +29,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         "app.services.execution.request_builder.Team.model_validate",
         return_value=SimpleNamespace(spec=SimpleNamespace(collaborationModel="solo")),
     )
-    mocker.patch.object(builder, "_get_bot_for_subtask", return_value=bot)
+    mocker.patch.object(builder, "get_bot_for_subtask", return_value=bot)
     mocker.patch.object(builder, "_build_workspace", return_value={})
     mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
     mocker.patch.object(builder, "_get_model_config", return_value={})
