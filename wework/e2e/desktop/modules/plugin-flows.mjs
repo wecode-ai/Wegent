@@ -1,5 +1,6 @@
 import {
   assertMentionRenderedAsToken,
+  closeComposerPluginPicker,
   waitForInstalledComposerPlugin,
   waitForSnapshot,
 } from './conversation-layout.mjs'
@@ -868,14 +869,7 @@ async function verifyMarketplacePluginLifecycle({
   )
   // Leave chat with a closed picker so the official-plugin install segment does
   // not inherit an open composer menu from this assertion.
-  if (composerAfterUninstall.testIds.includes('composer-plugin-picker')) {
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
-      'Closing the composer plugin picker after uninstall verification failed'
-    )
-  }
+  await closeComposerPluginPicker(control)
 }
 
 async function verifySkillMentionRendering({ control, fixture }) {
