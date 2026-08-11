@@ -4,10 +4,12 @@ export const PROVIDER_NATIVE_MARKERS = {
   a1: 'WEGENT-A1-NEW-2026',
   a2: 'WEGENT-A2-LEGACY-2024',
   a3: 'WEGENT-A3-RELEASE-1.4.0',
+  b1: 'WEGENT-B1-OPS-P1',
 } as const
 
 export interface ProviderNativeKnowledgeFixture {
   knowledgeBase: { id: number; name: string }
+  otherKnowledgeBase: { id: number; name: string }
   folders: {
     requirements: { id: number; name: string }
     history: { id: number; name: string }
@@ -16,6 +18,7 @@ export interface ProviderNativeKnowledgeFixture {
     a1: { id: number; name: string }
     a2: { id: number; name: string }
     a3: { id: number; name: string }
+    b1: { id: number; name: string }
   }
 }
 
@@ -42,18 +45,12 @@ export async function createProviderNativeKnowledgeFixture(
   const headers = authHeaders(token)
   const kbName = `E2E-KB-A-${nameSuffix}`
 
-  const knowledgeBase = await expectJson<{ id: number; name: string }>(
-    await request.post(`${apiBaseUrl}/api/knowledge-bases`, {
-      headers,
-      data: {
-        name: kbName,
-        description: 'Provider-native knowledge access E2E fixture',
-        namespace: 'default',
-        kb_type: 'classic',
-        rag_config_mode: 'disabled',
-        summary_enabled: false,
-      },
-    })
+  const knowledgeBase = await createKnowledgeBase(request, apiBaseUrl, headers, kbName)
+  const otherKnowledgeBase = await createKnowledgeBase(
+    request,
+    apiBaseUrl,
+    headers,
+    `E2E-KB-B-${nameSuffix}`
   )
 
   const requirements = await createFolder(
@@ -100,12 +97,43 @@ export async function createProviderNativeKnowledgeFixture(
     'Doc-A3_发布说明.md',
     `# 发布说明\n\n唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.a3}\``
   )
+  const b1 = await createDocument(
+    request,
+    apiBaseUrl,
+    token,
+    otherKnowledgeBase.id,
+    0,
+    'Doc-B1_故障手册.md',
+    `# 故障手册\n\n唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.b1}\``
+  )
 
   return {
     knowledgeBase,
+    otherKnowledgeBase,
     folders: { requirements, history },
-    documents: { a1, a2, a3 },
+    documents: { a1, a2, a3, b1 },
   }
+}
+
+async function createKnowledgeBase(
+  request: APIRequestContext,
+  apiBaseUrl: string,
+  headers: Record<string, string>,
+  name: string
+) {
+  return expectJson<{ id: number; name: string }>(
+    await request.post(`${apiBaseUrl}/api/knowledge-bases`, {
+      headers,
+      data: {
+        name,
+        description: 'Provider-native knowledge access E2E fixture',
+        namespace: 'default',
+        kb_type: 'classic',
+        rag_config_mode: 'disabled',
+        summary_enabled: false,
+      },
+    })
+  )
 }
 
 export async function deleteProviderNativeKnowledgeFixture(

@@ -30,6 +30,7 @@ export class ProviderNativeKnowledgePage {
     await this.openKnowledgeBase(knowledgeBaseId, knowledgeBaseName)
     const folderControl = this.page.getByTestId(`knowledge-picker-folder-scope-${folderId}`)
     await expect(folderControl).toBeVisible()
+    await this.expectIncludeSubfoldersControlHidden()
     await folderControl.click()
     await this.closePicker()
   }
@@ -92,5 +93,13 @@ export class ProviderNativeKnowledgePage {
   private async closePicker(): Promise<void> {
     await this.page.keyboard.press('Escape')
     await expect(this.page.getByTestId('context-selector-popover')).toBeHidden()
+  }
+
+  private async expectIncludeSubfoldersControlHidden(): Promise<void> {
+    const picker = this.page.getByTestId('knowledge-source-picker')
+    await expect(picker.getByRole('checkbox')).toHaveCount(0)
+    await expect(
+      picker.getByText(/includeSubfolders|include subfolders|包含子文件夹|包含子目录/i)
+    ).toHaveCount(0)
   }
 }

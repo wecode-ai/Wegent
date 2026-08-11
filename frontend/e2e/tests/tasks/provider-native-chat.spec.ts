@@ -15,8 +15,11 @@ const TEST_PREFIX = `e2e-provider-native-${Date.now()}-${Math.random().toString(
 const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
 const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
 const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
+const LIST_KNOWLEDGE_BASES_TOOL = 'wegent_kb_list_knowledge_bases'
 const LIST_DOCUMENTS_TOOL = 'wegent_kb_list_documents'
 const READ_DOCUMENT_TOOL = 'wegent_kb_read_document_content'
+const SEARCH_KNOWLEDGE_BASE_TOOL = 'wegent_kb_search_knowledge_base'
+const WEGENT_SKILL_HEADING = '# Wegent Knowledge Base Skill'
 
 interface RuntimeCheckResponse {
   task_status: string
@@ -27,6 +30,19 @@ interface RecordedToolCall {
   name: string
   input: Record<string, unknown>
   output: unknown
+}
+
+interface CapturedModelRequest {
+  tools?: Array<{
+    name?: string
+    function?: { name?: string }
+  }>
+  [key: string]: unknown
+}
+
+interface BoundKnowledgeBase {
+  id: number
+  name: string
 }
 
 interface ToolScenarioStep {
@@ -85,11 +101,25 @@ test.describe('Provider-native Wegent knowledge access', () => {
         fixture.knowledgeBase.id
       ).catch(() => {})
     }
+    if (fixture?.otherKnowledgeBase.id) {
+      await deleteProviderNativeKnowledgeFixture(
+        request,
+        API_BASE_URL,
+        token,
+        fixture.otherKnowledgeBase.id
+      ).catch(() => {})
+    }
     await cleanupChatResources(request)
   })
 
   test('E2E-A2-001 selects a whole Wegent knowledge base', async ({ page, request }) => {
     const prompt = `${TEST_PREFIX} 先列出所选知识库的全部文档并逐份读取，按文档标题原样输出每份文档的唯一断言标记。`
+    const selectedDocuments = [fixture.documents.a1, fixture.documents.a2, fixture.documents.a3]
+    const expectedMarkers = [
+      PROVIDER_NATIVE_MARKERS.a1,
+      PROVIDER_NATIVE_MARKERS.a2,
+      PROVIDER_NATIVE_MARKERS.a3,
+    ]
     await configureToolScenario(request, prompt, [
       {
         toolCalls: [
@@ -100,12 +130,12 @@ test.describe('Provider-native Wegent knowledge access', () => {
         ],
       },
       {
-        toolCalls: Object.values(fixture.documents).map(document => ({
+        toolCalls: selectedDocuments.map(document => ({
           toolName: READ_DOCUMENT_TOOL,
           arguments: { document_id: document.id },
         })),
       },
-      { responseContent: Object.values(PROVIDER_NATIVE_MARKERS).join(' ') },
+      { responseContent: expectedMarkers.join(' ') },
     ])
 
     const knowledgePage = new ProviderNativeKnowledgePage(page)
@@ -116,18 +146,39 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
+    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
+    expect(evidence.externalKnowledgeRefs).toEqual([])
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [])
     expect(evidence.modelText).not.toContain('<resource ')
-    expectProviderToolInventory(evidence.modelText)
+    expectWegentSkillLoaded(evidence.modelBodies)
+    expectProviderToolInventory(evidence.modelBodies)
+    expectProviderToolOrder(evidence.toolCalls, [
+      LIST_DOCUMENTS_TOOL,
+      READ_DOCUMENT_TOOL,
+      READ_DOCUMENT_TOOL,
+      READ_DOCUMENT_TOOL,
+    ])
     expectToolCall(evidence.toolCalls, LIST_DOCUMENTS_TOOL, {
       knowledge_base_id: fixture.knowledgeBase.id,
     })
+    expectToolOutputContains(
+      evidence.toolCalls,
+      LIST_DOCUMENTS_TOOL,
+      [fixture.documents.a1.name, fixture.documents.a2.name, fixture.documents.a3.name],
+      [fixture.documents.b1.name]
+    )
     expectReadDocuments(
       evidence.toolCalls,
-      Object.values(fixture.documents).map(item => item.id)
+      selectedDocuments.map(item => item.id)
     )
-    await expectMarkers(page, Object.values(PROVIDER_NATIVE_MARKERS))
+    expectReadDocumentOutputs(evidence.toolCalls, [
+      [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
+      [fixture.documents.a2.id, PROVIDER_NATIVE_MARKERS.a2],
+      [fixture.documents.a3.id, PROVIDER_NATIVE_MARKERS.a3],
+    ])
+    expectFinalAnswer(evidence.finalAnswer, expectedMarkers)
+    await expectMarkers(page, expectedMarkers)
   })
 
   test('E2E-A2-002 selects a folder including descendants', async ({ page, request }) => {
@@ -165,22 +216,50 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
+    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [fixture.folders.requirements.id])
     expect(evidence.modelText).toContain(
       `scope_type=\"folder\" resource_id=\"${fixture.folders.requirements.id}\"`
     )
-    expectProviderToolInventory(evidence.modelText)
+    expectWegentSkillLoaded(evidence.modelBodies)
+    expectProviderToolInventory(evidence.modelBodies)
+    expectProviderToolOrder(evidence.toolCalls, [
+      LIST_DOCUMENTS_TOOL,
+      READ_DOCUMENT_TOOL,
+      READ_DOCUMENT_TOOL,
+    ])
     expectToolCall(evidence.toolCalls, LIST_DOCUMENTS_TOOL, {
       knowledge_base_id: fixture.knowledgeBase.id,
       folder_id: fixture.folders.requirements.id,
       include_subfolders: true,
     })
+    expectToolOutputContains(
+      evidence.toolCalls,
+      LIST_DOCUMENTS_TOOL,
+      [fixture.documents.a1.name, fixture.documents.a2.name],
+      [fixture.documents.a3.name, fixture.documents.b1.name]
+    )
     expectReadDocuments(evidence.toolCalls, [fixture.documents.a1.id, fixture.documents.a2.id])
-    expectReadDocuments(evidence.toolCalls, [fixture.documents.a3.id], false)
+    expectReadDocuments(
+      evidence.toolCalls,
+      [fixture.documents.a3.id, fixture.documents.b1.id],
+      false
+    )
+    expectReadDocumentOutputs(evidence.toolCalls, [
+      [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
+      [fixture.documents.a2.id, PROVIDER_NATIVE_MARKERS.a2],
+    ])
+    expectFinalAnswer(evidence.finalAnswer, [
+      PROVIDER_NATIVE_MARKERS.a1,
+      PROVIDER_NATIVE_MARKERS.a2,
+    ])
     await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1, PROVIDER_NATIVE_MARKERS.a2])
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a3
+    )
+    await expect(page.getByTestId('messages-container')).not.toContainText(
+      PROVIDER_NATIVE_MARKERS.b1
     )
   })
 
@@ -205,25 +284,40 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
+    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [fixture.documents.a1.id])
     expect(evidence.modelText).toContain(
       `scope_type=\"document\" resource_id=\"${fixture.documents.a1.id}\"`
     )
-    expectProviderToolInventory(evidence.modelText)
-    expect(evidence.toolCalls.some(call => call.name.endsWith(LIST_DOCUMENTS_TOOL))).toBe(false)
+    expectWegentSkillLoaded(evidence.modelBodies)
+    expectProviderToolInventory(evidence.modelBodies)
+    expectProviderToolOrder(evidence.toolCalls, [READ_DOCUMENT_TOOL])
+    expectNoToolCalls(evidence.toolCalls, [
+      LIST_KNOWLEDGE_BASES_TOOL,
+      LIST_DOCUMENTS_TOOL,
+      SEARCH_KNOWLEDGE_BASE_TOOL,
+    ])
     expectReadDocuments(evidence.toolCalls, [fixture.documents.a1.id])
     expectReadDocuments(
       evidence.toolCalls,
-      [fixture.documents.a2.id, fixture.documents.a3.id],
+      [fixture.documents.a2.id, fixture.documents.a3.id, fixture.documents.b1.id],
       false
     )
+    expectNoKnowledgeBaseAccess(evidence.toolCalls, fixture.otherKnowledgeBase.id)
+    expectReadDocumentOutputs(evidence.toolCalls, [
+      [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
+    ])
+    expectFinalAnswer(evidence.finalAnswer, [PROVIDER_NATIVE_MARKERS.a1])
     await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1])
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a2
     )
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a3
+    )
+    await expect(page.getByTestId('messages-container')).not.toContainText(
+      PROVIDER_NATIVE_MARKERS.b1
     )
   })
 
@@ -249,19 +343,41 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
+    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [
       fixture.documents.a1.id,
       fixture.documents.a3.id,
     ])
-    expect(evidence.modelText).toContain(`resource_id=\"${fixture.documents.a1.id}\"`)
-    expect(evidence.modelText).toContain(`resource_id=\"${fixture.documents.a3.id}\"`)
-    expectProviderToolInventory(evidence.modelText)
+    expect(evidence.modelText).toContain(
+      `scope_type=\"document\" resource_id=\"${fixture.documents.a1.id}\"`
+    )
+    expect(evidence.modelText).toContain(
+      `scope_type=\"document\" resource_id=\"${fixture.documents.a3.id}\"`
+    )
+    expectWegentSkillLoaded(evidence.modelBodies)
+    expectProviderToolInventory(evidence.modelBodies)
+    expectProviderToolOrder(evidence.toolCalls, [READ_DOCUMENT_TOOL, READ_DOCUMENT_TOOL])
     expectReadDocuments(evidence.toolCalls, [fixture.documents.a1.id, fixture.documents.a3.id])
-    expectReadDocuments(evidence.toolCalls, [fixture.documents.a2.id], false)
+    expectReadDocuments(
+      evidence.toolCalls,
+      [fixture.documents.a2.id, fixture.documents.b1.id],
+      false
+    )
+    expectReadDocumentOutputs(evidence.toolCalls, [
+      [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
+      [fixture.documents.a3.id, PROVIDER_NATIVE_MARKERS.a3],
+    ])
+    expectFinalAnswer(evidence.finalAnswer, [
+      PROVIDER_NATIVE_MARKERS.a1,
+      PROVIDER_NATIVE_MARKERS.a3,
+    ])
     await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1, PROVIDER_NATIVE_MARKERS.a3])
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a2
+    )
+    await expect(page.getByTestId('messages-container')).not.toContainText(
+      PROVIDER_NATIVE_MARKERS.b1
     )
   })
 
@@ -398,7 +514,9 @@ test.describe('Provider-native Wegent knowledge access', () => {
       `${MOCK_MODEL_SERVER_URL}/tool-scenarios?matchText=${matchText}`
     )
     expect(scenarioResponse.status(), await scenarioResponse.text()).toBe(200)
-    const scenario = (await scenarioResponse.json()) as { capturedRequests: unknown[] }
+    const scenario = (await scenarioResponse.json()) as {
+      capturedRequests: CapturedModelRequest[]
+    }
     const modelBodies = scenario.capturedRequests.filter(item =>
       JSON.stringify(item).includes(prompt)
     )
@@ -409,11 +527,44 @@ test.describe('Provider-native Wegent knowledge access', () => {
     })
     expect(taskResponse.status(), await taskResponse.text()).toBe(200)
     const task = (await taskResponse.json()) as unknown
+
+    const boundKnowledgeResponse = await request.get(
+      `${API_BASE_URL}/api/tasks/${taskId}/knowledge-bases`,
+      { headers: authHeaders() }
+    )
+    expect(boundKnowledgeResponse.status(), await boundKnowledgeResponse.text()).toBe(200)
+    const boundKnowledge = (await boundKnowledgeResponse.json()) as {
+      items: BoundKnowledgeBase[]
+      total: number
+    }
     return {
       modelBodies,
       modelText: JSON.stringify(modelBodies).replace(/\\\"/g, '\"'),
       toolCalls: collectToolCalls(task),
+      boundKnowledgeBases: boundKnowledge,
+      finalAnswer: extractFinalAnswer(task),
+      externalKnowledgeRefs: extractExternalKnowledgeRefs(task),
     }
+  }
+
+  function extractExternalKnowledgeRefs(task: unknown): unknown[] {
+    if (!task || typeof task !== 'object') return []
+    const refs = (task as { external_knowledge_refs?: unknown }).external_knowledge_refs
+    return Array.isArray(refs) ? refs : []
+  }
+
+  function extractFinalAnswer(task: unknown): string {
+    if (!task || typeof task !== 'object') return ''
+    const subtasks = (task as { subtasks?: unknown[] }).subtasks
+    if (!Array.isArray(subtasks)) return ''
+    for (const subtask of [...subtasks].reverse()) {
+      if (!subtask || typeof subtask !== 'object') continue
+      const result = (subtask as { result?: unknown }).result
+      if (!result || typeof result !== 'object') continue
+      const value = (result as { value?: unknown }).value
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return ''
   }
 
   function collectToolCalls(value: unknown): RecordedToolCall[] {
@@ -433,11 +584,12 @@ test.describe('Provider-native Wegent knowledge access', () => {
         const id = String(
           item.tool_use_id || item.id || `${item.tool_name}:${JSON.stringify(item.tool_input)}`
         )
+        const existing = calls.get(id)
         calls.set(id, {
           id,
           name: item.tool_name,
           input: item.tool_input as Record<string, unknown>,
-          output: item.tool_output,
+          output: item.tool_output ?? existing?.output,
         })
       }
       Object.values(item).forEach(visit)
@@ -447,17 +599,22 @@ test.describe('Provider-native Wegent knowledge access', () => {
   }
 
   function expectSingleSource(modelBodies: unknown[], knowledgeBaseId: number): void {
-    const selections = collectSelectedKnowledgeSources(modelBodies)
-    expect(selections.length).toBeGreaterThan(0)
-    for (const selection of selections) {
+    expect(modelBodies.length).toBeGreaterThan(0)
+    for (const modelBody of modelBodies) {
+      const selections = collectSelectedKnowledgeSources(modelBody)
+      expect(selections).toHaveLength(1)
+      const selection = selections[0]
       expect(countOccurrences(selection, '<source ')).toBe(1)
+      expect(selection).toContain('provider=\"wegent\"')
       expect(selection).toContain(`knowledge_base_id=\"${knowledgeBaseId}\"`)
     }
   }
 
   function expectSelectedResources(modelBodies: unknown[], resourceIds: number[]): void {
-    const selections = collectSelectedKnowledgeSources(modelBodies)
-    for (const selection of selections) {
+    for (const modelBody of modelBodies) {
+      const selections = collectSelectedKnowledgeSources(modelBody)
+      expect(selections).toHaveLength(1)
+      const selection = selections[0]
       expect(countOccurrences(selection, '<resource ')).toBe(resourceIds.length)
       for (const resourceId of resourceIds) {
         expect(selection).toContain(`resource_id=\"${resourceId}\"`)
@@ -487,10 +644,55 @@ test.describe('Provider-native Wegent knowledge access', () => {
     return selections
   }
 
-  function expectProviderToolInventory(modelText: string): void {
-    expect(modelText).toContain(LIST_DOCUMENTS_TOOL)
-    expect(modelText).toContain(READ_DOCUMENT_TOOL)
-    expect(modelText).not.toContain('knowledge_search')
+  function expectWegentSkillLoaded(modelBodies: CapturedModelRequest[]): void {
+    for (const modelBody of modelBodies) {
+      const requestText = JSON.stringify(modelBody)
+      expect(countOccurrences(requestText, WEGENT_SKILL_HEADING)).toBe(1)
+    }
+  }
+
+  function expectProviderToolInventory(modelBodies: CapturedModelRequest[]): void {
+    for (const modelBody of modelBodies) {
+      const toolNames = getToolDefinitionNames(modelBody)
+      expect(toolNames.length).toBeGreaterThan(0)
+      expect(new Set(toolNames).size).toBe(toolNames.length)
+      for (const toolSuffix of [LIST_DOCUMENTS_TOOL, READ_DOCUMENT_TOOL]) {
+        const toolName = toolNames.find(name => name.endsWith(toolSuffix))
+        expect(toolName, `Missing model tool definition ending with ${toolSuffix}`).toBeTruthy()
+        expect(toolName).toContain('wegent-knowledge')
+      }
+      expect(toolNames.some(name => isToolName(name, 'knowledge_search'))).toBe(false)
+    }
+  }
+
+  function getToolDefinitionNames(modelBody: CapturedModelRequest): string[] {
+    return (modelBody.tools || [])
+      .map(tool => tool.function?.name || tool.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0)
+  }
+
+  function expectProviderToolOrder(calls: RecordedToolCall[], expectedSuffixes: string[]): void {
+    const providerCalls = calls.filter(call => call.name.includes('wegent_kb_'))
+    expect(providerCalls).toHaveLength(expectedSuffixes.length)
+    expectedSuffixes.forEach((suffix, index) => {
+      expect(providerCalls[index].name).toMatch(new RegExp(`${suffix}$`))
+    })
+  }
+
+  function expectNoToolCalls(calls: RecordedToolCall[], forbiddenSuffixes: string[]): void {
+    for (const suffix of forbiddenSuffixes) {
+      expect(
+        calls.some(call => call.name.endsWith(suffix)),
+        `Unexpected tool call ending with ${suffix}: ${JSON.stringify(calls)}`
+      ).toBe(false)
+    }
+  }
+
+  function expectNoKnowledgeBaseAccess(calls: RecordedToolCall[], knowledgeBaseId: number): void {
+    expect(
+      calls.some(call => call.input.knowledge_base_id === knowledgeBaseId),
+      `Knowledge base ${knowledgeBaseId} must remain outside the selected scope`
+    ).toBe(false)
   }
 
   function expectToolCall(
@@ -504,6 +706,19 @@ test.describe('Provider-native Wegent knowledge access', () => {
     ).toBe(true)
   }
 
+  function expectToolOutputContains(
+    calls: RecordedToolCall[],
+    toolSuffix: string,
+    expectedValues: string[],
+    forbiddenValues: string[] = []
+  ): void {
+    const matchingCalls = calls.filter(call => call.name.endsWith(toolSuffix))
+    expect(matchingCalls, `${toolSuffix} should be called exactly once`).toHaveLength(1)
+    const outputText = JSON.stringify(matchingCalls[0].output)
+    for (const value of expectedValues) expect(outputText).toContain(value)
+    for (const value of forbiddenValues) expect(outputText).not.toContain(value)
+  }
+
   function expectReadDocuments(
     calls: RecordedToolCall[],
     documentIds: number[],
@@ -515,6 +730,38 @@ test.describe('Provider-native Wegent knowledge access', () => {
       )
       expect(found, `Document ${documentId} read expectation should be ${expected}`).toBe(expected)
     }
+  }
+
+  function expectReadDocumentOutputs(
+    calls: RecordedToolCall[],
+    expectedDocuments: Array<[documentId: number, marker: string]>
+  ): void {
+    for (const [documentId, marker] of expectedDocuments) {
+      const matchingCalls = calls.filter(
+        call => call.name.endsWith(READ_DOCUMENT_TOOL) && call.input.document_id === documentId
+      )
+      expect(matchingCalls, `Document ${documentId} should be read exactly once`).toHaveLength(1)
+      const outputText = JSON.stringify(matchingCalls[0].output)
+      expect(outputText).toContain(marker)
+    }
+  }
+
+  function expectBoundKnowledgeBase(
+    response: { items: BoundKnowledgeBase[]; total: number },
+    knowledgeBase: BoundKnowledgeBase
+  ): void {
+    expect(response.total).toBe(1)
+    expect(response.items).toHaveLength(1)
+    expect(response.items[0].id).toBe(knowledgeBase.id)
+    expect(response.items[0].name).toBe(knowledgeBase.name)
+  }
+
+  function expectFinalAnswer(finalAnswer: string, markers: string[]): void {
+    expect(finalAnswer).toBe(markers.join(' '))
+  }
+
+  function isToolName(actualName: string, expectedName: string): boolean {
+    return actualName === expectedName || actualName.endsWith(`_${expectedName}`)
   }
 
   function matchesInput(
