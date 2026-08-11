@@ -267,6 +267,16 @@ pub(crate) fn unregister(token: &str) {
     );
 }
 
+#[cfg(test)]
+pub(crate) fn registered_upstream(token: &str) -> Option<LocalModelProxyUpstream> {
+    registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned")
+        .routes
+        .get(token)
+        .map(|registered| registered.upstream.clone())
+}
+
 fn generate_registration_token(registry: &LocalModelProxyRegistry) -> String {
     loop {
         let mut bytes = [0_u8; 24];
