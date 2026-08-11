@@ -4,6 +4,7 @@ import {
   appendInstalledPluginsAsComposerApps,
   composerAppPluginKey,
   enrichComposerApps,
+  overlayMarketplaceLogosOnComposerApps,
 } from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
@@ -442,6 +443,71 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       expect.objectContaining({
         id: 'plugin:broken-plugin',
         skillPath: 'plugin://broken-plugin@wegent',
+      }),
+    ])
+  })
+})
+
+describe('overlayMarketplaceLogosOnComposerApps', () => {
+  test('replaces unresolved composer logos with marketplace package logos', () => {
+    const apps: LocalDeviceApp[] = [
+      {
+        id: 'plugin:weibo-api-wiki',
+        name: '微博开放平台内部WIKI',
+        pluginKey: 'weibo-api-wiki',
+        description: null,
+        logoUrl: '/plugin-icons/wework.svg',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'installed-plugin',
+      },
+      {
+        id: 'wegent:dingtalk',
+        name: '钉钉',
+        description: null,
+        logoUrl: 'https://example.com/dingtalk.png',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'wegent-connector',
+      },
+    ]
+
+    expect(
+      overlayMarketplaceLogosOnComposerApps(apps, [
+        {
+          id: 42,
+          remotePluginId: 'wegent~Plugin_42',
+          name: 'weibo-api-wiki',
+          displayName: '微博开放平台内部WIKI',
+          description: '',
+          visibility: 'workspace',
+          featured: false,
+          installed: true,
+          enabled: true,
+          sourceType: 'marketplace',
+          ownerUserId: 1,
+          components: {
+            skills: [],
+            commands: [],
+            agents: [],
+            hooks: [],
+            mcps: [],
+            lsps: [],
+            monitors: [],
+            bins: [],
+          },
+          manifest: {},
+          interface: { logo: 'data:image/png;base64,wiki' },
+        },
+      ])
+    ).toEqual([
+      expect.objectContaining({
+        id: 'plugin:weibo-api-wiki',
+        logoUrl: 'data:image/png;base64,wiki',
+      }),
+      expect.objectContaining({
+        id: 'wegent:dingtalk',
+        logoUrl: 'https://example.com/dingtalk.png',
       }),
     ])
   })

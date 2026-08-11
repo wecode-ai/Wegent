@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { PluginDistribution } from '../pluginDistribution'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
 
 export interface InstallPluginDialogTarget {
@@ -9,6 +10,8 @@ export interface InstallPluginDialogTarget {
   version?: string | null
   logoUrl?: string | null
   logoContrastPad?: boolean
+  useLogoInitial?: boolean
+  logoDistribution?: PluginDistribution
   componentCount: number
   requiredConnectionNames?: string[]
 }
@@ -23,6 +26,7 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
   const { t } = useTranslation('common')
   const confirmRef = useRef<HTMLButtonElement>(null)
   const logo = plugin.logoUrl?.trim() || ''
+  const useInitial = Boolean(plugin.useLogoInitial) || !logo
   const requiredConnectionNames = plugin.requiredConnectionNames ?? []
   const requiredConnectionName =
     requiredConnectionNames.length === 1 ? requiredConnectionNames[0] : null
@@ -49,8 +53,10 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
             <PluginSourceAvatar
               className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
               contrastPad={plugin.logoContrastPad}
+              distribution={plugin.logoDistribution}
               logoUrl={logo}
               name={plugin.name}
+              useInitial={useInitial}
             />
             <div>
               <h2 id="install-plugin-dialog-title" className="heading-subsection">

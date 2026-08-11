@@ -654,7 +654,8 @@ describe('ComposerTextarea', () => {
     })
 
     const weiboIcon = await screen.findByTestId('slash-command-icon-app-weibo-app')
-    expect(weiboIcon.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
+    expect(weiboIcon.querySelector('img')).toBeNull()
+    expect(weiboIcon).toHaveTextContent('微')
     const videoIcon = screen.getByTestId('slash-command-icon-app-wework-video')
     expect(videoIcon.querySelector('img')).toBeNull()
     expect(videoIcon).toHaveTextContent('W')

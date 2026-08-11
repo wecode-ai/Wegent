@@ -74,7 +74,7 @@ import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { useOptionalAppearance } from '@/features/appearance'
-import { resolvePluginLogo } from './plugin-assets'
+import { resolvePluginLogo, resolvePreferredPluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
 import {
   installedPluginSourceLabel,
@@ -223,11 +223,49 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
   return toInstalledPluginItem(raw)
 }
 
+function pickRenderableLogoField(
+  primary?: string | null,
+  secondary?: string | null
+): string | null | undefined {
+  if (
+    primary &&
+    resolvePluginLogo({ logo: primary, appearanceMode: 'light' }).source === 'provided'
+  ) {
+    return primary
+  }
+  if (
+    secondary &&
+    resolvePluginLogo({ logo: secondary, appearanceMode: 'light' }).source === 'provided'
+  ) {
+    return secondary
+  }
+  return primary || secondary
+}
+
 function withMarketplaceListingInterface(
   installed: InstalledPluginItem,
   marketplaceItem: PluginMarketplaceItem
 ): InstalledPluginItem {
   const version = installed.version || marketplaceItem.version
+  const installedInterface = installed.raw.spec.interface
+  const marketInterface = marketplaceItem.interface
+  // Keep package logos when they resolve; otherwise reuse marketplace listing assets.
+  const mergedInterface =
+    installedInterface || marketInterface
+      ? {
+          ...(marketInterface ?? {}),
+          ...(installedInterface ?? {}),
+          logo: pickRenderableLogoField(installedInterface?.logo, marketInterface?.logo),
+          logoDark: pickRenderableLogoField(
+            installedInterface?.logoDark,
+            marketInterface?.logoDark
+          ),
+          composerIcon: pickRenderableLogoField(
+            installedInterface?.composerIcon,
+            marketInterface?.composerIcon
+          ),
+        }
+      : null
   return {
     ...installed,
     version,
@@ -235,7 +273,7 @@ function withMarketplaceListingInterface(
       ...installed.raw,
       spec: {
         ...installed.raw.spec,
-        interface: marketplaceItem.interface,
+        interface: mergedInterface,
         version,
       },
     },
@@ -754,8 +792,10 @@ function PluginMarketplaceRow({
             logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
           ].join(' ')}
           contrastPad={logo.contrastPad}
+          distribution={marketplacePluginDistribution(item)}
           logoUrl={logo.url}
           name={item.displayName || item.name}
+          useInitial={logo.source === 'fallback'}
         />
         <div className="plugin-market-card-copy">
           <strong>{item.displayName || item.name}</strong>
@@ -904,8 +944,10 @@ function PluginMarketplaceRevealButton({
                 logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
               ].join(' ')}
               contrastPad={logo.contrastPad}
+              distribution={marketplacePluginDistribution(item)}
               logoUrl={logo.url}
               name={item.displayName || item.name}
+              useInitial={logo.source === 'fallback'}
             />
           )
         })}
@@ -1076,7 +1118,7 @@ export function PluginsWorkspace({
   const [pluginMarketplaceState, setPluginMarketplaceState] = useState<PluginMarketplaceState>(
     () => ({
       items: initialMarketplaceCache?.marketplaceItems ?? [],
-      isLoading: !initialMarketplaceCache,
+      isLoading: !initialMarketplaceCache?.marketplaceItems.length,
       error: null,
     })
   )
@@ -1086,6 +1128,8 @@ export function PluginsWorkspace({
   )
   const installedPluginsRef = useRef(installedPlugins)
   installedPluginsRef.current = installedPlugins
+  const pluginMarketplaceItemsRef = useRef(pluginMarketplaceState.items)
+  pluginMarketplaceItemsRef.current = pluginMarketplaceState.items
   const marketplacesRef = useRef(marketplaces)
   marketplacesRef.current = marketplaces
   const selectedMarketplaceKeyRef = useRef(selectedMarketplaceKey)
@@ -1095,18 +1139,39 @@ export function PluginsWorkspace({
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
-  // Account/session identity is encoded in the cache key; reset mounted state on switch.
+  // Account/session identity is encoded in the cache key; hydrate from durable cache on
+  // switch. A cache miss must clear prior-account catalog/installs — never keep showing
+  // another user's plugins while the new key loads.
   useEffect(() => {
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-    setMarketplaces(cached?.marketplaces ?? [])
-    setSelectedMarketplaceKey(cached?.selectedMarketplaceKey || rememberedMarketplaceKey())
-    setInstalledPlugins(cached?.installedPlugins ?? [])
-    setCurrentDeviceId(cached?.deviceId ?? '')
-    setCanPublish(cached?.canPublish ?? false)
-    setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
+    if (!cached) {
+      setMarketplaces([])
+      setInstalledPlugins([])
+      setCanPublish(false)
+      setCanSharePersonalPlugins(true)
+      setPluginMarketplaceState({
+        items: [],
+        isLoading: true,
+        error: null,
+      })
+      setSelectedPluginId(null)
+      setSelectedMarketplacePluginId(null)
+      setPluginShareState(null)
+      setPluginPublishTarget(null)
+      setPluginPublishError(null)
+      setPluginPublishShareRecovery(false)
+      initialMarketplaceLoadKeyRef.current = null
+      return
+    }
+    setMarketplaces(cached.marketplaces)
+    setSelectedMarketplaceKey(cached.selectedMarketplaceKey || rememberedMarketplaceKey())
+    setInstalledPlugins(cached.installedPlugins)
+    setCurrentDeviceId(cached.deviceId)
+    setCanPublish(cached.canPublish)
+    setCanSharePersonalPlugins(cached.canSharePersonalPlugins)
     setPluginMarketplaceState({
-      items: cached?.marketplaceItems ?? [],
-      isLoading: !cached,
+      items: cached.marketplaceItems,
+      isLoading: false,
       error: null,
     })
     setSelectedPluginId(null)
@@ -2412,14 +2477,25 @@ export function PluginsWorkspace({
     if (!hasCachedCatalog) {
       setPluginMarketplaceState(previous => ({
         ...previous,
-        isLoading: true,
+        isLoading: previous.items.length === 0,
         error: null,
       }))
-    } else {
-      // Keep the current catalog mounted while revalidating (including explicit
-      // post-install refresh). Flipping isLoading made action buttons vanish mid-click.
+    } else if (cached) {
+      // Cache-first: paint durable Wework/official + enterprise rows immediately,
+      // then revalidate in the background without blanking the list.
       setIsMarketplaceRefreshing(true)
-      setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+      setPluginMarketplaceState(previous =>
+        previous.items.length > 0
+          ? { ...previous, isLoading: false, error: null }
+          : {
+              items: cached.marketplaceItems,
+              isLoading: false,
+              error: null,
+            }
+      )
+      if (cached.installedPlugins.length > 0) {
+        setInstalledPlugins(previous => (previous.length > 0 ? previous : cached.installedPlugins))
+      }
     }
 
     const hasGithubMarketplace = (cached?.marketplaces ?? marketplacesRef.current).some(
@@ -2629,16 +2705,12 @@ export function PluginsWorkspace({
         }
       }
 
-      const cloudItems =
-        cloudItemsForMerge ??
-        (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []).filter(
-          item => !isLocalMarketplaceItem(item)
-        )
+      const cachedMarketplaceItems =
+        getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []
+      const cachedCloudItems = cachedMarketplaceItems.filter(item => !isLocalMarketplaceItem(item))
       const localRows = mergeDiskPersonalIntoLocalRows(
         localStateForMerge?.marketplaceItems ??
-          (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []).filter(
-            isLocalMarketplaceItem
-          ),
+          cachedMarketplaceItems.filter(isLocalMarketplaceItem),
         diskPersonalItemsForMerge
       )
       const previousInstalledRaw = installedPluginsRef.current.map(plugin => plugin.raw)
@@ -2654,6 +2726,12 @@ export function PluginsWorkspace({
         localStateForMerge?.installedPlugins ?? previousInstalledRaw,
         localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
       ).map(toInstalledPluginItem)
+      // Progressive local peeks must not wipe warm/cached Wework/enterprise rows.
+      const previousCloudItems = pluginMarketplaceItemsRef.current.filter(
+        item => !isLocalMarketplaceItem(item)
+      )
+      const cloudItems =
+        cloudItemsForMerge ?? (cachedCloudItems.length > 0 ? cachedCloudItems : previousCloudItems)
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: mergeMarketplaceCatalog(
           cloudItems,
@@ -2673,17 +2751,22 @@ export function PluginsWorkspace({
           sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
         )
       }
-      if (mergedItems.length === 0 && !hasCachedCatalog) {
+      if (
+        mergedItems.length === 0 &&
+        !hasCachedCatalog &&
+        pluginMarketplaceItemsRef.current.length === 0
+      ) {
         if (localStateForMerge || cloudInstalledForMerge) {
           setIsMarketplaceRefreshing(options.keepRefreshing)
         }
         return
       }
 
-      setPluginMarketplaceState({
-        items: mergedItems,
-        isLoading: false,
-        error: null,
+      setPluginMarketplaceState(previous => {
+        if (sameMarketplaceItems(previous.items, mergedItems) && !previous.error) {
+          return { ...previous, isLoading: false, error: null }
+        }
+        return { items: mergedItems, isLoading: false, error: null }
       })
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(options.keepRefreshing)
@@ -2858,7 +2941,9 @@ export function PluginsWorkspace({
       setCanSharePersonalPlugins(Boolean(capabilities.canSharePersonalPlugins ?? true))
 
       applyCatalogSnapshot(cloudItems, cloudInstalled, localState, capabilities, {
-        preferExistingOnSameSignature: !isExplicitRefresh,
+        // When durable storage had to drop data-URL logos, always take the network
+        // catalog so official plugins do not stay stuck on name initials.
+        preferExistingOnSameSignature: !isExplicitRefresh && !cached?.logosStripped,
       })
 
       const resolvedDeviceId = localState?.deviceId || ''
@@ -3384,6 +3469,8 @@ export function PluginsWorkspace({
             version: pendingInstall.item.version,
             logoUrl: pendingInstallLogo?.url,
             logoContrastPad: pendingInstallLogo?.contrastPad,
+            useLogoInitial: pendingInstallLogo?.source === 'fallback',
+            logoDistribution: marketplacePluginDistribution(pendingInstall.item),
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
@@ -4080,16 +4167,10 @@ export function PluginsWorkspace({
                         plugin,
                         pluginMarketplaceState.items
                       )
-                      const logo = resolvePluginLogo({
+                      const logo = resolvePreferredPluginLogo({
                         pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
-                        logo: marketplaceItem?.interface?.logo || plugin.raw.spec.interface?.logo,
-                        logoDark:
-                          marketplaceItem?.interface?.logoDark ||
-                          plugin.raw.spec.interface?.logoDark,
-                        composerIcon:
-                          marketplaceItem?.interface?.composerIcon ||
-                          plugin.raw.spec.interface?.composerIcon,
                         appearanceMode,
+                        interfaces: [plugin.raw.spec.interface, marketplaceItem?.interface],
                       })
                       return (
                         <button
@@ -4109,8 +4190,10 @@ export function PluginsWorkspace({
                                 : 'plugin-logo-fallback',
                             ].join(' ')}
                             contrastPad={logo.contrastPad}
+                            distribution={plugin.distribution}
                             logoUrl={logo.url}
                             name={plugin.name}
+                            useInitial={logo.source === 'fallback'}
                           />
                         </button>
                       )
@@ -4135,26 +4218,20 @@ export function PluginsWorkspace({
                                 plugin,
                                 pluginMarketplaceState.items
                               )
-                              const logo = resolvePluginLogo({
+                              const logo = resolvePreferredPluginLogo({
                                 pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
-                                logo:
-                                  marketplaceItem?.interface?.logo ||
-                                  plugin.raw.spec.interface?.logo,
-                                logoDark:
-                                  marketplaceItem?.interface?.logoDark ||
-                                  plugin.raw.spec.interface?.logoDark,
-                                composerIcon:
-                                  marketplaceItem?.interface?.composerIcon ||
-                                  plugin.raw.spec.interface?.composerIcon,
                                 appearanceMode,
+                                interfaces: [plugin.raw.spec.interface, marketplaceItem?.interface],
                               })
                               return (
                                 <PluginSourceAvatar
                                   key={plugin.id}
                                   className="plugin-installed-overflow-preview-logo"
                                   contrastPad={logo.contrastPad}
+                                  distribution={plugin.distribution}
                                   logoUrl={logo.url}
                                   name={plugin.name}
+                                  useInitial={logo.source === 'fallback'}
                                 />
                               )
                             })}

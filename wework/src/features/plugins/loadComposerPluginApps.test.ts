@@ -66,12 +66,15 @@ describe('loadComposerPluginApps', () => {
       },
     } satisfies InstalledPlugin)
 
-    const apps = await loadComposerPluginApps({
-      listCodexApps: async () => [],
-      readLocalInstalledPlugins: async () => [localPlugin],
-      readLocalInstalledPluginDetail: readDetail,
-      listCloudInstalledPlugins: async () => [],
-    })
+    const apps = await loadComposerPluginApps(
+      {
+        listCodexApps: async () => [],
+        readLocalInstalledPlugins: async () => [localPlugin],
+        readLocalInstalledPluginDetail: readDetail,
+        listCloudInstalledPlugins: async () => [],
+      },
+      { enrichRelativeLogos: true }
+    )
 
     expect(readDetail).toHaveBeenCalledWith(localPlugin)
     expect(apps).toEqual([
@@ -104,5 +107,66 @@ describe('loadComposerPluginApps', () => {
       listCloudInstalledPlugins: async () => [dingtalk],
     })
     expect(apps.map(app => app.id)).toEqual(['plugin:dingtalk'])
+  })
+
+  test('prefers marketplace catalog package logos over unresolved installed logos', async () => {
+    const wiki: InstalledPlugin = {
+      ...dingtalk,
+      metadata: { name: 'weibo-api-wiki', namespace: 'default', labels: { id: '10' } },
+      spec: {
+        ...dingtalk.spec,
+        pluginId: 42,
+        source: {
+          ...dingtalk.spec.source,
+          pluginKey: 'weibo-api-wiki',
+        },
+        displayName: '微博开放平台内部WIKI',
+        interface: {
+          logo: './assets/logo.png',
+        },
+        components: {
+          ...dingtalk.spec.components,
+          skills: [{ name: 'wiki', path: 'skills/wiki', description: '' }],
+        },
+      },
+    }
+
+    const apps = await loadComposerPluginApps(
+      {
+        listCodexApps: async () => [],
+        readLocalInstalledPlugins: async () => [],
+        listCloudInstalledPlugins: async () => [wiki],
+      },
+      {
+        marketplaceItems: [
+          {
+            id: 42,
+            remotePluginId: 'wegent~Plugin_42',
+            name: 'weibo-api-wiki',
+            displayName: '微博开放平台内部WIKI',
+            description: '',
+            visibility: 'workspace',
+            featured: false,
+            installed: true,
+            installedPluginId: 10,
+            enabled: true,
+            sourceType: 'marketplace',
+            ownerUserId: 1,
+            components: wiki.spec.components,
+            manifest: {},
+            interface: {
+              logo: 'data:image/png;base64,aaa',
+            },
+          },
+        ],
+      }
+    )
+
+    expect(apps).toEqual([
+      expect.objectContaining({
+        id: 'plugin:weibo-api-wiki',
+        logoUrl: 'data:image/png;base64,aaa',
+      }),
+    ])
   })
 })

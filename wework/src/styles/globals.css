@@ -614,12 +614,9 @@ button:disabled {
     padding: 0;
   }
 
-  [data-theme='dark'] .plugin-management-logo {
+  [data-theme='dark'] .plugin-management-logo.plugin-logo-provided {
     background: rgb(var(--color-bg-surface));
     border-color: rgb(var(--color-border) / 0.35);
-  }
-
-  [data-theme='dark'] .plugin-management-logo.plugin-logo-provided {
     padding: 2px;
   }
 
@@ -1672,7 +1669,36 @@ button.plugin-installed-overflow-button:hover {
 }
 
 .plugin-task-example-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border) / 0.3);
+  border-radius: 10px;
+  background: rgb(var(--color-bg-base));
   transition: border-color 150ms ease;
+}
+
+.plugin-task-example-avatar.plugin-logo-provided {
+  padding: 0;
+}
+
+.plugin-task-example-avatar.plugin-logo-fallback {
+  padding: 0;
+}
+
+.plugin-task-example-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[data-theme='dark'] .plugin-task-example-avatar.plugin-logo-provided img {
+  object-fit: contain;
+  border-radius: 9px;
 }
 
 .plugin-task-example-arrow {
@@ -1871,14 +1897,12 @@ button.plugin-installed-strip-item:focus-visible::after {
   padding: 0;
 }
 
-[data-theme='dark'] .plugin-market-card-logo,
-[data-theme='dark'] .plugin-installed-strip-logo {
-  background-color: rgb(var(--color-bg-surface));
-  border-color: rgb(var(--color-border) / 0.35);
-}
-
+/* Surface pad is only for real package logos. Initials keep distribution tints
+   so dark-theme glyphs stay readable (dark letter on light/tint chip). */
 [data-theme='dark'] .plugin-market-card-logo.plugin-logo-provided,
 [data-theme='dark'] .plugin-installed-strip-logo.plugin-logo-provided {
+  background-color: rgb(var(--color-bg-surface));
+  border-color: rgb(var(--color-border) / 0.35);
   padding: 2px;
 }
 
@@ -1942,14 +1966,10 @@ button.plugin-installed-strip-item:focus-visible::after {
   padding: 0;
 }
 
-[data-theme='dark'] .plugin-detail-header-logo,
-[data-theme='dark'] .plugin-detail-prompt-logo {
-  background-color: rgb(var(--color-bg-surface));
-  border-color: rgb(var(--color-border) / 0.35);
-}
-
 [data-theme='dark'] .plugin-detail-header-logo.plugin-logo-provided,
 [data-theme='dark'] .plugin-detail-prompt-logo.plugin-logo-provided {
+  background-color: rgb(var(--color-bg-surface));
+  border-color: rgb(var(--color-border) / 0.35);
   padding: 2px;
 }
 
@@ -2436,12 +2456,9 @@ button.plugin-market-reveal-button:focus-visible {
   padding: 0;
 }
 
-[data-theme='dark'] .plugin-market-reveal-logo {
+[data-theme='dark'] .plugin-market-reveal-logo.plugin-logo-provided {
   background-color: rgb(var(--color-bg-surface));
   border-color: rgb(var(--color-border) / 0.35);
-}
-
-[data-theme='dark'] .plugin-market-reveal-logo.plugin-logo-provided {
   padding: 1px;
 }
 

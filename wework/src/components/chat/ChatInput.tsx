@@ -184,6 +184,7 @@ export interface ChatInputProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
+  onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
@@ -582,6 +583,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onPause,
     showWorkspaceMenu,
     inputLeadingContext,
+    onDismissInputLeadingContext,
     toolbarLeadingContext,
     onCompactContext,
     goal,
@@ -925,6 +927,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onPause={onPause}
           showWorkspaceMenu={showWorkspaceMenu}
           inputLeadingContext={inputLeadingContext}
+          onDismissInputLeadingContext={onDismissInputLeadingContext}
           toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}

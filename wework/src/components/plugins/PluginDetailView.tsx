@@ -18,7 +18,7 @@ import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { useOptionalAppearance } from '@/features/appearance'
 import type { ResolvedAppearanceMode } from '@/features/appearance/types'
-import { resolvePluginLogo } from './plugin-assets'
+import { resolvePreferredPluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
@@ -188,12 +188,10 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
 }
 
 function installedPluginLogo(plugin: InstalledPluginItem, appearanceMode: ResolvedAppearanceMode) {
-  return resolvePluginLogo({
+  return resolvePreferredPluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
-    logo: plugin.raw.spec.interface?.logo,
-    logoDark: plugin.raw.spec.interface?.logoDark,
-    composerIcon: plugin.raw.spec.interface?.composerIcon,
     appearanceMode,
+    interfaces: [plugin.raw.spec.interface],
   })
 }
 
@@ -706,10 +704,15 @@ export function PluginDetailView({
               }}
             >
               <PluginSourceAvatar
-                className="plugin-task-example-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-border/30 bg-background"
+                className={[
+                  'plugin-task-example-avatar',
+                  logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+                ].join(' ')}
                 contrastPad={logo.contrastPad}
+                distribution={plugin.distribution}
                 logoUrl={logo.url}
                 name={plugin.name}
+                useInitial={logo.source === 'fallback'}
               />
               <span className="min-w-0 flex-1 text-base font-medium leading-6 text-text-primary">
                 <strong className="plugin-task-example-name">{plugin.name}</strong>{' '}
@@ -750,9 +753,11 @@ export function PluginDetailView({
               logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
             ].join(' ')}
             contrastPad={logo.contrastPad}
+            distribution={plugin.distribution}
             logoUrl={logo.url}
             name={plugin.name}
             testId="plugin-detail-logo"
+            useInitial={logo.source === 'fallback'}
           />
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
