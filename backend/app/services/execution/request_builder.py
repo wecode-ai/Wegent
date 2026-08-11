@@ -55,6 +55,12 @@ WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
 
 
+def _normalize_provider_keyword_text(value: str) -> str:
+    """Normalize provider keyword text for stable substring matching."""
+
+    return "".join(value.casefold().split())
+
+
 def _first_present_project_id(*values: Any) -> Optional[int]:
     """Return the first project id that is explicitly present, preserving 0."""
 
@@ -2163,7 +2169,9 @@ Response template:
     ) -> list:
         """Preload provider runtime skills or config guidance skills when relevant."""
         merged_preload_skills = list(preload_skills)
-        prompt_text = self._extract_prompt_text(message).strip().lower()
+        prompt_text = _normalize_provider_keyword_text(
+            self._extract_prompt_text(message)
+        )
         if not prompt_text:
             return merged_preload_skills
 
@@ -2175,14 +2183,17 @@ Response template:
 
         for provider in list_mcp_providers():
             keywords = provider.get("message_keywords") or ()
-            if not keywords or not any(keyword in prompt_text for keyword in keywords):
+            if not keywords or not any(
+                _normalize_provider_keyword_text(keyword) in prompt_text
+                for keyword in keywords
+            ):
                 continue
 
             matched_services = [
                 service
                 for service in provider.get("services", {}).values()
                 if any(
-                    keyword in prompt_text
+                    _normalize_provider_keyword_text(keyword) in prompt_text
                     for keyword in (service.get("message_keywords") or ())
                 )
             ]

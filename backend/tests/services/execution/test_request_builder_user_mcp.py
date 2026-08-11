@@ -241,13 +241,21 @@ class TestUserScopedMcpInjection:
             }
         ]
 
-    def test_injects_only_ai_table_skill_for_ai_table_request(self, test_db):
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "帮我更新钉钉AI表格里的记录和字段",
+            "帮我更新钉钉 AI 表格里的记录和字段",
+            "Update the DingTalk AI Table records",
+        ],
+    )
+    def test_injects_only_ai_table_skill_for_ai_table_request(self, test_db, message):
         builder = TaskRequestBuilder(test_db)
         user = SimpleNamespace(preferences="{}")
 
         preload_skills = builder._inject_conditional_provider_skills(
             user=user,
-            message="帮我更新钉钉AI表格里的记录和字段",
+            message=message,
             preload_skills=[],
         )
 

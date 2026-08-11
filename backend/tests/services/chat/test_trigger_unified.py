@@ -1113,6 +1113,11 @@ class TestProcessContextsAttachments:
         """Unsupported shells must not switch context processing to A2."""
         from app.services.chat.trigger import unified as trigger_unified
 
+        scope = KnowledgeBaseScope(
+            knowledge_base_id=1408,
+            scope_restricted=True,
+            document_ids=[101],
+        )
         request = ExecutionRequest(
             task_id=1263,
             subtask_id=1697,
@@ -1132,6 +1137,7 @@ class TestProcessContextsAttachments:
                 kb_meta_prompt="meta",
                 knowledge_base_ids=[1408],
                 is_user_selected_kb=True,
+                knowledge_base_scopes=[scope],
             ),
         )
 
@@ -1152,7 +1158,11 @@ class TestProcessContextsAttachments:
 
         assert result.system_prompt == "enhanced"
         assert result.kb_meta_prompt == "meta"
+        assert result.knowledge_base_ids == [1408]
+        assert result.knowledge_base_scopes == [scope]
         assert result.preload_skills == []
+        assert result.user_selected_skills == []
+        assert result.selected_knowledge_prompt == ""
         assert result.provider_native_knowledge is False
 
     @pytest.mark.asyncio
