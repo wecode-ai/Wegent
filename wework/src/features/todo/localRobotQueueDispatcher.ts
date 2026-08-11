@@ -41,6 +41,7 @@ function queuePrompt(execution: LocalLoopItemExecution): string {
  */
 export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () => void {
   const executionApi = services.localLoopItemExecutionApi
+  const cloudExecutionApi = services.projectAutomationApi
   const runtimeWorkApi = services.runtimeWorkApi
   const deviceApi = services.deviceApi
   const modelApi = services.modelApi
@@ -110,14 +111,24 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     return resolvedDeviceIds ?? []
   }
 
-  const claimNext = async (deviceId: string) =>
-    executionApi.claimNext({
+  const claimNext = async (deviceId: string) => {
+    const claim = {
       execution_device_id: deviceId,
       device_capacity: LOCAL_QUEUE_DEVICE_CAPACITY,
       lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
-    })
+    }
+    const cloudExecution = await cloudExecutionApi?.claimNext(claim)
+    if (cloudExecution) return { execution: cloudExecution, cloud: true }
+    const localExecution = await executionApi.claimNext(claim)
+    return localExecution ? { execution: localExecution, cloud: false } : null
+  }
 
-  const keepRunAlive = (executionId: number, deviceId: string, taskId: string) => {
+  const keepRunAlive = (
+    execution: LocalLoopItemExecution,
+    deviceId: string,
+    taskId: string,
+    cloud: boolean
+  ) => {
     // Long runs outlive the 5-minute claim lease. Heartbeat until the run
     // reaches a terminal state (heartbeat returns null for terminal rows) so
     // the lease recovery never requeues a task that is still executing.
@@ -126,8 +137,10 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         window.clearInterval(timer)
         return
       }
-      void executionApi
-        .heartbeat(executionId, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
+      const heartbeat = cloud
+        ? cloudExecutionApi!.heartbeat(execution, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
+        : executionApi.heartbeat(execution.id, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
+      void heartbeat
         .then(updated => {
           if (!updated) window.clearInterval(timer)
         })
@@ -142,11 +155,14 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     let deviceIds = await localDeviceIds()
     if (deviceIds.length === 0) deviceIds = ['local-device']
     let execution: LocalLoopItemExecution | null = null
+    let isCloudExecution = false
     let claimDeviceId: string | null = null
     try {
       for (const deviceId of deviceIds) {
-        execution = await claimNext(deviceId)
-        if (execution) {
+        const claimed = await claimNext(deviceId)
+        if (claimed) {
+          execution = claimed.execution
+          isCloudExecution = claimed.cloud
           claimDeviceId = deviceId
           break
         }
@@ -230,13 +246,49 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         taskId
       )
       const response = await runtimeWorkApi.createRuntimeTask({ ...request, workspacePath })
-      await executionApi.heartbeat(
-        execution.id,
-        deviceId,
-        response.taskId,
-        LOCAL_QUEUE_LEASE_SECONDS
-      )
-      keepRunAlive(execution.id, deviceId, response.taskId)
+      if (isCloudExecution) {
+        await cloudExecutionApi!.heartbeat(
+          execution,
+          deviceId,
+          response.taskId,
+          LOCAL_QUEUE_LEASE_SECONDS
+        )
+      } else {
+        await executionApi.heartbeat(
+          execution.id,
+          deviceId,
+          response.taskId,
+          LOCAL_QUEUE_LEASE_SECONDS
+        )
+      }
+      keepRunAlive(execution, deviceId, response.taskId, isCloudExecution)
+      if (isCloudExecution) {
+        let terminalReported = false
+        let unsubscribe: () => void = () => undefined
+        const reportOnce = (report: () => Promise<unknown>) => {
+          if (terminalReported) return
+          terminalReported = true
+          unsubscribe()
+          void report().catch(cause => {
+            console.warn('[local-robot-queue] failed to report cloud terminal state', {
+              executionId: execution.id,
+              error: cause instanceof Error ? cause.message : String(cause),
+            })
+          })
+        }
+        unsubscribe = services.chatStream.subscribe({
+          scope: { deviceId, taskId: response.taskId },
+          onChatDone: payload => {
+            if (payload.taskId !== response.taskId) return
+            const note = typeof payload.result?.value === 'string' ? payload.result.value : null
+            reportOnce(() => cloudExecutionApi!.complete(execution, note))
+          },
+          onChatError: payload => {
+            if (payload.taskId !== response.taskId) return
+            reportOnce(() => cloudExecutionApi!.fail(execution, payload.error))
+          },
+        })
+      }
       console.log('[local-robot-queue] dispatched', {
         executionId: execution.id,
         loopItemId: execution.loop_item_id,
@@ -253,7 +305,10 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         taskId,
         error: errorText,
       })
-      await executionApi.fail(execution.id, errorText).catch(failCause => {
+      const fail = isCloudExecution
+        ? cloudExecutionApi!.fail(execution, errorText)
+        : executionApi.fail(execution.id, errorText)
+      await fail.catch(failCause => {
         console.warn('[local-robot-queue] failed to mark execution failed', {
           error: failCause instanceof Error ? failCause.message : String(failCause),
         })

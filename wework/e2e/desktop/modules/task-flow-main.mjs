@@ -719,6 +719,22 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'project-automation') {
+      phase = 'project-automation-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-automation checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (CLOUD_ONLY) {
       phase = 'server-downlinked-socket-url'
       await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)

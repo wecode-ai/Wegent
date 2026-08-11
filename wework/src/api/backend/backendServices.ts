@@ -20,6 +20,7 @@ import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import { createProjectAutomationApi } from '@/api/projectAutomations'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -95,6 +96,7 @@ export function createBackendWorkbenchServices(
     socketClient,
     projectChatClient,
     projectChatAgentApi: createProjectChatAgentApi(client),
+    projectAutomationApi: createProjectAutomationApi(client),
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,
       startProjectCodeServer: projectApi.startCodeServerSession,

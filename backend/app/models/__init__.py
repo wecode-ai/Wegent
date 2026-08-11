@@ -23,6 +23,9 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
+    ProjectAutomationBugLink,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
@@ -78,6 +81,9 @@ __all__ = [
     "LoopItem",
     "LoopItemAttachment",
     "LoopItemCollaborator",
+    "ProjectAutomationRule",
+    "ProjectAutomationRun",
+    "ProjectAutomationBugLink",
     "Delivery",
     "DeliveryAsset",
     "User",

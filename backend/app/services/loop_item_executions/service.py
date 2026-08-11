@@ -214,6 +214,7 @@ class LoopItemExecutionService:
         if note:
             row.execution_note = note
         db.commit()
+        self._finish_project_automation_run(db, row.loop_item_id, "cancelled", note)
         db.refresh(row)
         return row
 
@@ -641,6 +642,7 @@ class LoopItemExecutionService:
         if note:
             row.execution_note = note
         db.commit()
+        self._finish_project_automation_run(db, row.loop_item_id, "succeeded", note)
         db.refresh(row)
         return row
 
@@ -687,8 +689,94 @@ class LoopItemExecutionService:
         if note:
             row.execution_note = note
         db.commit()
+        if row.status == STATUS_FAILED:
+            self._finish_project_automation_run(db, row.loop_item_id, "failed", error)
         db.refresh(row)
         return row
+
+    def _finish_project_automation_run(
+        self,
+        db: Session,
+        loop_item_id: str,
+        status_value: str,
+        note: Optional[str],
+    ) -> None:
+        """Finish an automation after its scan and child repairs terminate."""
+
+        from app.models.delivery import ProjectAutomationRun
+
+        item = db.get(LoopItem, loop_item_id)
+        run = (
+            db.query(ProjectAutomationRun)
+            .filter(ProjectAutomationRun.task_id == loop_item_id)
+            .first()
+        )
+        is_scan_task = run is not None
+        if run is None and item is not None and item.parent_id:
+            run = (
+                db.query(ProjectAutomationRun)
+                .filter(ProjectAutomationRun.task_id == item.parent_id)
+                .first()
+            )
+        if run is None or run.status != "running":
+            return
+        if is_scan_task and status_value in {"failed", "cancelled"}:
+            terminal_status = status_value
+        else:
+            children = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.parent_id == run.task_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                )
+                .all()
+            )
+            if is_scan_task and not children:
+                terminal_status = "succeeded"
+                summary = str(note).strip() if note else "No bugs found."
+            else:
+                executions = [
+                    self.latest_for_item(db, item_id=child.id) for child in children
+                ]
+                if any(
+                    execution is None or execution.status not in TERMINAL_STATUSES
+                    for execution in executions
+                ):
+                    return
+                terminal_status = (
+                    "failed"
+                    if any(
+                        execution.status != STATUS_COMPLETED
+                        for execution in executions
+                        if execution
+                    )
+                    else "succeeded"
+                )
+                completed_count = sum(
+                    execution is not None and execution.status == STATUS_COMPLETED
+                    for execution in executions
+                )
+                summary = (
+                    f"Scan found {len(children)} bug(s): "
+                    f"{completed_count} repaired, "
+                    f"{len(children) - completed_count} require attention."
+                )
+        run.status = terminal_status
+        if is_scan_task and status_value in {"failed", "cancelled"}:
+            summary = str(note).strip() if note else f"Scan {terminal_status}."
+        run.description = summary[:2000]
+        run.completed_at = utcnow()
+        run.version += 1
+        parent = db.get(LoopItem, run.task_id) if run.task_id else None
+        if parent is not None and terminal_status == "succeeded":
+            from app.services.loop_items.service import loop_item_service
+
+            project = db.get(CloudProject, parent.cloud_project_id)
+            statuses = loop_item_service._project_status_ids(project) if project else []
+            parent.status = statuses[-1] if statuses else parent.status
+            parent.completed_at = utcnow()
+            parent.version += 1
+        db.commit()
 
     @staticmethod
     def _error_text(error: Any) -> str:
@@ -760,6 +848,8 @@ class LoopItemExecutionService:
                 requeue=True,
             )
         db.commit()
+        if terminal == STATUS_COMPLETED:
+            self._finish_project_automation_run(db, row.loop_item_id, "succeeded", None)
         db.refresh(row)
         return row
 
@@ -843,6 +933,18 @@ class LoopItemExecutionService:
             # Public/group cloud models route through the backend LLM gateway
             # (same as an App send); everything else keeps its direct config.
             model_config = gateway_config or resolved
+            if gateway_config:
+                upstream_model_id = str(resolved.get("model_id") or "").lower()
+                inferred_catalog_model_id = (
+                    "wework-kimi-k2-7" if "kimi-k2.7" in upstream_model_id else None
+                )
+                model_config.setdefault(
+                    "codex_catalog_model_id",
+                    resolved.get("codex_catalog_model_id")
+                    or inferred_catalog_model_id
+                    or "wework-gpt-5.6-sol",
+                )
+                model_config["codex_responses_compat_proxy"] = True
         return self._build_runtime_payload(
             item=task,
             agent=agent,
@@ -914,6 +1016,15 @@ class LoopItemExecutionService:
         system_prompt = config.get("system_prompt") or ""
         model = config.get("model")
         model = model if isinstance(model, str) else None
+        runtime_model_id = model
+        if model_config and model_config.get("base_url"):
+            # The App routes cloud models through a known Codex catalog entry
+            # while the gateway config selects the real upstream model. Using
+            # the display name here makes Codex fall back to guessed metadata
+            # and can add unsupported request fields such as `reasoning`.
+            runtime_model_id = (
+                model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
+            )
         task_id = f"codex-robot-{getattr(item, 'id', '')}"
         subtask_id = f"{task_id}-assistant"
         team_id = int(getattr(team, "id", 0) or 0)
@@ -957,7 +1068,10 @@ class LoopItemExecutionService:
             "standalone_chat_workspace": True,
             "enable_tools": True,
             "enable_web_search": False,
-            "enable_deep_thinking": True,
+            # Match the App's default send. Enabling this unconditionally adds
+            # a `reasoning` parameter that some otherwise supported gateway
+            # models reject before the automation can start.
+            "enable_deep_thinking": False,
             "skill_names": [],
             "mcp_servers": [],
         }
@@ -967,7 +1081,7 @@ class LoopItemExecutionService:
             "runtime": "codex",
             "message": prompt,
             "title": title,
-            **({"modelId": model} if model else {}),
+            **({"modelId": runtime_model_id} if runtime_model_id else {}),
             "ephemeral": True,
             "continuable": True,
             "cloudProjectId": str(getattr(item, "cloud_project_id", "")),

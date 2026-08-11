@@ -618,6 +618,7 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "create_board_item"
             | "update_board_item"
             | "add_board_item_comment"
+            | "report_automation_bug"
             | "list_item_attachments"
             | "upload_item_attachment"
             | "read_item_attachment"
@@ -705,6 +706,15 @@ async fn call_backend_tool(
             .json(&json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
             })),
+        "report_automation_bug" => {
+            let run_id = string_argument(arguments, "run_id").map_err(|e| e.to_string())?;
+            client
+                .post(format!(
+                    "{base}/cloud-projects/automation-runs/{}/bugs",
+                    encode_segment(run_id)
+                ))
+                .json(arguments.get("bug").unwrap_or(arguments))
+        }
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -1143,6 +1153,31 @@ fn tools() -> Vec<Value> {
                     "body": {"type": "string"}
                 },
                 "required": ["space_id", "item_id", "body"]
+            }),
+        ),
+        tool(
+            "report_automation_bug",
+            "Report or update one bug found by a Wework board automation scan",
+            json!({
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "bug": {
+                        "type": "object",
+                        "properties": {
+                            "bug_key": {"type": "string"},
+                            "title": {"type": "string"},
+                            "evidence": {"type": "string"},
+                            "reproduction": {"type": "string"},
+                            "priority": {
+                                "type": "string",
+                                "enum": ["none", "low", "medium", "high", "urgent"]
+                            }
+                        },
+                        "required": ["bug_key", "title", "evidence"]
+                    }
+                },
+                "required": ["run_id", "bug"]
             }),
         ),
         tool(

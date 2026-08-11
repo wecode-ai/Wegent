@@ -887,6 +887,11 @@ export function CloudTodoWorkspace({
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
     (projectId: string, fetchedItems: CloudLoopItem[], error: string | null) => {
+      console.info('[Wework project board] snapshot applied', {
+        projectId,
+        itemCount: fetchedItems.length,
+        outcome: error ? 'failed' : 'loaded',
+      })
       setItems(fetchedItems)
       setItemsProjectId(projectId)
       setBoardError(error)
@@ -1210,9 +1215,7 @@ export function CloudTodoWorkspace({
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
-  const boardItemsLoading =
-    selectedProject !== null &&
-    (itemsProjectId !== selectedProjectId || (items.length === 0 && !boardError))
+  const boardItemsLoading = selectedProject !== null && itemsProjectId !== selectedProjectId
   const selectedItemApi = selectedItem ? apiForProjectId(selectedItem.cloud_project_id) : undefined
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
@@ -2135,6 +2138,7 @@ export function CloudTodoWorkspace({
                 <ProjectAutomationView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
+                  projectAutomationApi={services.projectAutomationApi}
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}

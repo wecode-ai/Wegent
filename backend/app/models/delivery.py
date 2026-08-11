@@ -216,6 +216,24 @@ class ProjectChatAgent(LoopNode):
         super().__init__(**kwargs)
 
 
+class ProjectAutomationRule(LoopNode):
+    """A scheduled automation owned by one Wework project."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_rule"}
+
+
+class ProjectAutomationRun(LoopNode):
+    """One scheduled or manual occurrence of a project automation."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_run"}
+
+
+class ProjectAutomationBugLink(LoopNode):
+    """Stable bug identity used to make automation-created tasks idempotent."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_bug_link"}
+
+
 class CloudProjectLocalBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "local_binding"}
 

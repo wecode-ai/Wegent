@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_value_is_unset,
 )
@@ -312,6 +313,53 @@ def test_runtime_events_renew_the_lease(test_db: Session, test_user: User) -> No
     )
     assert refreshed is not None
     assert refreshed.lease_expires_at > original_lease
+
+
+def test_runtime_completion_finishes_project_automation(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        task_id=item.id,
+        title="Automation run",
+        description="",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(run)
+    test_db.commit()
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.heartbeat(
+        test_db,
+        execution_id=execution.id,
+        runtime_device_id="cloud-device-1",
+        runtime_task_id="codex-robot-completed",
+    )
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id="codex-robot-completed",
+        event_name="response.completed",
+        payload={"data": {}},
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    test_db.refresh(run)
+    assert run.status == "succeeded"
+    assert run.completed_at is not None
 
 
 def test_lease_expiry_recovery_requeues_then_fails(
@@ -758,6 +806,8 @@ def test_claimed_run_builds_complete_model_config_matching_app_send(
     assert payload is not None
     model_config = payload["executionRequest"]["model_config"]
     assert model_config == full_config
+    assert payload["executionRequest"]["enable_deep_thinking"] is False
+    assert payload["modelId"] == "wework-gpt-5.6-sol"
     assert model_config["base_url"] == "https://gateway.example.com"
     assert model_config["model_id"] == "moonshot-kimi-k2.7-code-highspeed"
     assert model_config["upstream_api_format"] == "anthropic-messages"
@@ -827,6 +877,10 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert headers["X-Wegent-Model-Namespace"] == "default"
     assert headers["X-Wegent-Model-User-Id"] == "0"
     assert model_config["upstream_api_format"] == "anthropic-messages"
+    assert model_config["codex_catalog_model_id"] == "wework-kimi-k2-7"
+    assert model_config["codex_responses_compat_proxy"] is True
+    assert payload["modelId"] == "wework-kimi-k2-7"
+    assert payload["executionRequest"]["enable_deep_thinking"] is False
 
 
 def test_unbound_local_robot_can_be_claimed_by_creator_device(

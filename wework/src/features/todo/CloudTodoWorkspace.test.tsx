@@ -680,6 +680,29 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
   })
 
+  it('renders an empty board after a successful zero-item response', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [] }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.listLoopItems).toHaveBeenCalledWith(project.id)
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('顶层任务')).toBeInTheDocument()
+    expect(screen.getByText('0 个任务')).toBeInTheDocument()
+  })
+
   it('clears the previous project items and shows a skeleton while switching projects', async () => {
     const otherProject = {
       ...project,

@@ -311,6 +311,11 @@ class XXLJobBackend(SchedulerBackend):
             from app.tasks.subscription_tasks import check_due_subscriptions_sync
 
             check_due_subscriptions_sync()
+            from app.tasks.project_automation_tasks import (
+                check_due_project_automations_sync,
+            )
+
+            check_due_project_automations_sync()
         except ImportError:
             from app.tasks.subscription_tasks import check_due_subscriptions
 

@@ -151,6 +151,8 @@ class LoopItemService:
             agent = db.get(ProjectChatAgent, item.assignee_agent_id)
             values["assignee_agent_name"] = agent.name if agent else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        automation = metadata.get("automation")
+        values["automation"] = automation if isinstance(automation, dict) else None
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         values["ai_state"] = ai_state if isinstance(ai_state, dict) else None
         assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)

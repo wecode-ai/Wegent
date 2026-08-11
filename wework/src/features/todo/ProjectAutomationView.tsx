@@ -4,6 +4,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
 import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
+import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -11,6 +12,7 @@ export function ProjectAutomationView({
   api,
   project,
   projectChatAgentApi,
+  projectAutomationApi,
   executionApi,
   deviceApi,
   modelApi,
@@ -22,6 +24,7 @@ export function ProjectAutomationView({
   api: DeliveryApi
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
+  projectAutomationApi?: WorkbenchServices['projectAutomationApi']
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
@@ -41,6 +44,16 @@ export function ProjectAutomationView({
           <h2 className="text-heading-md font-semibold">{t('workbench.automation_title')}</h2>
           <p className="mt-1 text-sm text-text-muted">{t('workbench.automation_description')}</p>
         </header>
+        <ProjectAutomationRulesSection
+          projectId={project.id}
+          api={project.task_provider === 'local' ? projectAutomationApi : undefined}
+          agentApi={projectChatAgentApi}
+          canManage={canManageAgents}
+          deviceApi={deviceApi}
+          onOpenTask={taskId => {
+            void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
+          }}
+        />
         <ProjectChatAgentsSection
           project={project}
           projectChatAgentApi={projectChatAgentApi}

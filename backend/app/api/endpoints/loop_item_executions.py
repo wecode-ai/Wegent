@@ -38,6 +38,7 @@ from app.services.loop_item_executions.service import (
     _optional_user_id,
     loop_item_execution_service,
 )
+from app.services.project_automations import project_automation_service
 
 router = APIRouter()
 claim_router = APIRouter()
@@ -243,6 +244,11 @@ def claim_my_next_execution(
     claiming the same run.
     """
 
+    project_automation_service.activate_waiting_for_device(
+        db,
+        user_id=current_user.id,
+        device_id=values.execution_device_id,
+    )
     while True:
         row = loop_item_execution_service.claim_next_for_device(
             db,
