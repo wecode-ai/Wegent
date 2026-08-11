@@ -43,7 +43,6 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantFirstToken?: (turnId: string) => void
   onAssistantResponseSize?: (turnId: string, responseSizeBytes: number) => void
   onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
-  onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
@@ -70,7 +69,6 @@ export interface RuntimeConversationStreamHandlers {
     turnId: string,
     outcome: 'succeeded' | 'failed' | 'cancelled'
   ) => void
-  onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
   onSubagentActivity?: (
     address: RuntimeTaskAddress,
@@ -124,7 +122,6 @@ export function createRuntimeConversationStreamHandlers(
         handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
       onAssistantSettled: (turnId, outcome) =>
         handlers.onAssistantSettled?.(address, turnId, outcome),
-      onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
       onRuntimeTaskTitleUpdated: payload => handlers.onRuntimeTaskTitleUpdated?.(address, payload),
@@ -201,7 +198,6 @@ export function createRuntimeTaskStreamHandlers(
         clientUserMessageId: payload.clientUserMessageId,
         shellType: payload.shellType,
       })
-      handlers.onRefreshWorkLists?.()
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -314,7 +310,6 @@ export function createRuntimeTaskStreamHandlers(
         )
       }
       handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
-      handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) {
@@ -358,7 +353,6 @@ export function createRuntimeTaskStreamHandlers(
       }
       handlers.onAssistantSettled?.(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
       streamedFileChanges.delete(identity.subtaskId)
-      handlers.onRefreshWorkLists?.()
     },
     onBlockCreated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -395,7 +389,6 @@ export function createRuntimeTaskStreamHandlers(
           subtaskId: identity.subtaskId,
         })
         handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
-        handlers.onRefreshWorkLists?.()
       }
     },
     onBlockUpdated: payload => {

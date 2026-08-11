@@ -101,6 +101,8 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
+实时发送响应中的回合 ID 可能是 executor 在 provider 回合出现前分配的临时 ID，而随后 transcript 会返回 Codex 的规范回合 ID。Wework 合并实时会话和 transcript 时必须先按规范回合 ID 对账；两者不同时，再按稳定的 `clientUserMessageId` 合并为同一个回合，并采用 transcript 的规范回合 ID。不能因为本地回合已经有非空 ID 就跳过客户端消息 ID 对账，否则 Goal 自动续轮等竞态会把同一轮用户消息和后续输出重复渲染。
+
 Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 transcript 时，executor 先用 `thread/read(includeTurns=false)` 读取线程元数据，再用 `thread/turns/list` 按时间倒序读取回合，并对每个回合调用 `thread/items/list` 按正序加载完整 item。分页游标是 Codex 生成的不透明值，前后端不得解析或改写为本地 offset；普通页面只读取一页，搜索、Supervisor 和其他完整历史消费者会沿 `nextCursor` 读取到末尾。executor 会拒绝重复游标、缺失回合 ID、跨回合 item 等无效响应，避免静默产生缺失或错序的历史。
 
 分页 transcript 响应不再伪造全局 `rangeStart`、`rangeEnd` 或 provider 级完整导航索引。Wework 使用当前已加载消息构建回合导航；用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须创建超过单页大小的会话，重启应用后验证首屏只恢复最新页、加载更早历史使用不透明游标，并确认虚拟滚动中的导航状态仍由当前可见用户消息决定。
