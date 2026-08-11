@@ -3,6 +3,7 @@ import {
   formatReleaseNote,
   generateReleaseNotes,
   parseReleaseCommits,
+  readGitHubAuthorLogin,
 } from './generate-release-notes.mjs'
 
 describe('generate release notes', () => {
@@ -53,6 +54,38 @@ describe('generate release notes', () => {
         subject: 'fix(wework): repair updater (#99)',
       })
     ).toBe('- fix(wework): repair updater in #99')
+  })
+
+  test('attributes only the GitHub commit author', () => {
+    const runCommand = vi.fn(() => 'contributor\n')
+
+    expect(readGitHubAuthorLogin('example/repo', '1234567', runCommand)).toBe('contributor')
+    expect(runCommand).toHaveBeenCalledWith(
+      'gh',
+      [
+        'api',
+        'repos/example/repo/commits/1234567',
+        '--jq',
+        '.author.login // empty',
+      ],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'inherit'],
+      }
+    )
+  })
+
+  test('returns no attribution for a successful lookup with no linked author', () => {
+    expect(readGitHubAuthorLogin('example/repo', '1234567', () => '')).toBe('')
+  })
+
+  test('fails release-note generation when GitHub author lookup fails', () => {
+    const error = new Error('GitHub API unavailable')
+    expect(() =>
+      readGitHubAuthorLogin('example/repo', '1234567', () => {
+        throw error
+      })
+    ).toThrow(error)
   })
 
   test('resolves each commit author while preserving release order', () => {

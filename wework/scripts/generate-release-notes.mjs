@@ -56,24 +56,15 @@ function readReleaseCommits(previousTag, releaseSha) {
   return parseReleaseCommits(output)
 }
 
-function readGitHubAuthorLogin(repo, sha) {
-  try {
-    return execFileSync(
-      'gh',
-      [
-        'api',
-        `repos/${repo}/commits/${sha}`,
-        '--jq',
-        '.author.login // (if .committer.login != "web-flow" then .committer.login else empty end)',
-      ],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    ).trim()
-  } catch {
-    return ''
-  }
+export function readGitHubAuthorLogin(repo, sha, runCommand = execFileSync) {
+  return runCommand(
+    'gh',
+    ['api', `repos/${repo}/commits/${sha}`, '--jq', '.author.login // empty'],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    }
+  ).trim()
 }
 
 export function generateReleaseNotes(commits, resolveAuthorLogin) {
