@@ -191,6 +191,51 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
+# Scopes a model reference may name. Four, not three: `runtime` is a real scope --
+# see the same list in `app/schemas/user.py` -- and whitelisting only the obvious
+# three would reject a legitimate reference.
+MODEL_REF_TYPES = ("public", "user", "group", "runtime")
+
+
+def validated_model_ref(
+    value: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """A model reference that can actually select a model, or None for "unset".
+
+    Checked here because nothing downstream does. A name of spaces is truthy, so
+    it passes into the spec, and the run then reads any truthy name as a
+    deliberate override and pins its task to a model that does not exist -- which
+    surfaces much later, as a failed generation rather than a rejected request.
+    An unsupported `type` fails the same way.
+    """
+    if value is None:
+        return None
+
+    name = (value.get("name") or "").strip()
+    if not name:
+        raise ValueError("model reference requires a model name")
+
+    model_type = (value.get("type") or "").strip()
+    if model_type and model_type not in MODEL_REF_TYPES:
+        raise ValueError(
+            f"unsupported model type {model_type!r}; "
+            f"expected one of {', '.join(MODEL_REF_TYPES)}"
+        )
+    namespace = (value.get("namespace") or "").strip()
+
+    # A blank optional string is dropped, not passed through. Spreading `value`
+    # carries the original in, so a type of spaces -- which the check above reads as
+    # unset, and so never rejects -- would survive as a non-empty invalid scope and
+    # reach the task as one. That is the exact failure this function exists to stop.
+    normalised = {**value, "name": name}
+    for key, cleaned in (("type", model_type), ("namespace", namespace)):
+        if cleaned:
+            normalised[key] = cleaned
+        else:
+            normalised.pop(key, None)
+    return normalised
+
+
 class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
@@ -245,6 +290,19 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation, as "
+            "{'name': ..., 'type': 'public|user|group|runtime'}. Only a code wiki "
+            "generates, and CodeWikiCreate requires it there. Unset means the team's "
+            "bot supplies the model, which is what wikis created before this field do."
+        ),
+    )
+
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -310,6 +368,21 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation. Editable so a "
+            "wiki created before the field existed can be given one; the next run "
+            "picks it up, and one already running keeps the model it started with. "
+            "Explicit null clears it, returning the wiki to its team's model."
+        ),
+    )
+
+    # Explicit null stays a valid way to clear the field; anything else has to name
+    # a model, because this value is persisted straight into the spec.
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
     )
     show_generation_task: Optional[bool] = Field(
         None,
@@ -424,6 +497,22 @@ class CodeWikiCreate(KnowledgeBaseCreate):
             "existed also does."
         ),
     )
+    execution_model_ref: Dict[str, str] = Field(
+        ...,
+        description=(
+            "Model the generation agent runs on. Required: a wiki reads a whole "
+            "repository, so which model sees it is the caller's decision to make, "
+            "not one to inherit silently from whichever bot the team happens to bind."
+        ),
+    )
+
+    @field_validator("execution_model_ref")
+    @classmethod
+    def model_ref_names_a_model(cls, value: Dict[str, str]) -> Dict[str, str]:
+        """Reject a ref that cannot select a model. Required here, so never None."""
+        checked = validated_model_ref(value)
+        assert checked is not None
+        return checked
 
 
 class CodeWikiChangedPath(BaseModel):
@@ -702,6 +791,10 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         None,
         description="Model reference for summary generation",
     )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model that runs this knowledge base's own generation",
+    )
     summary: Optional[dict] = Field(
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
@@ -752,6 +845,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         summary = spec.get("summary")
         # Extract summary_model_ref from spec
         summary_model_ref = spec.get("summaryModelRef")
+        execution_model_ref = spec.get("executionModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
         kb_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
         # Only a code wiki has one. Carried so a list can render the repository on
@@ -794,6 +888,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
+            execution_model_ref=execution_model_ref,
             summary=summary,
             guided_questions=guided_questions,
             max_calls_per_conversation=max_calls,

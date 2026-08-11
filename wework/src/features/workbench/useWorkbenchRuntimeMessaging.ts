@@ -835,6 +835,8 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: optimisticDeviceId,
               workspacePath: optimisticWorkspacePath,
               projectId,
+              workspaceKind:
+                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
             })
           : null
       const runtimeProject = projectId
@@ -884,6 +886,8 @@ export function useWorkbenchRuntimeMessaging({
             workspacePath: optimisticWorkspacePath,
             title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
             runtime,
+            workspaceKind:
+              payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
             modelSelection: createModelSelection,
           }),
         })
@@ -898,6 +902,16 @@ export function useWorkbenchRuntimeMessaging({
           clientUserMessageId: options?.clientUserMessageId ?? null,
           deviceId: optimisticAddress.deviceId,
         })
+        const worktreeCreationDelayMs = Number(
+          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
+        )
+        if (
+          payload.execution?.workspace?.source === 'git_worktree' &&
+          Number.isFinite(worktreeCreationDelayMs) &&
+          worktreeCreationDelayMs > 0
+        ) {
+          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
+        }
         const response = await executorClient.runtime.createRuntimeTask(createRequest)
         logRuntimeTaskLaunchTiming('runtime-create-resolved', launchStartedAt, {
           taskId,
@@ -948,12 +962,16 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: address.deviceId,
               workspacePath: resolvedWorkspacePath,
               projectId,
+              workspaceKind:
+                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
             }),
             task: buildOptimisticRuntimeTask({
               taskId: address.taskId,
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
+              workspaceKind:
+                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
               modelSelection: createModelSelection,
             }),
           })
@@ -1022,6 +1040,8 @@ export function useWorkbenchRuntimeMessaging({
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
               status: 'failed',
+              workspaceKind:
+                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
               error: message,
             }),
           })
@@ -1563,12 +1583,14 @@ function buildOptimisticRuntimeWorkspace({
   deviceId,
   workspacePath,
   projectId,
+  workspaceKind,
 }: {
   baseWorkspace?: RuntimeDeviceWorkspace | null
   devices: WorkbenchState['devices']
   deviceId: string
   workspacePath: string
   projectId: number | null
+  workspaceKind?: RuntimeDeviceWorkspace['workspaceKind']
 }): RuntimeDeviceWorkspace {
   const device = findWorkbenchDevice(devices, deviceId)
   return {
@@ -1578,7 +1600,8 @@ function buildOptimisticRuntimeWorkspace({
     deviceName: device?.name ?? baseWorkspace?.deviceName ?? deviceId,
     deviceStatus: device?.status ?? baseWorkspace?.deviceStatus ?? null,
     workspacePath,
-    workspaceKind: baseWorkspace?.workspaceKind ?? (projectId ? 'workspace' : 'chat'),
+    workspaceKind:
+      workspaceKind ?? baseWorkspace?.workspaceKind ?? (projectId ? 'workspace' : 'chat'),
     mapped: baseWorkspace?.mapped ?? Boolean(projectId),
     available: baseWorkspace?.available ?? (device ? device.status !== 'offline' : true),
     tasks: [],
@@ -1591,6 +1614,7 @@ function buildOptimisticRuntimeTask({
   title,
   runtime,
   status = 'creating',
+  workspaceKind,
   error,
   modelSelection,
 }: {
@@ -1599,6 +1623,7 @@ function buildOptimisticRuntimeTask({
   title: string
   runtime: RuntimeTaskSummary['runtime']
   status?: 'creating' | 'failed'
+  workspaceKind?: RuntimeTaskSummary['workspaceKind']
   error?: string | null
   modelSelection?: ModelSelectionConfig | null
 }): RuntimeTaskSummary {
@@ -1609,6 +1634,7 @@ function buildOptimisticRuntimeTask({
     workspacePath,
     title,
     runtime,
+    ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
     running: status === 'creating',

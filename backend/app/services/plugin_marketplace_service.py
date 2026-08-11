@@ -99,6 +99,15 @@ class PublishedRelease:
     created: bool
 
 
+@dataclass(frozen=True)
+class _UserPluginAccessContext:
+    """Preloaded namespace membership used by marketplace list access checks."""
+
+    namespace_ids: set[str]
+    namespace_names: list[str]
+    namespace_names_by_id: dict[str, str]
+
+
 class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
 
@@ -304,8 +313,12 @@ class PluginMarketplaceService:
             if owner_ids
             else {}
         )
-        grants_by_plugin_id = self._load_grants_by_plugin_ids(
-            db, [plugin.id for plugin in rows]
+        plugin_ids = [plugin.id for plugin in rows]
+        grants_by_plugin_id = self._load_grants_by_plugin_ids(db, plugin_ids)
+        access_context = self._load_user_plugin_access_context(
+            db,
+            user_id=user_id,
+            grants_by_plugin_id=grants_by_plugin_id,
         )
         installed_kind_ids = [row.id for row in installed_by_plugin_id.values()]
         device_rows_by_kind_id: dict[int, PluginDeviceInstallation] = {}
@@ -322,7 +335,13 @@ class PluginMarketplaceService:
 
         items: list[PluginMarketplaceItem] = []
         for plugin in rows:
-            if not self._can_access_plugin(db, plugin=plugin, user_id=user_id):
+            if not self._can_access_plugin(
+                db,
+                plugin=plugin,
+                user_id=user_id,
+                grants=grants_by_plugin_id.get(plugin.id, []),
+                access_context=access_context,
+            ):
                 continue
             if listing_type and plugin.listing_type != listing_type:
                 continue
@@ -1880,7 +1899,13 @@ class PluginMarketplaceService:
         return plugin
 
     def _can_access_plugin(
-        self, db: Session, *, plugin: Plugin, user_id: int | None
+        self,
+        db: Session,
+        *,
+        plugin: Plugin,
+        user_id: int | None,
+        grants: list[ResourceMember] | None = None,
+        access_context: _UserPluginAccessContext | None = None,
     ) -> bool:
         """Apply optional direct-user or department grants to workspace plugins.
 
@@ -1888,6 +1913,8 @@ class PluginMarketplaceService:
             db: Database session
             plugin: Plugin to check access for
             user_id: User ID, or None for unauthenticated access
+            grants: Optional preloaded approved plugin grants
+            access_context: Optional preloaded user/namespace membership
 
         Returns:
             True if user can access plugin, False otherwise
@@ -1908,17 +1935,19 @@ class PluginMarketplaceService:
         # Owner can always access their own plugins
         if plugin.owner_user_id == user_id:
             return True
-        plugin_type_values = (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
-        approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
-        grants = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(plugin_type_values),
-                ResourceMember.resource_id == plugin.id,
-                ResourceMember.status.in_(approved_values),
+
+        if grants is None:
+            plugin_type_values = (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+            approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
+            grants = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type.in_(plugin_type_values),
+                    ResourceMember.resource_id == plugin.id,
+                    ResourceMember.status.in_(approved_values),
+                )
+                .all()
             )
-            .all()
-        )
         if not grants:
             return plugin.visibility == "workspace"
         if any(
@@ -1931,6 +1960,42 @@ class PluginMarketplaceService:
         }
         if not granted_namespace_ids:
             return False
+
+        if access_context is None:
+            access_context = self._load_user_plugin_access_context(
+                db,
+                user_id=user_id,
+                grants_by_plugin_id={plugin.id: grants},
+            )
+        if access_context is None:
+            return False
+        if access_context.namespace_ids & granted_namespace_ids:
+            return True
+        if not access_context.namespace_names:
+            return False
+        granted_names = [
+            access_context.namespace_names_by_id[namespace_id]
+            for namespace_id in granted_namespace_ids
+            if namespace_id in access_context.namespace_names_by_id
+        ]
+        return any(
+            member_name == granted_name or member_name.startswith(f"{granted_name}/")
+            for member_name in access_context.namespace_names
+            for granted_name in granted_names
+        )
+
+    def _load_user_plugin_access_context(
+        self,
+        db: Session,
+        *,
+        user_id: int | None,
+        grants_by_plugin_id: dict[int, list[ResourceMember]],
+    ) -> _UserPluginAccessContext | None:
+        """Load user namespace membership once for a marketplace list/access pass."""
+        if user_id is None:
+            return None
+
+        approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
         user_namespaces = (
             db.query(Namespace.id, Namespace.name)
             .join(
@@ -1948,29 +2013,31 @@ class PluginMarketplaceService:
             )
             .all()
         )
-        direct_ids = {str(row.id) for row in user_namespaces}
-        if direct_ids & granted_namespace_ids:
-            return True
-        user_namespace_names = [row.name for row in user_namespaces]
-        if not user_namespace_names:
-            return False
-        granted_names = [
-            row.name
-            for row in db.query(Namespace.name)
-            .filter(
-                Namespace.id.in_(
-                    int(namespace_id)
-                    for namespace_id in granted_namespace_ids
-                    if namespace_id.isdigit()
-                ),
-                Namespace.is_active.is_(True),
-            )
-            .all()
-        ]
-        return any(
-            member_name == granted_name or member_name.startswith(f"{granted_name}/")
-            for member_name in user_namespace_names
-            for granted_name in granted_names
+        granted_namespace_ids = {
+            grant.entity_id
+            for grants in grants_by_plugin_id.values()
+            for grant in grants
+            if grant.entity_type == "namespace"
+        }
+        namespace_names_by_id: dict[str, str] = {}
+        if granted_namespace_ids:
+            namespace_names_by_id = {
+                str(row.id): row.name
+                for row in db.query(Namespace.id, Namespace.name)
+                .filter(
+                    Namespace.id.in_(
+                        int(namespace_id)
+                        for namespace_id in granted_namespace_ids
+                        if namespace_id.isdigit()
+                    ),
+                    Namespace.is_active.is_(True),
+                )
+                .all()
+            }
+        return _UserPluginAccessContext(
+            namespace_ids={str(row.id) for row in user_namespaces},
+            namespace_names=[row.name for row in user_namespaces],
+            namespace_names_by_id=namespace_names_by_id,
         )
 
     def get_plugin_access(

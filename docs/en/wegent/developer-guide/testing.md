@@ -258,6 +258,22 @@ validates the branch after a PR is opened. A newer commit to the same PR or to
 always appear and verify that every selected job actually succeeded. Skipped,
 unrelated modules do not make the summary fail.
 
+CI reliability depends on these invariants:
+
+- The platform E2E MySQL service must allow enough startup grace for its first
+  initialization. Its health-check `start-period` should cover a cold start on
+  a shared runner before the interval and retry count determine failure; reruns
+  must not hide initialization timeouts.
+- Repository Policy jobs triggered by `pull_request_target` must run policy
+  scripts from the trusted base checkout, while checking out the scan target by
+  the PR head repository and immutable head SHA. Do not depend on
+  `refs/pull/<number>/merge`, which can be replaced or removed while a PR is
+  synchronized, and never execute code supplied by the PR in the policy job.
+- When final text and related controls render independently in desktop E2E,
+  wait for each target element before reading attributes or asserting state.
+  Visible final text does not imply that associated disclosure controls or
+  timelines have mounted.
+
 ### CI Cache Ownership
 
 Large caches are prewarmed and owned by `main`. Pull requests and merge-queue

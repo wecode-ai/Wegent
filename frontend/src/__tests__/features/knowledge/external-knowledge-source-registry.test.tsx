@@ -35,10 +35,11 @@ const mockUseKnowledgeBaseOptions = jest.fn()
 const mockListFakeKnowledgeBases = jest.fn()
 const mockListFakeNodes = jest.fn()
 
+const mockT = (key: string, fallback?: string | Record<string, unknown>) =>
+  typeof fallback === 'string' ? fallback : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : key,
+    t: mockT,
   }),
 }))
 

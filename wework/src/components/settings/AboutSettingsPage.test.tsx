@@ -23,12 +23,14 @@ function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
   const value: AppUpdateContextValue = {
     updateChannel: 'stable',
     availableUpdate: null,
+    installedReleaseNotes: null,
     status: 'idle',
     downloadProgress: null,
     message: null,
     error: null,
     checkNow: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),
+    dismissInstalledReleaseNotes: vi.fn(),
     setUpdateChannel: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }

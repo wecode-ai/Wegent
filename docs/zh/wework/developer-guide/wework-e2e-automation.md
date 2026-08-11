@@ -114,9 +114,11 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`workspace-tabs`、`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、
-`resilience`、`conversation-state`、`workspace-attachments`、
-`rendering-extensions` 和 `embedded-browser`。
+`workspace-tabs`、`priority-filter`、`telemetry-consent`、
+`automation-lifecycle`、`model-routing`、`core-task-flow`、
+`window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
+`conversation-state`、`workspace-attachments`、`rendering-extensions`、
+`browser-multi-tabs` 和 `embedded-browser`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
@@ -134,10 +136,18 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
+pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
+
+`automation-lifecycle` 独立覆盖自动化创建、立即执行、固定既有任务以及定时继续
+会话；`model-routing` 独立覆盖六种本地协议切换方向、跨 provider 重试、视觉
+sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因此不会拉长
+`core-task-flow` 的任务创建、追问和后台计划关键路径。无参数运行完整桌面流程时，
+这些场景仍会执行，不会因为分段而减少覆盖。
 
 插件桌面套件也复用同一套分段参数，但保持独立的 Codex Home 初始化环境。插件
 segment 依次为 `plugin-lifecycle`、`skill-mention-rendering` 和
@@ -170,7 +180,7 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 在 macOS 上，桌面 E2E 会通过临时 `.app` bundle 和 `open -g` 在后台启动。测试专用的 `WEWORK_E2E_BACKGROUND_WINDOW=1` 会让 Tauri 保持主窗口隐藏、禁止应用激活并隐藏 Dock 图标；隐藏 WebView 会关闭后台节流，因此 DOM 控制、计时器和截图仍正常工作。runner 在连接控制器后还会断言测试应用不是当前前台进程，防止窗口抢焦点行为回归。该环境变量只由桌面 E2E runner 注入，不改变正常开发或生产启动行为。
 
-云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。为缩短冷启动时间，Executor 构建与 Backend/Redis/数据库准备并行，远端 Executor 注册与 Tauri 应用构建并行；应用启动前仍必须同时等待两组前置任务完成。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
 
