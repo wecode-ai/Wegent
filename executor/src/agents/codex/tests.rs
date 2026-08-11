@@ -2045,10 +2045,7 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
 
     for params in [thread_start, thread_resume, thread_fork, turn_start] {
         assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
-        assert_eq!(
-            params["approvalPolicy"],
-            codex_runtime_approval_policy(&request)
-        );
+        assert_eq!(params["approvalPolicy"], "on-request");
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
     }
@@ -2093,10 +2090,7 @@ fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
         turn_start_params("thread-1", &request, &launch_config, Vec::new()),
     ] {
         assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
-        assert_eq!(
-            params["approvalPolicy"],
-            codex_runtime_approval_policy(&request)
-        );
+        assert_eq!(params["approvalPolicy"], "on-request");
     }
 }
 
@@ -2131,6 +2125,34 @@ fn codex_command_approval_response_preserves_user_decision() {
         .unwrap(),
         json!({"decision": "acceptForSession"})
     );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["cancel"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "cancel"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["unknown"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "decline"})
+    );
+    assert_eq!(
+        codex_approval_result(&message, &json!({})).unwrap(),
+        json!({"decision": "decline"})
+    );
 }
 
 #[test]
@@ -2162,6 +2184,21 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
                 "fileSystem": null
             },
             "scope": "session"
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["decline"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {},
+            "scope": "turn"
         })
     );
 }

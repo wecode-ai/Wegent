@@ -1,5 +1,5 @@
 import { Check, Eye, FolderPen, Globe2, ShieldAlert, TerminalSquare } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -22,6 +22,14 @@ export function PermissionModeSelector({
 }: PermissionModeSelectorProps) {
   const { t } = useTranslation('common')
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
+  const triggerContainerRef = useRef<HTMLDivElement>(null)
+  const restoreTriggerFocus = useCallback(
+    () =>
+      triggerContainerRef.current?.querySelector<HTMLElement>(
+        '[data-testid="permission-mode-menu-button"]'
+      ) ?? null,
+    []
+  )
   const labels: Record<RuntimePermissionMode, string> = {
     'read-only': t('workbench.permission_mode_read_only', '只读'),
     'workspace-write': t('workbench.permission_mode_workspace', '工作区'),
@@ -38,29 +46,32 @@ export function PermissionModeSelector({
 
   return (
     <>
-      <ActionMenu
-        ariaLabel={t('workbench.permission_mode', '权限模式')}
-        testId="permission-mode-menu-button"
-        icon={value === 'read-only' ? Eye : value === 'full-access' ? ShieldAlert : FolderPen}
-        triggerLabel={labels[value]}
-        disabled={disabled}
-        placement="bottom-end"
-        triggerClassName="flex h-8 max-w-32 items-center gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-        items={(['read-only', 'workspace-write', 'full-access'] as const).map(mode => ({
-          label: (
-            <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
-              <span>{labels[mode]}</span>
-              {value === mode ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-            </span>
-          ),
-          icon: mode === 'read-only' ? Eye : mode === 'full-access' ? ShieldAlert : FolderPen,
-          testId: `permission-mode-${mode}`,
-          onSelect: () => choose(mode),
-          danger: mode === 'full-access',
-        }))}
-      />
+      <div ref={triggerContainerRef} className="contents">
+        <ActionMenu
+          ariaLabel={t('workbench.permission_mode', '权限模式')}
+          testId="permission-mode-menu-button"
+          icon={value === 'read-only' ? Eye : value === 'full-access' ? ShieldAlert : FolderPen}
+          triggerLabel={labels[value]}
+          disabled={disabled}
+          placement="bottom-end"
+          triggerClassName="flex h-8 max-w-32 items-center gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+          items={(['read-only', 'workspace-write', 'full-access'] as const).map(mode => ({
+            label: (
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                <span>{labels[mode]}</span>
+                {value === mode ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+              </span>
+            ),
+            icon: mode === 'read-only' ? Eye : mode === 'full-access' ? ShieldAlert : FolderPen,
+            testId: `permission-mode-${mode}`,
+            onSelect: () => choose(mode),
+            danger: mode === 'full-access',
+          }))}
+        />
+      </div>
       {confirmFullAccess ? (
         <FullAccessConfirmDialog
+          restoreFocusTo={restoreTriggerFocus}
           onCancel={() => setConfirmFullAccess(false)}
           onConfirm={() => {
             onChange('full-access')
@@ -73,14 +84,47 @@ export function PermissionModeSelector({
 }
 
 function FullAccessConfirmDialog({
+  restoreFocusTo,
   onCancel,
   onConfirm,
 }: {
+  restoreFocusTo: () => HTMLElement | null
   onCancel: () => void
   onConfirm: () => void
 }) {
   const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelButtonRef = useRef<HTMLButtonElement>(null)
   useEscapeKey(onCancel)
+
+  useEffect(() => {
+    cancelButtonRef.current?.focus()
+    return () => {
+      const trigger = restoreFocusTo()
+      if (trigger?.isConnected) trigger.focus()
+    }
+  }, [restoreFocusTo])
+
+  const trapFocus = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return
+    const focusable = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])') ?? []
+    )
+    if (focusable.length === 0) {
+      event.preventDefault()
+      dialogRef.current?.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 
   return createPortal(
     <div
@@ -88,9 +132,12 @@ function FullAccessConfirmDialog({
       data-testid="full-access-confirm-overlay"
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="full-access-confirm-title"
+        tabIndex={-1}
+        onKeyDown={trapFocus}
         className="w-full max-w-[480px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-xl"
       >
         <div className="flex items-center gap-2">
@@ -139,6 +186,7 @@ function FullAccessConfirmDialog({
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <button
+            ref={cancelButtonRef}
             type="button"
             data-testid="full-access-confirm-cancel"
             onClick={onCancel}

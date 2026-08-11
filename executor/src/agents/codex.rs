@@ -2053,17 +2053,26 @@ fn spawn_shared_approval_response(
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
-    let Some(receiver) = request_user_input_answers else {
-        return Err("approval request requires a runtime response channel".to_owned());
-    };
-    let correlation_key = interaction_value_key(&request_id)
-        .ok_or_else(|| "approval request has invalid JSON-RPC id".to_owned())?;
+    let correlation_key = request_user_input_answers
+        .as_ref()
+        .map(|_| {
+            interaction_value_key(&request_id)
+                .ok_or_else(|| "approval request has invalid JSON-RPC id".to_owned())
+        })
+        .transpose()?;
     let client = client.clone();
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
-            let Some(response) = receiver.receive(correlation_key).await? else {
-                return Ok(());
+            let response = if let (Some(receiver), Some(correlation_key)) =
+                (request_user_input_answers, correlation_key)
+            {
+                receiver
+                    .receive(correlation_key)
+                    .await?
+                    .unwrap_or_else(|| json!({}))
+            } else {
+                json!({})
             };
             let result = codex_approval_result(&message, &response)?;
             client.send_response(request_id, result).await
@@ -4019,9 +4028,9 @@ fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
-const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
-const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
-const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
+pub(crate) const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
     match codex_runtime_permission_profile(request) {

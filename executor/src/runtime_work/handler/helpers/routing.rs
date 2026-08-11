@@ -294,9 +294,9 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         .and_then(Value::as_str)
     {
         let profile = match permission_mode {
-            "read-only" => ":read-only",
-            "full-access" => ":danger-full-access",
-            _ => ":workspace",
+            "read-only" => CODEX_READ_ONLY_PERMISSION_PROFILE,
+            "full-access" => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            _ => CODEX_WORKSPACE_PERMISSION_PROFILE,
         };
         request.extra.insert(
             "runtime_permission_profile".to_owned(),

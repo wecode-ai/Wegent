@@ -3042,7 +3042,13 @@ async function verifyPermissionModes(control) {
   await captureVerificationScreenshot(control, 'permission-04-full-access-cancelled.png')
 
   await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="permission-mode-full-access"]')
+  await control.command('waitFor', '[data-testid="full-access-confirm-submit"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="full-access-confirm-submit"]')
   await control.command('waitFor', trigger, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3055,6 +3061,9 @@ async function verifyPermissionModes(control) {
   await captureVerificationScreenshot(control, 'permission-05-full-access-enabled.png')
 
   await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-read-only"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="permission-mode-read-only"]')
   await control.command('waitFor', trigger, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3067,6 +3076,9 @@ async function verifyPermissionModes(control) {
   await captureVerificationScreenshot(control, 'permission-06-read-only-enabled.png')
 
   await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="permission-mode-workspace-write"]')
   await control.command('waitFor', trigger, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
