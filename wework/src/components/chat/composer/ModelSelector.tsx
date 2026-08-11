@@ -572,6 +572,7 @@ export function ModelSelector({
               return
             }
             handleSelectModel(model)
+            closeMenu()
           }}
           className={[
             `flex h-8 w-full items-center gap-2 rounded-lg ${indented ? 'pl-5 pr-2' : 'px-2'} text-left text-sm leading-[18px]`,
