@@ -174,6 +174,18 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
+    # Async video polling configuration
+    VIDEO_POLL_INTERVAL_SECONDS: int = 3
+    VIDEO_MAX_POLL_COUNT: int = 600
+    VIDEO_POLL_SCHEDULE_LEASE_SECONDS: int = 10
+    VIDEO_RECOVERY_STALE_SECONDS: int = 10
+    VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
+
+    # Default models used by image/video generation MCP tools when the current
+    # task model is not a matching generation model.
+    DEFAULT_IMAGE_GENERATION_MODEL: str = ""
+    DEFAULT_VIDEO_GENERATION_MODEL: str = ""
+
     # Tool calling flow limits
     CHAT_TOOL_MAX_REQUESTS: int = 10  # Maximum LLM requests in tool calling flow
     CHAT_TOOL_MAX_TIME_SECONDS: float = (
@@ -219,6 +231,9 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public base URL used for short-lived model-provider attachment downloads.
+    # Required when remote generation providers use locally uploaded references.
+    ATTACHMENT_PUBLIC_BASE_URL: str = ""
     # Public Socket.IO origin returned to Wework desktop clients.
     WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.

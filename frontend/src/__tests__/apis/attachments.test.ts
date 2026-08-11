@@ -5,8 +5,15 @@
 import {
   downloadAttachment,
   fetchAttachmentFile,
+  formatsToAcceptString,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
+
+describe('formatsToAcceptString', () => {
+  it('uses MIME types so the system file picker filters by model formats', () => {
+    expect(formatsToAcceptString(['jpeg', 'jpg', 'png'], 'image/*')).toBe('image/jpeg,image/png')
+  })
+})
 
 describe('fetchAttachmentFile', () => {
   const originalFetch = global.fetch
@@ -80,54 +87,35 @@ describe('fetchAttachmentFile', () => {
 
 describe('downloadAttachment', () => {
   const originalFetch = global.fetch
-  const originalCreateObjectURL = URL.createObjectURL
-  const originalRevokeObjectURL = URL.revokeObjectURL
 
   afterEach(() => {
     global.fetch = originalFetch
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      writable: true,
-      value: originalCreateObjectURL,
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      writable: true,
-      value: originalRevokeObjectURL,
-    })
-    jest.useRealTimers()
+    localStorage.clear()
     jest.restoreAllMocks()
   })
 
-  it('defers revoking the object URL until after the anchor click', async () => {
-    jest.useFakeTimers()
-    const revokeObjectURL = jest.fn()
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      writable: true,
-      value: jest.fn(() => 'blob:download'),
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      writable: true,
-      value: revokeObjectURL,
-    })
+  it('uses a short-lived token for browser-native streaming downloads', async () => {
+    localStorage.setItem('auth_token', 'test-token')
     const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation()
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      headers: new Headers({ 'Content-Type': 'application/pdf' }),
-      blob: async () => new Blob(['pdf-data'], { type: 'application/pdf' }),
+      json: async () => ({ download_token: 'short-lived-token' }),
     }) as typeof fetch
 
     await downloadAttachment(42, 'report.pdf')
 
+    expect(global.fetch).toHaveBeenCalledWith('/api/attachments/42/download-token', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-token' },
+    })
     expect(click).toHaveBeenCalledTimes(1)
-    expect(revokeObjectURL).not.toHaveBeenCalled()
-
-    jest.runOnlyPendingTimers()
-
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:download')
+    expect(click.mock.instances[0]).toMatchObject({
+      href: expect.stringContaining(
+        '/api/attachments/42/download?download_token=short-lived-token'
+      ),
+      download: 'report.pdf',
+    })
   })
 })
 

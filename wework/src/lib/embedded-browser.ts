@@ -1,17 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { normalizeBrowserUrl } from './browser-url'
 import { isTauriRuntime } from './runtime-environment'
 
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
-const EMBEDDED_BROWSER_FRONTEND_REQUEST_ID_START = -1
-let embeddedBrowserFrontendOpenRequestSequence = EMBEDDED_BROWSER_FRONTEND_REQUEST_ID_START
 let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
 let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 let embeddedBrowserOpenRequestHandlerSequence = 1
+let embeddedBrowserOpenRequestSequence = 0
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
 export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
@@ -23,6 +23,7 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
 
 export function browserDiagnosticUrl(value: string): string {
   try {
@@ -53,9 +54,16 @@ export interface EmbeddedBrowserPageState {
 }
 
 export interface EmbeddedBrowserOpenRequest {
-  requestId: number
+  id: string
   url: string
-  label: string
+  /** @deprecated Use baseLabel for routing. */
+  label?: string
+  baseLabel: string
+  source: 'user' | 'agent' | 'popup' | 'restore'
+  disposition: 'new-tab' | 'current-tab' | 'restore-tab'
+  targetLabel?: string
+  parentLabel?: string
+  browserSessionId?: string
 }
 
 function logEmbeddedBrowserOpenTransport(stage: string, detail: Record<string, unknown> = {}) {
@@ -74,7 +82,7 @@ export interface EmbeddedBrowserCloseRequest {
   nativeLabel: string
 }
 
-export type EmbeddedBrowserDataKind = 'cookies' | 'cache'
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage'
 
 export interface EmbeddedBrowserDownloadEvent {
   id: string
@@ -113,6 +121,19 @@ export interface EmbeddedBrowserAgentApproval {
   expiresAtUnixMs: number
 }
 
+export interface EmbeddedBrowserPopupRequest {
+  popupId: string
+  parentLabel: string
+  parentNativeLabel: string
+  url: string
+  origin: string
+  kind: string
+  strategy: string
+  status: string
+  createdAtUnixMs: number
+  warning: string | null
+}
+
 export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   nativeLabel: string
   url: string
@@ -128,6 +149,18 @@ export function listenEmbeddedBrowserInvalidTlsCertificates(
     EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT,
     event => handler(event.payload)
   )
+}
+
+export function listenEmbeddedBrowserPopupRequests(
+  handler: (request: EmbeddedBrowserPopupRequest) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserPopupRequest>(EMBEDDED_BROWSER_POPUP_EVENT, event => {
+    handler(event.payload)
+  }).catch(error => {
+    console.error('[Wework] Failed to listen for embedded browser popup requests', error)
+    return () => {}
+  })
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
@@ -227,6 +260,10 @@ function browserArgs(label = DEFAULT_EMBEDDED_BROWSER_LABEL) {
 
 export function markEmbeddedBrowserLabelTransferred(label = DEFAULT_EMBEDDED_BROWSER_LABEL): void {
   transferredBrowserLabels.add(label)
+}
+
+export function isEmbeddedBrowserLabelTransferred(label = DEFAULT_EMBEDDED_BROWSER_LABEL): boolean {
+  return transferredBrowserLabels.has(label)
 }
 
 export function consumeEmbeddedBrowserLabelTransfer(
@@ -343,6 +380,13 @@ export async function relabelEmbeddedBrowser(
   })
 }
 
+export async function setEmbeddedBrowserActiveTab(
+  baseLabel: string,
+  activeTabLabel: string
+): Promise<void> {
+  await invoke('embedded_browser_set_active_tab', { baseLabel, activeTabLabel })
+}
+
 export async function closeEmbeddedBrowser(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
   expectedNativeLabel?: string
@@ -351,6 +395,11 @@ export async function closeEmbeddedBrowser(
     ...browserArgs(label),
     expectedNativeLabel: expectedNativeLabel ?? null,
   })
+}
+
+export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
+  if (labels.length === 0) return
+  await invoke('embedded_browser_close_many', { labels })
 }
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
@@ -368,10 +417,16 @@ export function requestEmbeddedBrowserOpen(
   const normalizedUrl = normalizeBrowserUrl(url, window.location.href)
   if (!normalizedUrl) return false
 
-  const request = {
-    requestId: embeddedBrowserFrontendOpenRequestSequence--,
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ?? `user-${++embeddedBrowserOpenRequestSequence}`
+
+  const request: EmbeddedBrowserOpenRequest = {
+    id: requestId,
     url: normalizedUrl,
     label,
+    baseLabel: label,
+    source: 'user',
+    disposition: 'new-tab',
   }
   embeddedBrowserOpenRequestHandlers.forEach(handler => handler(request))
   return true
@@ -400,7 +455,7 @@ export function listenEmbeddedBrowserOpenRequests(
       EMBEDDED_BROWSER_OPEN_REQUEST_EVENT,
       event => {
         logEmbeddedBrowserOpenTransport('native_event_received', {
-          requestId: event.payload.requestId,
+          requestId: event.payload.id,
           label: event.payload.label,
           url: event.payload.url,
         })
@@ -436,14 +491,14 @@ export function listenEmbeddedBrowserOpenRequests(
       logEmbeddedBrowserOpenTransport('pending_snapshot_received', {
         handlerId,
         requests: requests.map(request => ({
-          requestId: request.requestId,
+          requestId: request.id,
           label: request.label,
         })),
       })
       requests.forEach(request => {
         logEmbeddedBrowserOpenTransport('pending_request_dispatched', {
           handlerId,
-          requestId: request.requestId,
+          requestId: request.id,
           label: request.label,
         })
         handler(request)
@@ -472,13 +527,13 @@ export function listenEmbeddedBrowserOpenRequests(
       embeddedBrowserOpenRequestUnlisten = null
       embeddedBrowserOpenRequestUnlistenPromise = null
       if (currentUnlisten) {
-        currentUnlisten()
+        disposeTauriListener(currentUnlisten, 'embedded browser open request')
         logEmbeddedBrowserOpenTransport('native_listener_released', { handlerId })
         return
       }
       if (pendingUnlisten) {
         void pendingUnlisten.then(unlisten => {
-          unlisten()
+          disposeTauriListener(unlisten, 'embedded browser pending open request')
           logEmbeddedBrowserOpenTransport('pending_native_listener_released', { handlerId })
         })
       }

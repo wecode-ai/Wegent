@@ -1,51 +1,39 @@
-import { useState } from 'react'
+import { Boxes } from 'lucide-react'
 import type { PluginDistribution } from './pluginDistribution'
-import { pluginNameInitial } from './plugin-assets'
 
 interface PluginSourceAvatarProps {
   className: string
-  distribution: PluginDistribution
+  contrastPad?: boolean
+  distribution?: PluginDistribution
   imageTestId?: string
-  invertLogoInDark?: boolean
   logoUrl: string
   name: string
   testId?: string
-  useInitial: boolean
 }
 
 export function PluginSourceAvatar({
   className,
-  distribution,
+  contrastPad = false,
   imageTestId,
-  invertLogoInDark = false,
   logoUrl,
-  name,
   testId,
-  useInitial,
 }: PluginSourceAvatarProps) {
-  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
-  const imageFailed = failedLogoUrl === logoUrl
-  const showInitial = useInitial || imageFailed
-
   return (
     <span
       aria-hidden="true"
-      className={`plugin-source-avatar ${className}`}
-      data-plugin-distribution={showInitial ? distribution : undefined}
+      className={[
+        'plugin-source-avatar',
+        className,
+        contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       data-testid={testId}
     >
-      {showInitial ? (
-        <span className="plugin-source-avatar-initial" data-testid={imageTestId}>
-          {pluginNameInitial(name)}
-        </span>
+      {logoUrl ? (
+        <img src={logoUrl} alt="" data-testid={imageTestId} />
       ) : (
-        <img
-          src={logoUrl}
-          alt=""
-          className={invertLogoInDark ? 'plugin-source-avatar-logo-invert-dark' : undefined}
-          data-testid={imageTestId}
-          onError={() => setFailedLogoUrl(logoUrl)}
-        />
+        <Boxes className="h-5 w-5 text-text-muted" data-testid={imageTestId} />
       )}
     </span>
   )

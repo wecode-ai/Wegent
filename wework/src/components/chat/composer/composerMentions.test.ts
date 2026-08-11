@@ -94,7 +94,10 @@ describe('cloud references', () => {
 describe('composer mention icons', () => {
   test('uses a registered plugin brand icon', () => {
     const reference = '[$GitHub](plugin://github@openai-bundled)'
-    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+    registerComposerMentionIcon(reference, {
+      url: 'https://example.com/github.png',
+      contrastPad: true,
+    })
 
     const element = createComposerMentionElement({
       name: 'GitHub',
@@ -103,9 +106,30 @@ describe('composer mention icons', () => {
     })
 
     expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
+    expect(element.querySelector('.composer-mention-icon-slot')).toHaveClass(
+      'composer-mention-icon-slot--contrast-pad'
+    )
   })
 
-  test('uses the plugin initial when no brand logo exists', () => {
+  test('skips the contrast pad when the registered icon does not need one', () => {
+    const reference = '[$GitHub](plugin://github@openai-bundled)'
+    registerComposerMentionIcon(reference, {
+      url: 'https://example.com/github-dark.png',
+      contrastPad: false,
+    })
+
+    const element = createComposerMentionElement({
+      name: 'GitHub',
+      label: 'GitHub',
+      reference,
+    })
+
+    expect(element.querySelector('.composer-mention-icon-slot')).not.toHaveClass(
+      'composer-mention-icon-slot--contrast-pad'
+    )
+  })
+
+  test('falls back to bundled plugin brand icons for plugin mentions', () => {
     const reference = '[$superpowers](plugin://superpowers@openai-official)'
     const element = createComposerMentionElement({
       name: 'superpowers',
@@ -113,25 +137,8 @@ describe('composer mention icons', () => {
       reference,
     })
 
-    expect(element.querySelector('img')).toBeNull()
-    expect(element.querySelector('.composer-mention-initial-icon')).toHaveTextContent('S')
+    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
     expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
-  })
-
-  test('falls back from a broken registered logo to the canonical plugin brand', () => {
-    const reference = '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent)'
-    registerComposerMentionIcon(reference, 'https://example.com/missing-weibo.png')
-    const element = createComposerMentionElement({
-      name: '微博开放平台内部WIKI',
-      label: '微博开放平台内部WIKI',
-      reference,
-    })
-    const declaredLogo = element.querySelector('img')
-
-    declaredLogo?.dispatchEvent(new Event('error'))
-
-    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
-    expect(element.querySelector('.composer-mention-initial-icon')).toBeNull()
   })
 
   test('keeps the generic cube icon for skill mentions without a brand logo', () => {

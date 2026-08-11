@@ -25,7 +25,6 @@ import {
   readRecentPluginAppIds,
   sortComposerPluginsByUsage,
 } from './composerPluginSort'
-import { ComposerPluginIcon } from './ComposerPluginIcon'
 
 interface PluginPickerMenuProps {
   disabled?: boolean
@@ -42,6 +41,45 @@ function enabledComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
 
 function paintComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   return enabledComposerApps(items.length > 0 ? items : getComposerApps())
+}
+
+function ComposerPluginPreviewIcons({
+  apps,
+  appearanceMode,
+}: {
+  apps: LocalDeviceApp[]
+  appearanceMode: 'light' | 'dark'
+}) {
+  return (
+    <span
+      className="flex -space-x-1"
+      data-testid="composer-plugin-preview-icons"
+      aria-hidden="true"
+    >
+      {apps.slice(0, 3).map(app => {
+        const logo = resolvePluginLogo({
+          pluginKey: composerAppPluginKey(app),
+          logo: app.logoUrl,
+          logoDark: app.logoUrlDark,
+          appearanceMode,
+        })
+        return (
+          <span
+            key={app.id}
+            data-testid={`composer-plugin-preview-icon-${app.id}`}
+            className={[
+              'plugin-icon-slot h-6 w-6 rounded-full border-border/30',
+              logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-4 w-4" />}
+          </span>
+        )
+      })}
+    </span>
+  )
 }
 
 export function PluginPickerMenu({
@@ -177,10 +215,10 @@ export function PluginPickerMenu({
           aria-expanded={open}
           aria-label={t('workbench.composer_plugins', '插件')}
           className={[
-            'flex items-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
+            'flex items-center text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
             iconOnly
               ? 'h-7 w-7 justify-center rounded-lg px-0'
-              : 'h-7 gap-2 rounded-lg bg-muted/70 px-3 text-sm',
+              : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
           ].join(' ')}
           onClick={() => {
             if (disabled) return
@@ -203,21 +241,10 @@ export function PluginPickerMenu({
           ) : (
             <>
               <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
-              <span
-                className="flex -space-x-1"
-                data-testid="composer-plugin-preview-icons"
-                aria-hidden="true"
-              >
-                {apps.slice(0, 3).map(app => (
-                  <ComposerPluginIcon
-                    key={app.id}
-                    app={app}
-                    testId={`composer-plugin-preview-icon-${app.id}`}
-                    className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-border/35 bg-background"
-                    initialClassName="scale-75 text-xs font-medium leading-none text-text-secondary"
-                  />
-                ))}
-              </span>
+              <ComposerPluginPreviewIcons apps={apps} appearanceMode={appearanceMode} />
+              {apps.length > 3 && (
+                <span className="text-xs text-text-muted">+{apps.length - 3}</span>
+              )}
             </>
           )}
         </button>
@@ -265,12 +292,12 @@ export function PluginPickerMenu({
                     title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
-                      registerComposerMentionIcon(
-                        reference,
-                        logo.isGenericFallback ? null : logo.url
-                      )
+                      registerComposerMentionIcon(reference, {
+                        url: logo.url,
+                        contrastPad: logo.contrastPad,
+                      })
                       insertPluginReference(reference)
-                      showPluginTrialGuide(displayAppName(app), app.trialTemplates, app)
+                      showPluginTrialGuide(displayAppName(app), app.trialTemplates)
                       const recent = JSON.parse(
                         window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
                       ) as string[]
@@ -278,16 +305,23 @@ export function PluginPickerMenu({
                         RECENT_PLUGIN_APPS_KEY,
                         JSON.stringify([app.id, ...recent.filter(id => id !== app.id)].slice(0, 8))
                       )
-                      setApps(current => [app, ...current.filter(item => item.id !== app.id)])
                       setOpen(false)
                     }}
                   >
-                    <ComposerPluginIcon
-                      app={app}
-                      testId={`composer-plugin-picker-icon-${app.id}`}
-                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background"
-                      initialClassName="text-xs font-medium leading-none text-text-secondary"
-                    />
+                    <span
+                      className={[
+                        'plugin-icon-slot h-[22px] w-[22px] rounded-md border-border/30',
+                        logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {logo.url ? (
+                        <img src={logo.url} alt="" />
+                      ) : (
+                        <Boxes className="h-3.5 w-3.5 text-text-muted" />
+                      )}
+                    </span>
                     <span className="min-w-0 truncate text-base leading-5">
                       {displayAppName(app)}
                     </span>

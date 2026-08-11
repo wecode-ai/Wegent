@@ -125,6 +125,9 @@ export interface ProjectWorkControls {
   onCreateBranch?: (branchName: string) => Promise<void>
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
+  // When false, the project trigger renders a static folder icon instead of the
+  // hover-to-clear button (for defaults that cannot be cleared from the bar).
+  showProjectClearButton?: boolean
   projectMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
 }
@@ -353,7 +356,6 @@ function PluginTrialTemplateStrip({
             <ComposerPluginIcon
               app={pluginApp}
               className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
-              initialClassName="text-xs font-medium leading-none text-text-secondary"
               testId="plugin-trial-plugin-icon"
             />
           ) : (

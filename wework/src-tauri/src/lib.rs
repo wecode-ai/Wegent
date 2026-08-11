@@ -4875,6 +4875,7 @@ pub fn run() {
             #[cfg(desktop)]
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_close_many,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
@@ -4888,6 +4889,7 @@ pub fn run() {
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_active_tab,
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
@@ -4916,6 +4918,7 @@ pub fn run() {
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
             local_executor::local_executor_read_plugin_cloud_links,
+            local_executor::local_executor_list_personal_marketplace_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

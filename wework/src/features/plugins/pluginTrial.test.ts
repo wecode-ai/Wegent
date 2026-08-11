@@ -218,14 +218,6 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
-    expect(trial?.app).toEqual(
-      expect.objectContaining({
-        id: 'plugin:documents',
-        name: 'Documents',
-        pluginKey: 'documents',
-        source: 'installed-plugin',
-      })
-    )
     expect(trial?.openInNewChat).toBe(true)
   })
 
@@ -244,7 +236,7 @@ describe('plugin trial state', () => {
     ])
   })
 
-  test('queues an explicit detail scenario without a secondary chat guide', () => {
+  test('keeps the selected detail scenario first in the chat guide', () => {
     const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
     plugin.spec.components.templates = []
     plugin.spec.components.commands = []
@@ -252,7 +244,11 @@ describe('plugin trial state', () => {
     expect(queuePluginPromptTrial(plugin, 'Review the quarterly report for inconsistencies')).toBe(
       true
     )
-    expect(consumePluginTrial()?.templates).toEqual([])
+    expect(consumePluginTrial()?.templates[0]).toEqual({
+      name: 'Review the quarterly report for inconsistencies',
+      path: 'selected-use-case',
+      description: 'Review the quarterly report for inconsistencies',
+    })
   })
 
   test('keeps a refined detail task concise and removes the duplicate base scenario', () => {

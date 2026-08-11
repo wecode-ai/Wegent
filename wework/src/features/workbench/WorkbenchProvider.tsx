@@ -27,7 +27,7 @@ import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
@@ -39,7 +39,7 @@ import {
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
@@ -813,7 +813,11 @@ export function WorkbenchProvider({
     markRuntimeProjectRemoved,
     clearRuntimeProjectRemoval,
     refreshWorkLists,
+    refreshRuntimeTask,
     refreshDevices,
+    updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user,
@@ -1565,14 +1569,21 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
-  const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
-    void stableRefreshWorkLists().catch(error => {
-      console.warn('[Wework] Runtime work list refresh failed', {
-        deviceId: address.deviceId,
-        taskId: address.taskId,
-        error,
+  const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
+    const expectedLifecycle = lifecycleStore.getTask(address)
+    void refreshRuntimeTask(address)
+      .then(task => {
+        if (task && lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)) {
+          updateLocalRuntimeTaskSnapshot(address, task)
+        }
       })
-    })
+      .catch(error => {
+        console.warn('[Wework] Runtime task snapshot sync failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+      })
   })
   const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
     const normalizedTitle = title.trim()
@@ -1622,6 +1633,13 @@ export function WorkbenchProvider({
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
+            updateLocalRuntimeTaskExecution(address, true, 'active')
+            dispatch({
+              type: 'runtime_task_execution_updated',
+              address,
+              running: true,
+              status: 'active',
+            })
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1632,16 +1650,36 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address, turnId, outcome)
+            // Runtime providers may replace the provisional subtask ID with their canonical
+            // turn ID while streaming. A terminal event is already scoped to one task, so it
+            // must settle that task even when the provider-facing ID changed.
+            lifecycleStore.turnSettled(address, null, outcome)
+            const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
+            const status = running
+              ? 'active'
+              : outcome === 'succeeded'
+                ? 'done'
+                : outcome === 'failed'
+                  ? 'failed'
+                  : 'cancelled'
+            updateLocalRuntimeTaskExecution(address, running, status)
+            dispatch({
+              type: 'runtime_task_execution_updated',
+              address,
+              running,
+              status,
+            })
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
+            syncRuntimeTaskSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
           onRuntimeTaskTitleUpdated: (address, payload) => {
+            updateLocalRuntimeTaskTitle(address, payload.title)
             dispatch({
               type: 'runtime_task_title_updated',
               address,
@@ -1653,34 +1691,36 @@ export function WorkbenchProvider({
             const goal = payload.goal ?? null
             setRuntimeConversationGoal(address, goal)
             lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeGoalCleared: address => {
             setRuntimeConversationGoal(address, null)
             lifecycleStore.goalStatusReceived(address, null)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeSupervisorUpdated: address => {
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimeGoalContinuation: (address, payload) => {
             applyRuntimeConversationGoalContinuation(address, payload)
-            refreshRuntimeWorkLists(address)
+            syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
           onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
-          onRefreshWorkLists: refreshRuntimeWorkLists,
         })
       ),
     [
       aiGenerationTelemetry,
       applyCanonicalRuntimeAction,
       lifecycleStore,
-      refreshRuntimeWorkLists,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
+      updateLocalRuntimeTaskExecution,
+      updateLocalRuntimeTaskSnapshot,
+      updateLocalRuntimeTaskTitle,
     ]
   )
 
@@ -1796,16 +1836,36 @@ export function WorkbenchProvider({
 
       const loadGeneration = localAppsLoadGenerationRef.current
       const loadPromise = (async () => {
-        // Cloud installs must not depend on Codex readState succeeding — that was
-        // wiping the toolbar plugin button whenever local plugin state failed.
+        // Composer only needs installed membership. Never await Codex plugin/list
+        // here — it reconciles for ~10s and stalls turns on the shared app-server
+        // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
         let apps = await loadComposerPluginApps({
           listCodexApps: () => localPluginApi.listApps(),
-          readLocalInstalledPlugins: () =>
-            localPluginApi.readState().then(state => {
-              currentComposerDeviceId = state.deviceId
-              return state.installedPlugins
-            }),
+          readLocalInstalledPlugins: async () => {
+            currentComposerDeviceId =
+              peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
+              peekLocalCodexPluginsReadState()?.deviceId ||
+              null
+            if (!currentComposerDeviceId) {
+              try {
+                const status = await ensureLocalExecutorStarted()
+                currentComposerDeviceId = status.deviceId?.trim() || null
+              } catch {
+                currentComposerDeviceId = null
+              }
+            }
+            try {
+              const response = await localPluginApi.listInstalledPlugins()
+              currentComposerDeviceId =
+                peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
+                peekLocalCodexPluginsReadState()?.deviceId ||
+                currentComposerDeviceId
+              return response.items
+            } catch {
+              return []
+            }
+          },
           readLocalInstalledPluginDetail: plugin => {
             const labels = plugin.metadata.labels
             const id =

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.api.endpoints.installed_plugins import (
     _can_publish,
@@ -64,7 +65,13 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
-from app.services.plugin_upstream_adapter import OPENAI_GITHUB_SKILL_DESCRIPTIONS
+
+GITHUB_UPSTREAM_SKILL_PATHS = (
+    "skills/gh-address-comments/SKILL.md",
+    "skills/gh-fix-ci/SKILL.md",
+    "skills/github/SKILL.md",
+    "skills/yeet/SKILL.md",
+)
 
 
 def _plugin_zip(
@@ -114,7 +121,7 @@ def _github_upstream_zip(
         archive.writestr(".app.json", "{}")
         archive.writestr(".mcp.json", "{}")
         archive.writestr("assets/logo.png", b"png")
-        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+        for path in GITHUB_UPSTREAM_SKILL_PATHS:
             name = path.split("/")[-2]
             body = skill_body if name == "github" else f"# {name}"
             archive.writestr(
@@ -929,6 +936,90 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
     assert [
         item.id for item in service.list_plugins(test_db, user_id=test_user.id).items
     ] == [plugin.id]
+
+
+def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
+    test_db: Session, test_user: User
+) -> None:
+    owner = User(
+        user_name="other-plugin-owner",
+        password_hash=test_user.password_hash,
+        email="other-plugin-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(owner)
+    test_db.flush()
+    for index in range(12):
+        plugin = Plugin(
+            slug=f"personal-{index}",
+            name=f"personal-{index}",
+            display_name=f"Personal {index}",
+            keywords_json=[],
+            interface_json={},
+            visibility="personal",
+            status="published",
+            owner_user_id=owner.id,
+        )
+        test_db.add(plugin)
+        test_db.flush()
+        release = PluginRelease(
+            plugin_id=plugin.id,
+            version="1.0.0",
+            manifest_json={"name": plugin.name, "version": "1.0.0"},
+            interface_json={},
+            storage_key=f"plugins/{plugin.slug}.zip",
+            sha256=f"{index:064d}",
+            size_bytes=10,
+            status="ready",
+            scan_status="passed",
+            scan_report_json={},
+        )
+        test_db.add(release)
+        test_db.flush()
+        plugin.latest_release_id = release.id
+        test_db.add(
+            ResourceMember.create(
+                resource_type="Plugin",
+                resource_id=plugin.id,
+                entity_type="user",
+                entity_id=str(owner.id),
+                status=MemberStatus.APPROVED.value,
+            )
+        )
+    test_db.commit()
+
+    statements: list[str] = []
+
+    def before_cursor_execute(
+        _conn: object,
+        _cursor: object,
+        statement: str | bytes,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(str(statement))
+
+    bind = test_db.get_bind()
+    from sqlalchemy import event
+
+    event.listen(bind, "before_cursor_execute", before_cursor_execute)
+    try:
+        service = PluginMarketplaceService()
+        items = service.list_plugins(test_db, user_id=test_user.id).items
+    finally:
+        event.remove(bind, "before_cursor_execute", before_cursor_execute)
+
+    assert items == []
+    plugin_grant_lookups = [
+        statement
+        for statement in statements
+        if "resource_members" in statement.lower()
+        and "resource_id" in statement.lower()
+    ]
+    # One batched grants query, plus at most one user-namespace membership query.
+    assert len(plugin_grant_lookups) <= 2
 
 
 def test_restricted_submission_is_owner_only_until_access_is_granted(
@@ -2248,7 +2339,9 @@ def test_configure_controlled_upstream_rejects_listing_type_change(
     assert test_db.query(PluginUpstream).count() == 0
 
 
-def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monkeypatch):
+def test_openai_github_upstream_sync_passes_through_official_package(
+    test_db, monkeypatch
+):
     service = PluginMarketplaceService()
     stored_packages: dict[str, bytes] = {}
     monkeypatch.setattr(
@@ -2274,7 +2367,7 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
 
     result = service.sync_upstream(test_db, upstream_id=upstream.id)
 
-    assert result.lastSeenVersion == "0.1.6+wegent.3"
+    assert result.lastSeenVersion == "0.1.6"
     plugin = test_db.get(Plugin, upstream.pluginId)
     assert plugin.latest_release_id == 0
     release = (
@@ -2287,22 +2380,17 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
     )
     assert release.status == "processing"
     assert submission.status == "pending"
-    assert release.version == "0.1.6+wegent.3"
+    assert release.version == "0.1.6"
     provenance = release.scan_report_json["provenance"]
     assert provenance["kind"] == "upstream"
-    assert provenance["adapter"] == "openai-github"
-    assert provenance["adapterVersion"] == "3"
-    assert provenance["upstreamVersion"] == "0.1.6"
+    assert "adapter" not in provenance
     with zipfile.ZipFile(io.BytesIO(stored_packages[release.storage_key])) as archive:
         manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
-        assert manifest["connectors"] == [
-            {"slug": "github", "authPolicy": "on_install"}
-        ]
-        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items():
-            skill = archive.read(path).decode("utf-8")
-            assert f"description: {description}\n" in skill
-        assert "apps" not in manifest
-        assert ".mcp.json" not in archive.namelist()
+        assert manifest["apps"] == ["app_123"]
+        assert manifest["mcpServers"] == {"github": {"command": "legacy"}}
+        assert "connectors" not in manifest
+        assert ".mcp.json" in archive.namelist()
+        assert ".app.json" in archive.namelist()
 
     service.sync_upstream(test_db, upstream_id=upstream.id)
     assert test_db.query(PluginRelease).count() == 1
@@ -2319,7 +2407,7 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
         reviewer_user_id=1,
         submission_id=submission.id,
         approved=True,
-        note="Reviewed adapter and scan report",
+        note="Reviewed official upstream package and scan report",
     )
     assert reviewed.status == "approved"
     assert test_db.get(Plugin, plugin.id).latest_release_id == release.id
@@ -2354,7 +2442,7 @@ def test_openai_github_auto_sync_publishes_without_submission(test_db, monkeypat
     release = test_db.get(PluginRelease, plugin.latest_release_id)
     assert result.syncPolicy == "auto_after_scan"
     assert plugin.status == "published"
-    assert release.version == "0.1.6+wegent.3"
+    assert release.version == "0.1.6"
     assert release.status == "ready"
     assert release.scan_status == "passed"
     assert test_db.query(PluginSubmission).count() == 0
@@ -2383,7 +2471,7 @@ def test_openai_github_pending_release_publishes_after_switching_to_auto(
     plugin = test_db.get(Plugin, upstream.pluginId)
     previous = PluginRelease(
         plugin_id=plugin.id,
-        version="0.1.6+wegent.2",
+        version="0.1.5",
         manifest_json={},
         interface_json={},
         storage_key="plugins/github-v2.zip",
@@ -2405,14 +2493,14 @@ def test_openai_github_pending_release_publishes_after_switching_to_auto(
 
     result = service.sync_upstream(test_db, upstream_id=upstream.id)
 
-    assert result.lastSeenVersion == "0.1.6+wegent.3"
+    assert result.lastSeenVersion == "0.1.6"
     test_db.refresh(plugin)
     assert plugin.latest_release_id == previous.id
     candidate = (
         test_db.query(PluginRelease)
         .filter(
             PluginRelease.plugin_id == plugin.id,
-            PluginRelease.version == "0.1.6+wegent.3",
+            PluginRelease.version == "0.1.6",
         )
         .one()
     )

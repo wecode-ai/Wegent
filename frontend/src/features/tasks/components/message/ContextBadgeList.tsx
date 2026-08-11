@@ -5,11 +5,14 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Database, Loader2, Table2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
+import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { isImageExtension } from '@/apis/attachments'
+import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -49,6 +52,8 @@ interface ContextBadgeListProps {
   onContextReselect?: (context: SubtaskContextBrief) => void
   /** Share token for public access (no login required) */
   shareToken?: string
+  /** Render image attachments as generated media instead of compact input badges */
+  displayGeneratedMedia?: boolean
 }
 
 /**
@@ -65,6 +70,7 @@ export function ContextBadgeList({
   contexts,
   onContextReselect,
   shareToken,
+  displayGeneratedMedia = false,
 }: ContextBadgeListProps) {
   if (!contexts || contexts.length === 0) {
     return null
@@ -78,6 +84,7 @@ export function ContextBadgeList({
           context={context}
           onReselect={onContextReselect}
           shareToken={shareToken}
+          displayGeneratedMedia={displayGeneratedMedia}
         />
       ))}
     </div>
@@ -91,14 +98,22 @@ function ContextBadgeItem({
   context,
   onReselect,
   shareToken,
+  displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
   onReselect?: (context: SubtaskContextBrief) => void
   shareToken?: string
+  displayGeneratedMedia: boolean
 }) {
   switch (context.context_type) {
     case 'attachment':
-      return <AttachmentContextBadge context={context} shareToken={shareToken} />
+      return (
+        <AttachmentContextBadge
+          context={context}
+          shareToken={shareToken}
+          displayGeneratedMedia={displayGeneratedMedia}
+        />
+      )
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
     case 'external_knowledge':
@@ -118,9 +133,11 @@ function ContextBadgeItem({
 function AttachmentContextBadge({
   context,
   shareToken,
+  displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
   shareToken?: string
+  displayGeneratedMedia: boolean
 }) {
   // Map context status to Attachment status
   // SubtaskContextBrief uses lowercase status values (pending, ready, failed)
@@ -154,12 +171,58 @@ function AttachmentContextBadge({
     created_at: '',
   }
 
+  if (displayGeneratedMedia && isImageExtension(attachment.file_extension)) {
+    return <GeneratedImageContextBadge attachment={attachment} shareToken={shareToken} />
+  }
+
   return (
     <AttachmentPreview
       attachment={attachment}
-      compact={false}
+      compact={isImageExtension(attachment.file_extension)}
       showDownload={true}
       shareToken={shareToken}
+    />
+  )
+}
+
+function GeneratedImageContextBadge({
+  attachment,
+  shareToken,
+}: {
+  attachment: Attachment
+  shareToken?: string
+}) {
+  const { blobUrl, isLoading, error } = useAttachmentImage(attachment.id, true, shareToken)
+  const [imageSize, setImageSize] = React.useState<string>()
+
+  React.useEffect(() => {
+    if (!blobUrl) return
+
+    const image = new window.Image()
+    image.onload = () => setImageSize(`${image.naturalWidth}x${image.naturalHeight}`)
+    image.src = blobUrl
+  }, [blobUrl])
+
+  if (isLoading || (!blobUrl && !error)) {
+    return (
+      <div
+        className="flex h-[220px] w-[220px] items-center justify-center rounded-lg bg-muted"
+        data-testid="generated-context-image-loading"
+      >
+        <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
+      </div>
+    )
+  }
+
+  if (error || !blobUrl) {
+    return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />
+  }
+
+  return (
+    <ImageGallery
+      images={[{ url: blobUrl, attachmentId: attachment.id }]}
+      imageSize={imageSize}
+      className="mb-2"
     />
   )
 }

@@ -1,4 +1,13 @@
-import { Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, Upload, UserCog } from 'lucide-react'
+import {
+  Boxes,
+  Copy,
+  Ellipsis,
+  Loader2,
+  MessageCirclePlus,
+  Trash2,
+  Upload,
+  UserCog,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
@@ -6,7 +15,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import type { PluginDistribution } from './pluginDistribution'
 import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
-import { PluginSourceAvatar } from './PluginSourceAvatar'
 
 export interface InstalledPluginItem {
   id: string | number
@@ -98,19 +106,19 @@ export function InstalledPluginRow({
 
   const mainContent = (
     <>
-      <PluginSourceAvatar
+      <div
+        data-testid={`installed-plugin-logo-frame-${plugin.id}`}
         className={[
           'plugin-management-logo',
           logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
         ].join(' ')}
-        distribution={plugin.distribution}
-        imageTestId={`installed-plugin-logo-${plugin.id}`}
-        invertLogoInDark={logo.invertInDark}
-        logoUrl={logo.url}
-        name={plugin.name}
-        testId={`installed-plugin-logo-frame-${plugin.id}`}
-        useInitial={logo.isGenericFallback}
-      />
+      >
+        {logo.url ? (
+          <img src={logo.url} alt="" data-testid={`installed-plugin-logo-${plugin.id}`} />
+        ) : (
+          <Boxes className="h-5 w-5 text-text-muted" />
+        )}
+      </div>
       <div className="min-w-0">
         <strong className="block truncate text-base font-medium leading-5 text-text-primary">
           {plugin.name}

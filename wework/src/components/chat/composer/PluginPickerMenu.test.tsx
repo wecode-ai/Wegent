@@ -31,7 +31,6 @@ const superpowersApp: LocalDeviceApp = {
   id: 'plugin:superpowers',
   name: 'superpowers',
   description: 'A complete software development workflow for coding agents',
-  logoUrl: '/plugin-icons/wework.svg',
   isAccessible: true,
   isEnabled: true,
   source: 'installed-plugin',
@@ -60,18 +59,15 @@ describe('PluginPickerMenu', () => {
   })
 
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
-    const onListLocalApps = vi.fn().mockResolvedValue([
-      githubApp,
-      superpowersApp,
-      {
-        ...githubApp,
-        id: 'gitlab',
-        name: 'GitLab',
-        logoUrl: '/plugin-icons/wework.svg',
-      },
-      { ...githubApp, id: 'linear', name: 'Linear' },
-      { ...githubApp, id: 'notion', name: 'Notion' },
-    ])
+    const onListLocalApps = vi
+      .fn()
+      .mockResolvedValue([
+        githubApp,
+        superpowersApp,
+        { ...githubApp, id: 'gitlab', name: 'GitLab' },
+        { ...githubApp, id: 'linear', name: 'Linear' },
+        { ...githubApp, id: 'notion', name: 'Notion' },
+      ])
     const inserted: string[] = []
     const shownGuides: string[] = []
     const onInsert = (event: Event) => {
@@ -91,36 +87,22 @@ describe('PluginPickerMenu', () => {
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     )
-    expect(trigger).toHaveClass('h-7', 'gap-2', 'rounded-lg', 'bg-muted/70', 'px-3', 'text-sm')
+    expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
     expect(screen.getByTestId('composer-plugin-preview-icons')).toHaveClass('-space-x-1')
     expect(screen.getByTestId('composer-plugin-preview-icon-github')).toHaveClass(
-      'h-[18px]',
-      'w-[18px]',
-      'rounded-[5px]',
-      'border-border/35'
+      'plugin-icon-slot',
+      'h-6',
+      'w-6',
+      'rounded-full',
+      'border-border/30'
     )
-    expect(trigger).not.toHaveTextContent('+2')
-
-    const gitlabPreview = screen.getByTestId('composer-plugin-preview-icon-gitlab')
-    expect(gitlabPreview).not.toHaveTextContent('G')
-    expect(gitlabPreview.querySelector('img')).toHaveAttribute('src', '/plugin-icons/gitlab.svg')
-
-    const githubPreview = screen.getByTestId('composer-plugin-preview-icon-github')
-    const githubLogo = githubPreview.querySelector('img')
-    expect(githubLogo).not.toBeNull()
-    act(() => githubLogo?.dispatchEvent(new Event('error')))
-    expect(githubPreview).toHaveTextContent('G')
+    expect(trigger).toHaveTextContent('+2')
 
     await userEvent.click(trigger)
     const picker = await screen.findByTestId('composer-plugin-picker')
 
     expect(picker).toHaveTextContent('可用插件')
     expect(picker).toHaveTextContent('GitHub')
-    const superpowersPickerIcon = screen.getByTestId(
-      'composer-plugin-picker-icon-plugin:superpowers'
-    )
-    expect(superpowersPickerIcon).toHaveTextContent('S')
-    expect(superpowersPickerIcon.querySelector('img')).toBeNull()
     expect(picker).toHaveTextContent('superpowers')
     expect(picker).toHaveTextContent('检查仓库')
     expect(picker).toHaveTextContent('A complete software development workflow')
@@ -136,30 +118,6 @@ describe('PluginPickerMenu', () => {
 
     window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
     window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
-  })
-
-  test('falls back from a broken declared logo to the canonical plugin brand', async () => {
-    const weiboApp: LocalDeviceApp = {
-      id: 'weibo-app',
-      name: '微博开放平台内部WIKI',
-      pluginKey: 'weibo-api-wiki',
-      description: '检索微博开放平台内部 Wiki API 文档。',
-      logoUrl: 'https://example.com/missing-weibo.png',
-      isAccessible: true,
-      isEnabled: true,
-    }
-
-    render(<PluginPickerMenu onListLocalApps={async () => [weiboApp]} />)
-
-    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
-    const icon = await screen.findByTestId('composer-plugin-picker-icon-weibo-app')
-    const declaredLogo = icon.querySelector('img')
-    expect(declaredLogo).toHaveAttribute('src', 'https://example.com/missing-weibo.png')
-
-    act(() => declaredLogo?.dispatchEvent(new Event('error')))
-
-    expect(icon.querySelector('img')).toHaveAttribute('src', '/plugin-icons/weibo.svg')
-    expect(icon).not.toHaveTextContent('微')
   })
 
   test('renders a single icon trigger when iconOnly is set', async () => {

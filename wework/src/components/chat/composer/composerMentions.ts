@@ -1,28 +1,13 @@
 import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
 import {
   currentPluginLogoAppearanceMode,
-  pluginNameInitial,
-  resolvePluginLogoUrl,
+  resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
-const serverComposerMentionIconUrls = new Map<string, string>()
-
-declare global {
-  interface Window {
-    __weworkComposerMentionIconUrls?: Map<string, string>
-  }
-}
-
-function composerMentionIconUrls(): Map<string, string> {
-  if (typeof window === 'undefined') return serverComposerMentionIconUrls
-  if (!window.__weworkComposerMentionIconUrls) {
-    window.__weworkComposerMentionIconUrls = new Map<string, string>()
-  }
-  return window.__weworkComposerMentionIconUrls
-}
+const composerMentionIcons = new Map<string, { url: string; contrastPad: boolean }>()
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const COMPOSER_MENTION_ICON_PATHS = [
   'M16.5 9.4 7.55 4.24',
@@ -45,62 +30,59 @@ export interface ParsedComposerMention extends ComposerMentionPayload {
   end: number
 }
 
-export function registerComposerMentionIcon(reference: string, iconUrl?: string | null): void {
+export type ComposerMentionIconRegistration = {
+  url: string
+  contrastPad?: boolean
+}
+
+export function registerComposerMentionIcon(
+  reference: string,
+  icon?: string | ComposerMentionIconRegistration | null
+): void {
   const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
-  const normalizedIconUrl = iconUrl?.trim()
-  if (!href) return
-  if (!normalizedIconUrl) {
-    composerMentionIconUrls().delete(href)
-    return
-  }
-  composerMentionIconUrls().set(href, normalizedIconUrl)
+  if (!href || !icon) return
+  const entry =
+    typeof icon === 'string'
+      ? { url: icon.trim(), contrastPad: false }
+      : { url: icon.url.trim(), contrastPad: Boolean(icon.contrastPad) }
+  if (!entry.url) return
+  composerMentionIcons.set(href, entry)
 }
 
 export function getComposerMentionIconUrl(href: string): string | undefined {
-  return composerMentionIconUrls().get(href)
+  return composerMentionIcons.get(href)?.url
+}
+
+function getComposerMentionIcon(href: string): { url: string; contrastPad: boolean } | undefined {
+  return composerMentionIcons.get(href)
 }
 
 /** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
 export function resolveComposerMentionBrandIconUrl(href: string): string | null {
-  const appearanceMode = currentPluginLogoAppearanceMode()
-  const registered = getComposerMentionIconUrl(href)?.trim()
-  if (registered) {
-    return resolvePluginLogoUrl({ logo: registered, appearanceMode }) || null
-  }
-
-  const pluginReference = parsePluginUri(href)
-  if (pluginReference) {
-    return (
-      resolvePluginLogoUrl({
-        pluginKey: pluginReference.pluginName,
-        appearanceMode,
-      }) || null
-    )
-  }
-
-  if (href.startsWith('app://')) {
-    const appId = href.slice('app://'.length).trim()
-    return appId ? resolvePluginLogoUrl({ pluginKey: appId, appearanceMode }) || null : null
-  }
-
-  return null
+  return resolveComposerMentionBrandIcon(href)?.url ?? null
 }
 
-function resolveComposerMentionFallbackBrandIconUrl(href: string): string | null {
+export function resolveComposerMentionBrandIcon(
+  href: string
+): { url: string; contrastPad: boolean } | null {
+  const registered = getComposerMentionIcon(href)
+  if (registered) return registered
+
   const appearanceMode = currentPluginLogoAppearanceMode()
   const pluginReference = parsePluginUri(href)
   if (pluginReference) {
-    return (
-      resolvePluginLogoUrl({
-        pluginKey: pluginReference.pluginName,
-        appearanceMode,
-      }) || null
-    )
+    const logo = resolvePluginLogo({
+      pluginKey: pluginReference.pluginName,
+      appearanceMode,
+    })
+    return { url: logo.url, contrastPad: logo.contrastPad }
   }
 
   if (href.startsWith('app://')) {
     const appId = href.slice('app://'.length).trim()
-    return appId ? resolvePluginLogoUrl({ pluginKey: appId, appearanceMode }) || null : null
+    if (!appId) return null
+    const logo = resolvePluginLogo({ pluginKey: appId, appearanceMode })
+    return { url: logo.url, contrastPad: logo.contrastPad }
   }
 
   return null
@@ -259,21 +241,18 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
   const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
-  const brandIconUrl = mentionHref ? resolveComposerMentionBrandIconUrl(mentionHref) : null
-  const fallbackBrandIconUrl = mentionHref
-    ? resolveComposerMentionFallbackBrandIconUrl(mentionHref)
-    : null
-  const usePluginInitial = Boolean(pluginReference || mentionHref?.startsWith('app://'))
+  const brandIcon = mentionHref ? resolveComposerMentionBrandIcon(mentionHref) : null
+  if (brandIcon?.contrastPad) {
+    iconSlot.classList.add('composer-mention-icon-slot--contrast-pad')
+  }
   iconSlot.append(
     pathReference?.directory
       ? createComposerFolderIcon()
       : conversationReference
         ? createComposerConversationIcon()
-        : brandIconUrl
-          ? createComposerBrandIcon(brandIconUrl, displayLabel, fallbackBrandIconUrl)
-          : usePluginInitial
-            ? createComposerInitialIcon(displayLabel)
-            : createComposerMentionIcon()
+        : brandIcon
+          ? createComposerBrandIcon(brandIcon.url)
+          : createComposerMentionIcon()
   )
 
   const label = document.createElement('span')
@@ -284,30 +263,11 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   return element
 }
 
-function createComposerBrandIcon(
-  iconUrl: string,
-  fallbackLabel: string,
-  fallbackIconUrl: string | null
-): HTMLImageElement {
+function createComposerBrandIcon(iconUrl: string): HTMLImageElement {
   const icon = document.createElement('img')
   icon.className = 'composer-mention-icon composer-mention-brand-icon'
   icon.src = iconUrl
   icon.alt = ''
-  icon.addEventListener('error', () => {
-    if (fallbackIconUrl && fallbackIconUrl !== iconUrl && icon.dataset.fallbackTried !== 'true') {
-      icon.dataset.fallbackTried = 'true'
-      icon.src = fallbackIconUrl
-      return
-    }
-    icon.replaceWith(createComposerInitialIcon(fallbackLabel))
-  })
-  return icon
-}
-
-function createComposerInitialIcon(label: string): HTMLSpanElement {
-  const icon = document.createElement('span')
-  icon.className = 'composer-mention-icon composer-mention-initial-icon'
-  icon.textContent = pluginNameInitial(label)
   return icon
 }
 

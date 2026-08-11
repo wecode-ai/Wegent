@@ -91,11 +91,13 @@ def _format_forwarded_headers_for_log(headers) -> str:
 
 def _get_mcp_lifespan_servers():
     from app.mcp_server.server import (
+        image_mcp_server,
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
         prompt_optimization_mcp_server,
         subscription_mcp_server,
         system_mcp_server,
+        video_mcp_server,
     )
 
     servers = [
@@ -104,6 +106,8 @@ def _get_mcp_lifespan_servers():
         ("interactive_form_question", interactive_form_question_mcp_server),
         ("Prompt optimization", prompt_optimization_mcp_server),
         ("Subscription", subscription_mcp_server),
+        ("Image", image_mcp_server),
+        ("Video", video_mcp_server),
     ]
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
         from app.mcp_server.server import external_knowledge_mcp_server
@@ -428,6 +432,21 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    logger.info("Recovering in-progress video jobs...")
+    try:
+        from app.services.execution.agents.video.recovery import (
+            recover_video_jobs,
+            recover_video_jobs_after_stale_delay,
+        )
+
+        recovered_count = await recover_video_jobs()
+        logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
+        app.state.video_recovery_task = asyncio.create_task(
+            recover_video_jobs_after_stale_delay()
+        )
+    except Exception as e:
+        logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -445,6 +464,14 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 60)
         logger.info("Graceful shutdown initiated...")
         logger.info("=" * 60)
+
+        video_recovery_task = getattr(app.state, "video_recovery_task", None)
+        if video_recovery_task and not video_recovery_task.done():
+            video_recovery_task.cancel()
+            try:
+                await video_recovery_task
+            except asyncio.CancelledError:
+                pass
 
         # Step 1: Initiate graceful shutdown (mark as shutting down)
         await shutdown_manager.initiate_shutdown()

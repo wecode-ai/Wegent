@@ -707,11 +707,9 @@ export function PluginDetailView({
             >
               <PluginSourceAvatar
                 className="plugin-task-example-avatar flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-border/30 bg-background"
-                distribution={plugin.distribution}
-                invertLogoInDark={logo.invertInDark}
+                contrastPad={logo.contrastPad}
                 logoUrl={logo.url}
                 name={plugin.name}
-                useInitial={logo.isGenericFallback}
               />
               <span className="min-w-0 flex-1 text-base font-medium leading-6 text-text-primary">
                 <strong className="plugin-task-example-name">{plugin.name}</strong>{' '}
@@ -751,12 +749,10 @@ export function PluginDetailView({
               'plugin-detail-header-logo',
               logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
             ].join(' ')}
-            distribution={plugin.distribution}
-            invertLogoInDark={logo.invertInDark}
+            contrastPad={logo.contrastPad}
             logoUrl={logo.url}
             name={plugin.name}
             testId="plugin-detail-logo"
-            useInitial={logo.isGenericFallback}
           />
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
@@ -1001,7 +997,7 @@ export function PluginDetailView({
           skill={{
             name: selectedSkill.name,
             pluginName: plugin.name,
-            pluginLogoUrl: logo.isGenericFallback ? '' : logo.url,
+            pluginLogoUrl: logo.url,
             description: selectedSkill.description,
             invocation: `/${selectedSkill.name}`,
             installed: isInstalled,

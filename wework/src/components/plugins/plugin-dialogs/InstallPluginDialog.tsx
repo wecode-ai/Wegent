@@ -1,7 +1,5 @@
-import { Boxes } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { PluginDistribution } from '../pluginDistribution'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
 
 export interface InstallPluginDialogTarget {
@@ -10,9 +8,7 @@ export interface InstallPluginDialogTarget {
   publisher?: string | null
   version?: string | null
   logoUrl?: string | null
-  logoDistribution?: PluginDistribution
-  invertLogoInDark?: boolean
-  useLogoInitial?: boolean
+  logoContrastPad?: boolean
   componentCount: number
   requiredConnectionNames?: string[]
 }
@@ -50,30 +46,12 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
       >
         <div className="plugin-dialog-divider border-b px-6 py-5">
           <div className="flex items-center gap-3">
-            {plugin.useLogoInitial && plugin.logoDistribution ? (
-              <PluginSourceAvatar
-                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
-                distribution={plugin.logoDistribution}
-                logoUrl={logo}
-                name={plugin.name}
-                useInitial
-              />
-            ) : (
-              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background">
-                {logo ? (
-                  <img
-                    src={logo}
-                    alt=""
-                    className={[
-                      'h-full w-full object-cover',
-                      plugin.invertLogoInDark ? 'plugin-source-avatar-logo-invert-dark' : '',
-                    ].join(' ')}
-                  />
-                ) : (
-                  <Boxes className="h-5 w-5 text-text-muted" />
-                )}
-              </div>
-            )}
+            <PluginSourceAvatar
+              className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
+              contrastPad={plugin.logoContrastPad}
+              logoUrl={logo}
+              name={plugin.name}
+            />
             <div>
               <h2 id="install-plugin-dialog-title" className="heading-subsection">
                 {t('workbench.plugins_install_plugin', '安装插件')}

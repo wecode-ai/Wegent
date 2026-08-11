@@ -32,6 +32,7 @@ vi.mock('@tauri-apps/api/window', () => ({
     }),
     scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
+    onScaleChanged: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
 
@@ -1736,6 +1737,9 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('macos-traffic-light-spacer')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
     expect(screen.getByTestId('plugins-page-content').style.paddingLeft).toBe('')
+    expect(screen.getByTestId('app-shell')).toHaveClass('fixed', 'inset-0')
+    expect(screen.getByTestId('app-shell').style.width).toBe('')
+    expect(screen.getByTestId('app-shell').style.height).toBe('')
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
