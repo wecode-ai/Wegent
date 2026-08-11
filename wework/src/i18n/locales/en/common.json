@@ -392,7 +392,6 @@
     "workspace_tab_plugins": "Plugins",
     "workspace_tab_sites": "Applications",
     "workspace_tab_cloud": "Cloud work",
-    "workspace_tab_apps": "Apps",
     "workspace_tab_close": "Close {{title}}",
     "workspace_tab_open_new_window": "Open in new window",
     "workspace_tab_close_others": "Close other tabs",
