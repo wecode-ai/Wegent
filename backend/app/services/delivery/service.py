@@ -31,6 +31,10 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
+from app.services.loop_item_status_history import (
+    status_name,
+    write_status_change,
+)
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -246,6 +250,24 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
+            if item.status != "completed":
+                project = db.get(CloudProject, item.cloud_project_id)
+                if project is not None:
+                    metadata = (
+                        dict(item.metadata_json)
+                        if isinstance(item.metadata_json, dict)
+                        else {}
+                    )
+                    write_status_change(
+                        metadata,
+                        from_status=item.status,
+                        from_status_name=status_name(project, item.status),
+                        to_status="completed",
+                        to_status_name=status_name(project, "completed"),
+                        trigger="delivery",
+                        by_user_id=user_id,
+                    )
+                    item.metadata_json = metadata
             item.status = "completed"
             item.current_delivery_id = delivery.id
             item.completed_at = now

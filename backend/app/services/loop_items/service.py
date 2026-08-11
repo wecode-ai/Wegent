@@ -54,6 +54,11 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.loop_item_executions.wake import wake_robot_creator
+from app.services.loop_item_status_history import (
+    STATUS_HISTORY_KEY,
+    status_name,
+    write_status_change,
+)
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
 
@@ -159,6 +164,10 @@ class LoopItemService:
         values["assignment_history"] = (
             assignment_history if isinstance(assignment_history, list) else []
         )
+        status_history = metadata.get(STATUS_HISTORY_KEY)
+        values["status_history"] = (
+            status_history if isinstance(status_history, list) else []
+        )
         # Surface the newest run even after it ends, so a terminal failure is
         # visible to the UI instead of silently disappearing from the task.
         execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
@@ -197,7 +206,9 @@ class LoopItemService:
     def _reconcile_task_ai_state_from_message(
         self, db: Session, item: LoopItem
     ) -> bool:
-        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        metadata = (
+            dict(item.metadata_json) if isinstance(item.metadata_json, dict) else {}
+        )
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
             return False
@@ -252,11 +263,24 @@ class LoopItemService:
             next_state["auto_retry_count"] = (
                 int(ai_state.get("auto_retry_count") or 0) + 1
             )
-        item.metadata_json = {**metadata, TASK_AI_STATE_KEY: next_state}
-        if message.status == "completed" and item.status not in {
+        completed_transition = message.status == "completed" and item.status not in {
             "in_review",
             "completed",
-        }:
+        }
+        if completed_transition:
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None:
+                write_status_change(
+                    metadata,
+                    from_status=item.status,
+                    from_status_name=status_name(project, item.status),
+                    to_status="in_review",
+                    to_status_name=status_name(project, "in_review"),
+                    trigger="ai_completed",
+                    by_user_id=None,
+                )
+        item.metadata_json = {**metadata, TASK_AI_STATE_KEY: next_state}
+        if completed_transition:
             item.status = "in_review"
             item.completed_at = self._loop_unset_datetime(db)
         item.version += 1
@@ -592,6 +616,16 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
+        if payload["status"]:
+            write_status_change(
+                task_metadata,
+                from_status="",
+                from_status_name="",
+                to_status=payload["status"],
+                to_status_name=status_name(project, payload["status"]),
+                trigger="create",
+                by_user_id=user_id,
+            )
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -601,7 +635,7 @@ class LoopItemService:
             **payload,
         )
         if tags:
-            item.metadata_json = {"tags": tags}
+            item.metadata_json = {**task_metadata, "tags": tags}
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
@@ -982,6 +1016,22 @@ class LoopItemService:
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
                     )
+        if "status" in values.model_fields_set and updates.get("status") != item.status:
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None:
+                metadata = updates.get("metadata_json")
+                if not isinstance(metadata, dict):
+                    metadata = dict(item.metadata_json or {})
+                write_status_change(
+                    metadata,
+                    from_status=item.status,
+                    from_status_name=status_name(project, item.status),
+                    to_status=updates["status"] or "",
+                    to_status_name=status_name(project, updates["status"] or ""),
+                    trigger="user_update",
+                    by_user_id=user_id,
+                )
+                updates["metadata_json"] = metadata
         if next_status and next_status != item.status:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
@@ -1330,7 +1380,7 @@ class LoopItemService:
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
-                self._advance_task_started_item(db, item.id)
+                self._advance_task_started_item(db, item.id, user_id)
                 db.commit()
                 db.refresh(active)
                 return active
@@ -1347,7 +1397,7 @@ class LoopItemService:
         )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
-        self._advance_task_started_item(db, item.id)
+        self._advance_task_started_item(db, item.id, user_id)
         db.commit()
         db.refresh(binding)
         return binding
@@ -1461,24 +1511,37 @@ class LoopItemService:
         return query.first()
 
     @staticmethod
-    def _advance_task_started_item(db: Session, item_id: str) -> None:
+    def _advance_task_started_item(db: Session, item_id: str, user_id: int) -> None:
         """Move an unstarted TODO to in progress when execution is attached."""
 
-        updates = adapt_loop_node_values_for_dialect(
-            {"status": "in_progress", "completed_at": None},
-            db.get_bind().dialect.name,
-            loop_node_non_nullable_attributes(db.connection()),
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == item_id,
+                LoopItem.status.in_(("inbox", "pending")),
+            )
+            .first()
         )
-        db.query(LoopItem).filter(
-            LoopItem.id == item_id,
-            LoopItem.status.in_(("inbox", "pending")),
-        ).update(
-            {
-                **updates,
-                "version": LoopItem.version + 1,
-            },
-            synchronize_session=False,
-        )
+        if item is None:
+            return
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            metadata = (
+                dict(item.metadata_json) if isinstance(item.metadata_json, dict) else {}
+            )
+            write_status_change(
+                metadata,
+                from_status=item.status,
+                from_status_name=status_name(project, item.status),
+                to_status="in_progress",
+                to_status_name=status_name(project, "in_progress"),
+                trigger="task_started",
+                by_user_id=user_id,
+            )
+            item.metadata_json = metadata
+        item.status = "in_progress"
+        item.completed_at = LoopItemService._loop_unset_datetime(db)
+        item.version += 1
 
     def list_task_bindings(
         self, db: Session, item_id: str, user_id: int
@@ -1642,6 +1705,7 @@ class LoopItemService:
                 external_index_rows.append(item)
                 continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+            status_history = metadata.get(STATUS_HISTORY_KEY)
             execution = executions_by_item.get(item.id)
             result.append(
                 {
@@ -1653,6 +1717,9 @@ class LoopItemService:
                         assignment_history
                         if isinstance(assignment_history, list)
                         else []
+                    ),
+                    "status_history": (
+                        status_history if isinstance(status_history, list) else []
                     ),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": getattr(execution, "status", None),
@@ -1701,6 +1768,8 @@ class LoopItemService:
                             if isinstance(assignment_history, list)
                             else []
                         ),
+                        # External provider tasks never carry status history.
+                        "status_history": [],
                     }
                 )
         return result

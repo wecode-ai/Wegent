@@ -291,6 +291,83 @@ describe('TodoEditor assignment chain', () => {
   })
 })
 
+describe('TodoEditor status history', () => {
+  it('shows status history in a popover triggered next to the status', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'inbox',
+          from_status_name: '收集箱',
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'user_update',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+        {
+          from_status: 'in_progress',
+          from_status_name: '进行中',
+          to_status: 'in_review',
+          to_status_name: '待确认',
+          trigger: 'ai_completed',
+          by_user_id: null,
+          at: '2026-08-02T11:30:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    const trigger = screen.getByTestId('cloud-todo-status-history-trigger')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(trigger)
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('状态历史')
+    expect(popover).toHaveTextContent('收集箱')
+    expect(popover).toHaveTextContent('进行中')
+    expect(popover).toHaveTextContent('待确认')
+    expect(popover).toHaveTextContent('用户更新')
+    expect(popover).toHaveTextContent('AI 完成')
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByTestId('cloud-todo-status-history-popover')).not.toBeInTheDocument()
+  })
+
+  it('does not render the trigger when the item has no status history', () => {
+    render(editorElement(baseItem))
+    expect(screen.queryByTestId('cloud-todo-status-history-trigger')).not.toBeInTheDocument()
+  })
+
+  it('renders fallbacks for empty status names and null actors', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: '',
+          from_status_name: null,
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'ai_started',
+          by_user_id: null,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('未设置')
+    expect(popover).toHaveTextContent('系统/机器人')
+  })
+})
+
 describe('TodoEditor comments by provider', () => {
   it('closes task comments for DingTalk AI Table tasks', () => {
     const aitableProject = {

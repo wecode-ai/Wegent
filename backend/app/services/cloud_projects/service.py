@@ -29,6 +29,10 @@ from app.schemas.cloud_project import (
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_item_status_history import (
+    status_name,
+    write_status_change,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,18 +185,40 @@ class CloudProjectService:
                 next_ids = {item.id for item in values.board_config.statuses}
                 removed_ids = previous_ids - next_ids
                 if removed_ids:
-                    db.query(LoopItem).filter(
-                        LoopItem.cloud_project_id == project.id,
-                        LoopItem.status.in_(removed_ids),
-                        loop_datetime_is_unset(LoopItem.deleted_at),
-                    ).update(
-                        {
-                            "status": "",
-                            "completed_at": None,
-                            "version": LoopItem.version + 1,
-                        },
-                        synchronize_session=False,
+                    removed_names = {
+                        str(entry.get("id")): entry.get("name")
+                        for entry in previous_statuses
+                        if isinstance(entry, dict)
+                    }
+                    affected = (
+                        db.query(LoopItem)
+                        .filter(
+                            LoopItem.cloud_project_id == project.id,
+                            LoopItem.status.in_(removed_ids),
+                            loop_datetime_is_unset(LoopItem.deleted_at),
+                        )
+                        .all()
                     )
+                    for item in affected:
+                        metadata = (
+                            dict(item.metadata_json)
+                            if isinstance(item.metadata_json, dict)
+                            else {}
+                        )
+                        name = removed_names.get(item.status)
+                        write_status_change(
+                            metadata,
+                            from_status=item.status,
+                            from_status_name=name if isinstance(name, str) else "",
+                            to_status="",
+                            to_status_name="",
+                            trigger="status_removed",
+                            by_user_id=user_id,
+                        )
+                        item.metadata_json = metadata
+                        item.status = ""
+                        item.completed_at = None
+                        item.version += 1
                 metadata["board_config"] = values.board_config.model_dump()
                 updates.pop("board_config", None)
             if (
