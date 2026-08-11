@@ -86,6 +86,8 @@ Wework includes the current model category in local runtime requests. Official C
 
 ## Chat Runtime
 
+For a new chat, the composer shows the plugin entry with previews for up to three available plugins. After the conversation starts, the entry collapses to a single icon to reduce toolbar usage, while clicking the icon still opens the complete plugin picker. Narrow toolbars use the icon form as well.
+
 When a user selects a skill, app, or plugin in the composer, the editor inserts an indivisible inline mention. The cursor can only stop before or after the mention; copy and submit serialize it as Codex app-server-compatible Markdown:
 
 - Skills use `[$name](/absolute/path/to/SKILL.md)`.

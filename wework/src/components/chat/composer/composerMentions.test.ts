@@ -94,7 +94,10 @@ describe('cloud references', () => {
 describe('composer mention icons', () => {
   test('uses a registered plugin brand icon', () => {
     const reference = '[$GitHub](plugin://github@openai-bundled)'
-    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+    registerComposerMentionIcon(reference, {
+      url: 'https://example.com/github.png',
+      contrastPad: true,
+    })
 
     const element = createComposerMentionElement({
       name: 'GitHub',
@@ -103,6 +106,27 @@ describe('composer mention icons', () => {
     })
 
     expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
+    expect(element.querySelector('.composer-mention-icon-slot')).toHaveClass(
+      'composer-mention-icon-slot--contrast-pad'
+    )
+  })
+
+  test('skips the contrast pad when the registered icon does not need one', () => {
+    const reference = '[$GitHub](plugin://github@openai-bundled)'
+    registerComposerMentionIcon(reference, {
+      url: 'https://example.com/github-dark.png',
+      contrastPad: false,
+    })
+
+    const element = createComposerMentionElement({
+      name: 'GitHub',
+      label: 'GitHub',
+      reference,
+    })
+
+    expect(element.querySelector('.composer-mention-icon-slot')).not.toHaveClass(
+      'composer-mention-icon-slot--contrast-pad'
+    )
   })
 
   test('falls back to bundled plugin brand icons for plugin mentions', () => {

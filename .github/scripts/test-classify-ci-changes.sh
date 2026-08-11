@@ -264,7 +264,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"Core / workspace-tabs","command":"e2e:desktop","segment":"workspace-tabs"},{"id":"core-priority-filter","name":"Core / priority-filter","command":"e2e:desktop","segment":"priority-filter"},{"id":"core-automation-lifecycle","name":"Core / automation-lifecycle","command":"e2e:desktop","segment":"automation-lifecycle"},{"id":"core-model-routing","name":"Core / model-routing","command":"e2e:desktop","segment":"model-routing"},{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-window-lifecycle","name":"Core / window-lifecycle","command":"e2e:desktop","segment":"window-lifecycle"},{"id":"core-goal-lifecycle","name":"Core / goal-lifecycle","command":"e2e:desktop","segment":"goal-lifecycle"},{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"},{"id":"core-workspace-attachments","name":"Core / workspace-attachments","command":"e2e:desktop","segment":"workspace-attachments"},{"id":"core-rendering-extensions","name":"Core / rendering-extensions","command":"e2e:desktop","segment":"rendering-extensions"},{"id":"core-embedded-browser","name":"Core / embedded-browser","command":"e2e:desktop","segment":"embedded-browser"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"Core / workspace-tabs","command":"e2e:desktop","segment":"workspace-tabs"},{"id":"core-priority-filter","name":"Core / priority-filter","command":"e2e:desktop","segment":"priority-filter"},{"id":"core-automation-lifecycle","name":"Core / automation-lifecycle","command":"e2e:desktop","segment":"automation-lifecycle"},{"id":"core-model-routing","name":"Core / model-routing","command":"e2e:desktop","segment":"model-routing"},{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-window-lifecycle","name":"Core / window-lifecycle","command":"e2e:desktop","segment":"window-lifecycle"},{"id":"core-goal-lifecycle","name":"Core / goal-lifecycle","command":"e2e:desktop","segment":"goal-lifecycle"},{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"},{"id":"core-workspace-attachments","name":"Core / workspace-attachments","command":"e2e:desktop","segment":"workspace-attachments"},{"id":"core-rendering-extensions","name":"Core / rendering-extensions","command":"e2e:desktop","segment":"rendering-extensions"},{"id":"core-local-harness","name":"Core / local-harness","command":"e2e:desktop","segment":"local-harness"},{"id":"core-embedded-browser","name":"Core / embedded-browser","command":"e2e:desktop","segment":"embedded-browser"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""},{"id":"cloud","name":"Cloud","command":"e2e:desktop:cloud","segment":""}]}'
 
@@ -279,6 +279,14 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-embedded-browser","name":
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/lib/browser-url.ts"
+
+assert_desktop_case "local harness files select local harness coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-local-harness","name":"Core / local-harness","command":"e2e:desktop","segment":"local-harness"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/lib/local-harness.ts"
 
 assert_desktop_case "Core artifact changes retain full coverage" \
   "$full_desktop_expected" \
