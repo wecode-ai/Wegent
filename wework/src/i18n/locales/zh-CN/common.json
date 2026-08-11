@@ -1652,7 +1652,7 @@
     "general_settings_prevent_sleep_while_tasks_running_description": "有任务运行时阻止电脑因空闲自动休眠；所有任务结束后恢复系统原本的休眠策略。",
     "general_settings_system_tray_title": "系统托盘",
     "general_settings_task_completion_notifications": "任务完成时发送系统通知",
-    "general_settings_task_completion_notifications_description": "后台任务完成后，通过系统通知插件发送操作系统通知。",
+    "general_settings_task_completion_notifications_description": "仅在窗口失焦时提醒：后台任务完成后，若 Wework 窗口未处于焦点状态，通过系统通知发送提醒。",
     "general_settings_tray_display_content": "托盘显示内容",
     "general_settings_tray_display_content_description": "选择托盘图标和菜单里展示的状态。",
     "general_settings_tray_unread": "未读任务",
