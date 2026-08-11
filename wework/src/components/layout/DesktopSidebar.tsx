@@ -38,7 +38,9 @@ import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import {
@@ -350,14 +352,19 @@ function getSidebarPathBasename(path: string): string {
   return parts.at(-1) ?? normalizedPath
 }
 
+/**
+ * Whether any project or chat already represents the workspace path.
+ *
+ * The standalone row must not duplicate a workspace that is already visible
+ * under another device route: the same path can be opened as both a local and
+ * an aliased cloud project, and the workbench deduplicates them into one row.
+ */
 function runtimeWorkHasWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string,
   workspacePath: string
 ): boolean {
   const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
   const hasMatchingWorkspace = (workspace: RuntimeDeviceWorkspace) =>
-    workspace.deviceId === deviceId &&
     normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
 
   return (
@@ -376,7 +383,7 @@ function standaloneRuntimeProjectWork(
   const normalizedDeviceId = deviceId?.trim()
   const normalizedWorkspacePath = workspacePath ? normalizeSidebarWorkspacePath(workspacePath) : ''
   if (!normalizedDeviceId || !normalizedWorkspacePath) return null
-  if (runtimeWorkHasWorkspace(runtimeWork, normalizedDeviceId, normalizedWorkspacePath)) {
+  if (runtimeWorkHasWorkspace(runtimeWork, normalizedWorkspacePath)) {
     return null
   }
 
@@ -1307,6 +1314,56 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
           )
         : null}
     </div>
+  )
+}
+
+function SidebarReleaseNotesCard({
+  releaseNotes,
+  onOpen,
+  onDismiss,
+}: {
+  releaseNotes: WeworkInstalledReleaseNotes
+  onOpen: () => void
+  onDismiss: () => void
+}) {
+  const { t } = useTranslation('common')
+  const dismissLabel = t('workbench.app_release_notes_dismiss', '关闭版本更新提示')
+
+  return (
+    <aside
+      data-testid="sidebar-release-notes-card"
+      className="relative mb-1 shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm"
+    >
+      <button
+        type="button"
+        data-testid="sidebar-release-notes-open"
+        onClick={onOpen}
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      >
+        <span className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          <span className="min-w-0 truncate text-sm font-medium">
+            {t('workbench.app_release_notes_updated', {
+              defaultValue: 'Wework 已更新至 v{{version}}',
+              version: releaseNotes.version,
+            })}
+          </span>
+        </span>
+        <span className="mt-1 block text-xs leading-4 text-text-secondary">
+          {t('workbench.app_release_notes_summary', '查看此版本的新功能和改进')}
+        </span>
+      </button>
+      <button
+        type="button"
+        data-testid="sidebar-release-notes-dismiss"
+        aria-label={dismissLabel}
+        title={dismissLabel}
+        onClick={onDismiss}
+        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </aside>
   )
 }
 
@@ -2672,7 +2729,9 @@ export function DesktopSidebar({
   const platform = getPlatform()
   const usesOverlayTitlebar = false
   const isWindowsTauri = isTauriRuntime() && platform === 'win'
-  const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
+  const appUpdate = useOptionalAppUpdate()
+  const hasAvailableAppUpdate = Boolean(appUpdate?.availableUpdate)
+  const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sidebarAccount = requiresCloudLogin
     ? {
@@ -2694,6 +2753,7 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const [releaseNotesDialogOpen, setReleaseNotesDialogOpen] = useState(false)
   const [accountCloudDialogOpen, setAccountCloudDialogOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
@@ -3958,6 +4018,17 @@ export function DesktopSidebar({
             )}
           </div>
 
+          {installedReleaseNotes && (
+            <SidebarReleaseNotesCard
+              releaseNotes={installedReleaseNotes}
+              onOpen={() => setReleaseNotesDialogOpen(true)}
+              onDismiss={() => {
+                setReleaseNotesDialogOpen(false)
+                appUpdate?.dismissInstalledReleaseNotes()
+              }}
+            />
+          )}
+
           <div ref={settingsMenuRef} className="group/account relative shrink-0">
             <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
               <button
@@ -4057,6 +4128,14 @@ export function DesktopSidebar({
               )}
             </div>
           </div>
+
+          {installedReleaseNotes && (
+            <AppReleaseNotesDialog
+              open={releaseNotesDialogOpen}
+              releaseNotes={installedReleaseNotes}
+              onClose={() => setReleaseNotesDialogOpen(false)}
+            />
+          )}
 
           {accountCloudDialogOpen && (
             <CloudConnectionDialog

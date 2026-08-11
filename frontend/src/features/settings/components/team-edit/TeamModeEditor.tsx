@@ -7,6 +7,7 @@
 import React from 'react'
 import { Label } from '@/components/ui/label'
 import { Bot, Team, type PipelineContextPassing } from '@/types/api'
+import type { ModelCategoryType } from '@/apis/models'
 import { UnifiedShell } from '@/apis/shells'
 import { TeamMode, AgentType } from '../team-modes'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -37,6 +38,7 @@ interface TeamModeEditorProps {
   botEditRef: React.RefObject<BotEditRef | null>
   scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string
+  modelCategoryType?: ModelCategoryType
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>
   setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
@@ -72,6 +74,7 @@ export default function TeamModeEditor({
   botEditRef,
   scope,
   groupName,
+  modelCategoryType,
   requireConfirmationMap,
   setRequireConfirmationMap,
   contextPassingMap,
@@ -106,6 +109,7 @@ export default function TeamModeEditor({
             botEditRef={botEditRef}
             scope={scope}
             groupName={groupName}
+            modelCategoryType={modelCategoryType}
           />
         )}
 

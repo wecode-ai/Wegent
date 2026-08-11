@@ -77,6 +77,11 @@ export async function loadComposerPluginApps(
       pluginKeys: installedPlugins.map(
         plugin => plugin.spec.source?.pluginKey || plugin.metadata.name
       ),
+      pluginStates: installedPlugins.map(plugin => ({
+        key: plugin.spec.source?.pluginKey || plugin.metadata.name,
+        enabled: plugin.spec.enabled,
+        installState: plugin.spec.installState,
+      })),
     })
   }
 

@@ -14,6 +14,7 @@ import { Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import Modal from '@/features/common/Modal'
+import { buildTeamTargetHref } from '@/features/tasks/components/selector/team-selector-utils'
 
 interface TeamShareHandlerProps {
   teams: Team[]
@@ -58,7 +59,7 @@ export default function TeamShareHandler({ teams, onRefreshTeams }: TeamShareHan
 
   const navigateToTeam = (teamId: number, bindMode?: string[]) => {
     const targetPage = getTargetPage(bindMode)
-    router.push(`/${targetPage}?teamId=${teamId}`)
+    router.push(buildTeamTargetHref(targetPage, new URLSearchParams({ teamId: String(teamId) })))
   }
 
   useEffect(() => {

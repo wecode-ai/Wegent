@@ -474,6 +474,10 @@ The active-conversation capture is also normative:
   multiple markers may be active when content from multiple turns is visible.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- Runtime stream lifecycle events update only the affected task's in-memory
+  status. They must not refresh the whole sidebar work list. A generated task
+  title is authoritative over older list requests already in flight until the
+  local executor confirms the same title.
 - When opening, closing, or resizing a side panel reflows conversation content,
   preserve the reader's visible message or content anchor. Continue following
   the bottom only when the reader was already at the bottom before the reflow.
