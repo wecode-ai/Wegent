@@ -185,6 +185,9 @@ import {
   SEND_REJECTION_RUNNING_PROMPT,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
+  SIDE_CHAT_GUIDANCE_COMPLETION,
+  SIDE_CHAT_GUIDANCE_FOLLOW_UP,
+  SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
   SIDE_CHAT_QUEUE_FOLLOW_UP,
   SIDE_CHAT_QUEUE_INITIAL,
@@ -316,6 +319,9 @@ class DesktopE2EServer {
     })
     this.sideChatQueueRelease = new Promise(resolvePromise => {
       this.resolveSideChatQueueRelease = resolvePromise
+    })
+    this.sideChatGuidanceRelease = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceRelease = resolvePromise
     })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
@@ -584,6 +590,7 @@ class DesktopE2EServer {
         'concurrent_memory',
         'side_chat_attachment',
         'side_chat_queue',
+        'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
         'model_protocol_matrix',
@@ -698,6 +705,10 @@ class DesktopE2EServer {
 
   releaseSideChatQueueResponse() {
     this.resolveSideChatQueueRelease()
+  }
+
+  releaseSideChatGuidanceResponse() {
+    this.resolveSideChatGuidanceRelease()
   }
 
   awaitReconnectResponseStarted() {
@@ -2720,6 +2731,42 @@ class DesktopE2EServer {
         'The queued side-chat follow-up lost its prompt'
       )
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'side_chat_guidance') {
+      this.recordScenarioRequest('side_chat_guidance', modelRequest)
+      const requestText = JSON.stringify(body)
+      const requestCount = this.scenarioRequests.get('side_chat_guidance')?.length ?? 0
+      if (requestCount === 1) {
+        assert.ok(
+          requestText.includes(SIDE_CHAT_GUIDANCE_INITIAL),
+          'The initial side-chat guidance request lost its prompt'
+        )
+        const tool = selectShellTool(body, this.workspacePath)
+        await this.sideChatGuidanceRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-side-chat-guidance-tool', tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
+      assert.equal(
+        requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
+        true,
+        'The side-chat guidance turn did not return its tool output'
+      )
+      assert.ok(
+        requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
+        'The side-chat follow-up was not delivered as guidance to the active turn'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
+        responseCompleted(responseId),
+      ])
       return
     }
 

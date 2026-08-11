@@ -485,6 +485,10 @@ const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const createTemporaryRuntimeTaskMock = vi.fn()
 const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
+const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
+  sent: true,
+  turnId: 'runtime-side-chat-turn',
+})
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
@@ -695,6 +699,11 @@ describe('DesktopWorkbenchLayout', () => {
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
     sendRuntimePaneMessageMock.mockReset()
     sendRuntimePaneMessageMock.mockResolvedValue(true)
+    sendRuntimePaneGuidanceMock.mockReset()
+    sendRuntimePaneGuidanceMock.mockResolvedValue({
+      sent: true,
+      turnId: 'runtime-side-chat-turn',
+    })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
@@ -1211,6 +1220,7 @@ describe('DesktopWorkbenchLayout', () => {
       createEnvironmentBranch:
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
       sendRuntimePaneMessage: sendRuntimePaneMessageMock,
+      sendRuntimePaneGuidance: sendRuntimePaneGuidanceMock,
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
@@ -5854,6 +5864,77 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
+    )
+  }, 15_000)
+
+  test('temporary chat sends a busy follow-up as guidance when selected', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-guidance',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'guide the current response')
+    await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
+    await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
+
+    await waitFor(() => expect(sendRuntimePaneGuidanceMock).toHaveBeenCalledTimes(1))
+    expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
+    const guidanceRequest = sendRuntimePaneGuidanceMock.mock.calls[0]?.[0]
+    expect(guidanceRequest).toMatchObject({
+      address,
+      message: 'guide the current response',
+    })
+    expect(guidanceRequest.clientGuidanceId).toEqual(expect.any(String))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'guide the current response'
+    )
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent('引导中')
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | {
+          onGuidanceApplied?: (payload: {
+            taskId: string
+            subtaskId: string
+            deviceId: string
+            guidanceId: string
+            clientGuidanceId: string
+            message: string
+            appliedAtMs: number
+          }) => void
+        }
+      | undefined
+    act(() =>
+      streamHandlers?.onGuidanceApplied?.({
+        taskId: address.taskId,
+        subtaskId: 'runtime-side-chat-turn',
+        deviceId: address.deviceId,
+        guidanceId: 'runtime-guidance',
+        clientGuidanceId: guidanceRequest.clientGuidanceId,
+        message: 'guide the current response',
+        appliedAtMs: Date.now(),
+      })
+    )
+
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'guide the current response'
     )
   }, 15_000)
 
