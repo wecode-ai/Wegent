@@ -358,14 +358,19 @@ function getSidebarPathBasename(path: string): string {
   return parts.at(-1) ?? normalizedPath
 }
 
+/**
+ * Whether any project or chat already represents the workspace path.
+ *
+ * The standalone row must not duplicate a workspace that is already visible
+ * under another device route: the same path can be opened as both a local and
+ * an aliased cloud project, and the workbench deduplicates them into one row.
+ */
 function runtimeWorkHasWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string,
   workspacePath: string
 ): boolean {
   const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
   const hasMatchingWorkspace = (workspace: RuntimeDeviceWorkspace) =>
-    workspace.deviceId === deviceId &&
     normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
 
   return (
@@ -384,7 +389,7 @@ function standaloneRuntimeProjectWork(
   const normalizedDeviceId = deviceId?.trim()
   const normalizedWorkspacePath = workspacePath ? normalizeSidebarWorkspacePath(workspacePath) : ''
   if (!normalizedDeviceId || !normalizedWorkspacePath) return null
-  if (runtimeWorkHasWorkspace(runtimeWork, normalizedDeviceId, normalizedWorkspacePath)) {
+  if (runtimeWorkHasWorkspace(runtimeWork, normalizedWorkspacePath)) {
     return null
   }
 

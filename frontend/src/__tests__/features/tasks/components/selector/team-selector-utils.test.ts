@@ -7,6 +7,7 @@ import {
   buildTeamTargetHref,
   findDefaultTeamForMode,
   filterTeamsByMode,
+  getBindModesTargetPage,
   getRecentTeams,
   getTeamGenerateMode,
   getTeamTargetPage,
@@ -61,6 +62,8 @@ describe('team selector utils', () => {
   })
 
   it('resolves target pages from bind mode and current filter', () => {
+    expect(getBindModesTargetPage(['image'], 'all')).toBe('image')
+    expect(getBindModesTargetPage(['video'], 'all')).toBe('video')
     expect(getTeamTargetPage(makeTeam(1, ['task']), 'all')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(2, ['chat', 'task']), 'task')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(3, ['chat', 'code']), 'code')).toBe('code')

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.api.endpoints.installed_plugins import (
     _can_publish,
@@ -929,6 +930,90 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
     assert [
         item.id for item in service.list_plugins(test_db, user_id=test_user.id).items
     ] == [plugin.id]
+
+
+def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
+    test_db: Session, test_user: User
+) -> None:
+    owner = User(
+        user_name="other-plugin-owner",
+        password_hash=test_user.password_hash,
+        email="other-plugin-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(owner)
+    test_db.flush()
+    for index in range(12):
+        plugin = Plugin(
+            slug=f"personal-{index}",
+            name=f"personal-{index}",
+            display_name=f"Personal {index}",
+            keywords_json=[],
+            interface_json={},
+            visibility="personal",
+            status="published",
+            owner_user_id=owner.id,
+        )
+        test_db.add(plugin)
+        test_db.flush()
+        release = PluginRelease(
+            plugin_id=plugin.id,
+            version="1.0.0",
+            manifest_json={"name": plugin.name, "version": "1.0.0"},
+            interface_json={},
+            storage_key=f"plugins/{plugin.slug}.zip",
+            sha256=f"{index:064d}",
+            size_bytes=10,
+            status="ready",
+            scan_status="passed",
+            scan_report_json={},
+        )
+        test_db.add(release)
+        test_db.flush()
+        plugin.latest_release_id = release.id
+        test_db.add(
+            ResourceMember.create(
+                resource_type="Plugin",
+                resource_id=plugin.id,
+                entity_type="user",
+                entity_id=str(owner.id),
+                status=MemberStatus.APPROVED.value,
+            )
+        )
+    test_db.commit()
+
+    statements: list[str] = []
+
+    def before_cursor_execute(
+        _conn: object,
+        _cursor: object,
+        statement: str | bytes,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(str(statement))
+
+    bind = test_db.get_bind()
+    from sqlalchemy import event
+
+    event.listen(bind, "before_cursor_execute", before_cursor_execute)
+    try:
+        service = PluginMarketplaceService()
+        items = service.list_plugins(test_db, user_id=test_user.id).items
+    finally:
+        event.remove(bind, "before_cursor_execute", before_cursor_execute)
+
+    assert items == []
+    plugin_grant_lookups = [
+        statement
+        for statement in statements
+        if "resource_members" in statement.lower()
+        and "resource_id" in statement.lower()
+    ]
+    # One batched grants query, plus at most one user-namespace membership query.
+    assert len(plugin_grant_lookups) <= 2
 
 
 def test_restricted_submission_is_owner_only_until_access_is_granted(

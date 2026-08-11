@@ -2021,9 +2021,9 @@ export function WorkspaceBrowserTabPanel({
   }
 
   const clearBrowserData = useCallback(
-    async (kind: EmbeddedBrowserDataKind) => {
+    async (kinds: EmbeddedBrowserDataKind[]) => {
       if (clearingDataKind) return
-      setClearingDataKind(kind)
+      setClearingDataKind(kinds[0] ?? null)
       setClearDataNotice({
         id: Date.now(),
         message: t('workbench.browser_clear_started'),
@@ -2033,7 +2033,7 @@ export function WorkspaceBrowserTabPanel({
         window.setTimeout(resolve, BROWSER_CLEAR_STARTED_NOTICE_MIN_MS)
       )
       try {
-        await clearEmbeddedBrowserData([kind])
+        await clearEmbeddedBrowserData(kinds)
         setClearDataNotice({
           id: Date.now(),
           message: t('workbench.browser_clear_completed'),
@@ -2124,6 +2124,9 @@ export function WorkspaceBrowserTabPanel({
     if (!state.approval) return null
     return state.approval.reason || state.message || t('workbench.browser_agent_approval_reason')
   }
+
+  const clearLocalFilePreviewToast = useCallback(() => setLocalFilePreviewToast(null), [])
+  const clearClearDataNotice = useCallback(() => setClearDataNotice(null), [])
 
   return (
     <div
@@ -2272,13 +2275,13 @@ export function WorkspaceBrowserTabPanel({
                       label: t('workbench.browser_clear_cookies'),
                       testId: 'workspace-browser-clear-cookies-item',
                       disabled: Boolean(clearingDataKind),
-                      onSelect: () => clearBrowserData('cookies'),
+                      onSelect: () => clearBrowserData(['cookies']),
                     },
                     {
                       label: t('workbench.browser_clear_cache'),
                       testId: 'workspace-browser-clear-cache-item',
                       disabled: Boolean(clearingDataKind),
-                      onSelect: () => clearBrowserData('cache'),
+                      onSelect: () => clearBrowserData(['cache', 'storage']),
                     },
                   ],
                 },
@@ -2460,13 +2463,13 @@ export function WorkspaceBrowserTabPanel({
         key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
         message={localFilePreviewToast?.message ?? null}
         tone="error"
-        onClear={() => setLocalFilePreviewToast(null)}
+        onClear={clearLocalFilePreviewToast}
       />
       <TransientNotice
         key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
         message={clearDataNotice?.message ?? null}
         tone={clearDataNotice?.tone}
-        onClear={() => setClearDataNotice(null)}
+        onClear={clearClearDataNotice}
       />
       {invalidTlsCertificate ? (
         <div
