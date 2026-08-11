@@ -366,6 +366,57 @@ describe('TodoEditor status history', () => {
     expect(popover).toHaveTextContent('未设置')
     expect(popover).toHaveTextContent('系统/机器人')
   })
+
+  it('renders the initial create entry without an unset from-status', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: '',
+          from_status_name: null,
+          to_status: 'inbox',
+          to_status_name: '收集箱',
+          trigger: 'create',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('初始状态')
+    expect(popover).toHaveTextContent('收集箱')
+    expect(popover).not.toHaveTextContent('未设置')
+  })
+
+  it('labels an in-review to completed user update as accept', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'in_review',
+          from_status_name: '待确认',
+          to_status: 'completed',
+          to_status_name: '已完成',
+          trigger: 'user_update',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('验收')
+    expect(popover).not.toHaveTextContent('用户更新')
+  })
 })
 
 describe('TodoEditor create parent resolution', () => {
