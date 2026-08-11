@@ -114,10 +114,12 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `workspace-tabs`, `core-task-flow`, `window-lifecycle`,
-`goal-lifecycle`, `resilience`, `conversation-state`, `workspace-attachments`,
-`rendering-extensions`, and `embedded-browser`. `--segment <checkpoint>` performs common startup
-and project initialization, then runs only the selected checkpoint.
+The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
+`automation-lifecycle`, `model-routing`, `core-task-flow`, `window-lifecycle`,
+`goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
+`workspace-attachments`, `rendering-extensions`, `browser-multi-tabs`, and
+`embedded-browser`. `--segment <checkpoint>` performs common startup and project
+initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
@@ -139,10 +141,21 @@ feature coverage is registered. Segment commands are also useful for focused
 local iteration:
 
 ```bash
+pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
+
+`automation-lifecycle` independently covers automation creation, immediate
+execution, pinning and continuing an existing task, and scheduled continuation.
+`model-routing` independently covers all six local protocol-switch directions,
+cross-provider retry, the vision sidecar, and the local model protocol matrix.
+Both checkpoints establish their own minimal fixtures, so they no longer extend
+the critical path for task creation, follow-up, and background plans in
+`core-task-flow`. An unsegmented complete desktop run still executes these
+scenarios, so splitting them does not reduce coverage.
 
 The plugin desktop suite reuses the same segment options while keeping its
 separate Codex Home initialization environment. Its ordered segments are
@@ -179,7 +192,7 @@ Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built 
 
 On macOS, desktop E2E launches a temporary `.app` bundle in the background through `open -g`. The test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting keeps the Tauri main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. After the controller connects, the runner also asserts that the test application is not the current foreground process, preventing focus-stealing regressions. Only the desktop E2E runner injects this variable; normal development and production launches are unchanged.
 
-The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Tauri application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 

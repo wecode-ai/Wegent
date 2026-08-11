@@ -8981,14 +8981,13 @@ async function verifyGoalRestartRecoveryLifecycle({
 }
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, executorBinary, modelServerUrl, workspacePath }) {
+  constructor({ codexBinary, modelServerUrl, workspacePath }) {
     this.codexBinary = codexBinary
-    this.executorBinary = executorBinary
     this.modelServerUrl = modelServerUrl
     this.workspacePath = workspacePath
   }
 
-  async start() {
+  async startBackend() {
     this.redisPort = await reservePort()
     this.backendPort = await reservePort()
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
@@ -9052,7 +9051,9 @@ class RealCloudEnvironment {
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
     await this.seedCloudProtocolModels()
     await this.seedCloudVisionSidecarModels()
+  }
 
+  async startRemoteExecutor(executorBinary) {
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
@@ -9080,7 +9081,7 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
-    this.remoteExecutor = spawn(this.executorBinary, [], {
+    this.remoteExecutor = spawn(executorBinary, [], {
       cwd: weworkDir,
       env: remoteEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -14130,6 +14131,158 @@ async function verifyModelProtocolMatrix({
   }
 }
 
+async function verifyLocalModelRouting({
+  composerSelector,
+  control,
+  modelSwitchVerification,
+  newConversationSelector,
+  projectRowSelector,
+  setPhase,
+  workspacePath,
+}) {
+  for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
+    setPhase(`local-model-switch-${switchCase.id}`)
+    const sourceModel = LOCAL_MODEL_CASES.find(
+      model => model.protocol === switchCase.sourceProtocol
+    )
+    const targetModel = LOCAL_MODEL_CASES.find(
+      model => model.protocol === switchCase.targetProtocol
+    )
+    assert.ok(sourceModel, `Missing ${switchCase.sourceProtocol} local switch source`)
+    assert.ok(targetModel, `Missing ${switchCase.targetProtocol} local switch target`)
+    for (const model of LOCAL_MODEL_CASES) {
+      control.localProtocolStates.set(model.protocol, { stage: 'initial', requests: [] })
+    }
+    control.localProtocolStates.set(sourceModel.protocol, {
+      stage: 'model_switch_source',
+      requests: [],
+    })
+    control.localProtocolStates.set(targetModel.protocol, {
+      stage: 'model_switch_target',
+      requests: [],
+    })
+    await rm(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), { force: true })
+    await control.command('clickWhenEnabled', newConversationSelector)
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control, sourceModel.optionIds, sourceModel.labels)
+    await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+    await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
+      ?.requests.length
+    assert.ok(
+      sourceRequestsBeforeSwitch && sourceRequestsBeforeSwitch >= 3,
+      `${switchCase.id} did not complete its source tool loop and failed follow-up`
+    )
+    if (switchIndex === 0) {
+      await prepareCompletedTurnScreenshot(control)
+      await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
+    }
+    await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
+    await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    if (switchIndex === 0) {
+      await captureVerificationScreenshot(
+        control,
+        'model-switch-retry-02-picker-open.png',
+        '[data-testid="model-selector-menu"]'
+      )
+    }
+    await selectE2EModel(control, targetModel.optionIds, targetModel.labels)
+    if (switchIndex === 0) {
+      await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
+    }
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: LOCAL_MODEL_SWITCH_COMPLETE,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(
+      await readFile(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), 'utf8'),
+      LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT,
+      `${switchCase.id} did not execute its source tool call before switching`
+    )
+    const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
+    const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
+    assert.equal(
+      sourceSwitchState?.requests.length,
+      sourceRequestsBeforeSwitch,
+      `${switchCase.id} retried through the old custom model`
+    )
+    assert.equal(
+      targetSwitchState?.stage,
+      'model_switch_target_complete',
+      `${switchCase.id} did not complete the automatic same-conversation retry`
+    )
+    await waitForE2EModelLabel(control, targetModel.labels)
+    await waitForSnapshot(
+      control,
+      snapshot => !/下一轮|Next/.test(snapshot.text),
+      `${switchCase.id} left the applied model marked as next-turn only`,
+      DEFAULT_STEP_TIMEOUT_MS,
+      '[data-testid="model-selector-button"]'
+    )
+    modelSwitchVerification.push({
+      direction: switchCase.id,
+      sourceProtocol: sourceModel.protocol,
+      targetProtocol: targetModel.protocol,
+      sourceRequestCount: sourceSwitchState.requests.length,
+      targetRequestCount: targetSwitchState.requests.length,
+      targetHistoryVerified: targetSwitchState.historyVerified === true,
+      toolArtifactVerified: true,
+      completed: true,
+    })
+    if (switchIndex === 0) {
+      await prepareCompletedTurnScreenshot(control)
+      await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
+    }
+  }
+
+  setPhase('provider-switch-retry')
+  await verifyCrossProviderSwitchRetry(control, composerSelector)
+  setPhase('local-vision-sidecar')
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: LOCAL_VISION_SIDECAR_CASE,
+    projectRowSelector,
+  })
+  await writeFile(
+    join(resultDir, 'model-switch-protocol-verification.json'),
+    `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
+    'utf8'
+  )
+  assert.deepEqual(
+    modelSwitchVerification.map(result => result.direction),
+    LOCAL_MODEL_SWITCH_CASES.map(result => result.id),
+    'The model-routing E2E did not verify all six protocol directions'
+  )
+  if (MODEL_SWITCH_ONLY) return
+
+  setPhase('local-model-protocol-matrix')
+  await verifyModelProtocolMatrix({
+    cases: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
+    composerSelector,
+    control,
+    newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    screenshotPrefix: 'local-matrix',
+    workspacePath,
+  })
+}
+
 async function waitForMatrixStage(control, model, ...expectedStages) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
@@ -14233,17 +14386,19 @@ async function main() {
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-    const executorBinary = await buildExecutor()
+    let executorBinary
     if (CLOUD_ONLY) {
       cloudEnvironment = new RealCloudEnvironment({
         codexBinary,
-        executorBinary,
         modelServerUrl: control.url,
         workspacePath,
       })
-      await cloudEnvironment.start()
+      const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
+      executorBinary = builtExecutor
+    } else {
+      executorBinary = await buildExecutor()
     }
-    const desktopApp = await buildDesktopApp(
+    const desktopAppPromise = buildDesktopApp(
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
       cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
@@ -14251,6 +14406,14 @@ async function main() {
       control.url,
       codexBinary
     )
+    const desktopApp = cloudEnvironment
+      ? (
+          await Promise.all([
+            desktopAppPromise,
+            cloudEnvironment.startRemoteExecutor(executorBinary),
+          ])
+        )[0]
+      : await desktopAppPromise
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
@@ -14702,10 +14865,14 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
-    if (AUTOMATION_ONLY) {
+    if (DESKTOP_SEGMENT === 'automation-lifecycle' || AUTOMATION_ONLY) {
       phase = 'automation-lifecycle'
       await verifyAutomationLifecycle(control, executorHome, homePath)
-      console.log(`Wework desktop automation E2E passed. Evidence: ${resultDir}`)
+      console.log(
+        AUTOMATION_ONLY
+          ? `Wework desktop automation E2E passed. Evidence: ${resultDir}`
+          : `Wework desktop automation-lifecycle checkpoint passed. Evidence: ${resultDir}`
+      )
       return
     }
 
@@ -14801,6 +14968,55 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY) {
+      phase = 'model-routing-project'
+      const projectMenusBeforeModelRouting = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('project-menu-')
+        )
+      )
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      const projectSnapshot = await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.some(
+            testId =>
+              testId.startsWith('project-menu-') && !projectMenusBeforeModelRouting.has(testId)
+          ),
+        'The model-routing project was not shown in the sidebar'
+      )
+      const projectMenuTestId = projectSnapshot.testIds.find(
+        testId => testId.startsWith('project-menu-') && !projectMenusBeforeModelRouting.has(testId)
+      )
+      assert.ok(projectMenuTestId, 'The model-routing project identity was not found')
+      const projectId = projectMenuTestId.slice('project-menu-'.length)
+      await verifyLocalModelRouting({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        modelSwitchVerification,
+        newConversationSelector: `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`,
+        projectRowSelector: `[data-testid="project-row-${projectId}"]`,
+        setPhase: value => {
+          phase = value
+        },
+        workspacePath,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(
+        MODEL_SWITCH_ONLY
+          ? `Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`
+          : `Wework desktop model-routing checkpoint passed. Evidence: ${resultDir}`
+      )
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
@@ -14834,8 +15050,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
 
-        phase = 'automation-lifecycle'
-        await verifyAutomationLifecycle(control, executorHome, homePath)
+        if (shouldRunDesktopCheckpoint('automation-lifecycle')) {
+          phase = 'automation-lifecycle'
+          await verifyAutomationLifecycle(control, executorHome, homePath)
+        }
 
         phase = 'cloud-work-page'
         await verifyCloudWorkPage(control)
@@ -15179,6 +15397,29 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
       console.log(`Wework background task-plan E2E passed. Evidence: ${resultDir}`)
       return
+    }
+
+    if (shouldRunDesktopCheckpoint('model-routing')) {
+      await verifyLocalModelRouting({
+        composerSelector,
+        control,
+        modelSwitchVerification,
+        newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        projectRowSelector,
+        setPhase: value => {
+          phase = value
+        },
+        workspacePath,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      if (shouldStopAfterDesktopCheckpoint('model-routing')) {
+        console.log(`Wework desktop model-routing checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
     }
 
     let taskRowTestId
@@ -15584,165 +15825,6 @@ last_updated = "2026-07-30T00:00:00Z"`
           control,
           projectRowSelector,
           taskRowTestId,
-        })
-
-        for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
-          phase = `local-model-switch-${switchCase.id}`
-          const sourceModel = LOCAL_MODEL_CASES.find(
-            model => model.protocol === switchCase.sourceProtocol
-          )
-          const targetModel = LOCAL_MODEL_CASES.find(
-            model => model.protocol === switchCase.targetProtocol
-          )
-          assert.ok(sourceModel, `Missing ${switchCase.sourceProtocol} local switch source`)
-          assert.ok(targetModel, `Missing ${switchCase.targetProtocol} local switch target`)
-          for (const model of LOCAL_MODEL_CASES) {
-            control.localProtocolStates.set(model.protocol, { stage: 'initial', requests: [] })
-          }
-          control.localProtocolStates.set(sourceModel.protocol, {
-            stage: 'model_switch_source',
-            requests: [],
-          })
-          control.localProtocolStates.set(targetModel.protocol, {
-            stage: 'model_switch_target',
-            requests: [],
-          })
-          await rm(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), { force: true })
-          await control.command('click', '[data-testid="new-chat-button"]')
-          await control.command('waitFor', composerSelector, {
-            timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-          })
-          await selectE2EModel(control, sourceModel.optionIds, sourceModel.labels)
-          await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
-          await control.command('waitFor', '[data-testid="message-assistant"]', {
-            text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
-          await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
-          await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
-            visible: true,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
-          const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
-            ?.requests.length
-          assert.ok(
-            sourceRequestsBeforeSwitch && sourceRequestsBeforeSwitch >= 3,
-            `${switchCase.id} did not complete its source tool loop and failed follow-up`
-          )
-          if (switchIndex === 0) {
-            await prepareCompletedTurnScreenshot(control)
-            await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
-          }
-          await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
-          await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
-            stableMs: COMPOSER_READY_STABILITY_MS,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
-          await control.command('waitFor', '[data-testid="model-selector-menu"]', {
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
-          if (switchIndex === 0) {
-            await captureVerificationScreenshot(
-              control,
-              'model-switch-retry-02-picker-open.png',
-              '[data-testid="model-selector-menu"]'
-            )
-          }
-          await selectE2EModel(control, targetModel.optionIds, targetModel.labels)
-          if (switchIndex === 0) {
-            await captureVerificationScreenshot(
-              control,
-              'model-switch-retry-03-target-selected.png'
-            )
-          }
-          await control.command('waitFor', '[data-testid="message-assistant"]', {
-            text: LOCAL_MODEL_SWITCH_COMPLETE,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          })
-          assert.equal(
-            await readFile(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), 'utf8'),
-            LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT,
-            `${switchCase.id} did not execute its source tool call before switching`
-          )
-          const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
-          const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
-          assert.equal(
-            sourceSwitchState?.requests.length,
-            sourceRequestsBeforeSwitch,
-            `${switchCase.id} retried through the old custom model`
-          )
-          assert.equal(
-            targetSwitchState?.stage,
-            'model_switch_target_complete',
-            `${switchCase.id} did not complete the automatic same-conversation retry`
-          )
-          await waitForE2EModelLabel(control, targetModel.labels)
-          await waitForSnapshot(
-            control,
-            snapshot => !/下一轮|Next/.test(snapshot.text),
-            `${switchCase.id} left the applied model marked as next-turn only`,
-            DEFAULT_STEP_TIMEOUT_MS,
-            '[data-testid="model-selector-button"]'
-          )
-          modelSwitchVerification.push({
-            direction: switchCase.id,
-            sourceProtocol: sourceModel.protocol,
-            targetProtocol: targetModel.protocol,
-            sourceRequestCount: sourceSwitchState.requests.length,
-            targetRequestCount: targetSwitchState.requests.length,
-            targetHistoryVerified: targetSwitchState.historyVerified === true,
-            toolArtifactVerified: true,
-            completed: true,
-          })
-          if (switchIndex === 0) {
-            await prepareCompletedTurnScreenshot(control)
-            await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
-          }
-        }
-        phase = 'provider-switch-retry'
-        await verifyCrossProviderSwitchRetry(control, composerSelector)
-        phase = 'local-vision-sidecar'
-        await verifyVisionSidecar({
-          composerSelector,
-          control,
-          modelCase: LOCAL_VISION_SIDECAR_CASE,
-          projectRowSelector,
-        })
-        await writeFile(
-          join(resultDir, 'model-switch-protocol-verification.json'),
-          `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
-          'utf8'
-        )
-        if (MODEL_SWITCH_ONLY) {
-          assert.deepEqual(
-            modelSwitchVerification.map(result => result.direction),
-            LOCAL_MODEL_SWITCH_CASES.map(result => result.id),
-            'The focused model-switch E2E did not verify all six protocol directions'
-          )
-          await writeFile(
-            join(resultDir, 'model-requests.json'),
-            `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-            'utf8'
-          )
-          console.log(`Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`)
-          return
-        }
-
-        phase = 'local-model-protocol-matrix'
-        await verifyModelProtocolMatrix({
-          cases: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
-          composerSelector,
-          control,
-          newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-          screenshotPrefix: 'local-matrix',
-          workspacePath,
-        })
-
-        await ensureTaskRowVisible(control, taskRowTestId)
-        await control.command('click', `[data-testid="${taskRowTestId}"]`)
-        await control.command('waitFor', '[data-testid="model-selector-button"]', {
-          text: DEFAULT_MODEL_LABEL,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
       }
 
