@@ -321,9 +321,7 @@ function ExternalKnowledgeBadge({
   const scopeLabel =
     context.external_target_type === 'document'
       ? formatCompactKnowledgeScope(0, count, t)
-      : context.external_target_type === 'folder'
-        ? formatCompactKnowledgeScope(count, 0, t)
-        : undefined
+      : undefined
   const sourceLabel = context.external_provider
     ? getExternalKnowledgeSourceLabel(context.external_provider, externalSource)
     : undefined

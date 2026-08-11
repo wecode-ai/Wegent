@@ -90,7 +90,7 @@ describe('FlyfishOfficePreview', () => {
     }
   )
 
-  it('keeps spreadsheet DOM overlays in the scoped style surface', () => {
+  it('forwards shadow style isolation to the spreadsheet viewer', () => {
     render(
       <FlyfishOfficePreview
         blob={new Blob(['spreadsheet'], { type: 'application/octet-stream' })}
@@ -100,6 +100,6 @@ describe('FlyfishOfficePreview', () => {
 
     const props = mockFileViewer.mock.calls[0][0]
     expect(props.className).not.toContain('overflow-auto')
-    expect((props.options as { styleIsolation: string }).styleIsolation).toBe('scoped')
+    expect((props.options as { styleIsolation: string }).styleIsolation).toBe('shadow')
   })
 })
