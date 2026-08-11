@@ -67,6 +67,7 @@ class SandboxToolProvider(SkillToolProvider):
             "timeout": config.get("timeout", 7200),
             "auth_token": context.auth_token,  # For skill downloads in sandbox
             "skill_identity_token": context.skill_identity_token,
+            "load_skill_tool": context.load_skill_tool,
         }
 
     @property
