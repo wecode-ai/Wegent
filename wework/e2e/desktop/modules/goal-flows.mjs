@@ -15,6 +15,7 @@ import { snapshotHasAssistantActivity } from './response-protocol.mjs'
 
 import {
   COMPOSER_READY_STABILITY_MS,
+  ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -55,13 +56,11 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     )
   )
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, composerSelector)
   await selectE2EModel(control)
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
   await control.command('click', '[data-testid="set-goal-button"]')
-  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await sendPromptUntilScenarioRequest(control, composerSelector, GOAL_IDLE_PROMPT, 'goal_idle')
@@ -76,12 +75,18 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+    'The running Goal turn did not render a consistent sidebar state'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('pause-response-button') &&
       snapshotHasAssistantActivity(snapshot) &&
-      !snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId),
-    'The running Goal turn did not render a consistent sidebar, composer, and message state'
+      !snapshot.testIds.includes('send-message-button'),
+    'The running Goal turn did not render a consistent composer and message state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   const runningDebugSnapshot = await waitForWorkbenchDebugState(
     control,
@@ -127,17 +132,23 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     control,
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
-      snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'The between-turn Goal gap did not preserve the sidebar and unread state'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes('pause-response-button') &&
       snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes('assistant-error-card') &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_IDLE_PROMPT) &&
       snapshot.text.includes(GOAL_IDLE_INITIAL_TEXT),
-    'The between-turn Goal gap did not preserve the sidebar, composer, message, and unread state',
-    DEFAULT_STEP_TIMEOUT_MS
+    'The between-turn Goal gap did not preserve the composer and message state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   const continuationDebugSnapshot = await waitForWorkbenchDebugState(
     control,
@@ -187,11 +198,18 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
-      snapshot.testIds.includes('pause-response-button') &&
-      !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId),
-    'Reloading lost the provider-confirmed running state during Goal continuation',
+    'Reloading lost the provider-confirmed sidebar state during Goal continuation',
     WORKBENCH_READY_TIMEOUT_MS
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('send-message-button'),
+    'Reloading lost the provider-confirmed composer state during Goal continuation',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   const reloadedContinuationDebugSnapshot = await waitForWorkbenchDebugState(
     control,
@@ -249,15 +267,20 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await waitForSnapshot(
     control,
     snapshot =>
+      !snapshot.testIds.includes(goalUnreadTestId) && !snapshot.testIds.includes(goalRunningTestId),
+    'Opening the completed Goal task did not clear its sidebar state'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
-      !snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('thinking-indicator') &&
       !snapshot.testIds.includes('assistant-error-card') &&
       !snapshot.testIds.includes('goal-status-bar'),
-    'Opening the completed Goal task did not render a consistent final state',
-    DEFAULT_STEP_TIMEOUT_MS
+    'Opening the completed Goal task did not render a consistent final workbench state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   const settledDebugSnapshot = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -278,9 +301,7 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   control.setScenario('goal_busy_handoff')
   const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, composerSelector)
   await selectE2EModel(control)
   await ensurePlanMode(control)
   await sendPromptUntilScenarioRequest(
@@ -293,7 +314,9 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
     control,
     snapshot =>
       snapshot.testIds.includes('pause-response-button') && snapshotHasAssistantActivity(snapshot),
-    'The planning turn did not remain active before Goal submission'
+    'The planning turn did not remain active before Goal submission',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
 
   const runningDebugSnapshot = JSON.parse(
@@ -304,9 +327,9 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   const goalTaskRowTestId = `runtime-local-task-row-${goalTaskId}`
   const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
 
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
   await control.command('click', '[data-testid="set-goal-button"]')
-  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', composerSelector, { value: GOAL_BUSY_OBJECTIVE })
@@ -317,11 +340,17 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   })
   await waitForSnapshot(
     control,
+    snapshot => snapshot.testIds.includes(goalRunningTestId),
+    'Submitting Goal during a planning turn did not preserve the sidebar running state'
+  )
+  await waitForSnapshot(
+    control,
     snapshot =>
       snapshot.testIds.includes('goal-status-bar') &&
-      snapshot.testIds.includes(goalRunningTestId) &&
       snapshot.testIds.includes('pause-response-button'),
-    'Submitting Goal during a planning turn did not preserve the running state'
+    'Submitting Goal during a planning turn did not preserve the workbench running state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -358,15 +387,21 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   })
   await waitForSnapshot(
     control,
+    snapshot => !snapshot.testIds.includes(goalRunningTestId),
+    'The automatically started Goal remained running in the sidebar'
+  )
+  await waitForSnapshot(
+    control,
     snapshot =>
       snapshot.text.includes(GOAL_BUSY_PLAN_TEXT) &&
       snapshot.text.includes(GOAL_BUSY_COMPLETION_TEXT) &&
       snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes('goal-status-bar') &&
       !snapshot.testIds.includes('conversation-queue-panel') &&
       !snapshot.testIds.includes('assistant-error-card'),
-    'The automatically started Goal did not complete cleanly'
+    'The automatically started Goal did not complete cleanly',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
 }
 
@@ -379,11 +414,9 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     )
   )
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, composerSelector)
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
   await control.command('waitFor', '[data-testid="task-supervisor-toggle-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -496,13 +529,11 @@ async function verifyGoalRestartRecoveryLifecycle({
     )
   )
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, composerSelector)
   await selectE2EModel(control)
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
   await control.command('click', '[data-testid="set-goal-button"]')
-  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await sendPromptUntilScenarioRequest(
@@ -527,14 +558,20 @@ async function verifyGoalRestartRecoveryLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+    'The user did not see the Goal running in the sidebar before Wework restarted'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes('pause-response-button') &&
       snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
-    'The user did not see the Goal working before Wework restarted'
+    'The user did not see the Goal working before Wework restarted',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   ).catch(async error => {
     const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     throw new Error(
@@ -598,15 +635,23 @@ async function verifyGoalRestartRecoveryLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      snapshot.testIds.includes(goalTaskRowTestId),
+    'Opening the interrupted Goal did not preserve its stable sidebar state',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('thinking-indicator') &&
-      !snapshot.testIds.includes(goalRunningTestId) &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_PROMPT),
     'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
-    WORKBENCH_READY_TIMEOUT_MS
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   const interruptedDebugSnapshot = await waitForWorkbenchDebugState(
     control,
@@ -646,12 +691,18 @@ async function verifyGoalRestartRecoveryLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+    'The explicitly resumed Goal did not show consistent sidebar feedback'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('pause-response-button') &&
       snapshot.testIds.includes('thinking-indicator') &&
-      !snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId),
-    'The user did not see consistent running feedback after explicitly resuming the Goal'
+      !snapshot.testIds.includes('send-message-button'),
+    'The user did not see consistent workbench feedback after explicitly resuming the Goal',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   await captureVerificationScreenshot(control, 'goal-restart-04-explicitly-resumed.png')
 
@@ -674,14 +725,19 @@ async function verifyGoalRestartRecoveryLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
+      !snapshot.testIds.includes(goalUnreadTestId) && !snapshot.testIds.includes(goalRunningTestId),
+    'The recovered Goal did not clear its sidebar state'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
       snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
-      !snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('thinking-indicator') &&
       !snapshot.testIds.includes('goal-status-bar'),
-    'The recovered Goal did not settle into a consistent final state',
-    DEFAULT_STEP_TIMEOUT_MS
+    'The recovered Goal did not settle into a consistent final workbench state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
   )
   await captureVerificationScreenshot(control, 'goal-restart-06-completed-read.png')
 }
