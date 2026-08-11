@@ -338,10 +338,13 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
   await control.command('click', `${sideChatSelector} [data-testid^="queue-cancel-button-"]`)
-  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
-    hidden: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The side-chat queued follow-up could not be cancelled',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
 
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-mode-menu-button"]`)
