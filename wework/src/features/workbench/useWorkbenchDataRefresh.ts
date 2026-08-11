@@ -50,6 +50,25 @@ import {
 } from './remoteRuntimeWorkCache'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 
+/**
+ * Resolve the standalone device after a device or runtime-work refresh.
+ *
+ * While a standalone workspace is open its device must be preserved verbatim:
+ * the workspace may belong to a cloud or remote device that the standalone-task
+ * preference intentionally excludes. Re-picking a local device here would
+ * render a phantom local project row next to the real remote workspace.
+ */
+function resolveStandaloneDeviceIdForRefresh(
+  devices: DeviceInfo[],
+  standaloneDeviceId: string | null | undefined,
+  standaloneWorkspacePath: string | null | undefined
+): string | null {
+  if (standaloneWorkspacePath && standaloneDeviceId) {
+    return standaloneDeviceId
+  }
+  return getPreferredStandaloneDeviceId(devices, standaloneDeviceId)
+}
+
 interface UseWorkbenchDataRefreshOptions {
   user: User
   state: WorkbenchState
@@ -339,6 +358,7 @@ export function useWorkbenchDataRefresh({
       options?: {
         projects: ProjectWithTasks[]
         standaloneDeviceId: string | null
+        standaloneWorkspacePath?: string | null
         trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
         isCancelled?: () => boolean
       }
@@ -414,9 +434,10 @@ export function useWorkbenchDataRefresh({
           dispatch({
             type: 'devices_refreshed',
             devices,
-            standaloneDeviceId: getPreferredStandaloneDeviceId(
+            standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
               devices,
-              options?.standaloneDeviceId ?? null
+              options?.standaloneDeviceId ?? null,
+              options?.standaloneWorkspacePath
             ),
           })
         }
@@ -508,9 +529,10 @@ export function useWorkbenchDataRefresh({
           projects: options?.projects ?? [],
           devices,
           runtimeWork,
-          standaloneDeviceId: getPreferredStandaloneDeviceId(
+          standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
             devices,
-            options?.standaloneDeviceId ?? null
+            options?.standaloneDeviceId ?? null,
+            options?.standaloneWorkspacePath
           ),
         })
       } finally {
@@ -674,15 +696,17 @@ export function useWorkbenchDataRefresh({
         projects: state.projects,
         devices: visibleDevices,
         runtimeWork,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(
+        standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
           visibleDevices,
-          state.standaloneDeviceId
+          state.standaloneDeviceId,
+          state.standaloneWorkspacePath
         ),
       })
       if (options?.syncCloud !== false) {
         void refreshCloudBackgroundData(devices, localRuntimeWork, {
           projects: state.projects,
           standaloneDeviceId: state.standaloneDeviceId,
+          standaloneWorkspacePath: state.standaloneWorkspacePath,
           trigger: 'manual-refresh',
         }).catch(() => undefined)
       }
@@ -700,6 +724,7 @@ export function useWorkbenchDataRefresh({
       state.projects,
       state.runtimeWork,
       state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
     ]
   )
 
@@ -780,11 +805,16 @@ export function useWorkbenchDataRefresh({
       dispatch({
         type: 'devices_refreshed',
         devices,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
+        standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
+          devices,
+          state.standaloneDeviceId,
+          state.standaloneWorkspacePath
+        ),
       })
       void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
         projects: state.projects,
         standaloneDeviceId: state.standaloneDeviceId,
+        standaloneWorkspacePath: state.standaloneWorkspacePath,
         trigger: 'manual-refresh',
       }).catch(() => undefined)
     },
@@ -795,6 +825,7 @@ export function useWorkbenchDataRefresh({
       state.projects,
       state.runtimeWork,
       state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
     ]
   )
 
