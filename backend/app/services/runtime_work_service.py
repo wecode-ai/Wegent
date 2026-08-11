@@ -573,20 +573,14 @@ async def send_runtime_message(
         payload["requestUserInputResponse"] = request.request_user_input_response
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=address.device_id,
-            method="runtime.tasks.send",
-            payload=payload,
-            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
-        )
-    except RuntimeRpcError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    return _runtime_send_response(result, address.local_task_id)
+    return await _dispatch_runtime_send(
+        db=db,
+        user_id=user_id,
+        address=address,
+        payload=payload,
+        request=request,
+        rpc_method="runtime.tasks.send",
+    )
 
 
 async def interrupt_and_send_runtime_message(
@@ -611,11 +605,49 @@ async def interrupt_and_send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
+    return await _dispatch_runtime_send(
+        db=db,
+        user_id=user_id,
+        address=address,
+        payload=payload,
+        request=request,
+        rpc_method="runtime.tasks.interrupt_and_send",
+    )
+
+
+async def _dispatch_runtime_send(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    payload: dict[str, Any],
+    request: RuntimeSendRequest,
+    rpc_method: str,
+) -> RuntimeSendResponse:
+    """Send a runtime task message with a best-effort executionRequest payload.
+
+    The executor requires ``executionRequest`` to spawn a new turn (it carries
+    model config, user info, skills, etc.). The Wework frontend builds this
+    client-side for direct local sends; the IM continuation path flows through
+    the backend RPC, so we synthesize a minimal request here from the default
+    task-mode team. Failures to build the request are non-fatal — the payload
+    is still forwarded so existing tasks that don't need a fresh turn (e.g.
+    request-user-input responses) keep working.
+    """
+    execution_request = _safe_build_runtime_send_execution_request(
+        db=db,
+        user_id=user_id,
+        address=address,
+        message=request.message,
+        attachment_ids=request.attachment_ids,
+    )
+    if execution_request is not None:
+        payload["executionRequest"] = execution_request.to_dict()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=address.device_id,
-            method="runtime.tasks.interrupt_and_send",
+            method=rpc_method,
             payload=payload,
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
         )
@@ -2205,7 +2237,15 @@ async def _runtime_task_title_for_address(
     expected_task_id = str(address.local_task_id).strip()
     if not expected_task_id:
         return None
+    expected_workspace_path = (
+        normalize_workspace_path(address.workspace_path)
+        if address.workspace_path
+        else None
+    )
     for workspace in _iter_runtime_workspaces(result):
+        workspace_path = normalize_workspace_path(workspace["workspacePath"])
+        if expected_workspace_path and workspace_path != expected_workspace_path:
+            continue
         for task in workspace["tasks"]:
             if not isinstance(task, dict):
                 continue
@@ -3824,6 +3864,138 @@ def _get_team(db: Session, user_id: int, team_id: int) -> Kind:
             detail="Team not found",
         )
     return team
+
+
+def _get_task_mode_team(db: Session, user_id: int) -> Optional[Kind]:
+    """Resolve the default task-mode team (e.g. wegent-wework#default).
+
+    Mirrors ``IMChannelHandler._get_task_mode_team`` so the IM continuation
+    path uses the same default agent as the Wework workbench.
+    """
+    from app.services.readers.kinds import KindType, kindReader
+
+    config_value = settings.DEFAULT_TEAM_TASK
+    if not config_value or not config_value.strip():
+        return None
+    parts = config_value.strip().split("#", 1)
+    name = parts[0].strip()
+    namespace = parts[1].strip() if len(parts) > 1 else "default"
+    if not name:
+        return None
+    return kindReader.get_by_name_and_namespace(
+        db, user_id, KindType.TEAM, namespace, name
+    )
+
+
+def _build_runtime_send_execution_request(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    message: str,
+    attachment_ids: list[int],
+):
+    """Build an executor request for an IM continuation send.
+
+    The executor's ``runtime.tasks.send`` handler requires an
+    ``executionRequest`` to spawn a new turn (model config, user info,
+    skills, workspace, etc.). The Wework frontend constructs this
+    client-side for direct local sends; the IM continuation path flows
+    through the backend RPC, so we synthesize one here from the default
+    task-mode team — the same agent the workbench uses.
+    """
+    from app.services.execution import TaskRequestBuilder
+
+    user = _get_user(db, user_id)
+    team = _get_task_mode_team(db, user_id)
+    if team is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Default task-mode team is not configured",
+        )
+    task_id, subtask_id = _runtime_execution_ids()
+    target = RuntimeTaskTarget(
+        device_id=address.device_id,
+        workspace_path=address.workspace_path or "",
+        project=None,
+        workspace_source="local_path",
+    )
+    request = SimpleNamespace(
+        message=message,
+        additional_context=None,
+        additional_skills=[],
+        attachment_ids=attachment_ids,
+        model_id=None,
+        model_type=None,
+        model_options={},
+        runtime="codex",
+    )
+    task = _runtime_task_context(
+        user_id=user_id,
+        task_id=task_id,
+        request=request,
+        target=target,
+        team=team,
+    )
+    subtask = _runtime_assistant_context(
+        user_id=user_id,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        request=request,
+        team=team,
+    )
+    payload = _runtime_execution_payload(request)
+    runtime_model_config, override_model_name, force_override = _runtime_model_override(
+        db,
+        user_id,
+        request,
+    )
+    execution_request = TaskRequestBuilder(db).build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message=_message_with_application_context(message, None),
+        preload_skills=request.additional_skills,
+        override_model_name=override_model_name,
+        force_override=force_override,
+        runtime_model_config=runtime_model_config,
+        web_runtime_guidance=True,
+    )
+    _apply_runtime_task_target(execution_request, target)
+    _apply_runtime_model_options(db, execution_request, user, payload)
+    _apply_runtime_attachments(db, execution_request, user_id, attachment_ids)
+    return execution_request
+
+
+def _safe_build_runtime_send_execution_request(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    message: str,
+    attachment_ids: list[int],
+):
+    """Best-effort wrapper around _build_runtime_send_execution_request.
+
+    Returns ``None`` on failure so the send payload is still forwarded
+    without an ``executionRequest`` — the executor can handle cases that
+    don't need a fresh turn (e.g. request-user-input responses).
+    """
+    try:
+        return _build_runtime_send_execution_request(
+            db=db,
+            user_id=user_id,
+            address=address,
+            message=message,
+            attachment_ids=attachment_ids,
+        )
+    except Exception:
+        logger.warning(
+            "[RuntimeWork] Failed to build executionRequest for runtime send",
+            exc_info=True,
+        )
+        return None
 
 
 def _ensure_owned_device(db: Session, user_id: int, device_id: str) -> None:

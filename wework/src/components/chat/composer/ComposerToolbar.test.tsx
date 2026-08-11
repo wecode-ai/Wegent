@@ -72,7 +72,7 @@ describe('ComposerToolbar', () => {
     expect(screen.getByTestId('quick-phrase-layout')).toHaveTextContent('icon')
   })
 
-  it('collapses the plugin picker trigger to an icon once a conversation has started', () => {
+  it('keeps the expanded plugin picker until the toolbar itself is compact', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       width: 600,

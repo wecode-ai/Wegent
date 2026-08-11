@@ -23,7 +23,7 @@ import {
   type LocalExecutorReadiness,
   type StartupEnvVar,
 } from '@wecode/api/local-executor'
-import type { DeviceInfo } from '@/types/devices'
+import type { DeviceInfo } from '@/types/api'
 import { canSaveEnvVars, type LocalExecutorState } from './localManagementState'
 
 function StatusPill({ label, tone }: { label: string; tone: 'online' | 'warning' | 'neutral' }) {

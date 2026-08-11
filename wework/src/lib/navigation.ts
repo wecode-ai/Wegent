@@ -32,7 +32,7 @@ export function resolveDesktopAppRoute(app: DesktopAppKey): string {
     case 'wegent':
       return '/app/wegent'
     default:
-      return '/apps'
+      return '/'
   }
 }
 
