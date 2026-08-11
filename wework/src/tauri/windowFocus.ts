@@ -11,7 +11,16 @@ let initialized = false
 let unlistenPromise: Promise<UnlistenFn> | null = null
 
 function ensureListenerInstalled() {
-  if (initialized || !isTauriRuntime() || getCurrentWindow().label !== 'main') {
+  if (initialized || !isTauriRuntime()) {
+    return
+  }
+  let label: string
+  try {
+    label = getCurrentWindow().label
+  } catch {
+    return
+  }
+  if (label !== 'main') {
     return
   }
   initialized = true
