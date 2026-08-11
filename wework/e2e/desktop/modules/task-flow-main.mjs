@@ -1147,6 +1147,13 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'permission-modes') {
+      phase = 'permission-modes'
+      await verifyPermissionModes(control)
+      console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
@@ -2985,6 +2992,90 @@ last_updated = "2026-07-30T00:00:00Z"`
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }
   }
+}
+
+async function verifyPermissionModes(control) {
+  const trigger = '[data-testid="permission-mode-menu-button"]'
+  await control.command('waitFor', trigger, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Workspace|工作区/,
+    'The default permission mode was not workspace'
+  )
+  await captureVerificationScreenshot(control, 'permission-01-default-workspace.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'permission-02-mode-menu.png')
+
+  await control.command('click', '[data-testid="permission-mode-full-access"]')
+  await control.command('waitFor', '[data-testid="full-access-confirm-overlay"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="full-access-confirm-overlay"]'),
+    /Enable full access|启用完整访问/,
+    'The full-access warning dialog did not explain the requested mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-03-full-access-confirmation.png')
+
+  await control.command('click', '[data-testid="full-access-confirm-cancel"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Workspace|工作区/,
+    'Cancelling full access changed the permission mode'
+  )
+  assert.equal(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.includes(
+      'full-access-confirm-overlay'
+    ),
+    false,
+    'Cancelling full access left the confirmation dialog open'
+  )
+  await captureVerificationScreenshot(control, 'permission-04-full-access-cancelled.png')
+
+  await control.command('click', trigger)
+  await control.command('click', '[data-testid="permission-mode-full-access"]')
+  await control.command('click', '[data-testid="full-access-confirm-submit"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Full access|完整访问/,
+    'Confirming full access did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-05-full-access-enabled.png')
+
+  await control.command('click', trigger)
+  await control.command('click', '[data-testid="permission-mode-read-only"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Read only|只读/,
+    'Selecting read-only did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-06-read-only-enabled.png')
+
+  await control.command('click', trigger)
+  await control.command('click', '[data-testid="permission-mode-workspace-write"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Workspace|工作区/,
+    'Restoring workspace mode did not update the permission mode'
+  )
 }
 
 export { main }

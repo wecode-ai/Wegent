@@ -75,7 +75,20 @@
     "asked_count": "已询问 {{count}} 个问题",
     "ignore": "取消",
     "submit": "提交",
-    "custom_placeholder": "输入你的回答"
+    "custom_placeholder": "输入你的回答",
+    "approval_title": "需要审批",
+    "approval_command": "是否允许运行此命令？\n{{detail}}",
+    "approval_file_change": "是否允许此文件变更？\n{{detail}}",
+    "approval_permissions": "是否授予请求的权限？\n{{detail}}",
+    "approval_no_detail": "Codex 请求访问当前权限边界之外的资源。",
+    "approval_allow_once": "仅允许一次",
+    "approval_allow_once_description": "仅批准本次请求。",
+    "approval_allow_session": "本会话允许",
+    "approval_allow_session_description": "在本次会话剩余时间内批准同类访问。",
+    "approval_decline": "拒绝",
+    "approval_decline_description": "拒绝本次请求，并让 Codex 继续。",
+    "approval_cancel": "停止",
+    "approval_cancel_description": "拒绝本次请求，并停止当前执行。"
   },
   "plan_card": {
     "title": "计划",

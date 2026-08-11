@@ -10,6 +10,7 @@ import { hasImplementationPlanText } from './requestUserInputMessages'
 interface RequestUserInputOption {
   label?: string
   description?: string
+  value?: string
 }
 
 interface RequestUserInputQuestion {
@@ -27,6 +28,15 @@ export interface RequestUserInputPayload {
   requestId?: number | string
   item_id?: string
   itemId?: string
+  interactionKind?: string
+  interaction_kind?: string
+  approvalKind?: string
+  approval_kind?: string
+  command?: string
+  cwd?: string
+  reason?: string
+  grantRoot?: string
+  grant_root?: string
   questions?: RequestUserInputQuestion[]
   response?: RequestUserInputResponse
   requestUserInputResponse?: RequestUserInputResponse
@@ -48,7 +58,10 @@ export function RequestUserInputCard({
 }: RequestUserInputCardProps) {
   const { t } = useTranslation('chat')
   const formRef = useRef<HTMLFormElement | null>(null)
-  const questions = useMemo(() => normalizeQuestions(payload.questions), [payload.questions])
+  const questions = useMemo(
+    () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
+    [payload, t]
+  )
   const isImplementationPlanRequest = isImplementationPlanQuestions(questions)
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>(() =>
     initialAnswers(questions)
@@ -99,7 +112,7 @@ export function RequestUserInputCard({
   ) => {
     const nextAnswers = {
       ...selectedAnswers,
-      [question.id]: option.label ?? '',
+      [question.id]: option.value ?? '',
       ...emptyCustomAnswersForImplementationPlan(questions),
     }
     setActiveQuestionId(question.id)
@@ -184,7 +197,7 @@ export function RequestUserInputCard({
                 </div>
               ) : null}
               {!customQuestionIds.has(question.id) ? (
-                <div className="mb-1.5 text-sm font-medium leading-5 text-text-primary">
+                <div className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary">
                   {question.question}
                 </div>
               ) : null}
@@ -192,7 +205,7 @@ export function RequestUserInputCard({
                 <div className="flex flex-col gap-1">
                   {question.options.map((option, index) => {
                     const isSelected =
-                      selectedAnswers[question.id] === option.label &&
+                      selectedAnswers[question.id] === option.value &&
                       (!isImplementationPlanRequest || activeQuestionId === question.id)
                     return (
                       <button
@@ -264,14 +277,20 @@ export function RequestUserInputCard({
 
 export function RequestUserInputSummary({ payload }: { payload: RequestUserInputPayload }) {
   const { t } = useTranslation('chat')
-  const questions = useMemo(() => normalizeQuestions(payload.questions), [payload.questions])
+  const questions = useMemo(
+    () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
+    [payload, t]
+  )
   const response =
     payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
-  const rows = questions.map(question => ({
-    id: question.id,
-    question: question.question,
-    answer: responseAnswerText(response, question.id),
-  }))
+  const rows = questions.map(question => {
+    const answer = responseAnswerText(response, question.id)
+    return {
+      id: question.id,
+      question: question.question,
+      answer: question.options.find(option => option.value === answer)?.label ?? answer,
+    }
+  })
 
   if (rows.length === 0) return null
 
@@ -306,6 +325,7 @@ function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
       .map(option => ({
         label: option.label?.trim() ?? '',
         description: option.description?.trim() ?? '',
+        value: option.value?.trim() || option.label?.trim() || '',
       }))
       .filter(option => option.label)
     return {
@@ -320,12 +340,54 @@ function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
 
 function initialAnswers(questions: ReturnType<typeof normalizeQuestions>): Record<string, string> {
   return Object.fromEntries(
-    questions.map(question => [question.id, question.options[0]?.label ?? ''])
+    questions.map(question => [question.id, question.options[0]?.value ?? ''])
   )
 }
 
 function initialActiveQuestionId(questions: ReturnType<typeof normalizeQuestions>): string | null {
   return implementationPlanOptionQuestion(questions)?.id ?? questions[0]?.id ?? null
+}
+
+const CODEX_APPROVAL_QUESTION_ID = '__codex_approval'
+
+function localizeApprovalQuestions(
+  payload: RequestUserInputPayload,
+  t: ReturnType<typeof useTranslation>['t']
+): RequestUserInputQuestion[] | undefined {
+  const interactionKind = payload.interactionKind ?? payload.interaction_kind
+  if (interactionKind !== 'approval') return payload.questions
+
+  const approvalKind = payload.approvalKind ?? payload.approval_kind ?? 'command'
+  const detail =
+    approvalKind === 'command'
+      ? payload.command
+      : approvalKind === 'file_change'
+        ? (payload.grantRoot ?? payload.grant_root ?? payload.reason)
+        : (payload.reason ?? payload.cwd)
+  const questionKey =
+    approvalKind === 'file_change'
+      ? 'request_user_input.approval_file_change'
+      : approvalKind === 'permissions'
+        ? 'request_user_input.approval_permissions'
+        : 'request_user_input.approval_command'
+
+  return [
+    {
+      id: CODEX_APPROVAL_QUESTION_ID,
+      header: t('request_user_input.approval_title'),
+      question: t(questionKey, {
+        detail: detail || t('request_user_input.approval_no_detail'),
+      }),
+      options: (payload.questions?.[0]?.options ?? []).map(option => {
+        const value = option.label?.trim() ?? ''
+        return {
+          value,
+          label: t(`request_user_input.approval_${value}`),
+          description: t(`request_user_input.approval_${value}_description`),
+        }
+      }),
+    },
+  ]
 }
 
 function responseAnswers(
@@ -353,7 +415,7 @@ function responseAnswers(
 
   return {
     [implementQuestion.id]: {
-      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.label ?? ''],
+      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.value ?? ''],
     },
   }
 }

@@ -78,7 +78,20 @@
     "asked_count": "Asked {{count}} question(s)",
     "ignore": "Cancel",
     "submit": "Submit",
-    "custom_placeholder": "Type your answer"
+    "custom_placeholder": "Type your answer",
+    "approval_title": "Approval required",
+    "approval_command": "Allow this command?\n{{detail}}",
+    "approval_file_change": "Allow this file change?\n{{detail}}",
+    "approval_permissions": "Grant the requested permissions?\n{{detail}}",
+    "approval_no_detail": "Codex requested access outside the current permission boundary.",
+    "approval_allow_once": "Allow once",
+    "approval_allow_once_description": "Approve only this request.",
+    "approval_allow_session": "Allow for session",
+    "approval_allow_session_description": "Approve similar access for the rest of this session.",
+    "approval_decline": "Deny",
+    "approval_decline_description": "Deny this request and let Codex continue.",
+    "approval_cancel": "Stop",
+    "approval_cancel_description": "Deny this request and stop the current turn."
   },
   "plan_card": {
     "title": "Plan",

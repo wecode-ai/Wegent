@@ -2044,13 +2044,36 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
     let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
 
     for params in [thread_start, thread_resume, thread_fork, turn_start] {
+        assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
+        assert_eq!(
+            params["approvalPolicy"],
+            codex_runtime_approval_policy(&request)
+        );
+        assert!(params.get("sandboxPolicy").is_none());
+        assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_full_access_permission_profile_is_applied_when_requested() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
         assert_eq!(
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
-        assert!(params.get("sandboxPolicy").is_none());
-        assert!(params.get("sandbox").is_none());
+        assert_eq!(params["approvalPolicy"], "never");
     }
 }
 
@@ -2070,8 +2093,77 @@ fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
         turn_start_params("thread-1", &request, &launch_config, Vec::new()),
     ] {
         assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
+        assert_eq!(
+            params["approvalPolicy"],
+            codex_runtime_approval_policy(&request)
+        );
     }
+}
+
+#[test]
+fn codex_command_approval_response_preserves_user_decision() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_once"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "accept"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "acceptForSession"})
+    );
+}
+
+#[test]
+fn codex_permissions_approval_returns_requested_profile_and_scope() {
+    let message = json!({
+        "method": "item/permissions/requestApproval",
+        "params": {
+            "itemId": "permissions-1",
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            }
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "session"
+        })
+    );
 }
 
 #[test]
@@ -2091,10 +2183,7 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(
-            params["approvalPolicy"]["granular"]["mcp_elicitations"],
-            true
-        );
+        assert_eq!(params["approvalPolicy"], "on-request");
     }
 }
 

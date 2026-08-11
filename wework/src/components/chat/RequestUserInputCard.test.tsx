@@ -191,6 +191,54 @@ describe('RequestUserInputCard', () => {
     expect(onIgnore).toHaveBeenCalledTimes(1)
   })
 
+  test('localizes Codex approvals while submitting protocol decision values', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{
+          kind: 'request_user_input',
+          requestId: 44,
+          itemId: 'command-1',
+          interactionKind: 'approval',
+          approvalKind: 'command',
+          command: 'git push origin feature/permission-modes',
+          questions: [
+            {
+              id: '__codex_approval',
+              question: 'command',
+              options: [
+                { label: 'allow_once' },
+                { label: 'allow_session' },
+                { label: 'decline' },
+                { label: 'cancel' },
+              ],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent('需要审批')
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent(
+      'git push origin feature/permission-modes'
+    )
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-1')).toHaveTextContent(
+      '本会话允许'
+    )
+
+    await user.click(screen.getByTestId('request-user-input-option-__codex_approval-1'))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 44,
+      itemId: 'command-1',
+      answers: {
+        __codex_approval: { answers: ['allow_session'] },
+      },
+    })
+  })
+
   test('submits with Enter and ignores with Escape', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

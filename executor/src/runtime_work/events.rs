@@ -279,6 +279,19 @@ impl CodexNotificationEventMapper {
                     message.get("id"),
                 );
             }
+            "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval" => {
+                emit_codex_approval_request(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    notification.params,
+                    message.get("id"),
+                );
+            }
             "mcpServer/elicitation/request" => {
                 if let Some(params) =
                     mcp_server_elicitation_request_user_input_params(notification.params)
@@ -1352,6 +1365,115 @@ fn emit_request_user_input(
             }
         }),
     );
+}
+
+fn emit_codex_approval_request(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    method: &str,
+    params: &Value,
+    message_request_id: Option<&Value>,
+) {
+    let approval_kind = match method {
+        "item/commandExecution/requestApproval" => "command",
+        "item/fileChange/requestApproval" => "file_change",
+        "item/permissions/requestApproval" => "permissions",
+        _ => return,
+    };
+    let item_id = params
+        .get("itemId")
+        .or_else(|| params.get("item_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("approval");
+    let request_id = message_request_id
+        .or_else(|| params.get("requestId"))
+        .or_else(|| params.get("request_id"));
+    let block_id = request_id
+        .and_then(value_identifier)
+        .map(|id| format!("request-user-input-{id}"))
+        .unwrap_or_else(|| format!("request-user-input-{item_id}"));
+    let options = codex_approval_options(approval_kind, params);
+    let mut render_payload = params.clone();
+    if let Some(object) = render_payload.as_object_mut() {
+        object.insert(
+            "kind".to_owned(),
+            Value::String("request_user_input".to_owned()),
+        );
+        object.insert(
+            "interactionKind".to_owned(),
+            Value::String("approval".to_owned()),
+        );
+        object.insert(
+            "approvalKind".to_owned(),
+            Value::String(approval_kind.to_owned()),
+        );
+        object.insert(
+            "questions".to_owned(),
+            json!([{
+                "id": "__codex_approval",
+                "question": approval_kind,
+                "options": options,
+            }]),
+        );
+        if let Some(request_id) = request_id {
+            object.insert("requestId".to_owned(), request_id.clone());
+        }
+    }
+    emit_response_event(
+        event_tx,
+        device_id,
+        "response.block.created",
+        local_task_id,
+        request,
+        json!({
+            "block": {
+                "id": block_id,
+                "type": "tool",
+                "tool_name": "request_user_input",
+                "status": "pending",
+                "timestamp": now_ms(),
+                "render_payload": render_payload,
+            }
+        }),
+    );
+}
+
+fn codex_approval_options(approval_kind: &str, params: &Value) -> Value {
+    let default_decisions = match approval_kind {
+        "permissions" => vec!["allow_once", "allow_session", "decline"],
+        _ => vec!["allow_once", "allow_session", "decline", "cancel"],
+    };
+    let decisions = if approval_kind == "command" {
+        params
+            .get("availableDecisions")
+            .or_else(|| params.get("available_decisions"))
+            .and_then(Value::as_array)
+            .map(|available| {
+                available
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(|decision| match decision {
+                        "accept" => Some("allow_once"),
+                        "acceptForSession" => Some("allow_session"),
+                        "decline" => Some("decline"),
+                        "cancel" => Some("cancel"),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|decisions| !decisions.is_empty())
+            .unwrap_or(default_decisions)
+    } else {
+        default_decisions
+    };
+    Value::Array(
+        decisions
+            .into_iter()
+            .map(|decision| json!({"label": decision, "description": ""}))
+            .collect(),
+    )
 }
 
 fn value_identifier(value: &Value) -> Option<String> {
@@ -3785,6 +3907,63 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+    }
+
+    #[test]
+    fn maps_codex_command_approval_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "id": 43,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "command": "git push",
+                    "cwd": "/workspace",
+                    "availableDecisions": ["accept", "decline"]
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("approval request event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(block["id"], "request-user-input-43");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["render_payload"]["interactionKind"], "approval");
+        assert_eq!(block["render_payload"]["approvalKind"], "command");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["id"],
+            "__codex_approval"
+        );
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][0]["label"],
+            "allow_once"
+        );
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][1]["label"],
+            "decline"
+        );
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]

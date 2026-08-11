@@ -106,6 +106,10 @@ import {
 } from '@/tauri/localExecutor'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
+import {
+  runtimePermissionMode,
+  runtimePermissionProfile,
+} from '@/features/workbench/runtimePermissionMode'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
   codexModelPickerLabel,
@@ -1569,6 +1573,7 @@ function buildLocalRuntimeExecutionRequest(
     task_mode: 'code',
     attachments: localRuntimeAttachments(input.attachments, subtaskId),
     reasoning_config: reasoning,
+    runtime_permission_profile: runtimePermissionProfile(runtimePermissionMode(input.modelOptions)),
   }
 }
 
