@@ -140,7 +140,7 @@ The workflow can only be started manually from GitHub Actions and does not respo
 
 For example, when the latest stable version is `1.2.3`, the first Beta is `1.2.4-beta.1`, followed by `1.2.4-beta.2` and `1.2.4-beta.3`. After publishing stable `1.2.4`, the next automatic Beta is `1.2.5-beta.1`.
 
-A formal run creates or updates a `wework-v<version>` draft release. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
+A formal run creates or updates a `wework-v<version>` draft release. The Release changelog collects commits under `wework/` and `executor/` since the previous Wework tag. When no previous tag exists, the first release includes all matching history reachable from the release commit. Squash-merged PR entries include the PR number and `@contributor`; direct commits retain their short commit SHA and include `@contributor` when GitHub can identify the author's account. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
 
 After publishing the versioned Release, the workflow updates rolling manifests in the fixed `wework-updater` Release:
 
@@ -149,6 +149,8 @@ After publishing the versioned Release, the workflow updates rolling manifests i
 - A release only replaces a rolling manifest when its SemVer is higher; historical or lower releases cannot downgrade users.
 
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
+
+The updater manifest's `notes` field is persisted as the installed version's changelog during installation. On the first launch of the new version, Wework does not open the changelog automatically. Instead, it shows a fixed announcement at the bottom of the desktop sidebar above the account area. Clicking the announcement opens the Markdown release notes. Closing the details keeps the announcement available; only the announcement card's close button dismisses it, and that dismissal survives an app reload. The saved version must match the running app version, otherwise the client discards the stale record.
 
 Configure these repository secrets in GitHub Actions:
 

@@ -9,6 +9,7 @@ import {
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K27_CATALOG_MODEL_ID,
   KIMI_K3_CATALOG_MODEL_ID,
+  KIMI_K3_CONTEXT_WINDOW,
   type LocalModelApiFormat,
   type LocalModelConfig,
   type LocalModelToolProfile,
@@ -134,7 +135,11 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     webSearchMode: 'disabled',
     imageGenerationEnabled: false,
     modelDefaults: {
-      'kimi-k3': { contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
+      'kimi-k3': {
+        contextWindow: KIMI_K3_CONTEXT_WINDOW,
+        codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
+        inputModalities: ['text', 'image'],
+      },
       'kimi-k2.7-code': { contextWindow: 262_144 },
       'kimi-k2.7-code-highspeed': { contextWindow: 262_144 },
       'kimi-k2.6': { contextWindow: 262_144 },

@@ -165,11 +165,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
     }
-    const onRefreshWorkLists = vi.fn()
     const onRuntimeTaskTitleUpdated = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: vi.fn(),
-      onRefreshWorkLists,
       onRuntimeTaskTitleUpdated,
     })
 
@@ -180,7 +178,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       title: '测试标题生成功能',
     })
 
-    expect(onRefreshWorkLists).not.toHaveBeenCalled()
     expect(onRuntimeTaskTitleUpdated).toHaveBeenCalledWith({
       taskId: 'runtime-task-1',
       subtaskId: 'friendly-title-turn',
@@ -506,18 +503,16 @@ describe('createRuntimeTaskStreamHandlers', () => {
     )
   })
 
-  test('passes context compaction through regular block created actions', () => {
+  test('passes context compaction through regular block created actions without refreshing work', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const onAssistantSettled = vi.fn()
-    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
       onAssistantSettled,
-      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -548,7 +543,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'runtime-task-1-context-compact',
     })
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
-    expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
   })
 
   test('passes reclassified assistant text identity to the conversation reducer', () => {
@@ -596,11 +590,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
     }
     const actions: RuntimePaneMessageAction[] = []
     const onAssistantSettled = vi.fn()
-    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
       onAssistantSettled,
-      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -628,7 +620,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       },
     })
     expect(onAssistantSettled).not.toHaveBeenCalled()
-    expect(onRefreshWorkLists).not.toHaveBeenCalled()
   })
 
   test('preserves request user input render payload on block created events', () => {
