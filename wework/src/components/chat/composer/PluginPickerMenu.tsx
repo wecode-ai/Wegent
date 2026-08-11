@@ -43,6 +43,44 @@ function paintComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   return enabledComposerApps(items.length > 0 ? items : getComposerApps())
 }
 
+function ComposerPluginPreviewIcons({
+  apps,
+  appearanceMode,
+}: {
+  apps: LocalDeviceApp[]
+  appearanceMode: 'light' | 'dark'
+}) {
+  return (
+    <span
+      className="flex -space-x-1"
+      data-testid="composer-plugin-preview-icons"
+      aria-hidden="true"
+    >
+      {apps.slice(0, 3).map(app => {
+        const logo = resolvePluginLogoUrl({
+          pluginKey: composerAppPluginKey(app),
+          logo: app.logoUrl,
+          logoDark: app.logoUrlDark,
+          appearanceMode,
+        })
+        return (
+          <span
+            key={app.id}
+            data-testid={`composer-plugin-preview-icon-${app.id}`}
+            className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
+          >
+            {logo ? (
+              <img src={logo} alt="" className="h-full w-full object-contain" />
+            ) : (
+              <Boxes className="h-4 w-4" />
+            )}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 export function PluginPickerMenu({
   disabled = false,
   iconOnly = false,
@@ -202,33 +240,7 @@ export function PluginPickerMenu({
           ) : (
             <>
               <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
-              <span
-                className="flex -space-x-1"
-                data-testid="composer-plugin-preview-icons"
-                aria-hidden="true"
-              >
-                {apps.slice(0, 3).map(app => {
-                  const logo = resolvePluginLogoUrl({
-                    pluginKey: composerAppPluginKey(app),
-                    logo: app.logoUrl,
-                    logoDark: app.logoUrlDark,
-                    appearanceMode,
-                  })
-                  return (
-                    <span
-                      key={app.id}
-                      data-testid={`composer-plugin-preview-icon-${app.id}`}
-                      className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
-                    >
-                      {logo ? (
-                        <img src={logo} alt="" className="h-full w-full object-contain" />
-                      ) : (
-                        <Boxes className="h-4 w-4" />
-                      )}
-                    </span>
-                  )
-                })}
-              </span>
+              <ComposerPluginPreviewIcons apps={apps} appearanceMode={appearanceMode} />
               {apps.length > 3 && (
                 <span className="text-xs text-text-muted">+{apps.length - 3}</span>
               )}

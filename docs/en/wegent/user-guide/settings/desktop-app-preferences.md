@@ -75,6 +75,8 @@ When no conversation is open, the newly created main window keeps the task launc
 
 After every task completes, fails, or is interrupted, Wework immediately releases the inhibition and restores the operating system's normal sleep policy. Wework does not force the computer to sleep and does not change the configured system sleep timeout.
 
+On macOS, Wework prevents sleep with a system power assertion tied to the application process instead of starting a persistent `caffeinate` process. If Wework exits unexpectedly, macOS automatically releases the assertion, so no background process remains to keep blocking idle sleep.
+
 To keep Wework from controlling sleep, disable this option under **Settings → General**. Disabling it immediately releases any current sleep inhibition. If it is enabled again while a task is still running, Wework resumes preventing idle sleep.
 
 ## Interface Recovery After Locking the Screen

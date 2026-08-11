@@ -370,6 +370,8 @@ Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍
 
 图片转换可能生成仅供模型读取的临时 `*.model-input.*` 文件，但该路径不能作为 Wework 消息附件的持久化地址。executor 从 Codex transcript 恢复用户消息时，优先使用文件提及上下文或本地 runtime handle 中保留的原始附件路径；临时模型输入仅用于推理阶段。这样临时文件清理后，历史消息、任务切换和重开任务仍能显示原始图片预览。
 
+Codex transcript 分页必须保持严格的页边界。本地 runtime handle 中用于补齐附件、引用或 supervisor 输入的用户消息 presentation，只有在 client message ID 已命中当前页，或其 turn ID / 创建时间属于当前页范围时，才能合入该页；不能因为 `ensureVisible` 就把新页消息重复注入旧页。Wework 在请求更早页或补齐中间缺口前记录当前 `scrollHeight` 和距底部距离，临时关闭浏览器原生滚动锚定，并在分页内容完成布局后恢复同一距底部位置。这样旧消息 prepend、虚拟列表重测量和底部 sticky composer 共享一个确定的滚动事务，不会产生消息重复或输入框随内容漂移。
+
 Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管理隔离的 Codex Home、认证链接和配置归一化，`interaction` 路由用户输入与 MCP 交互响应，`run_state` 将 app-server 事件归约为轮次结果，`diagnostics` 负责日志裁剪与敏感输出摘要，`tests` 保存模块级回归测试。`codex.rs` 保留对外 API、共享 app-server 生命周期和轮次编排。新增行为应进入对应职责模块，避免把配置、协议状态和诊断逻辑重新耦合到编排层。
 
 Codex agent message 的实时文本必须按显式 phase 分类：只有 `final` 或 `final_answer` 才能进入最终回答，`analysis`、`commentary` 以及缺失 phase 的文本都先进入 processing。缺失 phase 的文本可能出现在工具调用前后，不能因为默认值而触发 Wework 的 final-processing 折叠；轮次结束时，executor 使用明确的 final 文本，若模型始终没有发送 phase，则使用最后一段未标 phase 的文本作为终态回答。转录恢复沿用同一规则，并根据后续是否存在工具或其他过程项判断未标文本属于 processing 还是 final。

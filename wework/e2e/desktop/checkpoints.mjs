@@ -2,6 +2,8 @@ export const DESKTOP_CHECKPOINTS = [
   'workspace-tabs',
   'priority-filter',
   'telemetry-consent',
+  'automation-lifecycle',
+  'model-routing',
   'core-task-flow',
   'window-lifecycle',
   'goal-lifecycle',

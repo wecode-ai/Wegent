@@ -7,7 +7,14 @@ import {
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { useAppVersion } from '@/hooks/useAppVersion'
 import { track } from '@/telemetry/client'
+import {
+  clearPendingWeworkReleaseNotes,
+  readPendingWeworkReleaseNotes,
+  writePendingWeworkReleaseNotes,
+  type WeworkInstalledReleaseNotes,
+} from './app-release-notes'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
   APP_UPDATE_CHANNEL_KEY,
@@ -24,6 +31,10 @@ const SIMULATED_UPDATE_VERSION = 'debug-simulation'
 const SIMULATED_DOWNLOAD_TOTAL_BYTES = 10_000_000
 const SIMULATED_DOWNLOAD_STEP_BYTES = 1_000_000
 const SIMULATED_DOWNLOAD_INTERVAL_MS = 250
+const SIMULATED_RELEASE_NOTES = `## Changes
+
+- Added a new version changelog announcement.
+- Improved the Wework update experience.`
 
 interface UpdateCheckResult {
   update: WeworkUpdateInfo | null
@@ -61,8 +72,11 @@ function messageFor(error: unknown): string {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
+  const appVersion = useAppVersion()
   const [updateChannel, setUpdateChannelState] = useState<WeworkUpdateChannel>(readUpdateChannel)
   const [availableUpdate, setAvailableUpdate] = useState<WeworkUpdateInfo | null>(null)
+  const [pendingReleaseNotes, setPendingReleaseNotes] =
+    useState<WeworkInstalledReleaseNotes | null>(readPendingWeworkReleaseNotes)
   const [status, setStatus] = useState<AppUpdateStatus>('idle')
   const [downloadProgress, setDownloadProgress] = useState<WeworkUpdateDownloadProgress | null>(
     null
@@ -75,6 +89,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     promise: Promise<UpdateCheckResult>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
+  const installedReleaseNotes =
+    isTauriRuntime() && appVersion && pendingReleaseNotes?.version === appVersion
+      ? pendingReleaseNotes
+      : null
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current === null) return
@@ -179,6 +197,16 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const installUpdate = useCallback(async () => {
     if (!availableUpdate || status === 'installing') return
 
+    const releaseNotesBody = availableUpdate.body?.trim()
+    if (releaseNotesBody) {
+      writePendingWeworkReleaseNotes({
+        version: availableUpdate.version,
+        body: releaseNotesBody,
+      })
+    } else {
+      clearPendingWeworkReleaseNotes()
+    }
+
     setStatus('installing')
     setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
     setMessage(null)
@@ -189,6 +217,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       await installPendingWeworkUpdate(setDownloadProgress)
     } catch (caughtError) {
       const installError = messageFor(caughtError)
+      clearPendingWeworkReleaseNotes(availableUpdate.version)
       setDownloadProgress(null)
       setError(installError)
 
@@ -201,6 +230,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [availableUpdate, status, updateChannel])
+
+  const dismissInstalledReleaseNotes = useCallback(() => {
+    if (installedReleaseNotes) {
+      clearPendingWeworkReleaseNotes(installedReleaseNotes.version)
+    }
+    setPendingReleaseNotes(null)
+  }, [installedReleaseNotes])
 
   const setUpdateChannel = useCallback(
     async (channel: WeworkUpdateChannel) => {
@@ -220,8 +256,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const simulateUpdate = useCallback(() => {
     clearSimulationTimer()
+    const simulatedInstalledVersion = appVersion ?? __WEWORK_APP_VERSION__
     setAvailableUpdate({
-      currentVersion: __WEWORK_APP_VERSION__,
+      currentVersion: simulatedInstalledVersion,
       version: SIMULATED_UPDATE_VERSION,
     })
     setStatus('installing')
@@ -240,11 +277,17 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       if (downloadedBytes === SIMULATED_DOWNLOAD_TOTAL_BYTES) {
         clearSimulationTimer()
         setAvailableUpdate(null)
+        const releaseNotes = {
+          version: simulatedInstalledVersion,
+          body: SIMULATED_RELEASE_NOTES,
+        }
+        writePendingWeworkReleaseNotes(releaseNotes)
+        setPendingReleaseNotes(releaseNotes)
         setStatus('upToDate')
         setMessage('upToDate')
       }
     }, SIMULATED_DOWNLOAD_INTERVAL_MS)
-  }, [clearSimulationTimer])
+  }, [appVersion, clearSimulationTimer])
 
   useEffect(() => {
     window.addEventListener(APP_UPDATE_SIMULATE_EVENT, simulateUpdate)
@@ -252,6 +295,14 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [simulateUpdate])
 
   useEffect(() => clearSimulationTimer, [clearSimulationTimer])
+
+  useEffect(() => {
+    if (!isTauriRuntime() || !appVersion) return
+
+    if (pendingReleaseNotes && pendingReleaseNotes.version !== appVersion) {
+      clearPendingWeworkReleaseNotes()
+    }
+  }, [appVersion, pendingReleaseNotes])
 
   useEffect(() => {
     if (!isTauriRuntime()) return
@@ -277,20 +328,24 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     () => ({
       updateChannel,
       availableUpdate,
+      installedReleaseNotes,
       status,
       downloadProgress,
       message,
       error,
       checkNow,
       installUpdate,
+      dismissInstalledReleaseNotes,
       setUpdateChannel,
     }),
     [
       availableUpdate,
       checkNow,
+      dismissInstalledReleaseNotes,
       downloadProgress,
       error,
       installUpdate,
+      installedReleaseNotes,
       message,
       setUpdateChannel,
       status,

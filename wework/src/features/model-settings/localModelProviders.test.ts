@@ -59,7 +59,10 @@ describe('localModelProviders', () => {
         webSearchMode: 'disabled',
         contextWindow: 1_000_000,
         modelDefaults: {
-          'kimi-k3': { contextWindow: 1_000_000 },
+          'kimi-k3': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-kimi-k3',
+          },
           'kimi-k2.6': { contextWindow: 262_144 },
           'moonshot-v1-8k': { contextWindow: 8_192 },
           'moonshot-v1-32k': { contextWindow: 32_768 },

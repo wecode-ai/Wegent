@@ -82,7 +82,7 @@ export interface EmbeddedBrowserCloseRequest {
   nativeLabel: string
 }
 
-export type EmbeddedBrowserDataKind = 'cookies' | 'cache'
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage'
 
 export interface EmbeddedBrowserDownloadEvent {
   id: string
