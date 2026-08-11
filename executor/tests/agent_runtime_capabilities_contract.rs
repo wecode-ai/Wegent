@@ -898,6 +898,55 @@ async fn claude_runtime_streams_answer_drain_follow_up_output() {
     }));
 }
 
+#[tokio::test]
+async fn claude_runtime_preserves_new_deferred_form_after_answer_drain() {
+    let _lock = env_lock().await;
+    let workspace_root = unique_dir("claude-runtime-answer-new-defer-workspace");
+    let marker = unique_dir("claude-runtime-answer-new-defer-marker").join("count");
+    let fake_claude = write_fake_claude_answer_drain_with_new_defer(&marker);
+    let waiting_payload = json!({
+        "__deferred_user_input__": true,
+        "success": true,
+        "status": "waiting_for_user_response"
+    });
+    let mcp_url = spawn_mcp_server(vec![
+        json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
+        json!({"jsonrpc": "2.0", "result": {}}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "content": [{
+                    "type": "text",
+                    "text": waiting_payload.to_string()
+                }]
+            }
+        }),
+    ])
+    .await;
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let mut request = interactive_form_answer_request(7795, 106);
+    request.mcp_servers = vec![json!({
+        "name": "interactive-wegent-interactive-form-question",
+        "type": "streamable-http",
+        "url": mcp_url
+    })];
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::WaitingForUserInput {
+            stop_reason: "tool_deferred".to_owned()
+        }
+    );
+}
+
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().await
@@ -1045,7 +1094,35 @@ if ! grep -q 'tool-answered' >/dev/null 2>&1; then
   exit 9
 fi
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"published"}}]}}}}'
-printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-stale","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-stale-followup","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[{{"id":"confirm","question":"Confirm?"}}]}}}}}}'
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-stale","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
+"#,
+        marker.display()
+    );
+    fs::write(&path, content).unwrap();
+    make_executable(&path);
+    path
+}
+
+fn write_fake_claude_answer_drain_with_new_defer(marker: &Path) -> PathBuf {
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let path = unique_dir("fake-claude-answer-new-defer").join("claude");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let content = format!(
+        r#"#!/bin/sh
+MARKER='{}'
+if [ ! -f "$MARKER" ]; then
+  printf 1 > "$MARKER"
+  printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer-new-defer"}}'
+  printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-new-defer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
+  exit 0
+fi
+if ! grep -q 'tool-answered' >/dev/null 2>&1; then
+  exit 9
+fi
+printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"one verification decision remains"}}]}}}}'
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-new-defer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-new","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[{{"id":"verification_scope","question":"Which verification scope?"}}]}}}}}}'
 "#,
         marker.display()
     );

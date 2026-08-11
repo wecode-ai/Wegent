@@ -50,6 +50,8 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
+    RuntimeIMNotificationPresenceResponse,
+    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeProjectRef,
@@ -86,7 +88,10 @@ from app.services.device.command_service import execute_configured_device_comman
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
-from app.services.im.session_service import im_session_service
+from app.services.im.session_service import (
+    IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+    im_session_service,
+)
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
@@ -624,24 +629,35 @@ async def _dispatch_runtime_send(
     request: RuntimeSendRequest,
     rpc_method: str,
 ) -> RuntimeSendResponse:
-    """Send a runtime task message with a best-effort executionRequest payload.
+    """Send a runtime task message with the required execution request.
 
     The executor requires ``executionRequest`` to spawn a new turn (it carries
     model config, user info, skills, etc.). The Wework frontend builds this
     client-side for direct local sends; the IM continuation path flows through
-    the backend RPC, so we synthesize a minimal request here from the default
-    task-mode team. Failures to build the request are non-fatal — the payload
-    is still forwarded so existing tasks that don't need a fresh turn (e.g.
-    request-user-input responses) keep working.
+    the backend RPC, so we build it here from the default task-mode team.
+    Request-user-input responses use a dedicated executor channel and do not
+    spawn a new turn, so they intentionally omit ``executionRequest``.
     """
-    execution_request = _safe_build_runtime_send_execution_request(
-        db=db,
-        user_id=user_id,
-        address=address,
-        message=request.message,
-        attachment_ids=request.attachment_ids,
-    )
-    if execution_request is not None:
+    if request.request_user_input_response is None:
+        try:
+            execution_request = _build_runtime_send_execution_request(
+                db=db,
+                user_id=user_id,
+                address=address,
+                message=request.message,
+                attachment_ids=request.attachment_ids,
+                additional_context=request.additional_context,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "[RuntimeWork] Failed to build executionRequest for runtime send"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to build runtime execution request",
+            ) from exc
         payload["executionRequest"] = execution_request.to_dict()
     try:
         result = await runtime_rpc_service.call(
@@ -788,6 +804,24 @@ async def update_global_im_notification(
         session_key=request.session_key,
     )
     return await get_im_notification_settings(db=db, user_id=user_id)
+
+
+async def update_im_notification_presence(
+    *,
+    user_id: int,
+    request: RuntimeIMNotificationPresenceUpdateRequest,
+) -> RuntimeIMNotificationPresenceResponse:
+    """Refresh Wework foreground presence for away-only global IM delivery."""
+
+    away = await im_session_service.update_im_notification_presence(
+        user_id=user_id,
+        client_id=request.client_id,
+        away=request.away,
+    )
+    return RuntimeIMNotificationPresenceResponse(
+        away=away,
+        ttlSeconds=IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+    )
 
 
 async def subscribe_runtime_task_im_notification(
@@ -3894,6 +3928,7 @@ def _build_runtime_send_execution_request(
     address: RuntimeTaskAddress,
     message: str,
     attachment_ids: list[int],
+    additional_context: Optional[dict[str, dict[str, Any]]] = None,
 ):
     """Build an executor request for an IM continuation send.
 
@@ -3904,98 +3939,33 @@ def _build_runtime_send_execution_request(
     through the backend RPC, so we synthesize one here from the default
     task-mode team — the same agent the workbench uses.
     """
-    from app.services.execution import TaskRequestBuilder
-
-    user = _get_user(db, user_id)
     team = _get_task_mode_team(db, user_id)
     if team is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Default task-mode team is not configured",
         )
-    task_id, subtask_id = _runtime_execution_ids()
     target = RuntimeTaskTarget(
         device_id=address.device_id,
         workspace_path=address.workspace_path or "",
         project=None,
         workspace_source="local_path",
     )
-    request = SimpleNamespace(
-        message=message,
-        additional_context=None,
-        additional_skills=[],
-        attachment_ids=attachment_ids,
-        model_id=None,
-        model_type=None,
-        model_options={},
+    request = RuntimeTaskCreateRequest(
+        deviceId=address.device_id,
+        workspacePath=address.workspace_path,
+        teamId=team.id,
         runtime="codex",
+        message=message,
+        attachmentIds=attachment_ids,
+        additionalContext=additional_context,
     )
-    task = _runtime_task_context(
+    return _build_runtime_execution_request(
+        db=db,
         user_id=user_id,
-        task_id=task_id,
         request=request,
         target=target,
-        team=team,
     )
-    subtask = _runtime_assistant_context(
-        user_id=user_id,
-        task_id=task_id,
-        subtask_id=subtask_id,
-        request=request,
-        team=team,
-    )
-    payload = _runtime_execution_payload(request)
-    runtime_model_config, override_model_name, force_override = _runtime_model_override(
-        db,
-        user_id,
-        request,
-    )
-    execution_request = TaskRequestBuilder(db).build(
-        subtask=subtask,
-        task=task,
-        user=user,
-        team=team,
-        message=_message_with_application_context(message, None),
-        preload_skills=request.additional_skills,
-        override_model_name=override_model_name,
-        force_override=force_override,
-        runtime_model_config=runtime_model_config,
-        web_runtime_guidance=True,
-    )
-    _apply_runtime_task_target(execution_request, target)
-    _apply_runtime_model_options(db, execution_request, user, payload)
-    _apply_runtime_attachments(db, execution_request, user_id, attachment_ids)
-    return execution_request
-
-
-def _safe_build_runtime_send_execution_request(
-    *,
-    db: Session,
-    user_id: int,
-    address: RuntimeTaskAddress,
-    message: str,
-    attachment_ids: list[int],
-):
-    """Best-effort wrapper around _build_runtime_send_execution_request.
-
-    Returns ``None`` on failure so the send payload is still forwarded
-    without an ``executionRequest`` — the executor can handle cases that
-    don't need a fresh turn (e.g. request-user-input responses).
-    """
-    try:
-        return _build_runtime_send_execution_request(
-            db=db,
-            user_id=user_id,
-            address=address,
-            message=message,
-            attachment_ids=attachment_ids,
-        )
-    except Exception:
-        logger.warning(
-            "[RuntimeWork] Failed to build executionRequest for runtime send",
-            exc_info=True,
-        )
-        return None
 
 
 def _ensure_owned_device(db: Session, user_id: int, device_id: str) -> None:

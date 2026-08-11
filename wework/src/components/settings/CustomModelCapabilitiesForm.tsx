@@ -394,9 +394,12 @@ export function CustomModelCapabilitiesForm({
             <option value="">{t('workbench.local_model_automatic_option', '自动')}</option>
             {structuredItems(entry.supported_reasoning_levels).map(item => {
               const effort = stringValue(item.effort)
+              const knownOption = REASONING_LEVEL_OPTIONS.find(option => option.effort === effort)
               return effort ? (
                 <option key={effort} value={effort}>
-                  {effort}
+                  {knownOption
+                    ? t(`workbench.local_model_reasoning_${knownOption.labelKey}`)
+                    : effort}
                 </option>
               ) : null
             })}

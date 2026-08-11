@@ -71,6 +71,20 @@ class FakeIMSessionRedisClient:
                 del zset[member]
         return removed
 
+    async def zremrangebyscore(
+        self,
+        key: str,
+        minimum: str | float,
+        maximum: str | float,
+    ) -> int:
+        lower = float("-inf") if minimum == "-inf" else float(minimum)
+        upper = float("inf") if maximum == "+inf" else float(maximum)
+        zset = self._cache.zsets.get(key, {})
+        expired = [member for member, score in zset.items() if lower <= score <= upper]
+        for member in expired:
+            del zset[member]
+        return len(expired)
+
     async def aclose(self) -> None:
         return None
 

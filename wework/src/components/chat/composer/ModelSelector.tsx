@@ -11,6 +11,7 @@ import {
   getSelectedModelDisplayLabel,
   groupModelsByFamily,
   inferModelFamily,
+  isModelInterfaceModel,
   normalizeModelOptionValue,
 } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
@@ -384,12 +385,19 @@ export function ModelSelector({
   const selectedReasoningValue =
     normalizeModelOptionValue('reasoning', selectedModelOptions.reasoning) ??
     reasoningControl?.defaultValue
+  const selectedReasoningOption = reasoningControl?.options.find(
+    option => option.value === selectedReasoningValue
+  )
   const ultraLabel =
-    selectedReasoningValue === 'ultra' ? t('workbench.intelligence_ultra', 'Extra High') : undefined
+    selectedReasoningValue === 'ultra' && selectedReasoningOption
+      ? selectedReasoningOption.labelKey
+        ? t(selectedReasoningOption.labelKey, selectedReasoningOption.label)
+        : selectedReasoningOption.label
+      : undefined
   const supportsReasoningControl = Boolean(reasoningControl)
   const speedControl = controlsBelowModels.find(control => control.id === 'speed')
   const fastModeState = desktopFastModeState(speedControl, selectedModelOptions)
-  const desktopReasoningControl = desktopModelControl(reasoningControl)
+  const desktopReasoningControl = desktopModelControl(reasoningControl, selectedModel)
   const desktopControls = [desktopReasoningControl, speedControl].filter(
     (control): control is ModelControlConfig =>
       Boolean(control && !DESKTOP_HIDDEN_CONTROL_IDS.has(control.id))
@@ -397,10 +405,19 @@ export function ModelSelector({
   const desktopModels = useMemo(() => familyGroups.flatMap(group => group.models), [familyGroups])
   const defaultModel = useMemo(() => findCodexDefaultModel(desktopModels), [desktopModels])
   const powerSettings = useMemo(() => getCodexModelPowerSettings(desktopModels), [desktopModels])
-  const selectedPowerSettingAvailable = powerSettings.some(setting =>
+  const codexPowerSettingAvailable = powerSettings.some(setting =>
     isSelectedPowerSetting(setting, selectedModel, selectedModelOptions.reasoning)
   )
-  const powerViewOpen = advancedOpen && selectedPowerSettingAvailable
+  const currentModelSliderAvailable = Boolean(
+    isModelInterfaceModel(selectedModel) && (desktopReasoningControl?.options.length ?? 0) >= 2
+  )
+  const advancedReasoningMode = codexPowerSettingAvailable
+    ? 'codex-power'
+    : currentModelSliderAvailable
+      ? 'current-model'
+      : null
+  const advancedReasoningAvailable = advancedReasoningMode !== null
+  const powerViewOpen = advancedOpen && advancedReasoningAvailable
   const activeControl =
     activeDesktopSubmenu?.type === 'control'
       ? desktopControls.find(control => control.id === activeDesktopSubmenu.id)
@@ -922,7 +939,7 @@ export function ModelSelector({
                   <div className="mx-2 my-1 border-t border-border" />
                 </>
               ) : null}
-              {selectedPowerSettingAvailable ? (
+              {advancedReasoningAvailable ? (
                 <ModelAdvancedHeader
                   disabled={!reasoningControl}
                   interacting={powerSliderInteracting}
@@ -967,16 +984,26 @@ export function ModelSelector({
                   data-enter-animation="advanced"
                   className={styles.advancedPanel}
                 >
-                  <ModelPowerSlider
-                    control={desktopReasoningControl}
-                    models={desktopModels}
-                    selectedModel={selectedModel}
-                    selectedModelOptions={selectedModelOptions}
-                    onSelectModel={handleSelectModel}
-                    onSelectModelAndOptions={onSelectModelAndOptions}
-                    onSelectModelOption={handleSelectModelOption}
-                    onInteractionChange={setPowerSliderInteracting}
-                  />
+                  {advancedReasoningMode === 'codex-power' ? (
+                    <ModelPowerSlider
+                      control={desktopReasoningControl}
+                      models={desktopModels}
+                      selectedModel={selectedModel}
+                      selectedModelOptions={selectedModelOptions}
+                      onSelectModel={handleSelectModel}
+                      onSelectModelAndOptions={onSelectModelAndOptions}
+                      onSelectModelOption={handleSelectModelOption}
+                      onInteractionChange={setPowerSliderInteracting}
+                    />
+                  ) : (
+                    <ReasoningSlider
+                      control={desktopReasoningControl}
+                      selectedModelOptions={selectedModelOptions}
+                      onSelectOption={handleSelectModelOption}
+                      clearSubmenuOnHover={false}
+                      onInteractionChange={setPowerSliderInteracting}
+                    />
+                  )}
                 </div>
               ) : null}
             </div>

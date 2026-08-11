@@ -172,6 +172,169 @@ fn completed_statusless_tools_are_done() {
 }
 
 #[test]
+fn tool_notifications_preserve_item_lifecycle_timestamps() {
+    let started = json!({
+        "startedAtMs": 1_780_000_001_250_i64,
+        "item": {
+            "id": "call-1",
+            "type": "commandExecution",
+            "command": "sleep 3",
+            "cwd": "/tmp",
+            "status": "inProgress"
+        }
+    });
+    let completed = json!({
+        "completedAtMs": 1_780_000_004_750_i64,
+        "item": {
+            "id": "call-1",
+            "type": "commandExecution",
+            "command": "sleep 3",
+            "cwd": "/tmp",
+            "status": "completed",
+            "durationMs": 3_500
+        }
+    });
+
+    let started_block =
+        workbench_block_from_notification(&started, "turn-1", "device-1", "/tmp", None)
+            .expect("started tool block");
+    let (_, completed_updates) =
+        tool_update_from_notification(&completed).expect("completed tool update");
+
+    assert_eq!(started_block["timestamp"], 1_780_000_001_250_i64);
+    assert_eq!(completed_updates["completedAt"], 1_780_000_004_750_i64);
+    assert_eq!(completed_updates["durationMs"], 3_500);
+}
+
+#[test]
+fn completed_tool_duration_is_not_replaced_with_the_turn_duration() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_010,
+            "status": "completed",
+            "items": [{
+                "id": "call-1",
+                "type": "commandExecution",
+                "command": "sleep 3",
+                "cwd": "/tmp/project",
+                "status": "completed",
+                "durationMs": 3_500
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let block = &messages[0]["blocks"][0];
+
+    assert_eq!(block["tool_name"], "bash");
+    assert_eq!(block["timestamp"], 1_780_000_006_500_i64);
+    assert_eq!(block["completedAt"], 1_780_000_010_000_i64);
+}
+
+#[test]
+fn transcript_restores_precise_tool_timing_from_completed_rollout_events() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_020,
+            "status": "completed",
+            "items": [{
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "started_at_ms": 1_780_000_001_250_i64,
+                    "completed_at_ms": 1_780_000_016_119_i64,
+                    "item": {
+                        "id": "call-1",
+                        "type": "CommandExecution",
+                        "command": ["sleep", "15"],
+                        "cwd": "/tmp/project",
+                        "status": "completed",
+                        "duration": {
+                            "secs": 14,
+                            "nanos": 869_000_000
+                        }
+                    }
+                }
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let block = &messages[0]["blocks"][0];
+
+    assert_eq!(block["timestamp"], 1_780_000_001_250_i64);
+    assert_eq!(block["completedAt"], 1_780_000_016_119_i64);
+}
+
+#[test]
+fn transcript_merges_completed_command_timing_into_function_call_block() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_020,
+            "status": "completed",
+            "items": [{
+                "type": "response_item",
+                "timestamp": 1_780_000_001_100_i64,
+                "payload": {
+                    "id": "function-call-1",
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"sleep 15\",\"workdir\":\"/tmp/project\"}"
+                }
+            }, {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "started_at_ms": 1_780_000_001_250_i64,
+                    "completed_at_ms": 1_780_000_016_119_i64,
+                    "item": {
+                        "id": "call-1",
+                        "type": "CommandExecution",
+                        "command": ["/bin/zsh", "-lc", "sleep 15"],
+                        "cwd": "/tmp/project",
+                        "status": "completed",
+                        "duration": {
+                            "secs": 14,
+                            "nanos": 869_000_000
+                        }
+                    }
+                }
+            }, {
+                "type": "response_item",
+                "timestamp": 1_780_000_016_120_i64,
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "Chunk ID: test\nWall time: 14.869 seconds\nProcess exited with code 0\nFinal output:\n"
+                }
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let blocks = messages[0]["blocks"].as_array().expect("assistant blocks");
+
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["tool_use_id"], "call-1");
+    assert_eq!(blocks[0]["timestamp"], 1_780_000_001_250_i64);
+    assert_eq!(blocks[0]["completedAt"], 1_780_000_016_119_i64);
+    assert_eq!(blocks[0]["tool_input"]["cmd"], "sleep 15");
+}
+
+#[test]
 fn completed_mcp_tool_updates_preserve_structured_content() {
     let params = json!({
         "item": {

@@ -171,9 +171,15 @@ impl<'a> TurnTranscriptProjector<'a> {
                 .assistant
                 .blocks
                 .push(plan_block(item, self.created_at, self.options)),
-            "commandexecution" | "functioncall" | "customtoolcall" | "dynamictoolcall"
-            | "mcptoolcall" | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
-            | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
+            "commandexecution" => merge_tool_output(
+                &mut self.assistant.blocks,
+                item,
+                self.created_at,
+                self.options,
+            ),
+            "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall" | "mcpcall"
+            | "toolsearchcall" | "websearchcall" | "websearch" | "imagegeneration"
+            | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
                 self.push_workbench_block(item)
             }
             "functioncalloutput"
@@ -510,6 +516,14 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
         "status": status,
     });
     if let Some(object) = updates.as_object_mut() {
+        if let Some(completed_at) = item_completed_at(&item) {
+            object.insert("completedAt".to_owned(), json!(completed_at));
+        }
+        if let Some(duration_ms) =
+            integer_field(&item, "durationMs").or_else(|| integer_field(&item, "duration_ms"))
+        {
+            object.insert("durationMs".to_owned(), json!(duration_ms.max(0)));
+        }
         insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
         insert_image_generation_render_payload(object, &item);
     }
@@ -526,16 +540,38 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     Some((tool_call_id(&item), updates))
 }
 
-fn notification_item(params: &Value) -> Value {
-    transcript_item(params.get("item").unwrap_or(params))
+pub(crate) fn notification_item(params: &Value) -> Value {
+    let mut item = transcript_item(params.get("item").unwrap_or(params));
+    let Some(object) = item.as_object_mut() else {
+        return item;
+    };
+    if !object.contains_key("createdAt") && !object.contains_key("created_at") {
+        if let Some(started_at) = params
+            .get("startedAtMs")
+            .or_else(|| params.get("started_at_ms"))
+            .cloned()
+        {
+            object.insert("createdAt".to_owned(), started_at);
+        }
+    }
+    if !object.contains_key("completedAt") && !object.contains_key("completed_at") {
+        if let Some(completed_at) = params
+            .get("completedAtMs")
+            .or_else(|| params.get("completed_at_ms"))
+            .cloned()
+        {
+            object.insert("completedAt".to_owned(), completed_at);
+        }
+    }
+    item
 }
 
 fn transcript_item(item: &Value) -> Value {
     let Some(payload) = codex_wrapped_item_payload(item) else {
         return item.clone();
     };
-    if let Some(plan_item) = completed_plan_event_item(item, payload) {
-        return plan_item;
+    if let Some(completed_item) = completed_event_item(item, payload) {
+        return completed_item;
     }
     let Some(payload_object) = payload.as_object() else {
         return item.clone();
@@ -552,14 +588,11 @@ fn transcript_item(item: &Value) -> Value {
     Value::Object(object)
 }
 
-fn completed_plan_event_item(item: &Value, payload: &Value) -> Option<Value> {
+fn completed_event_item(item: &Value, payload: &Value) -> Option<Value> {
     if item_type(item) != "eventmsg" || item_type(payload) != "itemcompleted" {
         return None;
     }
     let nested_item = payload.get("item")?;
-    if item_type(nested_item) != "plan" {
-        return None;
-    }
     let mut object = nested_item.as_object()?.clone();
     copy_missing_fields(
         &mut object,
@@ -585,12 +618,23 @@ fn completed_plan_event_item(item: &Value, payload: &Value) -> Option<Value> {
         ],
     );
     if !object.contains_key("createdAt") && !object.contains_key("created_at") {
+        if let Some(started_at) = payload
+            .get("started_at_ms")
+            .or_else(|| payload.get("startedAtMs"))
+            .or_else(|| payload.get("completed_at_ms"))
+            .or_else(|| payload.get("completedAtMs"))
+            .cloned()
+        {
+            object.insert("createdAt".to_owned(), started_at);
+        }
+    }
+    if !object.contains_key("completedAt") && !object.contains_key("completed_at") {
         if let Some(completed_at) = payload
             .get("completed_at_ms")
             .or_else(|| payload.get("completedAtMs"))
             .cloned()
         {
-            object.insert("createdAt".to_owned(), completed_at);
+            object.insert("completedAt".to_owned(), completed_at);
         }
     }
     Some(Value::Object(object))
@@ -874,9 +918,9 @@ mod message_projection;
 pub(crate) use message_projection::normalized_user_request_content;
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
-    is_internal_turn_abort_message, item_timestamp, normalized_phase_or_status, plan_block,
-    push_accumulated_assistant, push_reasoning_block, push_user_message_once, AssistantEmitContext,
-    AssistantTurnAccumulation,
+    is_internal_turn_abort_message, item_completed_at, item_timestamp, normalized_phase_or_status,
+    plan_block, push_accumulated_assistant, push_reasoning_block, push_user_message_once,
+    AssistantEmitContext, AssistantTurnAccumulation,
 };
 
 #[path = "transcript/tool_projection.rs"]

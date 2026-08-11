@@ -175,7 +175,11 @@ import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
-import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
+import {
+  DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
+  DESKTOP_MESSAGE_LIST_CLASS,
+  DESKTOP_MESSAGE_LIST_WIDTH_CLASS,
+} from './desktopChatLayout'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
 import { isWorktreeCreationPending } from './worktreeCreationState'
@@ -3234,8 +3238,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
-          ) : isCreatingWorktree ? (
-            <WorktreeCreationStatus className="min-h-full" />
           ) : activeLocalHarnessSession ? (
             <div className="relative flex min-h-0 min-w-0">
               {activeLocalHarnessSession.active ? (
@@ -3285,7 +3287,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               <ScrollableMessageArea
                 messages={paneMessages}
                 loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
+                isWaitingForAssistant={
+                  !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+                }
                 hasMoreBefore={paneSession.transcriptHasMoreBefore}
                 loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                 turnNavigation={paneSession.turnNavigation}
@@ -3310,6 +3314,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   DESKTOP_MESSAGE_LIST_CLASS,
                   chatContentResizing && 'transition-none'
                 )}
+                contentFooter={
+                  isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                }
+                contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
                 stickyFooterClassName={cn(
                   DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
                   hasMainBackground
@@ -3319,7 +3327,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   rightPanelExpanded && 'z-critical'
                 )}
                 stickyFooter={
-                  temporaryChatExpanded ? null : (
+                  temporaryChatExpanded || isCreatingWorktree ? null : (
                     <>
                       <div
                         className={cn(

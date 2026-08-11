@@ -1759,6 +1759,69 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('restores a running image generation placeholder from persisted image config', async () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const actions = createRuntimeActions({
+      joinTask: vi.fn().mockResolvedValue({
+        streaming: {
+          subtask_id: 77,
+          offset: 0,
+          cached_content: '',
+        },
+        subtasks: [
+          {
+            id: 76,
+            role: 'USER',
+            message_id: 1,
+            prompt: 'make an image',
+            status: 'COMPLETED',
+            result: {
+              image_config: {
+                model: 'gpt-image',
+                size: '1512x648',
+              },
+            },
+            created_at: '2026-08-11T12:00:00.000Z',
+          },
+          {
+            id: 77,
+            role: 'TEAM',
+            message_id: 2,
+            prompt: '',
+            status: 'RUNNING',
+            result: { value: '' },
+            created_at: '2026-08-11T12:00:01.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'RUNNING',
+      updated_at: '2026-08-11T12:00:01.000Z',
+    })
+    await machine.recover({ force: true })
+
+    const message = machine.getState().messages.get('ai-77')
+    expect(message?.status).toBe('streaming')
+    expect(message?.result?.blocks).toEqual([
+      expect.objectContaining({
+        id: 'image-placeholder-77',
+        type: 'image',
+        status: 'streaming',
+        is_placeholder: true,
+        image_urls: [],
+        image_count: 0,
+        image_size: '1512x648',
+      }),
+    ])
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('uses chat chunk offsets to ignore content already covered by cached recovery', async () => {
     const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
