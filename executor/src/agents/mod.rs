@@ -311,18 +311,24 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                                spec = runtime_capabilities::prepare_claude_runtime(&request, spec)
-                                    .await
-                                    .unwrap_or_else(|error| {
+                                spec = match runtime_capabilities::prepare_claude_runtime(
+                                    &request, spec,
+                                )
+                                .await
+                                {
+                                    Ok(spec) => spec,
+                                    Err(message) => {
                                         let mut failed_fields =
                                             task_fields(&request.task_id, &request.subtask_id);
-                                        failed_fields.push(("error_len", error.len().to_string()));
+                                        failed_fields
+                                            .push(("error_len", message.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",
                                             &failed_fields,
                                         );
-                                        build_claude_command(&request, &planner.claude_binary)
-                                    });
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                };
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
@@ -401,18 +407,24 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                                spec = runtime_capabilities::prepare_claude_runtime(&request, spec)
-                                    .await
-                                    .unwrap_or_else(|error| {
+                                spec = match runtime_capabilities::prepare_claude_runtime(
+                                    &request, spec,
+                                )
+                                .await
+                                {
+                                    Ok(spec) => spec,
+                                    Err(message) => {
                                         let mut failed_fields =
                                             task_fields(&request.task_id, &request.subtask_id);
-                                        failed_fields.push(("error_len", error.len().to_string()));
+                                        failed_fields
+                                            .push(("error_len", message.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",
                                             &failed_fields,
                                         );
-                                        build_claude_command(&request, &planner.claude_binary)
-                                    });
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                };
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);

@@ -30,6 +30,7 @@ class SkillToolContext:
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
         skill_identity_token: JWT token for skill identity verification
+        load_skill_tool: LoadSkillTool tracking skills active in the current session
     """
 
     task_id: int
@@ -41,6 +42,7 @@ class SkillToolContext:
     user_name: str = ""
     auth_token: str = ""  # JWT token for API authentication
     skill_identity_token: str = ""  # JWT token for skill identity verification
+    load_skill_tool: Any = None
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Get a configuration value from skill config.

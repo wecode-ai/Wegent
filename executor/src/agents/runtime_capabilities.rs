@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
@@ -296,7 +296,7 @@ pub async fn prepare_claude_runtime(
         .get("SKILLS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| config_dir.join("skills"));
-    deploy_request_skills(request, &skills_dir).await;
+    deploy_request_skills(request, &skills_dir).await?;
 
     let global_mcps = load_global_mcp_records();
     log_runtime_event(
@@ -352,7 +352,11 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root().join(&request.task_id));
     let codex_skills_dir = codex_skills_dir(&task_dir);
-    deploy_request_skills(request, &codex_skills_dir).await;
+    if let Err(error) = deploy_request_skills(request, &codex_skills_dir).await {
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+        push_error_fields(&mut fields, error);
+        log_executor_event("codex Skill deployment failed", &fields);
+    }
 }
 
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
@@ -364,9 +368,16 @@ pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     overrides
 }
 
-async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
+async fn deploy_request_skills(
+    request: &ExecutionRequest,
+    skills_dir: &Path,
+) -> Result<(), String> {
+    let required_skills = required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
-        return;
+        return required_skills
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
     };
     let Some(plan) = build_skill_deployment_plan(
         primary_bot,
@@ -377,15 +388,109 @@ async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
             skip_existing: false,
         },
     ) else {
-        return;
+        return required_skills.is_empty().then_some(()).ok_or_else(|| {
+            format!(
+                "required Skills are missing from the deployment plan: {}",
+                required_skills.join(", ")
+            )
+        });
     };
 
     let api_base_url = request_api_base_url(request);
-    if let Err(error) = deploy_skills(&plan, &api_base_url).await {
-        let mut fields = task_fields(&request.task_id, &request.subtask_id);
-        fields.push(("error_len", error.len().to_string()));
-        log_executor_event("skill deployment skipped after error", &fields);
+    let report = deploy_skills(&plan, &api_base_url).await?;
+    let missing_required = missing_required_skills(&required_skills, &plan, &report);
+    if !missing_required.is_empty() {
+        return Err(format!(
+            "required Skill deployment failed: {}",
+            missing_required.join(", ")
+        ));
     }
+    Ok(())
+}
+
+pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value, String> {
+    let required_skills = required_skill_names(&request);
+    let Some(primary_bot) = primary_bot(&request) else {
+        return required_skills
+            .is_empty()
+            .then(|| json!({"success": true, "skill_count": 0, "failed_skills": []}))
+            .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
+    };
+    let skills_dir = claude_config_dir(&request, None)
+        .ok_or_else(|| "Claude config directory is unavailable".to_owned())?
+        .join("skills");
+    let Some(plan) = build_skill_deployment_plan(
+        primary_bot,
+        &request,
+        SkillDeploymentOptions {
+            skills_dir,
+            clear_cache: false,
+            skip_existing: false,
+        },
+    ) else {
+        return required_skills
+            .is_empty()
+            .then(|| json!({"success": true, "skill_count": 0, "failed_skills": []}))
+            .ok_or_else(|| {
+                format!(
+                    "required Skills are missing from the deployment plan: {}",
+                    required_skills.join(", ")
+                )
+            });
+    };
+
+    let api_base_url = request_api_base_url(&request);
+    let report = deploy_skills(&plan, &api_base_url).await?;
+    let missing_required = missing_required_skills(&required_skills, &plan, &report);
+    if !missing_required.is_empty() {
+        return Err(format!(
+            "required Skill deployment failed: {}",
+            missing_required.join(", ")
+        ));
+    }
+
+    Ok(json!({
+        "success": true,
+        "skill_count": report.skill_count,
+        "success_count": report.success_skills.len(),
+        "success_skills": report.success_skills,
+        "failed_skills": report.failed_skills,
+        "required_skills": required_skills,
+        "skills_dir": plan.skills_dir,
+    }))
+}
+
+fn required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for key in ["required_skills", "preload_skills"] {
+        if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
+            names.extend(
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+            );
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn missing_required_skills(
+    required_skills: &[String],
+    plan: &SkillDeploymentPlan,
+    report: &SkillDeploymentReport,
+) -> Vec<String> {
+    required_skills
+        .iter()
+        .filter(|skill| {
+            !plan.skills.contains(skill)
+                || report.failed_skills.contains(skill)
+                || !plan.skills_dir.join(skill).join("SKILL.md").is_file()
+        })
+        .cloned()
+        .collect()
 }
 
 struct AttachmentDownloadOutcome {
@@ -657,7 +762,10 @@ fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
         .join(",")
 }
 
-async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result<(), String> {
+async fn deploy_skills(
+    plan: &SkillDeploymentPlan,
+    api_base_url: &str,
+) -> Result<SkillDeploymentReport, String> {
     fs::create_dir_all(&plan.skills_dir).map_err(|error| {
         format!(
             "failed to create skills dir {}: {error}",
@@ -672,13 +780,26 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             async move {
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
-                let Some(cache_miss_reason) =
-                    skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref)?
-                else {
-                    return Ok::<SkillDeploymentResult, String>(SkillDeploymentResult {
+                let cache_miss_reason =
+                    match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
+                        Ok(reason) => reason,
+                        Err(error) => {
+                            let mut fields = vec![("skill", skill.clone())];
+                            push_error_fields(&mut fields, error);
+                            log_executor_event("skill cache validation failed", &fields);
+                            return SkillDeploymentResult {
+                                skill_name: skill,
+                                success: false,
+                                installed: None,
+                            };
+                        }
+                    };
+                let Some(cache_miss_reason) = cache_miss_reason else {
+                    return SkillDeploymentResult {
+                        skill_name: skill.clone(),
                         success: true,
                         installed: None,
-                    });
+                    };
                 };
                 let mut fields = vec![
                     ("skill", skill.clone()),
@@ -702,15 +823,16 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
                     let _ = fs::remove_dir_all(&target);
                 }
                 match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
-                    Ok(result) => Ok(result),
+                    Ok(result) => result,
                     Err(error) => {
                         let mut fields = vec![("skill", skill.clone())];
                         push_error_fields(&mut fields, error);
                         log_executor_event("skill deployment item skipped after error", &fields);
-                        Ok(SkillDeploymentResult {
+                        SkillDeploymentResult {
+                            skill_name: skill,
                             success: false,
                             installed: None,
-                        })
+                        }
                     }
                 }
             }
@@ -719,15 +841,18 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
         .collect::<Vec<_>>()
         .await;
 
-    let success_count = results
+    let success_count = results.iter().filter(|result| result.success).count();
+    let success_skills = results
         .iter()
-        .filter(|result| matches!(result, Ok(SkillDeploymentResult { success: true, .. })))
-        .count();
-    for installed in results
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|result| result.installed)
-    {
+        .filter(|result| result.success)
+        .map(|result| result.skill_name.clone())
+        .collect::<Vec<_>>();
+    let failed_skills = results
+        .iter()
+        .filter(|result| !result.success)
+        .map(|result| result.skill_name.clone())
+        .collect::<Vec<_>>();
+    for installed in results.into_iter().filter_map(|result| result.installed) {
         record_installed_skill(
             &plan.skills_dir,
             &installed.skill_name,
@@ -745,10 +870,22 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             ("skills_dir", plan.skills_dir.display().to_string()),
         ],
     );
-    Ok(())
+    Ok(SkillDeploymentReport {
+        skill_count: plan.skills.len(),
+        success_skills,
+        failed_skills,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkillDeploymentReport {
+    skill_count: usize,
+    success_skills: Vec<String>,
+    failed_skills: Vec<String>,
 }
 
 struct SkillDeploymentResult {
+    skill_name: String,
     success: bool,
     installed: Option<DownloadedSkillRecord>,
 }
@@ -878,6 +1015,7 @@ async fn download_skill(
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {
         return Ok(SkillDeploymentResult {
+            skill_name: skill_name.to_owned(),
             success: false,
             installed: None,
         });
@@ -898,6 +1036,7 @@ async fn download_skill(
     .await?;
     match download {
         SkillArchiveResponse::NotModified => Ok(SkillDeploymentResult {
+            skill_name: skill_name.to_owned(),
             success: true,
             installed: None,
         }),
@@ -915,6 +1054,7 @@ async fn download_skill(
                     .or(content_hash),
             });
             Ok(SkillDeploymentResult {
+                skill_name: skill_name.to_owned(),
                 success: extracted,
                 installed,
             })
