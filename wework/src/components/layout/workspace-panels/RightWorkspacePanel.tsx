@@ -26,6 +26,7 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
@@ -131,9 +132,16 @@ interface RightWorkspacePanelProps {
     update: Partial<RightWorkspaceBrowserState>
   ) => void
   codeCommentCount?: number
+  codeCommentContexts?: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onFileDirtyChange?: (dirty: boolean) => void
   onFileSelectionChange?: (selection: FileWorkspacePanelSelection) => void
   onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
@@ -155,7 +163,14 @@ interface RightWorkspaceBrowserPanelSlotProps {
   active: boolean
   state: RightWorkspaceBrowserState
   codeCommentCount: number
+  codeCommentContexts: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
     update: Partial<RightWorkspaceBrowserState>
@@ -167,7 +182,11 @@ function RightWorkspaceBrowserPanelSlot({
   active,
   state,
   codeCommentCount,
+  codeCommentContexts,
+  browserAnnotationCommand,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onBrowserStateChange,
 }: RightWorkspaceBrowserPanelSlotProps) {
   const handleDownloadActivityChange = useCallback(
@@ -191,9 +210,14 @@ function RightWorkspaceBrowserPanelSlot({
     <WorkspaceBrowserPanel
       active={active}
       label={state.label}
+      browserTabId={tab}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
+      codeCommentContexts={codeCommentContexts}
+      browserAnnotationCommand={browserAnnotationCommand}
       onAddCodeComment={onAddCodeComment}
+      onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+      onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
       onTitleChange={handleTitleChange}
@@ -227,9 +251,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   browserStates,
   onBrowserStateChange,
   codeCommentCount = 0,
+  codeCommentContexts = [],
+  browserAnnotationCommand,
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onFileDirtyChange,
   onFileSelectionChange,
   onSelectFileWorkspaceTarget,
@@ -519,7 +547,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                 active={visible && activeView === tab}
                 state={browserState}
                 codeCommentCount={codeCommentCount}
+                codeCommentContexts={codeCommentContexts}
+                browserAnnotationCommand={browserAnnotationCommand}
                 onAddCodeComment={onAddCodeComment}
+                onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+                onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
                 onBrowserStateChange={onBrowserStateChange}
               />
             </div>

@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { browserAnnotationInjectionScript } from './WorkspaceBrowserPanel'
+import { browserAnnotationInjectionScript } from './browser-annotation/injection-script'
 
-interface PublishedAnnotation {
-  comment: string
-  number: number
-  text: string
+interface RuntimeApi {
+  getSnapshot: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
+  clear: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
+  suspend: () => unknown
+  resume: () => unknown
+  destroy: () => void
 }
 
-type AnnotationWindow = Window & {
-  __weworkBrowserAnnotationClear?: () => void
-  __weworkBrowserAnnotationClose?: () => void
-  __weworkBrowserAnnotationConsume?: () => PublishedAnnotation[]
-}
+type AnnotationWindow = Window & { __WEWORK_BROWSER_ANNOTATION__?: RuntimeApi }
 
 const annotationWindow = window as AnnotationWindow
 
@@ -36,135 +34,130 @@ function click(element: Element) {
 function openEditor(target: HTMLElement) {
   target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
   click(target)
-  return document.querySelector<HTMLInputElement>('[data-wework-annotation="editor"] input')
+  return document.querySelector<HTMLInputElement>('[data-wework-annotation="comment-input"]')
 }
 
-function publishButton() {
-  return document.querySelector<HTMLButtonElement>('[data-wework-annotation="editor"] button')
+function saveButton() {
+  return document.querySelector<HTMLButtonElement>('[data-wework-annotation="save"]')
 }
 
 describe('browser annotation injection', () => {
   beforeEach(() => {
-    document.body.innerHTML = `
-      <main>
-        <button id="first-target">First target</button>
-        <button id="second-target">Second target</button>
-      </main>
-    `
+    document.body.innerHTML =
+      '<main><button id="first-target">First target</button><button id="second-target">Second target</button></main>'
     setElementRect(document.querySelector('#first-target')!, 20, 30)
     setElementRect(document.querySelector('#second-target')!, 180, 90)
-    window.eval(browserAnnotationInjectionScript())
+    window.eval(browserAnnotationInjectionScript({ browserTabId: 'test-browser' }))
   })
 
   afterEach(() => {
-    annotationWindow.__weworkBrowserAnnotationClose?.()
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.destroy()
     document.body.innerHTML = ''
     vi.restoreAllMocks()
   })
 
-  test('publishes exactly one annotation without reopening the editor', () => {
+  test('publishes a non-destructive revision snapshot', () => {
     const input = openEditor(document.querySelector('#first-target')!)
-    expect(input).not.toBeNull()
-
     input!.value = 'First comment'
-    click(publishButton()!)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
 
-    expect(document.querySelectorAll('[data-wework-annotation="editor"]')).toHaveLength(0)
+    const first = annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()
+    const second = annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({
+      revision: 1,
+      annotations: [{ comment: 'First comment', number: 1 }],
+    })
     expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(1)
-    expect(document.querySelector('[data-wework-annotation="box"] span')).toHaveTextContent('1')
-    expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([
-      expect.objectContaining({
-        comment: 'First comment',
-        number: 1,
-        text: 'First target',
-      }),
-    ])
   })
 
-  test('publishes with Enter without selecting the editor as a new target', () => {
+  test('edits a published annotation without changing its number', () => {
     const input = openEditor(document.querySelector('#first-target')!)
-    input!.value = 'Keyboard comment'
-    input!.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        bubbles: true,
-        cancelable: true,
-        key: 'Enter',
-      })
+    input!.value = 'First comment'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+    click(document.querySelector('[data-wework-annotation="badge"]')!)
+
+    const editorInput = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="comment-input"]'
+    )!
+    editorInput.value = 'Edited comment'
+    editorInput.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()).toMatchObject({
+      revision: 2,
+      annotations: [{ comment: 'Edited comment', number: 1 }],
+    })
+  })
+
+  test('deletes one annotation after the injected confirmation', () => {
+    const input = openEditor(document.querySelector('#first-target')!)
+    input!.value = 'First comment'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+    click(document.querySelector('[data-wework-annotation="badge"]')!)
+    click(document.querySelector('[data-wework-annotation="delete"]')!)
+
+    expect(document.querySelector('[data-wework-annotation="delete-confirmation"]')).not.toBeNull()
+    click(document.querySelector('[data-wework-annotation="delete-confirm"]')!)
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()).toMatchObject({
+      revision: 2,
+      annotations: [],
+    })
+  })
+
+  test('suspends without losing annotations and resumes their boxes', () => {
+    const input = openEditor(document.querySelector('#first-target')!)
+    input!.value = 'First comment'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.suspend()
+    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toHaveLength(
+      1
     )
 
-    expect(document.querySelectorAll('[data-wework-annotation="editor"]')).toHaveLength(0)
-    expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([
-      expect.objectContaining({ comment: 'Keyboard comment', number: 1 }),
-    ])
-  })
-
-  test('keeps consecutive annotations paired with their own selection boxes', () => {
-    const firstInput = openEditor(document.querySelector('#first-target')!)
-    firstInput!.value = 'First comment'
-    click(publishButton()!)
-
-    const secondInput = openEditor(document.querySelector('#second-target')!)
-    secondInput!.value = 'Second comment'
-    click(publishButton()!)
-
-    expect(document.querySelectorAll('[data-wework-annotation="editor"]')).toHaveLength(0)
-    expect(
-      Array.from(document.querySelectorAll('[data-wework-annotation="box"] span')).map(
-        badge => badge.textContent
-      )
-    ).toEqual(['1', '2'])
-    expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([
-      expect.objectContaining({ comment: 'First comment', number: 1, text: 'First target' }),
-      expect.objectContaining({ comment: 'Second comment', number: 2, text: 'Second target' }),
-    ])
-  })
-
-  test('close removes all published selection boxes when leaving annotation mode', () => {
-    const firstInput = openEditor(document.querySelector('#first-target')!)
-    firstInput!.value = 'First comment'
-    click(publishButton()!)
-
-    const secondInput = openEditor(document.querySelector('#second-target')!)
-    secondInput!.value = 'Second comment'
-    click(publishButton()!)
-
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(2)
-    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
-
-    annotationWindow.__weworkBrowserAnnotationClose?.()
-
-    expect(document.querySelectorAll('[data-wework-annotation]')).toHaveLength(0)
-    expect(document.getElementById('__wework_browser_annotation_layer__')).toBeNull()
-    expect(annotationWindow.__weworkBrowserAnnotationClose).toBeUndefined()
-    expect(annotationWindow.__weworkBrowserAnnotationConsume).toBeUndefined()
-  })
-
-  test('clear removes published boxes while keeping annotation mode handlers', () => {
-    const firstInput = openEditor(document.querySelector('#first-target')!)
-    firstInput!.value = 'First comment'
-    click(publishButton()!)
-
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.resume()
     expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(1)
-    annotationWindow.__weworkBrowserAnnotationClear?.()
-
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
-    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
-    expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([])
   })
 
-  test('clear removes orphaned boxes that are no longer under the annotation layer', () => {
-    const firstInput = openEditor(document.querySelector('#first-target')!)
-    firstInput!.value = 'First comment'
-    click(publishButton()!)
+  test('clears annotations while keeping the runtime available', () => {
+    const input = openEditor(document.querySelector('#first-target')!)
+    input!.value = 'First comment'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
 
-    const orphan = document.querySelector('[data-wework-annotation="box"]')
-    expect(orphan).not.toBeNull()
-    // Simulate a leaked box that left the live annotation layer.
-    document.body.appendChild(orphan!)
+    const result = annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.clear()
+    expect(result).toMatchObject({ revision: 2, annotations: [] })
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toEqual([])
+    expect(document.querySelector('[data-wework-annotation-layer]')).not.toBeNull()
+  })
 
-    annotationWindow.__weworkBrowserAnnotationClear?.()
+  test('restores the element baseline on suspend and clear, then replays saved adjustments', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    target.style.color = 'blue'
+    const input = openEditor(target)
+    input!.value = 'Use a stronger color'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
 
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
-    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.value = '#ff0000'
+    color.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+
+    click(saveButton()!)
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.suspend()
+    expect(target.style.color).toBe('blue')
+
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.resume()
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.clear()
+    expect(target.style.color).toBe('blue')
   })
 })

@@ -7,7 +7,9 @@ function lineRangeLabel(context: CodeCommentContext): string {
 }
 
 function contextSource(context: CodeCommentContext): 'browser_annotation' | 'code_selection' {
-  return context.filePath.startsWith('browser:') ? 'browser_annotation' : 'code_selection'
+  return context.source === 'browser_annotation' || context.filePath.startsWith('browser:')
+    ? 'browser_annotation'
+    : 'code_selection'
 }
 
 function contextLocationLabel(context: CodeCommentContext): string {
@@ -21,7 +23,7 @@ function serializedCodeCommentContexts(contexts: CodeCommentContext[]): string {
   const payload = contexts.map((context, index) => {
     const source = contextSource(context)
     return {
-      commentNumber: index + 1,
+      commentNumber: context.browserAnnotation?.number ?? index + 1,
       source,
       location: contextLocationLabel(context),
       filePath: context.filePath,
@@ -29,6 +31,7 @@ function serializedCodeCommentContexts(contexts: CodeCommentContext[]): string {
       lines: source === 'code_selection' ? lineRangeLabel(context) : null,
       selectedText: context.selectedText,
       userComment: context.comment,
+      adjustments: context.adjustments?.length ? context.adjustments : undefined,
       createdAt: context.createdAt,
     }
   })
