@@ -24,6 +24,16 @@ pub struct HarnessPluginAdapter {
     pub env: HashMap<String, String>,
 }
 
+pub struct HarnessPluginAdapterOptions<'a> {
+    pub harness_id: &'a str,
+    pub session_id: &'a str,
+    pub cwd: Option<&'a str>,
+    pub plugin_roots: &'a [String],
+    pub base_env: &'a HashMap<String, String>,
+    pub accept_bypass_permissions: bool,
+    pub uses_wework_model: bool,
+}
+
 struct PluginSource {
     name: String,
     root: PathBuf,
@@ -32,84 +42,109 @@ struct PluginSource {
 
 pub fn prepare_harness_plugin_adapter(
     app: &tauri::AppHandle,
-    harness_id: &str,
-    session_id: &str,
-    cwd: Option<&str>,
-    plugin_roots: &[String],
-    base_env: &HashMap<String, String>,
-    accept_bypass_permissions: bool,
+    options: HarnessPluginAdapterOptions<'_>,
 ) -> Result<HarnessPluginAdapter, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("Failed to resolve Wework app data directory: {error}"))?;
-    let sources = resolve_plugin_sources(&app_data, plugin_roots);
+    let sources = resolve_plugin_sources(&app_data, options.plugin_roots);
     let browser_bridge_runtime_path = embedded_browser::embedded_browser_bridge_runtime_path()?;
-    let fingerprint = plugin_fingerprint(harness_id, &sources);
+    let fingerprint = plugin_fingerprint(options.harness_id, &sources);
     let adapter_root = app_data
         .join("harness-adapters")
-        .join(harness_id)
+        .join(options.harness_id)
         .join(fingerprint);
     if !adapter_root.is_dir() {
         materialize_adapter(
             &adapter_root,
-            harness_id,
+            options.harness_id,
             &sources,
             &browser_bridge_runtime_path,
         )?;
     }
 
-    match harness_id {
+    prepare_harness_plugin_adapter_at(&app_data, &adapter_root, &options)
+}
+
+fn prepare_harness_plugin_adapter_at(
+    app_data: &Path,
+    adapter_root: &Path,
+    options: &HarnessPluginAdapterOptions<'_>,
+) -> Result<HarnessPluginAdapter, String> {
+    match options.harness_id {
         "opencode" => {
-            let session_root = app_data.join("harness-sessions").join(session_id);
-            let mut env = HashMap::from([
-                (
-                    "OPENCODE_CONFIG_DIR".to_string(),
-                    adapter_root.display().to_string(),
-                ),
-                (
-                    "XDG_DATA_HOME".to_string(),
-                    session_root.join("share").display().to_string(),
-                ),
-                (
-                    "XDG_CACHE_HOME".to_string(),
-                    session_root.join("cache").display().to_string(),
-                ),
-                (
-                    "XDG_STATE_HOME".to_string(),
-                    session_root.join("state").display().to_string(),
-                ),
-            ]);
-            merge_opencode_config_content(&adapter_root, base_env, &mut env)?;
+            let mut env = HashMap::from([(
+                "OPENCODE_CONFIG_DIR".to_string(),
+                adapter_root.display().to_string(),
+            )]);
+            if options.uses_wework_model {
+                let session_root = app_data.join("harness-sessions").join(options.session_id);
+                env.extend([
+                    (
+                        "XDG_DATA_HOME".to_string(),
+                        session_root.join("share").display().to_string(),
+                    ),
+                    (
+                        "XDG_CACHE_HOME".to_string(),
+                        session_root.join("cache").display().to_string(),
+                    ),
+                    (
+                        "XDG_STATE_HOME".to_string(),
+                        session_root.join("state").display().to_string(),
+                    ),
+                ]);
+            }
+            merge_opencode_config_content(adapter_root, options.base_env, &mut env)?;
             Ok(HarnessPluginAdapter {
                 args: Vec::new(),
                 env,
             })
         }
         "claude_code" => {
-            let home = app_data
-                .join("harness-sessions")
-                .join(session_id)
-                .join("claude-code");
-            prepare_claude_home(&home, cwd, accept_bypass_permissions)?;
+            let env = if options.uses_wework_model {
+                let home = app_data
+                    .join("harness-sessions")
+                    .join(options.session_id)
+                    .join("claude-code");
+                prepare_claude_home(&home, options.cwd, options.accept_bypass_permissions)?;
+                HashMap::from([("CLAUDE_CONFIG_DIR".to_string(), home.display().to_string())])
+            } else {
+                HashMap::new()
+            };
             Ok(HarnessPluginAdapter {
                 args: vec![
                     "--plugin-dir".to_string(),
                     adapter_root.display().to_string(),
                 ],
-                env: HashMap::from([("CLAUDE_CONFIG_DIR".to_string(), home.display().to_string())]),
+                env,
             })
         }
         "kimi_code" => {
-            let home = app_data
-                .join("harness-sessions")
-                .join(session_id)
-                .join("kimi-code");
-            synchronize_kimi_home(&adapter_root, &home, cwd)?;
-            Ok(HarnessPluginAdapter {
-                args: Vec::new(),
-                env: HashMap::from([("KIMI_CODE_HOME".to_string(), home.display().to_string())]),
-            })
+            if options.uses_wework_model {
+                let home = app_data
+                    .join("harness-sessions")
+                    .join(options.session_id)
+                    .join("kimi-code");
+                synchronize_kimi_home(adapter_root, &home, options.cwd)?;
+                Ok(HarnessPluginAdapter {
+                    args: Vec::new(),
+                    env: HashMap::from([(
+                        "KIMI_CODE_HOME".to_string(),
+                        home.display().to_string(),
+                    )]),
+                })
+            } else {
+                Ok(HarnessPluginAdapter {
+                    args: vec![
+                        "--mcp-config-file".to_string(),
+                        adapter_root.join("mcp.json").display().to_string(),
+                        "--skills-dir".to_string(),
+                        adapter_root.join("skills").display().to_string(),
+                    ],
+                    env: HashMap::new(),
+                })
+            }
         }
         _ => Ok(HarnessPluginAdapter {
             args: Vec::new(),

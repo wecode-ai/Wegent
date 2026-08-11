@@ -637,17 +637,11 @@ export async function createDesktopScenario({
         'Kimi Code did not receive the Wework built-in browser MCP server'
       )
       assert.match(
-        await readFile(
-          join(kimiCodeHome, 'skills', 'wework-built-in-browser', 'SKILL.md'),
-          'utf8'
-        ),
+        await readFile(join(kimiCodeHome, 'skills', 'wework-built-in-browser', 'SKILL.md'), 'utf8'),
         /Wework built-in browser/,
         'Kimi Code did not receive the Wework built-in browser Skill'
       )
-      await probeMessagesProxy(
-        `${kimiCodeBaseUrl}/v1/messages`,
-        'WEWORK_HARNESS_KIMI_CHAT_PROXY'
-      )
+      await probeMessagesProxy(`${kimiCodeBaseUrl}/v1/messages`, 'WEWORK_HARNESS_KIMI_CHAT_PROXY')
       assert.deepEqual(harnessModelRequests, [
         { model: 'kimi-k3', protocol: 'chat' },
         { model: 'deepseek-v4-pro', protocol: 'responses' },
@@ -685,6 +679,81 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureWorkbench(control, 'local-harness-21-session-closed.png')
+
+      await control.command(
+        'click',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="workbench-harness-option-claude_code"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`
+      )
+      await control.command(
+        'click',
+        '[data-testid="workbench-harness-model-option-claude_code-native"]'
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`,
+        {
+          text: '不指定模型',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('fill', '[data-testid="chat-message-input"]', {
+        value: 'Use the native Claude model',
+      })
+      await capturePage(control, 'local-harness-22-native-model-ready.png')
+      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_ARGS_FILE),
+        value => {
+          const args = value.trim().split('\n')
+          assert.deepEqual(args.slice(0, 3), ['--permission-mode', 'plan', '--verbose'])
+          assert.equal(args[3], '--plugin-dir')
+          assert.match(
+            args[4],
+            /\/harness-adapters\/claude_code\/[0-9a-f]{16}$/,
+            'Claude Code did not receive its Agent Plugins adapter'
+          )
+          assert.equal(args[5], '--session-id')
+          assert.match(
+            args[6],
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+            'Claude Code did not receive a resumable session UUID'
+          )
+          assert.equal(args[7], 'Use the native Claude model')
+          assert.equal(args.length, 8)
+          assert.ok(!args.includes('--model'), 'Wework overrode the native Claude model')
+        },
+        uiTimeoutMs
+      )
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_PROXY_FILE),
+        value => {
+          assert.ok(
+            !value.includes('/harness-router/'),
+            'Wework injected its model router while no model was selected'
+          )
+        },
+        uiTimeoutMs
+      )
+      assert.deepEqual(harnessModelRequests, [
+        { model: 'kimi-k3', protocol: 'chat' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'kimi-k3', protocol: 'chat' },
+      ])
+      await captureWorkbench(control, 'local-harness-23-native-model-running.png')
     },
 
     diagnostics() {

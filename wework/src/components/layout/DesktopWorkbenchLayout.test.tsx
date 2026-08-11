@@ -3290,7 +3290,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-add-harness-option')).toHaveTextContent(
-      '新建 Harness 会话 · 实验性'
+      '新建编码会话 · 实验性'
     )
 
     fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
@@ -3634,17 +3634,17 @@ describe('DesktopWorkbenchLayout', () => {
         projectId: 1,
         cwd: '/workspace/github_wegent',
         executablePath: null,
-        args: ['--model', 'wework-messages/wework-selected'],
+        args: [],
         pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
-        proxyToken: 'proxy-token',
-        modelKey: 'wework:runtime:::local-model%3Atest',
+        proxyToken: undefined,
+        modelKey: null,
         resumeSessionId: 'local-harness-persisted',
         env: {
-          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
           WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
         },
       })
     )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
     expect(listLocalSkills).not.toHaveBeenCalled()
     expect(await screen.findByTestId('central-harness-terminal')).toBeVisible()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -3654,7 +3654,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('重启后继续修复')
   })
 
-  test('starts Claude Code with its configured permission mode and arguments', async () => {
+  test('starts Claude Code without overriding its native model by default', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessesMock.mockResolvedValue([
       {
@@ -3679,6 +3679,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(claudeCodeOption).not.toBeDisabled())
     await userEvent.click(claudeCodeOption)
     expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Claude Code')
+    expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent('不指定模型')
 
     const input = screen.getByTestId('chat-message-input')
     const form = input.closest('form')
@@ -3693,18 +3694,17 @@ describe('DesktopWorkbenchLayout', () => {
         projectId: 1,
         cwd: '/workspace/github_wegent',
         executablePath: null,
-        args: ['--model', 'wework-selected'],
+        args: [],
         pluginRoots: [],
-        proxyToken: 'proxy-token',
-        modelKey: 'wework:runtime:::local-model%3Atest',
+        proxyToken: undefined,
+        modelKey: null,
         resumeSessionId: undefined,
         env: {
-          ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
-          ANTHROPIC_API_KEY: 'wework-local-router',
           WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
         },
       })
     )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
   })
 
@@ -3748,17 +3748,17 @@ describe('DesktopWorkbenchLayout', () => {
         projectId: null,
         cwd: '/workspace/current-wework',
         executablePath: null,
-        args: ['--model', 'wework-messages/wework-selected'],
+        args: [],
         pluginRoots: [],
-        proxyToken: 'proxy-token',
-        modelKey: 'wework:runtime:::local-model%3Atest',
+        proxyToken: undefined,
+        modelKey: null,
         resumeSessionId: undefined,
         env: {
-          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
           WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
         },
       })
     )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
 
     expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
     expect(screen.getByTestId('central-harness-terminal')).toBeVisible()

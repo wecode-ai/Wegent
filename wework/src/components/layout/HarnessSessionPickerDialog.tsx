@@ -48,7 +48,7 @@ export function HarnessSessionPickerDialog({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h2 id="harness-session-picker-title" className="heading-small text-text-primary">
-                {t('workbench.harness_session_picker_title', '新建 Harness 会话')}
+                {t('workbench.harness_session_picker_title', '新建编码会话')}
               </h2>
               <ExperimentalBadge testId="harness-session-picker-experimental-badge" />
             </div>

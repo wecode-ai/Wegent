@@ -730,7 +730,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
-    Partial<Record<LocalHarnessId, string>>
+    Partial<Record<LocalHarnessId, string | null>>
   >({})
   const localHarnessPreferences =
     appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
@@ -1464,26 +1464,41 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const getSelectedHarnessModel = useCallback(
     (preference: LocalHarnessPreference): LocalHarnessModelOption | null => {
       const options = getHarnessModelOptions(preference.id)
-      const configuredKey = localHarnessModelKeys[preference.id] ?? preference.modelKey
-      const configuredModel = options.find(option => option.key === configuredKey)
-      if (configuredModel) return configuredModel
-
-      const currentComposerModel =
-        projectChat.selectedModel &&
-        options.find(
-          option =>
-            option.model.name === projectChat.selectedModel?.name &&
-            option.model.type === projectChat.selectedModel.type
-        )
-      return currentComposerModel ?? options[0] ?? null
+      const hasPendingSelection = Object.prototype.hasOwnProperty.call(
+        localHarnessModelKeys,
+        preference.id
+      )
+      const configuredKey = hasPendingSelection
+        ? localHarnessModelKeys[preference.id]
+        : preference.modelKey
+      if (!configuredKey) return null
+      return options.find(option => option.key === configuredKey) ?? null
     },
-    [getHarnessModelOptions, localHarnessModelKeys, projectChat.selectedModel]
+    [getHarnessModelOptions, localHarnessModelKeys]
+  )
+  const getConfiguredHarnessModelKey = useCallback(
+    (preference: LocalHarnessPreference): string | null => {
+      const hasPendingSelection = Object.prototype.hasOwnProperty.call(
+        localHarnessModelKeys,
+        preference.id
+      )
+      return (
+        (hasPendingSelection
+          ? localHarnessModelKeys[preference.id]
+          : preference.modelKey
+        )?.trim() || null
+      )
+    },
+    [localHarnessModelKeys]
   )
   const harnessModelOptions = selectedHarnessPreference
     ? getHarnessModelOptions(selectedHarnessPreference.id)
     : []
   const selectedHarnessModel = selectedHarnessPreference
     ? getSelectedHarnessModel(selectedHarnessPreference)
+    : null
+  const selectedHarnessModelKey = selectedHarnessPreference
+    ? getConfiguredHarnessModelKey(selectedHarnessPreference)
     : null
   const selectedHarnessInstalled = Boolean(
     selectedHarnessPreference &&
@@ -1495,8 +1510,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     preferLocalWorkspaceTerminal &&
     canPrepareHarnessWorktree &&
     centralHarnessCwd &&
-    selectedHarnessModel &&
-    services?.localHarnessModelApi
+    (!selectedHarnessModelKey || (selectedHarnessModel && services?.localHarnessModelApi))
   )
   const activeNewChatRuntime =
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
@@ -1576,7 +1590,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       resumeSession,
     }: {
       preference: LocalHarnessPreference
-      model: LocalHarnessModelOption
+      model: LocalHarnessModelOption | null
       prompt: string
       isPrimary: boolean
       projectId: number | null
@@ -1590,14 +1604,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       let proxyToken: string | null = null
       try {
         const pluginRoots = resumeSession?.pluginRoots ?? (await resolveHarnessPluginRoots())
-        const modelLaunch = await services?.localHarnessModelApi?.resolveLaunch(
-          preference.id,
-          model
-        )
-        if (!modelLaunch) {
+        const modelLaunch = model
+          ? await services?.localHarnessModelApi?.resolveLaunch(preference.id, model)
+          : null
+        if (model && !modelLaunch) {
           throw new Error(t('workbench.harness_model_required', '请选择可用的 Wework 模型'))
         }
-        proxyToken = modelLaunch.proxyToken
+        proxyToken = modelLaunch?.proxyToken ?? null
         const sessionId = await startLocalHarness({
           harnessId: preference.id,
           prompt,
@@ -1605,20 +1618,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           projectId,
           cwd,
           executablePath: preference.executablePath,
-          args: buildLocalHarnessLaunchArgs(preference, modelLaunch.modelId),
+          args: buildLocalHarnessLaunchArgs(preference, modelLaunch?.modelId ?? null),
           pluginRoots,
-          proxyToken: modelLaunch.proxyToken,
-          modelKey: model.key,
+          proxyToken: modelLaunch?.proxyToken,
+          modelKey: model?.key ?? null,
           resumeSessionId: resumeSession?.sessionId,
           env: {
             ...preference.env,
-            ...modelLaunch.env,
+            ...(modelLaunch?.env ?? {}),
             WEWORK_EMBEDDED_BROWSER_LABEL: defaultEmbeddedBrowserLabel,
           },
         })
         if (centralHarnessRequestIdRef.current !== requestId) {
           await closeLocalTerminal(sessionId)
-          await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
+          if (modelLaunch) {
+            await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
+          }
           return
         }
         if (!resumeSession) {
@@ -1636,9 +1651,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isPrimary,
           projectId,
           active: true,
-          modelKey: model.key,
+          modelKey: model?.key ?? null,
           pluginRoots,
-          proxyToken: modelLaunch.proxyToken,
+          proxyToken: modelLaunch?.proxyToken,
         })
       } catch (error) {
         console.error('Failed to launch local Harness session:', {
@@ -1676,11 +1691,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           candidate => candidate.id === activeLocalHarnessSession.harnessId
         ) ?? null)
       : null
+  const activeHarnessResumeModelKey = activeLocalHarnessSession?.modelKey?.trim() || null
   const activeHarnessResumeModel =
     activeLocalHarnessSession && activeHarnessResumePreference
       ? (getHarnessModelOptions(activeHarnessResumePreference.id).find(
-          option => option.key === activeLocalHarnessSession.modelKey
-        ) ?? getSelectedHarnessModel(activeHarnessResumePreference))
+          option => option.key === activeHarnessResumeModelKey
+        ) ?? null)
       : null
   const activeHarnessResumeError =
     activeLocalHarnessSession && !activeLocalHarnessSession.active
@@ -1689,7 +1705,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             name: localHarnessLabel(activeLocalHarnessSession.harnessId),
             defaultValue: `${localHarnessLabel(activeLocalHarnessSession.harnessId)} 已禁用，无法恢复会话`,
           })
-        : !activeHarnessResumeModel
+        : activeHarnessResumeModelKey && !activeHarnessResumeModel
           ? t('workbench.harness_model_required', '请选择可用的 Wework 模型')
           : null
       : null
@@ -1697,7 +1713,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!activeLocalHarnessSession || activeLocalHarnessSession.active) return
     const resumeRequests = harnessResumeRequestsRef.current
     if (resumeRequests.has(activeLocalHarnessSession.sessionId)) return
-    if (!activeHarnessResumePreference || !activeHarnessResumeModel) return
+    if (
+      !activeHarnessResumePreference ||
+      (activeHarnessResumeModelKey && !activeHarnessResumeModel)
+    ) {
+      return
+    }
     const sessionId = activeLocalHarnessSession.sessionId
     let started = false
     resumeRequests.add(sessionId)
@@ -1723,6 +1744,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [
     activeHarnessResumeModel,
+    activeHarnessResumeModelKey,
     activeHarnessResumePreference,
     activeLocalHarnessSession,
     launchHarnessSession,
@@ -1772,12 +1794,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
     const prompt = (value ?? paneInput).trim()
     if (!prompt || centralHarnessStarting) return
-    if (
-      !selectedHarnessAvailable ||
-      !centralHarnessCwd ||
-      !selectedHarnessPreference ||
-      !selectedHarnessModel
-    ) {
+    if (!selectedHarnessAvailable || !centralHarnessCwd || !selectedHarnessPreference) {
       const harnessName = newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime)
       setCentralHarnessError(
         t('workbench.harness_start_unavailable', {
@@ -1812,18 +1829,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (centralHarnessStarting) return
 
       const preference = enabledLocalHarnesses.find(candidate => candidate.id === harnessId)
+      const modelKey = preference ? getConfiguredHarnessModelKey(preference) : null
       const model = preference ? getSelectedHarnessModel(preference) : null
       const installed = localHarnesses.some(
         harness => harness.id === harnessId && harness.installed
       )
       if (
         !preference ||
-        !model ||
+        (modelKey && !model) ||
         !installed ||
         !centralHarnessCwd ||
         !preferLocalWorkspaceTerminal ||
         !canPrepareHarnessWorktree ||
-        !services?.localHarnessModelApi
+        (model && !services?.localHarnessModelApi)
       ) {
         setCentralHarnessError(
           t('workbench.harness_start_unavailable', {
@@ -1859,6 +1877,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       centralHarnessStarting,
       currentProject,
       enabledLocalHarnesses,
+      getConfiguredHarnessModelKey,
       getSelectedHarnessModel,
       launchHarnessSession,
       localHarnesses,
@@ -1876,11 +1895,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         disabled: Boolean(
           centralHarnessStarting ||
           !localHarnesses.some(harness => harness.id === preference.id && harness.installed) ||
-          !getSelectedHarnessModel(preference) ||
+          (getConfiguredHarnessModelKey(preference) && !getSelectedHarnessModel(preference)) ||
           !centralHarnessCwd ||
           !preferLocalWorkspaceTerminal ||
           !canPrepareHarnessWorktree ||
-          !services?.localHarnessModelApi
+          (getSelectedHarnessModel(preference) && !services?.localHarnessModelApi)
         ),
       })),
     [
@@ -1888,6 +1907,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       centralHarnessCwd,
       centralHarnessStarting,
       enabledLocalHarnesses,
+      getConfiguredHarnessModelKey,
       getSelectedHarnessModel,
       localHarnesses,
       preferLocalWorkspaceTerminal,
@@ -1904,7 +1924,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               icon: Bot,
               label: `${t(
                 'workbench.harness_session_picker_title',
-                '新建 Harness 会话'
+                '新建编码会话'
               )} · ${t('workbench.experimental_badge', '实验性')}`,
               disabled: harnessSessionPickerOptions.every(option => option.disabled),
               onSelect: () => setHarnessSessionPickerOpen(true),
@@ -3615,7 +3635,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             onModelChange={model => {
                               setLocalHarnessModelKeys(current => ({
                                 ...current,
-                                [selectedHarnessPreference.id]: model?.key ?? '',
+                                [selectedHarnessPreference.id]: model?.key ?? null,
                               }))
                               const localHarnesses = localHarnessPreferences.map(preference =>
                                 preference.id === selectedHarnessPreference.id

@@ -134,6 +134,90 @@ fn prepares_claude_home_without_replacing_existing_settings() {
 }
 
 #[test]
+fn native_model_adapters_preserve_each_tools_configuration_home() {
+    let root = test_directory("native-model-adapters");
+    let app_data = root.join("app-data");
+    let adapter_root = root.join("adapter");
+    fs::create_dir_all(adapter_root.join("skills")).unwrap();
+    fs::write(adapter_root.join("opencode.json"), r#"{"mcp":{}}"#).unwrap();
+    fs::write(adapter_root.join("mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+    let base_env = HashMap::new();
+
+    let opencode = prepare_harness_plugin_adapter_at(
+        &app_data,
+        &adapter_root,
+        &HarnessPluginAdapterOptions {
+            harness_id: "opencode",
+            session_id: "native-opencode",
+            cwd: Some("/workspace/demo"),
+            plugin_roots: &[],
+            base_env: &base_env,
+            accept_bypass_permissions: false,
+            uses_wework_model: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        opencode.env["OPENCODE_CONFIG_DIR"],
+        adapter_root.display().to_string()
+    );
+    assert!(opencode.env.contains_key("OPENCODE_CONFIG_CONTENT"));
+    assert!(!opencode.env.contains_key("XDG_DATA_HOME"));
+    assert!(!opencode.env.contains_key("XDG_CACHE_HOME"));
+    assert!(!opencode.env.contains_key("XDG_STATE_HOME"));
+
+    let claude = prepare_harness_plugin_adapter_at(
+        &app_data,
+        &adapter_root,
+        &HarnessPluginAdapterOptions {
+            harness_id: "claude_code",
+            session_id: "native-claude",
+            cwd: Some("/workspace/demo"),
+            plugin_roots: &[],
+            base_env: &base_env,
+            accept_bypass_permissions: false,
+            uses_wework_model: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        claude.args,
+        vec![
+            "--plugin-dir".to_string(),
+            adapter_root.display().to_string()
+        ]
+    );
+    assert!(claude.env.is_empty());
+
+    let kimi = prepare_harness_plugin_adapter_at(
+        &app_data,
+        &adapter_root,
+        &HarnessPluginAdapterOptions {
+            harness_id: "kimi_code",
+            session_id: "native-kimi",
+            cwd: Some("/workspace/demo"),
+            plugin_roots: &[],
+            base_env: &base_env,
+            accept_bypass_permissions: false,
+            uses_wework_model: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        kimi.args,
+        vec![
+            "--mcp-config-file".to_string(),
+            adapter_root.join("mcp.json").display().to_string(),
+            "--skills-dir".to_string(),
+            adapter_root.join("skills").display().to_string(),
+        ]
+    );
+    assert!(kimi.env.is_empty());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
     let root = test_directory("materialize");
     let plugin_root = root.join("plugin");

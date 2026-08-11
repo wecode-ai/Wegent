@@ -66,19 +66,22 @@ their project. Reopening one uses the native continue or resume mechanism of Ope
 or Kimi Code and restores bounded terminal scrollback. Explicitly closing a session terminates its
 process and removes the persisted record.
 
-After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by the
-harness model picker. It directly lists local model interfaces from **Settings → Models** and the
-public, personal, and group models available through the connected Wegent account. Harnesses no
-longer maintain a separate list of model IDs. An explicit composer selection replaces any
-`--model` or `-m` value from the default arguments.
+After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by
+the harness model picker. Its default is **Don't specify a model**: Wework does not pass a
+`--model` argument, model proxy endpoint, or model credential, so the tool reads its own native
+configuration. You can instead explicitly select a local model interface from
+**Settings → Models** or a public, personal, or group model available through the connected Wegent
+account. That choice is persisted for the harness and replaces any `--model` or `-m` value from its
+default arguments.
 
-All three harnesses connect only to an Anthropic Messages-compatible loopback route exposed by the
-executor. The child process receives a fixed local model alias and non-privileged placeholder
-credentials. Provider keys, cloud login tokens, model resource identity, and the configured local
-HTTP/SOCKS proxy remain inside the executor. The executor converts Messages requests as peer
-adapters to Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions according to the
-selected model. Native Anthropic upstream requests and responses preserve their original fields.
-Closing or exiting a harness unregisters its route; abandoned routes expire after an idle timeout.
+Only an explicitly selected Wework model connects the harness to the Anthropic
+Messages-compatible loopback route exposed by the executor. The child process then receives a
+fixed local model alias and non-privileged placeholder credentials. Provider keys, cloud login
+tokens, model resource identity, and the configured local HTTP/SOCKS proxy remain inside the
+executor. The executor converts Messages requests as peer adapters to Anthropic Messages, OpenAI
+Responses, or OpenAI Chat Completions according to the selected model. Native Anthropic upstream
+requests and responses preserve their original fields. Closing or exiting a harness unregisters
+its route; abandoned routes expire after an idle timeout.
 
 Harnesses are experimental; Codex itself is not marked experimental. OpenCode, Claude Code, and
 Kimi Code load Agent Plugins-standard Skills and MCP servers from the Wework plugins selected for

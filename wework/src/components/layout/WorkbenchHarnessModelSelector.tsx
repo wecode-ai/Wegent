@@ -18,7 +18,7 @@ export function WorkbenchHarnessModelSelector({
   onModelChange,
 }: WorkbenchHarnessModelSelectorProps) {
   const { t } = useTranslation('common')
-  const defaultLabel = t('workbench.harness_model_required', '请选择 Wework 模型')
+  const defaultLabel = t('workbench.harness_model_unspecified', '不指定模型')
   const optionLabel = (model: LocalHarnessModelOption) =>
     `${model.label} · ${t(`workbench.harness_model_source_${model.source}`)}`
 
@@ -38,6 +38,11 @@ export function WorkbenchHarnessModelSelector({
       placement="bottom-end"
       triggerClassName="flex h-8 max-w-56 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary opacity-90 hover:bg-muted hover:text-text-primary hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
       items={[
+        {
+          label: defaultLabel,
+          testId: `workbench-harness-model-option-${harnessId}-native`,
+          onSelect: () => onModelChange(null),
+        },
         ...models.map((model, index) => ({
           label: optionLabel(model),
           testId: `workbench-harness-model-option-${harnessId}-${index}`,

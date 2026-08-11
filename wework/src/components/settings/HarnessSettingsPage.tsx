@@ -167,7 +167,7 @@ export function HarnessSettingsPage() {
         }
         description={t(
           'workbench.harness_settings_description',
-          '配置 Wework 中可直接启动的本地编码工具。模型统一来自 Wework 模型设置，并通过本地 Messages 路由使用代理与云端模型能力。'
+          '配置 Wework 中可直接启动的本地编码工具。默认使用工具自己的模型配置；也可以显式选择 Wework 模型，通过本地 Messages 路由使用代理与云端模型能力。'
         )}
         actions={
           <>

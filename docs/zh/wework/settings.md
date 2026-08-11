@@ -68,15 +68,17 @@ Kimi Code 以交互 TUI 启动。Wework 在终端附着时通过 bracketed paste
 分别使用其原生继续/恢复能力接回历史上下文，并恢复有限的终端回滚内容。显式关闭会话会终止进程
 并删除该会话记录，已经显式关闭的会话不会在下次启动时恢复。
 
-选择 OpenCode、Claude Code 或 Kimi Code 后，普通 Codex 模型选择器会切换为运行工具模型选择器。这里直接
-展示“设置 → 模型”中的本地模型接口，以及当前已连接 Wegent 账号可访问的公共、个人和群组模型；
-不再单独维护一份 harness 模型 ID。输入区中的显式选择会替换默认参数里的 `--model` 或 `-m`。
+选择 OpenCode、Claude Code 或 Kimi Code 后，普通 Codex 模型选择器会切换为运行工具模型选择器。
+默认项是“不指定模型”：Wework 不传入 `--model`、模型代理地址或模型凭证，由工具读取
+自己的原生配置。也可以显式选择“设置 → 模型”中的本地模型接口，或当前已连接 Wegent 账号可访问的
+公共、个人和群组模型；该选择会持久化到对应运行工具，并替换默认参数里的 `--model` 或 `-m`。
 
-三个运行工具都只连接 executor 暴露在回环地址上的 Anthropic Messages 兼容路由。工具进程只收到
-固定的本地模型别名和无权限的占位凭证；真实 provider 凭证、云端登录 token、模型资源身份和本地
-HTTP/SOCKS 代理配置都保留在 executor 中。executor 按选中模型把 Messages 请求平级转换到
-Anthropic Messages、OpenAI Responses 或 OpenAI Chat Completions，上游为 Anthropic Messages
-时保留原始请求和响应字段。关闭或退出运行工具会注销对应路由，异常遗留路由会在空闲超时后回收。
+只有显式选择 Wework 模型时，运行工具才连接 executor 暴露在回环地址上的 Anthropic Messages
+兼容路由。此时工具进程只收到固定的本地模型别名和无权限的占位凭证；真实 provider 凭证、云端
+登录 token、模型资源身份和本地 HTTP/SOCKS 代理配置都保留在 executor 中。executor 按选中模型
+把 Messages 请求平级转换到 Anthropic Messages、OpenAI Responses 或 OpenAI Chat Completions，
+上游为 Anthropic Messages 时保留原始请求和响应字段。关闭或退出运行工具会注销对应路由，异常
+遗留路由会在空闲超时后回收。
 
 运行工具属于实验性功能；Codex 本身不显示实验性标记。OpenCode、Claude Code 和 Kimi Code
 会加载当前 Wework 插件提供的 Agent Plugins 标准 Skill 与 MCP Server，并自动连接

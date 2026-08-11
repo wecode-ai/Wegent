@@ -971,14 +971,21 @@ pub fn start_local_harness(
             || configured_args
                 .windows(2)
                 .any(|args| args[0] == "--permission-mode" && args[1] == "bypassPermissions"));
+    let uses_wework_model = request
+        .proxy_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
     let plugin_adapter = agent_plugins::prepare_harness_plugin_adapter(
         &app,
-        definition.id,
-        &session_id,
-        cwd.as_deref(),
-        &plugin_roots,
-        &env,
-        accept_bypass_permissions,
+        agent_plugins::HarnessPluginAdapterOptions {
+            harness_id: definition.id,
+            session_id: &session_id,
+            cwd: cwd.as_deref(),
+            plugin_roots: &plugin_roots,
+            base_env: &env,
+            accept_bypass_permissions,
+            uses_wework_model,
+        },
     )?;
     env.extend(plugin_adapter.env);
     configured_args.extend(plugin_adapter.args);
