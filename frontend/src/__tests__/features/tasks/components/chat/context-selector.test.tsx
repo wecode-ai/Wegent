@@ -724,6 +724,59 @@ describe('ContextSelector organization grouping', () => {
     expect(onReplaceContexts).toHaveBeenCalledWith([1], [])
   })
 
+  it('preserves disjoint folder scopes when removing an effectively selected folder', async () => {
+    const onReplaceContexts = jest.fn()
+    mockGetFolderTree.mockResolvedValue([
+      { id: 10, name: 'Specs', children: [] },
+      { id: 20, name: 'Guides', children: [] },
+    ])
+    mockListDocuments.mockResolvedValue({
+      items: [
+        { id: 101, name: 'API.md', folder_id: 10 },
+        { id: 102, name: 'Guide.md', folder_id: 20 },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[
+          {
+            id: 1,
+            name: 'Org KB',
+            type: 'knowledge_base',
+            scope_restricted: true,
+            folder_ids: [10, 20],
+            folder_names: ['Specs', 'Guides'],
+            include_subfolders: true,
+          },
+        ]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    fireEvent.click(await screen.findByTestId('knowledge-picker-source-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-folder-scope-10'))
+
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [1],
+      [
+        expect.objectContaining({
+          folder_ids: [20],
+          folder_names: ['Guides'],
+          include_subfolders: true,
+          document_ids: [102],
+        }),
+      ]
+    )
+  })
+
   it('allows removing a child document from an inherited folder selection', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
