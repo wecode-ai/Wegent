@@ -89,7 +89,6 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
-import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -450,7 +449,6 @@ function AppShell() {
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const tauriViewportSize = useTauriViewportSize(isTauri)
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
   const titlebarOverlaysContent = false
@@ -666,7 +664,6 @@ function AppShell() {
     >
       <div
         data-testid="app-shell"
-        data-tauri-viewport-height={tauriViewportSize?.height}
         className={cn(
           isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
@@ -676,14 +673,6 @@ function AppShell() {
               : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
-        style={
-          tauriViewportSize
-            ? {
-                width: `${tauriViewportSize.width}px`,
-                height: `${tauriViewportSize.height}px`,
-              }
-            : undefined
-        }
       >
         {showChromeTitlebar && (
           <ChromeTitlebar
