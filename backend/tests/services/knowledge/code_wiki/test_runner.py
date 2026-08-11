@@ -830,6 +830,29 @@ def test_a_stored_type_that_is_not_a_model_scope_falls_back_whole(
     assert tasks.created[0].force_override_bot_model is False
 
 
+def test_a_stored_type_of_spaces_reaches_the_task_as_no_type_at_all(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A blank type is unset, and has to arrive unset.
+
+    It passes the scope check -- there is nothing to check -- so the danger is not
+    rejection but survival: carried through as the original "   ", it reaches the
+    task as a non-empty scope that matches nothing, which is the same broken
+    override the check exists to prevent.
+    """
+    _set_spec(
+        test_db,
+        knowledge_base,
+        executionModelRef={"name": "claude-opus-5", "type": "   "},
+    )
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    created = tasks.created[0]
+    assert created.model_id == "claude-opus-5"
+    assert created.force_override_bot_model_type is None
+
+
 def test_a_stored_name_is_trimmed_before_it_reaches_the_task(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
 ):

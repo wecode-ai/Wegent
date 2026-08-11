@@ -221,10 +221,18 @@ def validated_model_ref(
             f"unsupported model type {model_type!r}; "
             f"expected one of {', '.join(MODEL_REF_TYPES)}"
         )
+    namespace = (value.get("namespace") or "").strip()
 
+    # A blank optional string is dropped, not passed through. Spreading `value`
+    # carries the original in, so a type of spaces -- which the check above reads as
+    # unset, and so never rejects -- would survive as a non-empty invalid scope and
+    # reach the task as one. That is the exact failure this function exists to stop.
     normalised = {**value, "name": name}
-    if model_type:
-        normalised["type"] = model_type
+    for key, cleaned in (("type", model_type), ("namespace", namespace)):
+        if cleaned:
+            normalised[key] = cleaned
+        else:
+            normalised.pop(key, None)
     return normalised
 
 
