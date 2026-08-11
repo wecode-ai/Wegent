@@ -199,6 +199,54 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('enables native Responses tools for supported GPT cloud models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-gpt-model',
+      modelId: 'gpt-5.6-sol',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {},
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-gpt-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+      },
+    })
+  })
+
+  test('honors explicit native Responses tool capability overrides', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        native_tool_search: false,
+        nativeNamespaceTools: false,
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toEqual(
+      expect.objectContaining({
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+      })
+    )
+  })
+
   test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',

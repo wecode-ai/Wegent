@@ -987,6 +987,7 @@ fn convert_responses_input_item(
             );
             converted["arguments"] = Value::String(json_string(item.get("arguments")));
             if let Some(object) = converted.as_object_mut() {
+                object.remove("id");
                 object.remove("execution");
             }
             Ok(converted)
@@ -1026,6 +1027,7 @@ fn convert_responses_input_item(
                 .map_err(|error| error.to_string())?,
             );
             if let Some(object) = converted.as_object_mut() {
+                object.remove("id");
                 object.remove("execution");
                 object.remove("tools");
             }
@@ -4154,12 +4156,14 @@ mod tests {
                 {"role": "user", "content": "Create an issue"},
                 {
                     "type": "tool_search_call",
+                    "id": "tsc_bridge_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "arguments": {"query": "GitHub create issue"}
                 },
                 {
                     "type": "tool_search_output",
+                    "id": "tso_bridge_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
@@ -4209,11 +4213,15 @@ mod tests {
         assert_eq!(converted["tools"][1]["name"], "github__create_issue");
         assert_eq!(converted["input"][1]["type"], "function_call");
         assert_eq!(converted["input"][1]["name"], TOOL_SEARCH_NAME);
+        assert!(converted["input"][1].get("id").is_none());
+        assert_eq!(converted["input"][1]["call_id"], "search_1");
         assert_eq!(
             converted["input"][1]["arguments"],
             "{\"query\":\"GitHub create issue\"}"
         );
         assert_eq!(converted["input"][2]["type"], "function_call_output");
+        assert!(converted["input"][2].get("id").is_none());
+        assert_eq!(converted["input"][2]["call_id"], "search_1");
         assert!(converted["input"][2]["output"]
             .as_str()
             .is_some_and(|value| value.contains("\"tools\"")));
@@ -4254,12 +4262,14 @@ mod tests {
             "input": [
                 {
                     "type": "tool_search_call",
+                    "id": "tsc_native_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "arguments": {"query": "GitHub"}
                 },
                 {
                     "type": "tool_search_output",
+                    "id": "tso_native_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
