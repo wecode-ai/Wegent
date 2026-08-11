@@ -158,10 +158,11 @@ export function ModelSelector({
   )
   const handleSelectModel = useCallback(
     (model: UnifiedModel | null) => {
-      onSelectModel(model)
-      if (isMobile) {
+      const selectionApplied = onSelectModel(model)
+      if (isMobile && selectionApplied !== false) {
         closeMenu()
       }
+      return selectionApplied
     },
     [closeMenu, isMobile, onSelectModel]
   )
@@ -571,7 +572,9 @@ export function ModelSelector({
               onBlockedModelSelect?.(model, disabledMessage)
               return
             }
-            handleSelectModel(model)
+            if (handleSelectModel(model) !== false) {
+              closeMenu()
+            }
           }}
           className={[
             `flex h-8 w-full items-center gap-2 rounded-lg ${indented ? 'pl-5 pr-2' : 'px-2'} text-left text-sm leading-[18px]`,

@@ -28,7 +28,7 @@ interface ComposerToolbarProps {
   onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void

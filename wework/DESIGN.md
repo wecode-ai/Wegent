@@ -532,6 +532,8 @@ recipe closely:
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
+- selecting a model is a terminal menu action and closes the model selector;
+  reasoning and speed adjustments keep it open for consecutive changes;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
