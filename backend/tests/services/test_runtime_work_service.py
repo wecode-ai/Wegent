@@ -1782,6 +1782,11 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         }
     )
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_safe_build_runtime_send_execution_request",
+        lambda **kwargs: None,
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
@@ -1990,6 +1995,11 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     )
     rpc = AsyncMock(return_value={"success": True, "accepted": True})
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_safe_build_runtime_send_execution_request",
+        lambda **kwargs: None,
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,

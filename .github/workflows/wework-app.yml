@@ -176,12 +176,10 @@ jobs:
           previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
 
           if [ -n "$previous_tag" ]; then
-            log_range="${previous_tag}..${RELEASE_SHA}"
-          else
-            log_range="$RELEASE_SHA"
+            export PREVIOUS_TAG="$previous_tag"
           fi
 
-          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+          node wework/scripts/generate-release-notes.mjs > "$generated_notes"
 
           if [ ! -s "$generated_notes" ]; then
             echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"

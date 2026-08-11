@@ -38,15 +38,14 @@ jobs:
           path: trusted-policy
           persist-credentials: false
 
-      - name: Checkout pull request merge tree
+      - name: Checkout pull request head tree
         if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository }}
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
           path: policy-target
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
 
       - name: Checkout merge group
         if: github.event_name == 'merge_group'

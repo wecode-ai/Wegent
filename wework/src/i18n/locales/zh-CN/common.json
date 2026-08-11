@@ -464,6 +464,8 @@
     "create_permanent_worktree_description": "从 HEAD 创建新的 Git 工作树，将其添加为项目，并保留到你将其移除为止。",
     "create_permanent_worktree_unavailable": "当前设备不支持创建工作树",
     "create_permanent_worktree_failed": "创建工作树失败",
+    "worktree_creation_title": "正在创建工作树",
+    "worktree_creation_description": "正在准备隔离的代码工作区。完成后，任务会自动开始。",
     "project_name_placeholder": "输入项目名称",
     "remote_project": "远程项目",
     "blank_project_name_title": "为项目命名",
