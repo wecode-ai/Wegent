@@ -584,6 +584,15 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!sameTask || tagsMatch(tags, previous?.tags ?? [])) setTags(item.tags ?? [])
     syncedItemRef.current = item
   }, [item, title, description, status, priority, parentId, dueDate, assigneeTarget, tags])
+  // A create draft or initial parent can reference a task that was archived
+  // since; a deleted parent is not in the live item list, so fall back to a
+  // top-level task instead of sending a parent id the backend rejects.
+  useEffect(() => {
+    if (item || !parentId || allItems.length === 0) return
+    if (allItems.some(candidate => candidate.id === parentId)) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- stale parent fallback
+    setParentId('')
+  }, [allItems, item, parentId])
   // Tag autocomplete candidates: the project registry plus tags already used
   // by any item in the project.
   const tagSuggestions = Array.from(

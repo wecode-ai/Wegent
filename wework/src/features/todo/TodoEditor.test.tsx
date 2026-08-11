@@ -368,6 +368,88 @@ describe('TodoEditor status history', () => {
   })
 })
 
+describe('TodoEditor create parent resolution', () => {
+  it('drops a parent that no longer exists and creates a top-level task', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem: vi.fn(async () => ({ ...baseItem, version: 1 })),
+    } as never
+    const staleParent = { ...baseItem, id: 'STALE-1' } as unknown as CloudLoopItem
+    const liveParent = { ...baseItem, id: 'LIVE-1' } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={staleParent}
+        initialStatus="inbox"
+        allItems={[liveParent]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.type(screen.getByTestId('cloud-todo-title'), '新的顶层任务')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createApi.createLoopItem).toHaveBeenCalledWith('11', {
+        title: '新的顶层任务',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+      })
+    })
+  })
+
+  it('keeps a live parent in the create payload', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem: vi.fn(async () => ({ ...baseItem, version: 1 })),
+    } as never
+    const liveParent = { ...baseItem, id: 'LIVE-1' } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={liveParent}
+        initialStatus="inbox"
+        allItems={[liveParent]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.type(screen.getByTestId('cloud-todo-title'), '子任务')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createApi.createLoopItem).toHaveBeenCalledWith('11', {
+        title: '子任务',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+        parent_id: 'LIVE-1',
+      })
+    })
+  })
+})
+
 describe('TodoEditor comments by provider', () => {
   it('closes task comments for DingTalk AI Table tasks', () => {
     const aitableProject = {
