@@ -244,6 +244,14 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
+      "categoryFilter": {
+        "label": "Knowledge base category",
+        "all": "All",
+        "document": "Document",
+        "code": "Code",
+        "emptyDocument": "No document knowledge bases",
+        "emptyCode": "No code knowledge bases"
+      },
       "currentDefaultView": "Current Default Opening View",
       "convertToNotebook": "Open Workspace by Default",
       "convertToClassic": "Open Document Management by Default",

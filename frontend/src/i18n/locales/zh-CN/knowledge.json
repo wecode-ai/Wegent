@@ -244,6 +244,14 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
+      "categoryFilter": {
+        "label": "知识库类别",
+        "all": "全部",
+        "document": "文档",
+        "code": "代码",
+        "emptyDocument": "暂无文档知识库",
+        "emptyCode": "暂无代码知识库"
+      },
       "currentDefaultView": "当前默认打开方式",
       "convertToNotebook": "默认打开工作台",
       "convertToClassic": "默认打开文档管理",

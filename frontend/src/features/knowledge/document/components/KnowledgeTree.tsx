@@ -25,6 +25,11 @@ import {
   Settings,
 } from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
+import {
+  isInKnowledgeBaseCategory,
+  KnowledgeBaseCategoryFilter,
+  type KnowledgeBaseCategory,
+} from './KnowledgeBaseCategoryFilter'
 import { Spinner } from '@/components/ui/spinner'
 import {
   DropdownMenu,
@@ -33,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import type { TreeNode } from '../hooks/useKnowledgeTree'
 import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 import type { Group } from '@/types/group'
@@ -81,23 +87,32 @@ export function KnowledgeTree({
 }: KnowledgeTreeProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
+  const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
 
-  // Filter tree nodes based on search
+  const showCodeCategory = useMemo(
+    () => getRuntimeConfigSync().enableCodeWiki || hasCodeWiki(nodes),
+    [nodes]
+  )
+
+  // Filter tree nodes by category before applying the name search.
   const filteredNodes = useMemo(() => {
-    if (!searchQuery.trim()) return nodes
-
     const query = searchQuery.toLowerCase()
+    const hasSearchQuery = Boolean(query.trim())
+    if (!hasSearchQuery && category === 'all') return nodes
 
     const filterNode = (node: TreeNode): TreeNode | null => {
-      // For leaf nodes, check if name matches
       if (node.type === 'kb-leaf') {
-        const matches =
+        const matchesCategory = isInKnowledgeBaseCategory(
+          node.knowledgeBase?.kb_type ?? node.kbType,
+          category
+        )
+        const matchesSearch =
+          !hasSearchQuery ||
           node.label.toLowerCase().includes(query) ||
           node.knowledgeBase?.description?.toLowerCase().includes(query)
-        return matches ? node : null
+        return matchesCategory && matchesSearch ? node : null
       }
 
-      // For non-leaf nodes, filter children
       if (node.children) {
         const filteredChildren = node.children
           .map(child => filterNode(child))
@@ -107,7 +122,7 @@ export function KnowledgeTree({
           return {
             ...node,
             children: filteredChildren,
-            expanded: true, // Auto-expand when searching
+            expanded: true,
           }
         }
       }
@@ -116,12 +131,23 @@ export function KnowledgeTree({
     }
 
     return nodes.map(node => filterNode(node)).filter((node): node is TreeNode => node !== null)
-  }, [nodes, searchQuery])
+  }, [nodes, searchQuery, category])
+
+  const emptyMessage = searchQuery.trim()
+    ? t('document.tree.noResults')
+    : category === 'code'
+      ? t('document.knowledgeBase.categoryFilter.emptyCode')
+      : t('document.knowledgeBase.categoryFilter.emptyDocument')
 
   if (loading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="p-3">
+        <div className="flex flex-col gap-2 p-3">
+          <KnowledgeBaseCategoryFilter
+            value={category}
+            onValueChange={setCategory}
+            showCode={showCodeCategory}
+          />
           <SearchInput value={searchQuery} onChange={setSearchQuery} />
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -133,17 +159,19 @@ export function KnowledgeTree({
 
   return (
     <div className="flex flex-col h-full" data-testid="knowledge-tree">
-      {/* Search */}
-      <div className="p-3 border-b border-border">
+      <div className="flex flex-col gap-2 p-3 border-b border-border">
+        <KnowledgeBaseCategoryFilter
+          value={category}
+          onValueChange={setCategory}
+          showCode={showCodeCategory}
+        />
         <SearchInput value={searchQuery} onChange={setSearchQuery} />
       </div>
 
       {/* Tree content */}
       <div className="flex-1 overflow-y-auto py-1 custom-scrollbar">
-        {filteredNodes.length === 0 && searchQuery ? (
-          <div className="px-3 py-6 text-center text-sm text-text-muted">
-            {t('document.tree.noResults')}
-          </div>
+        {filteredNodes.length === 0 ? (
+          <div className="px-3 py-6 text-center text-sm text-text-muted">{emptyMessage}</div>
         ) : (
           filteredNodes.map(node => (
             <TreeNodeItem
@@ -165,6 +193,14 @@ export function KnowledgeTree({
         )}
       </div>
     </div>
+  )
+}
+
+function hasCodeWiki(nodes: TreeNode[]): boolean {
+  return nodes.some(
+    node =>
+      (node.type === 'kb-leaf' && (node.knowledgeBase?.kb_type ?? node.kbType) === 'code_wiki') ||
+      (node.children ? hasCodeWiki(node.children) : false)
   )
 }
 

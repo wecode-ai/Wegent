@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { KnowledgeTree } from '@/features/knowledge/document/components/KnowledgeTree'
 import type { TreeNode } from '@/features/knowledge/document/hooks/useKnowledgeTree'
@@ -120,5 +121,62 @@ describe('KnowledgeTree permissions', () => {
 
     expect(screen.getByTestId('group-settings-1')).toBeInTheDocument()
     expect(screen.getByTestId('kb-settings-8')).toBeInTheDocument()
+  })
+})
+
+describe('KnowledgeTree category filter', () => {
+  it('filters the mobile tree by document or code category', async () => {
+    const user = userEvent.setup()
+    const documentKb = createKnowledgeBase()
+    const codeWiki = {
+      ...createKnowledgeBase(),
+      id: 9,
+      name: 'Code Wiki',
+      kb_type: 'code_wiki' as const,
+    }
+    const nodes: TreeNode[] = [
+      {
+        id: 'personal',
+        type: 'category-root',
+        label: 'My Knowledge',
+        expanded: true,
+        children: [
+          {
+            id: `kb-${documentKb.id}`,
+            type: 'kb-leaf',
+            label: documentKb.name,
+            knowledgeBase: documentKb,
+            kbType: documentKb.kb_type,
+          },
+          {
+            id: `kb-${codeWiki.id}`,
+            type: 'kb-leaf',
+            label: codeWiki.name,
+            knowledgeBase: codeWiki,
+            kbType: codeWiki.kb_type,
+          },
+        ],
+      },
+    ]
+
+    render(
+      <KnowledgeTree
+        nodes={nodes}
+        selectedKbId={null}
+        loading={false}
+        expandState={{ personal: true }}
+        onToggleExpand={jest.fn()}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+      />
+    )
+
+    await user.click(screen.getByTestId('knowledge-category-code-filter'))
+    expect(screen.queryByTestId(`knowledge-tree-kb-${documentKb.id}`)).not.toBeInTheDocument()
+    expect(screen.getByTestId(`knowledge-tree-kb-${codeWiki.id}`)).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-category-document-filter'))
+    expect(screen.getByTestId(`knowledge-tree-kb-${documentKb.id}`)).toBeInTheDocument()
+    expect(screen.queryByTestId(`knowledge-tree-kb-${codeWiki.id}`)).not.toBeInTheDocument()
   })
 })
