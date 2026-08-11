@@ -1760,9 +1760,10 @@ describe('PluginsWorkspace', () => {
         expect.objectContaining({ method: 'DELETE' })
       )
     )
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents-local-id' })
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@personal' })
+    // Bare ids like documents-local-id look like Codex remote plugin ids and must
+    // not be probed for local/personal uninstalls.
     expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@wework-personal' })
+    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@personal' })
     expect(invoke).toHaveBeenCalledWith('local_executor_unlink_plugin_release', {
       marketplacePath: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       localPluginName: 'documents',
