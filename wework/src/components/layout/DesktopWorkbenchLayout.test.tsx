@@ -3539,6 +3539,56 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('reopens the loaded Codex task when switching back from another page', async () => {
+    window.history.pushState({}, '', '/automations')
+    const currentRuntimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-loaded',
+    }
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'chat',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-loaded',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Codex 会话',
+                    runtime: 'codex',
+                    createdAt: '2026-08-11T00:00:00.000Z',
+                    updatedAt: '2026-08-11T00:00:00.000Z',
+                    running: false,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+          currentRuntimeTask,
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-runtime-loaded'))
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledOnce()
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(currentRuntimeTask)
+  })
+
   test('resumes an inactive persisted harness session with the same Wework session id', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     const listLocalSkills = vi.fn().mockRejectedValue(new Error('must not reload plugins'))

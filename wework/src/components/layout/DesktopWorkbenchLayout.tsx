@@ -212,10 +212,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
-      if (isSameRuntimeTask(state.currentRuntimeTask, address)) return
+      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
       await onOpenRuntimeTask(address)
     },
-    [onOpenRuntimeTask, state.currentRuntimeTask]
+    [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback((session: LocalHarnessWorkbenchSession) => {
     setLocalHarnessSessions(current => [
