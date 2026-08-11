@@ -36,7 +36,7 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
-    codex_runtime_approval_policy, configured_inference_model_provider,
+    codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, select_wework_codex_user_instructions,
     wework_codex_home,
 };

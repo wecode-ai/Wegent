@@ -106,10 +106,9 @@ mod home;
 mod plugin_skills;
 
 use diagnostics::{json_scalar_field, json_string_field};
-pub(crate) use home::select_wework_codex_user_instructions;
-pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
+pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 
@@ -3887,13 +3886,6 @@ fn parse_config_override_value(value: &str) -> Value {
         }
     }
     Value::String(value.to_owned())
-}
-
-fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
 }
 
 fn resolve_codex_binary(value: &str) -> String {
