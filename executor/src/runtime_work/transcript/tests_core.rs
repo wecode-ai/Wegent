@@ -260,6 +260,7 @@ fn image_generation_blocks_preserve_renderable_image_data() {
         block["render_payload"]["revisedPrompt"],
         "A minimal blue circle"
     );
+    assert_eq!(block["render_payload"]["savedPath"], "/tmp/ig-1.png");
 }
 
 #[test]
@@ -267,6 +268,55 @@ fn created_plain_content_counts_lines_as_additions() {
     let content = "# CPU System Report\n\n- CPU: Apple M1 Max\n- Thermal status: normal\n";
 
     assert_eq!(diff_stats(content, "created"), (4, 0));
+}
+
+#[test]
+fn created_plain_content_with_diff_headers_counts_all_lines_as_additions() {
+    let content = "--- release notes\n+++ follow-up\nplain content\n";
+
+    assert_eq!(diff_stats(content, "created"), (3, 0));
+}
+
+#[test]
+fn tool_call_ids_without_explicit_ids_are_stable_and_content_derived() {
+    let first = json!({"type": "customToolCall", "name": "alpha", "input": {"value": 1}});
+    let second = json!({"type": "customToolCall", "name": "alpha", "input": {"value": 2}});
+
+    assert_eq!(tool_call_id(&first), tool_call_id(&first));
+    assert_ne!(tool_call_id(&first), tool_call_id(&second));
+}
+
+#[test]
+fn empty_tool_output_does_not_replace_existing_output() {
+    let mut block = Map::from_iter([(
+        "tool_output".to_owned(),
+        Value::String("existing output".to_owned()),
+    )]);
+    let empty_output = json!({"type": "functionCallOutput", "output": ""});
+
+    insert_tool_output_fields(
+        &mut block,
+        &empty_output,
+        TranscriptBuildOptions::truncated(),
+    );
+
+    assert_eq!(block["tool_output"], "existing output");
+}
+
+#[test]
+fn value_string_tool_output_respects_truncation_options() {
+    let output = format!("{}tail", "x".repeat(MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 32));
+    let item = json!({"type": "functionCallOutput", "output": output});
+    let mut block = Map::new();
+
+    insert_tool_output_fields(&mut block, &item, TranscriptBuildOptions::truncated());
+
+    assert_eq!(
+        block["tool_output"].as_str().unwrap().len(),
+        MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES
+    );
+    assert!(block["tool_output"].as_str().unwrap().ends_with("tail"));
+    assert_eq!(block["tool_output_truncated"], true);
 }
 
 #[test]

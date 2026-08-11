@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use sha2::{Digest, Sha256};
 
 fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
     let mut block = new_tool_block(item, timestamp, "bash", Some(command_input(item)));
@@ -95,6 +96,9 @@ pub(super) fn insert_tool_output_fields(
     options: TranscriptBuildOptions,
 ) {
     let output = limited_tool_output(item, options);
+    if object.contains_key("tool_output") && !is_meaningful_tool_output(&output.value) {
+        return;
+    }
     object.insert("tool_output".to_owned(), output.value);
     if output.truncated {
         object.insert("tool_output_truncated".to_owned(), Value::Bool(true));
@@ -105,6 +109,14 @@ pub(super) fn insert_tool_output_fields(
     } else {
         object.remove("tool_output_truncated");
         object.remove("tool_output_original_bytes");
+    }
+}
+
+fn is_meaningful_tool_output(output: &Value) -> bool {
+    match output {
+        Value::Null => false,
+        Value::String(value) => !value.is_empty(),
+        _ => true,
     }
 }
 
@@ -198,11 +210,17 @@ fn limited_tool_output(item: &Value, options: TranscriptBuildOptions) -> Limited
                 }
             }
         }
-        RawToolOutput::Value(value) => LimitedToolOutput {
-            value,
-            truncated: false,
-            original_bytes: 0,
-        },
+        RawToolOutput::Value(Value::String(text)) if options.truncate_content => {
+            limited_tool_output_string(&text)
+        }
+        RawToolOutput::Value(value) => {
+            let original_bytes = value.as_str().map_or(0, str::len);
+            LimitedToolOutput {
+                value,
+                truncated: false,
+                original_bytes,
+            }
+        }
     }
 }
 
@@ -335,7 +353,15 @@ pub(super) fn tool_call_id(item: &Value) -> String {
     string_field(item, "call_id")
         .or_else(|| string_field(item, "callId"))
         .or_else(|| string_field(item, "id"))
-        .unwrap_or_else(|| format!("tool-{}", now_ms()))
+        .unwrap_or_else(|| {
+            let serialized = serde_json::to_vec(item).unwrap_or_default();
+            let digest = Sha256::digest(serialized);
+            let suffix = digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            format!("tool-{suffix}")
+        })
 }
 
 fn tool_name(item: &Value) -> String {
@@ -500,7 +526,7 @@ fn default_tool_output(item: &Value) -> RawToolOutput<'_> {
         .collect::<Vec<_>>()
         .join("\n");
     if !combined.is_empty() {
-        return RawToolOutput::Value(limited_tool_output_string(&combined).value);
+        return RawToolOutput::Value(Value::String(combined));
     }
     RawToolOutput::Value(
         item.get("result")
@@ -589,16 +615,33 @@ pub(super) fn tool_status(item: &Value) -> String {
             "inProgress".to_owned()
         }
     });
-    if is_command_status_item_type(&item_type) && command_exit_code(item).is_some() {
-        "done".to_owned()
-    } else if status.eq_ignore_ascii_case("failed")
+    if status.eq_ignore_ascii_case("failed")
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
         || bool_field(item, "success").is_some_and(|success| !success)
         || has_error_value(item)
     {
         "error".to_owned()
+    } else if is_command_status_item_type(&item_type) {
+        match command_exit_code(item) {
+            Some(0) => "done".to_owned(),
+            Some(_) => "error".to_owned(),
+            None => status_from_completion_signal(item, &status),
+        }
     } else if status.eq_ignore_ascii_case("completed")
+        || status.eq_ignore_ascii_case("complete")
+        || status.eq_ignore_ascii_case("done")
+        || status.eq_ignore_ascii_case("succeeded")
+        || bool_field(item, "success").is_some_and(|success| success)
+    {
+        "done".to_owned()
+    } else {
+        "pending".to_owned()
+    }
+}
+
+fn status_from_completion_signal(item: &Value, status: &str) -> String {
+    if status.eq_ignore_ascii_case("completed")
         || status.eq_ignore_ascii_case("complete")
         || status.eq_ignore_ascii_case("done")
         || status.eq_ignore_ascii_case("succeeded")

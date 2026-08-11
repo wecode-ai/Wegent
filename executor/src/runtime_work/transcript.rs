@@ -4,13 +4,13 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use serde_json::{json, Map, Value};
 
 use crate::{
+    agents::executor_home,
     protocol::{CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     services::turn_file_changes::persist_named_artifact,
 };

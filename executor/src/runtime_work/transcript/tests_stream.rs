@@ -223,6 +223,35 @@ fn transcript_prefers_original_mentioned_image_over_transient_model_input() {
 }
 
 #[test]
+fn transcript_normalizes_and_deduplicates_remote_image_urls() {
+    let data_url = "data:image/png;base64,aW1hZ2U=";
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "status": "completed",
+            "items": [{
+                "id": "user-event",
+                "type": "userMessage",
+                "content": [
+                    {"type": "image", "url": format!("  {data_url}  ")},
+                    {"type": "image", "url": data_url}
+                ]
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let attachments = messages[0]["attachments"].as_array().unwrap();
+
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0]["filename"], "image-1.png");
+    assert_eq!(attachments[0]["local_preview_url"], data_url);
+}
+
+#[test]
 fn transcript_uses_the_latest_snapshot_for_duplicate_item_ids() {
     let thread = json!({
         "id": "thread-1",
@@ -483,7 +512,7 @@ fn full_transcript_messages_keep_large_content_and_tool_output() {
 }
 
 #[test]
-fn transcript_treats_non_zero_command_exit_as_done() {
+fn transcript_treats_non_zero_command_exit_as_error() {
     let thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
@@ -525,7 +554,7 @@ fn transcript_treats_non_zero_command_exit_as_done() {
 
     assert_eq!(block["type"], "tool");
     assert_eq!(block["tool_name"], "exec_command");
-    assert_eq!(block["status"], "done");
+    assert_eq!(block["status"], "error");
 }
 
 #[test]
@@ -895,7 +924,13 @@ fn running_turn_stays_streaming_without_final_file_changes_card() {
                         "id": "patch-1",
                         "type": "patchApplyEnd",
                         "status": "completed",
-                        "changes": [{"path": "src/main.rs", "kind": "modified", "additions": 2, "deletions": 1}]
+                        "changes": {
+                            "/tmp/project/src/main.rs": {
+                                "type": "update",
+                                "unified_diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                "move_path": null
+                            }
+                        }
                     }
                 ]
             }

@@ -166,7 +166,7 @@ pub(super) fn file_changes_from_file_change_item(
         device_id,
         workspace_path,
         files,
-        combined_diff_from_file_change_item(item, workspace_path),
+        combined_diff_from_codex_changes(item, workspace_path),
     )
 }
 
@@ -187,7 +187,7 @@ pub(super) fn file_changes_from_patch_updated(
         device_id,
         workspace_path,
         files,
-        combined_diff_from_patch_updated(params, workspace_path),
+        combined_diff_from_codex_changes(params, workspace_path),
     )
 }
 
@@ -265,17 +265,6 @@ fn file_changes_summary(
         }
     }
     Some(summary)
-}
-
-fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".wegent-executor")
-        })
 }
 
 fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option<Value> {
@@ -368,7 +357,7 @@ fn workspace_relative_path(path: &str, workspace_path: &str) -> String {
 }
 
 pub(super) fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
-    if looks_like_unified_diff(diff) {
+    if looks_like_unified_diff(diff, change_type) {
         return prefixed_diff_stats(diff);
     }
 
@@ -380,12 +369,11 @@ pub(super) fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
     }
 }
 
-fn looks_like_unified_diff(diff: &str) -> bool {
+fn looks_like_unified_diff(diff: &str, change_type: &str) -> bool {
     diff.lines().any(|line| {
         line.starts_with("@@ ")
             || line.starts_with("diff --git ")
-            || line.starts_with("+++ ")
-            || line.starts_with("--- ")
+            || (change_type != "created" && (line.starts_with("+++ ") || line.starts_with("--- ")))
     })
 }
 
@@ -399,14 +387,6 @@ fn prefixed_diff_stats(diff: &str) -> (i64, i64) {
         .filter(|line| line.starts_with('-') && !line.starts_with("---"))
         .count() as i64;
     (additions, deletions)
-}
-
-fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Option<String> {
-    combined_diff_from_codex_changes(item, workspace_path)
-}
-
-fn combined_diff_from_patch_updated(params: &Value, workspace_path: &str) -> Option<String> {
-    combined_diff_from_codex_changes(params, workspace_path)
 }
 
 fn combined_diff_from_codex_changes(value: &Value, workspace_path: &str) -> Option<String> {

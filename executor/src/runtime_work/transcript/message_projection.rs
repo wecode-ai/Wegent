@@ -146,11 +146,14 @@ pub(super) fn push_accumulated_assistant(
     include_file_only: bool,
     options: TranscriptBuildOptions,
 ) {
-    let should_emit = if include_file_only {
+    let has_content = if include_file_only {
         assistant.has_output()
     } else {
         assistant.has_non_file_output()
-    } || (include_file_only && context.status == "failed" && *segment_index == 0);
+    };
+    let is_first_failed_turn =
+        include_file_only && context.status == "failed" && *segment_index == 0;
+    let should_emit = has_content || is_first_failed_turn;
     if !should_emit {
         return;
     }
@@ -321,17 +324,17 @@ fn user_message_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
             match item_type(part).as_str() {
                 "localimage" => {
                     if let Some(path) = string_field(part, "path") {
-                        push_image_attachment(&mut attachments, &path, true, created_at);
+                        push_image_attachment(&mut attachments, &path, created_at);
                     }
                 }
                 "image" => {
                     if let Some(url) = string_field(part, "url") {
-                        push_image_attachment(&mut attachments, &url, false, created_at);
+                        push_image_attachment(&mut attachments, &url, created_at);
                     }
                 }
                 "inputimage" => {
                     if let Some(url) = string_field(part, "image_url") {
-                        push_image_attachment(&mut attachments, &url, false, created_at);
+                        push_image_attachment(&mut attachments, &url, created_at);
                     }
                 }
                 _ => {}
@@ -342,10 +345,10 @@ fn user_message_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
         .into_iter()
         .chain(string_array_field(item, "localImages"))
     {
-        push_image_attachment(&mut attachments, &path, true, created_at);
+        push_image_attachment(&mut attachments, &path, created_at);
     }
     for url in string_array_field(item, "images") {
-        push_image_attachment(&mut attachments, &url, false, created_at);
+        push_image_attachment(&mut attachments, &url, created_at);
     }
     attachments
 }
@@ -375,7 +378,7 @@ fn mentioned_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
         if !is_image_reference(filename) && !is_image_reference(path) {
             continue;
         }
-        push_image_attachment(&mut attachments, path, true, created_at);
+        push_image_attachment(&mut attachments, path, created_at);
     }
     attachments
 }
@@ -387,8 +390,9 @@ fn is_image_reference(value: &str) -> bool {
         .any(|extension| path.ends_with(extension))
 }
 
-fn push_image_attachment(attachments: &mut Vec<Value>, source: &str, local: bool, created_at: i64) {
-    if source.trim().is_empty()
+fn push_image_attachment(attachments: &mut Vec<Value>, source: &str, created_at: i64) {
+    let source = source.trim();
+    if source.is_empty()
         || attachments
             .iter()
             .any(|item| item["local_preview_url"] == source)
@@ -406,7 +410,7 @@ fn push_image_attachment(attachments: &mut Vec<Value>, source: &str, local: bool
         "status": "ready",
         "file_extension": extension,
         "created_at": created_at,
-        "local_preview_url": if local { source } else { source.trim() },
+        "local_preview_url": source,
     }));
 }
 
@@ -423,6 +427,10 @@ fn string_array_field(item: &Value, key: &str) -> Vec<String> {
 }
 
 fn image_filename(source: &str, index: usize, extension: &str) -> String {
+    if source.to_ascii_lowercase().starts_with("data:") {
+        return format!("image-{}{}", index + 1, extension);
+    }
+
     if let Some(filename) = Path::new(strip_url_query(source))
         .file_name()
         .and_then(|value| value.to_str())
