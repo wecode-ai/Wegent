@@ -148,6 +148,8 @@ import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
   CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
+  CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+  CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
@@ -994,6 +996,10 @@ function localRuntimeModelConfig(
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const nativeToolSearch =
+      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
+    const nativeNamespaceTools =
+      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const codexCatalogModelId = visionSidecar
       ? VISION_SIDECAR_CATALOG_MODEL_ID
@@ -1005,6 +1011,8 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: codexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
+      native_tool_search: nativeToolSearch,
+      native_namespace_tools: nativeNamespaceTools,
       tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,

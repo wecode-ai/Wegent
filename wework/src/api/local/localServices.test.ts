@@ -2208,6 +2208,8 @@ describe('createLocalAppServices', () => {
         codex_catalog_model_id: 'wework-kimi-k3',
         api_format: 'responses',
         upstream_api_format: 'openai-chat-completions',
+        native_tool_search: false,
+        native_namespace_tools: false,
         tool_profile: 'custom',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
@@ -2225,6 +2227,48 @@ describe('createLocalAppServices', () => {
             configured: true,
           },
         },
+      })
+    )
+  })
+
+  test('passes native Responses tool capabilities to the executor', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-native-responses',
+      runtime: 'codex',
+      message: 'build a site',
+      title: 'Native Responses',
+      modelId: 'gpt-5.6-sol',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model_id: 'gpt-5.6-sol',
+        upstream_api_format: 'openai-responses',
+        native_tool_search: true,
+        native_namespace_tools: true,
       })
     )
   })

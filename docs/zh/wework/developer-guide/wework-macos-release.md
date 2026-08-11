@@ -100,6 +100,14 @@ Wework 主窗口和独立工作区窗口必须使用不透明的 Tauri 窗口，
 或原生 vibrancy 材质；不同 macOS 版本和图形环境对透明窗口边缘的合成结果不一致，
 可能显示为透出桌面、半透明描边或灰色边框。
 
+主 React WebView 的根壳必须直接使用 CSS viewport 约束（例如 `fixed inset-0`）
+填满当前 WebView。不要监听 Tauri 原生 resize 事件，再把异步读取和换算后的
+`innerSize`、`scaleFactor` 写成根壳的内联宽高；原生事件、缩放因子和 WebView
+布局提交可能乱序，旧的内联尺寸会覆盖当前 viewport，并在窗口调整后留下未填充区域。
+原生窗口尺寸只用于窗口创建、恢复和系统级窗口管理，不作为 React 根布局的尺寸来源。
+Linux 上的内置浏览器子 WebView 必须放在 `GtkOverlay` 和 `GtkFixed` 组成的绝对定位
+宿主中，不能直接加入主窗口的 `GtkBox` 参与布局，否则会挤压主 React WebView。
+
 系统拖拽面板和 Popout Window 是独立的轻量浮层，不受该约束。修改普通窗口的背景、
 标题栏或创建参数时，需要同时验证主窗口和独立工作区窗口，并保留自动化断言，确保
 两者不会重新启用原生透明效果。
