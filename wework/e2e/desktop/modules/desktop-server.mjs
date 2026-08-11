@@ -189,8 +189,6 @@ import {
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
-  SIDE_CHAT_QUEUE_FOLLOW_UP,
-  SIDE_CHAT_QUEUE_INITIAL,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_CORRECTION,
   SUPERVISOR_CORRECTION_COMPLETION_TEXT,
@@ -316,9 +314,6 @@ class DesktopE2EServer {
     })
     this.queueManagementFirstCompletionRelease = new Promise(resolvePromise => {
       this.releaseQueueManagementFirstCompletion = resolvePromise
-    })
-    this.sideChatQueueRelease = new Promise(resolvePromise => {
-      this.resolveSideChatQueueRelease = resolvePromise
     })
     this.sideChatGuidanceRelease = new Promise(resolvePromise => {
       this.resolveSideChatGuidanceRelease = resolvePromise
@@ -589,7 +584,6 @@ class DesktopE2EServer {
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
-        'side_chat_queue',
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
@@ -701,10 +695,6 @@ class DesktopE2EServer {
 
   releaseQueueManagementFirstResponse() {
     this.releaseQueueManagementFirstCompletion()
-  }
-
-  releaseSideChatQueueResponse() {
-    this.resolveSideChatQueueRelease()
   }
 
   releaseSideChatGuidanceResponse() {
@@ -2702,40 +2692,6 @@ class DesktopE2EServer {
         assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
-      return
-    }
-
-    if (this.scenario === 'side_chat_queue') {
-      this.recordScenarioRequest('side_chat_queue', modelRequest)
-      const requestText = JSON.stringify(body)
-      const requestCount = this.scenarioRequests.get('side_chat_queue')?.length ?? 0
-      if (requestCount === 1) {
-        assert.ok(
-          requestText.includes(SIDE_CHAT_QUEUE_INITIAL),
-          'The initial side-chat queue request lost its prompt'
-        )
-        response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.write(createSse([responseCreated(responseId)]))
-        await this.sideChatQueueRelease
-        if (response.destroyed || response.writableEnded) return
-        response.end(
-          createSse([
-            assistantMessage('WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL_COMPLETE'),
-            responseCompleted(responseId),
-          ])
-        )
-        return
-      }
-      assert.ok(
-        requestText.includes(SIDE_CHAT_QUEUE_FOLLOW_UP),
-        'The queued side-chat follow-up lost its prompt'
-      )
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
 

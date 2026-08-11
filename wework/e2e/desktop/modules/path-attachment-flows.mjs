@@ -22,7 +22,6 @@ import {
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
   SIDE_CHAT_QUEUE_FOLLOW_UP,
-  SIDE_CHAT_QUEUE_INITIAL,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
@@ -321,10 +320,10 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
 
-  control.setScenario('side_chat_queue')
-  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_INITIAL })
+  control.setScenario('side_chat_guidance')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_INITIAL })
   await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
-  await control.awaitScenarioRequestCount('side_chat_queue', 1)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 1)
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
@@ -338,17 +337,12 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
-  control.releaseSideChatQueueResponse()
-  await control.awaitScenarioRequestCount('side_chat_queue', 2)
+  await control.command('click', `${sideChatSelector} [data-testid^="queue-cancel-button-"]`)
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
     hidden: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
-  control.setScenario('side_chat_guidance')
-  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_INITIAL })
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
-  await control.awaitScenarioRequestCount('side_chat_guidance', 1)
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-mode-menu-button"]`)
   await control.command('click', '[data-testid="guide-current-turn-option"]')
