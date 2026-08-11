@@ -600,14 +600,34 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('waitFor', rowSelector, {
-    text: PLUGIN_DISPLAY_NAME,
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // Leaving for the trial chat resets the marketplace tab/filter; restore the
+  // fixture market before looking for the plugin row again.
+  const returnedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (returnedSnapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+  } else {
+    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+  }
+  await control.command(
+    'click',
+    `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`
+  )
 
-  // Example click may already have installed the plugin; only run the install /
+  // Example click installs before opening trial; only run the install /
   // connector-auth path when the install CTA is still present.
-  const afterExampleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const afterExampleSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-install-${pluginId}`) ||
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) ||
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
+    'Returning to Plugins after the example trial did not show the marketplace plugin'
+  )
   if (afterExampleSnapshot.testIds.includes(`plugin-marketplace-install-${pluginId}`)) {
     await control.command('click', installSelector)
     await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
