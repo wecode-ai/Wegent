@@ -104,6 +104,18 @@ Transparent window edges are composed differently across macOS versions and
 graphics environments, which can expose the desktop or appear as translucent
 or gray borders.
 
+The root shell in the main React WebView must fill the current WebView through
+CSS viewport constraints such as `fixed inset-0`. Do not listen for native
+Tauri resize events and write asynchronously read and converted `innerSize` and
+`scaleFactor` values back as inline root-shell dimensions. Native events, scale
+factors, and WebView layout commits can arrive out of order, allowing a stale
+inline size to override the current viewport and leave an unfilled region after
+a resize. Native window dimensions are for window creation, restoration, and
+system-level window management, not as a source for the React root layout.
+On Linux, embedded browser child WebViews must live in an absolute host built
+from `GtkOverlay` and `GtkFixed`; adding them directly to the main window's
+`GtkBox` lets them participate in layout and compress the main React WebView.
+
 The system drag panel and Popout Window are separate lightweight overlays and
 are not covered by this rule. Changes to ordinary window backgrounds, title
 bars, or creation options must verify both the main window and detached
