@@ -137,10 +137,17 @@ fn prepares_claude_home_without_replacing_existing_settings() {
 fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
     let root = test_directory("materialize");
     let plugin_root = root.join("plugin");
+    let browser_bridge_runtime_path = root.join("runtime/embedded-browser-bridge.json");
     let source = create_standard_plugin(&plugin_root);
 
     let open_code_root = root.join("opencode");
-    materialize_adapter(&open_code_root, "opencode", &[source]).unwrap();
+    materialize_adapter(
+        &open_code_root,
+        "opencode",
+        &[source],
+        &browser_bridge_runtime_path,
+    )
+    .unwrap();
     let open_code: Value =
         serde_json::from_slice(&fs::read(open_code_root.join("opencode.json")).unwrap()).unwrap();
     assert_eq!(
@@ -152,6 +159,10 @@ fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
         plugin_root.join("data/state.json").display().to_string()
     );
     assert!(open_code["mcp"]["wework_browser"].is_object());
+    assert_eq!(
+        open_code["mcp"]["wework_browser"]["environment"][EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV],
+        browser_bridge_runtime_path.display().to_string()
+    );
     assert!(open_code_root.join("skills/demo/SKILL.md").is_file());
     assert!(open_code_root
         .join("skills/wework-built-in-browser/SKILL.md")
@@ -159,7 +170,13 @@ fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
 
     let source = create_standard_plugin(&plugin_root);
     let claude_root = root.join("claude");
-    materialize_adapter(&claude_root, "claude_code", &[source]).unwrap();
+    materialize_adapter(
+        &claude_root,
+        "claude_code",
+        &[source],
+        &browser_bridge_runtime_path,
+    )
+    .unwrap();
     let claude_mcp: Value =
         serde_json::from_slice(&fs::read(claude_root.join(".mcp.json")).unwrap()).unwrap();
     assert_eq!(
@@ -167,12 +184,22 @@ fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
         plugin_root.join("bin/demo").display().to_string()
     );
     assert!(claude_mcp["mcpServers"]["wework_browser"].is_object());
+    assert_eq!(
+        claude_mcp["mcpServers"]["wework_browser"]["env"][EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV],
+        browser_bridge_runtime_path.display().to_string()
+    );
     assert!(claude_root.join(".claude-plugin/plugin.json").is_file());
     assert!(claude_root.join("skills/demo/SKILL.md").is_file());
 
     let source = create_standard_plugin(&plugin_root);
     let kimi_root = root.join("kimi");
-    materialize_adapter(&kimi_root, "kimi_code", &[source]).unwrap();
+    materialize_adapter(
+        &kimi_root,
+        "kimi_code",
+        &[source],
+        &browser_bridge_runtime_path,
+    )
+    .unwrap();
     let kimi_home = root.join("kimi-home");
     synchronize_kimi_home(&kimi_root, &kimi_home, None).unwrap();
     let kimi_mcp: Value =
@@ -182,6 +209,10 @@ fn materializes_standard_plugins_and_builtin_browser_for_all_harnesses() {
         plugin_root.join("bin/demo").display().to_string()
     );
     assert!(kimi_mcp["mcpServers"]["wework_browser"].is_object());
+    assert_eq!(
+        kimi_mcp["mcpServers"]["wework_browser"]["env"][EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV],
+        browser_bridge_runtime_path.display().to_string()
+    );
     assert!(kimi_home.join("skills/demo/SKILL.md").is_file());
     assert!(kimi_home
         .join("skills/wework-built-in-browser/SKILL.md")

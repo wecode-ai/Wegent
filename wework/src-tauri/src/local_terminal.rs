@@ -550,29 +550,33 @@ fn harness_launch_args(
 }
 
 #[tauri::command]
-pub fn list_local_harnesses(
+pub async fn list_local_harnesses(
     executable_overrides: Option<HashMap<String, Option<String>>>,
-) -> Vec<LocalHarnessDescriptor> {
-    LOCAL_HARNESSES
-        .iter()
-        .map(|definition| {
-            let executable_override = executable_overrides
-                .as_ref()
-                .and_then(|overrides| overrides.get(definition.id))
-                .and_then(|value| value.as_deref());
-            let executable_path =
-                resolve_local_harness_executable(*definition, executable_override);
-            let version = executable_path
-                .as_deref()
-                .and_then(|path| read_command_version(path, definition.version_args));
-            LocalHarnessDescriptor {
-                id: definition.id.to_string(),
-                installed: executable_path.is_some(),
-                executable_path: executable_path.map(|path| path.display().to_string()),
-                version,
-            }
-        })
-        .collect()
+) -> Result<Vec<LocalHarnessDescriptor>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        LOCAL_HARNESSES
+            .iter()
+            .map(|definition| {
+                let executable_override = executable_overrides
+                    .as_ref()
+                    .and_then(|overrides| overrides.get(definition.id))
+                    .and_then(|value| value.as_deref());
+                let executable_path =
+                    resolve_local_harness_executable(*definition, executable_override);
+                let version = executable_path
+                    .as_deref()
+                    .and_then(|path| read_command_version(path, definition.version_args));
+                LocalHarnessDescriptor {
+                    id: definition.id.to_string(),
+                    installed: executable_path.is_some(),
+                    executable_path: executable_path.map(|path| path.display().to_string()),
+                    version,
+                }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| format!("Failed to detect local harnesses: {error}"))
 }
 
 #[tauri::command]

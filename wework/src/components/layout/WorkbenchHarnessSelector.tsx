@@ -11,7 +11,6 @@ interface WorkbenchHarnessSelectorProps {
   enabledHarnesses: LocalHarnessId[]
   loading: boolean
   detectionFailed: boolean
-  onRefresh: () => void
   onRuntimeChange: (runtime: 'codex' | LocalHarnessId) => void
 }
 
@@ -21,7 +20,6 @@ export function WorkbenchHarnessSelector({
   enabledHarnesses,
   loading,
   detectionFailed,
-  onRefresh,
   onRuntimeChange,
 }: WorkbenchHarnessSelectorProps) {
   const { t } = useTranslation('common')
@@ -41,9 +39,6 @@ export function WorkbenchHarnessSelector({
         </span>
       }
       placement="bottom-end"
-      onOpenChange={open => {
-        if (open) onRefresh()
-      }}
       triggerClassName="flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
       items={[
         {

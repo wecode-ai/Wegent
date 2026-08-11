@@ -782,22 +782,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       cancelled = true
     }
   }, [executableOverrides, experimentalFeaturesEnabled])
-  const refreshLocalHarnesses = useCallback(() => {
-    if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
-
-    setLocalHarnessesLoading(true)
-    void listLocalHarnesses(executableOverrides)
-      .then(harnesses => {
-        setLocalHarnesses(harnesses)
-        setLocalHarnessDetectionFailed(false)
-      })
-      .catch(error => {
-        console.error('Failed to refresh local harnesses:', error)
-        setLocalHarnesses([])
-        setLocalHarnessDetectionFailed(true)
-      })
-      .finally(() => setLocalHarnessesLoading(false))
-  }, [executableOverrides, experimentalFeaturesEnabled])
   const [pendingSupervisorConfig, setPendingSupervisorConfig] =
     useState<TaskSupervisorConfig | null>(null)
   const supervisorTaskKey = currentRuntimeTask
@@ -3635,7 +3619,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             )}
                             loading={localHarnessesLoading}
                             detectionFailed={localHarnessDetectionFailed}
-                            onRefresh={refreshLocalHarnesses}
                             onRuntimeChange={runtime => {
                               setCentralHarnessError(null)
                               setNewChatRuntime(runtime)

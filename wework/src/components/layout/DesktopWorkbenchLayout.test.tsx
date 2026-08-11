@@ -3226,6 +3226,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('workbench-harness-selector'))
     const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
     await waitFor(() => expect(openCodeOption).not.toBeDisabled())
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
     await userEvent.click(openCodeOption)
     expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('OpenCode')
     expect(screen.getByTestId('project-work-bar')).toContainElement(

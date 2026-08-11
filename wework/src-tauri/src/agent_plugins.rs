@@ -8,9 +8,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
+use crate::embedded_browser;
+
 const AGENT_PLUGIN_SCHEMA: &str = "https://agent-plugins.org/schemas/plugin.json";
 const EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
-const HARNESS_ADAPTER_VERSION: u8 = 2;
+const HARNESS_ADAPTER_VERSION: u8 = 3;
+const EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
+    "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
 const WEWORK_LOCAL_ROUTER_API_KEY: &str = "wework-local-router";
 const WEWORK_BROWSER_SKILL_NAME: &str = "wework-built-in-browser";
 static TEMPORARY_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -40,13 +44,19 @@ pub fn prepare_harness_plugin_adapter(
         .app_data_dir()
         .map_err(|error| format!("Failed to resolve Wework app data directory: {error}"))?;
     let sources = resolve_plugin_sources(&app_data, plugin_roots);
+    let browser_bridge_runtime_path = embedded_browser::embedded_browser_bridge_runtime_path()?;
     let fingerprint = plugin_fingerprint(harness_id, &sources);
     let adapter_root = app_data
         .join("harness-adapters")
         .join(harness_id)
         .join(fingerprint);
     if !adapter_root.is_dir() {
-        materialize_adapter(&adapter_root, harness_id, &sources)?;
+        materialize_adapter(
+            &adapter_root,
+            harness_id,
+            &sources,
+            &browser_bridge_runtime_path,
+        )?;
     }
 
     match harness_id {
@@ -319,6 +329,7 @@ fn materialize_adapter(
     adapter_root: &Path,
     harness_id: &str,
     sources: &[PluginSource],
+    browser_bridge_runtime_path: &Path,
 ) -> Result<(), String> {
     let parent = adapter_root
         .parent()
@@ -359,7 +370,7 @@ fn materialize_adapter(
                 }
             }
         }
-        let browser_server = builtin_browser_mcp_server();
+        let browser_server = builtin_browser_mcp_server(browser_bridge_runtime_path);
         claude_mcp_servers.insert("wework_browser".to_string(), browser_server.clone());
         opencode_mcp_servers.insert(
             "wework_browser".to_string(),
@@ -455,15 +466,20 @@ Use the `wework_browser` MCP server for browser work inside Wework.
 4. Re-inspect after navigation or when targets become stale.
 5. Never claim an action succeeded unless the matching tool call succeeded.
 6. Use `browser_take_screenshot` only when the user requests a screenshot.
+7. Call only tools advertised by the MCP server. Use `browser_capabilities` to diagnose availability; there is no `browser_probe` tool.
 "#,
     )
     .map_err(|error| format!("Failed to write Wework browser skill: {error}"))
 }
 
-fn builtin_browser_mcp_server() -> Value {
+fn builtin_browser_mcp_server(browser_bridge_runtime_path: &Path) -> Value {
     json!({
         "command": executor_sidecar_command(),
         "args": ["browser-mcp-server"],
+        "env": {
+            EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV:
+                browser_bridge_runtime_path.display().to_string(),
+        },
     })
 }
 

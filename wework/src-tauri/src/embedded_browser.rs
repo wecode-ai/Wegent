@@ -42,7 +42,9 @@ use bridge_security::bridge_navigation_url;
 use bridge_security::bridge_request_authorized;
 #[cfg(test)]
 use bridge_server::read_http_request;
-pub(crate) use bridge_server::start_embedded_browser_bridge;
+pub(crate) use bridge_server::{
+    embedded_browser_bridge_runtime_path, start_embedded_browser_bridge,
+};
 #[cfg(test)]
 use browser_runtime::script_semantic_inspect_for_test as script_semantic_inspect;
 use browser_runtime::{
@@ -1150,7 +1152,8 @@ fn request_browser_open(
                 return Err(format!("Failed to request embedded browser open: {error}"));
             }
             log_embedded_browser_diagnostic(
-                state, base_label,
+                state,
+                base_label,
                 "open_request_emitted",
                 json!({
                     "requestedUrl": url,
@@ -1190,7 +1193,8 @@ fn request_browser_open(
             app.emit(EMBEDDED_BROWSER_OPEN_REQUEST_EVENT, request.clone())
                 .map_err(|error| format!("Failed to replay embedded browser open: {error}"))?;
             log_embedded_browser_diagnostic(
-                state, base_label,
+                state,
+                base_label,
                 "open_request_replayed",
                 json!({
                     "requestedUrl": url,
@@ -2373,7 +2377,8 @@ fn close_embedded_browser_entry(
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(label)
+        webviews
+            .get(label)
             .filter(|entry| {
                 expected_native_label.is_none_or(|expected| entry.native_label == expected)
             })
