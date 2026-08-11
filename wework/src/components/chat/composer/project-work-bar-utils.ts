@@ -5,6 +5,7 @@ import type {
   RuntimeDeviceWorkspace,
 } from '@/types/api'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { isLocalStandaloneDevice } from '@/lib/device-selection'
 
 const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const PROJECT_MENU_VERTICAL_PADDING = 12
@@ -62,9 +63,7 @@ export function getProjectDeviceId(project: ProjectWithTasks): string | undefine
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
 
-export function isLocalStandaloneDevice(device: DeviceInfo): boolean {
-  return device.device_type !== 'cloud' && device.device_type !== 'remote'
-}
+export { isLocalStandaloneDevice }
 
 export function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
   return Boolean(device && isLocalStandaloneDevice(device))

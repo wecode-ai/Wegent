@@ -67,6 +67,24 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  syncRuntimeTask(
+    address: RuntimeTaskAddress,
+    task: RuntimeTaskSummary,
+    expectedSnapshot?: RuntimeTaskLifecycleSnapshot | null
+  ): boolean {
+    if (expectedSnapshot !== undefined && this.getTask(address) !== expectedSnapshot) {
+      return false
+    }
+    const changed = this.reduceMachine(address, {
+      type: 'executor_snapshot_received',
+      address,
+      task,
+    })
+    if (changed) this.publish()
+    const executionRunning = this.getTask(address)?.execution.running
+    return typeof task.running !== 'boolean' || task.running === executionRunning
+  }
+
   setCurrentTask(address: RuntimeTaskAddress | null | undefined): void {
     const nextKey = address ? getRuntimeTaskLifecycleKey(address) : null
     if (nextKey === this.currentTaskKey) return

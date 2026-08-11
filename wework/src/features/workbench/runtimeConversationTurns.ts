@@ -15,25 +15,21 @@ export function mergeRuntimeConversationTurns(
   const localIndexByTurnId = new Map(
     localTurns.flatMap((turn, index) => (turn.id === null ? [] : [[turn.id, index] as const]))
   )
-  const localOptimisticIndexByClientUserMessageId = new Map(
+  const localIndexByClientUserMessageId = new Map(
     localTurns.flatMap((turn, index) =>
-      turn.id === null && turn.clientUserMessageId
-        ? [[turn.clientUserMessageId, index] as const]
-        : []
+      runtimeConversationTurnClientUserMessageIds(turn).map(id => [id, index] as const)
     )
   )
   const emittedLocalIndexes = new Set<number>()
   const snapshotUserMessageIds = new Set(
-    snapshotTurns.flatMap(turn =>
-      turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : []))
-    )
+    snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds)
   )
   const merged = snapshotTurns.map(snapshotTurn => {
     const localIndex =
       (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
-      (snapshotTurn.clientUserMessageId
-        ? localOptimisticIndexByClientUserMessageId.get(snapshotTurn.clientUserMessageId)
-        : undefined)
+      runtimeConversationTurnClientUserMessageIds(snapshotTurn)
+        .map(id => localIndexByClientUserMessageId.get(id))
+        .find((index): index is number => index !== undefined)
     if (localIndex === undefined) return snapshotTurn
     emittedLocalIndexes.add(localIndex)
     return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn)
@@ -42,9 +38,7 @@ export function mergeRuntimeConversationTurns(
   localTurns.forEach((turn, index) => {
     if (emittedLocalIndexes.has(index)) return
     if (
-      turn.id === null &&
-      turn.clientUserMessageId &&
-      snapshotUserMessageIds.has(turn.clientUserMessageId)
+      runtimeConversationTurnClientUserMessageIds(turn).some(id => snapshotUserMessageIds.has(id))
     ) {
       return
     }
@@ -53,6 +47,15 @@ export function mergeRuntimeConversationTurns(
     }
   })
   return orderRuntimeConversationTurns(merged)
+}
+
+function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTurn): string[] {
+  return Array.from(
+    new Set([
+      ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+      ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+    ])
+  )
 }
 
 export function reduceRuntimeConversationTurns(

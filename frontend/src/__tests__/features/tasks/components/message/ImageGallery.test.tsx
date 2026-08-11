@@ -41,55 +41,47 @@ jest.mock('@/apis/attachments', () => ({
 }))
 
 describe('ImageGallery', () => {
-  it('shows download and reference actions in the top-right without an expand action', () => {
+  it('uses authenticated image access and keeps the merged action layout', () => {
     const onUseAsReference = jest.fn()
+    const image = {
+      url: '/api/attachments/12/download',
+      attachmentId: 12,
+    }
     render(
-      <ImageGallery
-        images={[{ url: '/generated.png', attachmentId: 12 }]}
-        imageSize="1512x648"
-        onUseAsReference={onUseAsReference}
-      />
+      <ImageGallery images={[image]} imageSize="1512x648" onUseAsReference={onUseAsReference} />
     )
+
+    const thumbnail = screen.getByAltText('Generated image 1')
+    expect(thumbnail).toHaveAttribute('src', 'blob:attachment-12')
 
     const download = screen.getByTestId('generated-image-download-0')
     const reference = screen.getByTestId('generated-image-reference-0')
-
     expect(download.parentElement).toHaveClass('absolute', 'top-2', 'right-2')
     expect(reference.nextElementSibling).toBe(download)
     expect(screen.queryByTitle('View full size')).not.toBeInTheDocument()
+
     const preview = screen.getByTestId('generated-image-preview-0')
     expect(preview.style.aspectRatio).toBe('1512 / 648')
     expect(preview.style.width).toBe('513.33px')
     expect(preview.style.height).toBe('220px')
 
     fireEvent.click(reference)
-    expect(onUseAsReference).toHaveBeenCalledWith({
-      url: '/generated.png',
-      attachmentId: 12,
-    })
+    expect(onUseAsReference).toHaveBeenCalledWith(image)
     expect(screen.queryByTestId('generated-image-lightbox')).not.toBeInTheDocument()
   })
 
-  it('uses authenticated attachment URLs for previews and downloads', () => {
+  it('downloads attachments through the authenticated download API', () => {
     render(<ImageGallery images={[{ url: '/api/attachments/12/download', attachmentId: 12 }]} />)
 
-    const thumbnail = screen.getByAltText('Generated image 1')
-    expect(thumbnail).toHaveAttribute('src', 'blob:attachment-12')
+    fireEvent.click(screen.getByTestId('generated-image-download-0'))
 
-    fireEvent.click(thumbnail)
-
-    const previews = screen.getAllByAltText('Generated image 1')
-    expect(previews).toHaveLength(2)
-    expect(previews[1]).toHaveAttribute('src', 'blob:attachment-12')
-
-    fireEvent.click(screen.getByTestId('generated-image-lightbox-download'))
     expect(downloadAttachment).toHaveBeenCalledWith(12, 'generated_image_1.jpg', undefined)
   })
 
-  it('renders the lightbox in document.body and restores scrolling when closed', () => {
+  it('renders authenticated lightbox images in document.body and restores scrolling', () => {
     const { container } = render(
       <div style={{ transform: 'translateZ(0)' }}>
-        <ImageGallery images={[{ url: '/generated.png' }]} />
+        <ImageGallery images={[{ url: '/api/attachments/12/download', attachmentId: 12 }]} />
       </div>
     )
 
@@ -99,6 +91,10 @@ describe('ImageGallery', () => {
     expect(lightbox.parentElement).toBe(document.body)
     expect(container).not.toContainElement(lightbox)
     expect(document.body).toHaveStyle({ overflow: 'hidden' })
+
+    const previews = screen.getAllByAltText('Generated image 1')
+    expect(previews).toHaveLength(2)
+    expect(previews[1]).toHaveAttribute('src', 'blob:attachment-12')
 
     fireEvent.click(screen.getByTitle('Close'))
 

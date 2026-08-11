@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelCategoryType } from '@/apis/models'
 import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
 import type { Bot, TaskType } from '@/types/api'
 
@@ -85,6 +86,12 @@ export function getSimpleExecutorOptions(): SimpleExecutorOption[] {
 
 export function bindModeRequiresClaudeCode(bindMode: TaskType[]): boolean {
   return bindMode.includes('code') || bindMode.includes('task')
+}
+
+export function getModelCategoryTypeForBindMode(bindMode: TaskType[]): ModelCategoryType {
+  if (bindMode.length === 1 && bindMode[0] === 'image') return 'image'
+  if (bindMode.length === 1 && bindMode[0] === 'video') return 'video'
+  return 'llm'
 }
 
 export function isClaudeCodeShell(shell: UnifiedShell | null | undefined): boolean {
