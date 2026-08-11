@@ -25,7 +25,7 @@ of a misconfigured team is a much worse failure than one that says so at once.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, Optional, Sequence
+from typing import Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -34,7 +34,7 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
-from app.schemas.knowledge import KnowledgeBaseType, validated_model_ref
+from app.schemas.knowledge import KnowledgeBaseType
 from app.schemas.task import TaskCreate
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
@@ -243,7 +243,6 @@ def start_run(
         prompt=prompt,
         generation=generation,
         listed=_shows_generation_task(knowledge_base),
-        model_ref=_execution_model_of(knowledge_base),
     )
 
     generation.task_id = task_id
@@ -379,7 +378,6 @@ def _resolve_execution_context(
 
 
 SHOW_GENERATION_TASK_KEY = "showGenerationTask"
-EXECUTION_MODEL_REF_KEY = "executionModelRef"
 
 # Where a task goes when it should not be listed as a conversation. The listing query
 # excludes this namespace by name; task lookup by id does not, which is what makes a
@@ -399,35 +397,6 @@ def _shows_generation_task(knowledge_base: Kind) -> bool:
     return bool(spec.get(SHOW_GENERATION_TASK_KEY, False))
 
 
-def _execution_model_of(knowledge_base: Kind) -> Optional[Dict[str, str]]:
-    """The model this wiki generates with, or None to use the team's own model.
-
-    Required when creating a wiki, so None here means a wiki created before the
-    field existed. Those keep running on whatever model their team's bot binds,
-    which is what they have always run on.
-
-    A stored value is re-checked rather than trusted: the request schema rejects a
-    reference that names nothing, but rows written before it did are still in the
-    table. Anything unusable degrades to the same team fallback, because a half
-    applied override -- a task pinned to a model that does not resolve -- fails the
-    whole run, while the fallback is a model that works.
-    """
-    spec = (knowledge_base.json or {}).get("spec", {})
-    model_ref = spec.get(EXECUTION_MODEL_REF_KEY)
-    if not isinstance(model_ref, dict):
-        return None
-    try:
-        return validated_model_ref(model_ref)
-    except ValueError as error:
-        logger.warning(
-            "[code_wiki] kb %s has an unusable %s (%s); running on the team's model",
-            knowledge_base.id,
-            EXECUTION_MODEL_REF_KEY,
-            error,
-        )
-        return None
-
-
 def _create_task(
     db: Session,
     *,
@@ -437,7 +406,6 @@ def _create_task(
     prompt: str,
     generation: WikiGeneration,
     listed: bool = False,
-    model_ref: Optional[Dict[str, str]] = None,
 ) -> int:
     """Create the task that runs the agent, failing the run if it cannot be."""
     from app.services.adapters.task_kinds import task_kinds_service
@@ -461,11 +429,6 @@ def _create_task(
                 task_type="code",
                 auto_delete_executor="false",
                 source="code_wiki",
-                # Left unset for wikis created before the field existed, which lets
-                # the team's bot supply the model as it always has. TaskCreate turns
-                # a model_id into an override on its own.
-                model_id=(model_ref or {}).get("name"),
-                force_override_bot_model_type=(model_ref or {}).get("type"),
             ),
             user=task_user,
             task_id=task_id,

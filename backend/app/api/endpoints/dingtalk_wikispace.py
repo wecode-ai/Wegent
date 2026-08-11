@@ -48,9 +48,7 @@ async def sync_wikispace_nodes(
     current_user: User = Depends(get_current_user),
 ) -> DingtalkSyncResult:
     """Trigger sync of DingTalk wikispace nodes from the user's wikispace MCP server."""
-    # Guard on the WikiSpace MCP URL directly so the error names the right
-    # service; a missing Docs MCP is reported by the service layer below.
-    if not DingTalkWikiSpaceService.get_user_wikispace_mcp_url(current_user):
+    if not DingTalkWikiSpaceService.is_configured(current_user):
         raise HTTPException(
             status_code=400,
             detail="DingTalk WikiSpace MCP is not configured. "

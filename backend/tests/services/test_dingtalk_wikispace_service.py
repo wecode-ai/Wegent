@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
-from app.services.dingtalk_doc_service import DingTalkDocService, DingTalkMCPToolError
+from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import (
     DingTalkWikiSpaceService,
     _sanitize_url_for_telemetry,
@@ -32,50 +32,11 @@ def _make_text_content(data: object) -> MagicMock:
     return item
 
 
-def _make_mcp_result(data: object, *, is_error: bool = False) -> MagicMock:
+def _make_mcp_result(data: object) -> MagicMock:
     """Create a mock MCP tool call result wrapping JSON data."""
     result = MagicMock()
     result.content = [_make_text_content(data)]
-    result.isError = is_error
     return result
-
-
-class TestIsConfigured:
-    """Tests for DingTalkWikiSpaceService.is_configured readiness semantics."""
-
-    @patch("app.services.dingtalk_wikispace_service.UserMCPService")
-    def test_requires_both_mcp_urls(self, mock_mcp_svc: MagicMock) -> None:
-        """WikiSpace-only configuration is not sync-ready without Docs MCP."""
-        mock_mcp_svc.get_provider_service_config.return_value = {
-            "enabled": True,
-            "url": "https://ws.mcp.example.com",
-        }
-
-        with patch(
-            "app.services.dingtalk_wikispace_service.DingTalkDocService"
-            ".get_user_dingtalk_mcp_url",
-            return_value=None,
-        ):
-            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is False
-
-        with patch(
-            "app.services.dingtalk_wikispace_service.DingTalkDocService"
-            ".get_user_dingtalk_mcp_url",
-            return_value="https://docs.mcp.example.com",
-        ):
-            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is True
-
-    @patch("app.services.dingtalk_wikispace_service.UserMCPService")
-    def test_not_ready_without_wikispace_url(self, mock_mcp_svc: MagicMock) -> None:
-        """Docs MCP alone is not sync-ready without the WikiSpace MCP."""
-        mock_mcp_svc.get_provider_service_config.return_value = {"enabled": False}
-
-        with patch(
-            "app.services.dingtalk_wikispace_service.DingTalkDocService"
-            ".get_user_dingtalk_mcp_url",
-            return_value="https://docs.mcp.example.com",
-        ):
-            assert DingTalkWikiSpaceService.is_configured(MagicMock()) is False
 
 
 class TestSanitizeUrlForTelemetry:
@@ -149,97 +110,8 @@ class TestListWikiSpaces:
                     )
 
         assert len(result) == 2
-        assert result[0]["nodeId"] == "WS001"
         assert result[0]["workspaceId"] == "WS001"
         assert result[1]["name"] == "KB Two"
-
-    @pytest.mark.asyncio
-    async def test_prefers_workspace_id_over_generic_id(self) -> None:
-        """Knowledge base identity comes from workspaceId when aliases conflict."""
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(
-            return_value=_make_mcp_result(
-                {
-                    "wikiSpaces": [
-                        {
-                            "id": "generic-id",
-                            "workspaceId": "workspace-id",
-                            "name": "Knowledge Base",
-                        }
-                    ]
-                }
-            )
-        )
-
-        with (
-            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
-            patch("mcp.ClientSession") as mock_cls,
-        ):
-            mock_http.return_value.__aenter__ = AsyncMock(
-                return_value=(MagicMock(), MagicMock(), None)
-            )
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await DingTalkWikiSpaceService._list_wiki_spaces(
-                "https://ws.mcp.example.com"
-            )
-
-        assert result[0]["nodeId"] == "workspace-id"
-
-    @pytest.mark.asyncio
-    async def test_raises_when_list_wiki_spaces_returns_mcp_error(self) -> None:
-        """Knowledge base discovery cannot turn an MCP error into an empty snapshot."""
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.list_tools.return_value = MagicMock(tools=[])
-        mock_session.call_tool.return_value = _make_mcp_result(
-            {"message": "provider failure"}, is_error=True
-        )
-
-        with (
-            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
-            patch("mcp.ClientSession") as mock_cls,
-        ):
-            mock_http.return_value.__aenter__ = AsyncMock(
-                return_value=(MagicMock(), MagicMock(), None)
-            )
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            with pytest.raises(DingTalkMCPToolError):
-                await DingTalkWikiSpaceService._list_wiki_spaces(
-                    "https://ws.mcp.example.com"
-                )
-
-    @pytest.mark.asyncio
-    async def test_raises_when_list_wiki_spaces_reports_unsuccessful(self) -> None:
-        """Business-level discovery failures cannot become empty snapshots."""
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.list_tools.return_value = MagicMock(tools=[])
-        mock_session.call_tool.return_value = _make_mcp_result(
-            {"success": False, "message": "provider failure"}
-        )
-
-        with (
-            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
-            patch("mcp.ClientSession") as mock_cls,
-        ):
-            mock_http.return_value.__aenter__ = AsyncMock(
-                return_value=(MagicMock(), MagicMock(), None)
-            )
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            with pytest.raises(DingTalkMCPToolError):
-                await DingTalkWikiSpaceService._list_wiki_spaces(
-                    "https://ws.mcp.example.com"
-                )
 
 
 class TestListNodesInWikispace:
@@ -357,66 +229,6 @@ class TestListNodesInWikispace:
         assert all_nodes == []
         mock_recursive.assert_not_awaited()
 
-    @pytest.mark.asyncio
-    async def test_raises_when_list_nodes_reports_unsuccessful(self) -> None:
-        """A success=false document response cannot become an empty snapshot."""
-        session = AsyncMock()
-        session.call_tool.return_value = _make_mcp_result(
-            {"success": False, "message": "provider failure"}
-        )
-
-        with pytest.raises(DingTalkMCPToolError):
-            await DingTalkWikiSpaceService._list_nodes_in_wikispace(
-                session=session,
-                workspace_id="WS1",
-                all_nodes=[],
-            )
-
-    @pytest.mark.asyncio
-    async def test_id_only_mcp_node_is_persisted_end_to_end(
-        self, test_db, test_user
-    ) -> None:
-        """An id-only MCP document survives parsing and database persistence."""
-        session = AsyncMock()
-        session.call_tool = AsyncMock(
-            return_value=_make_mcp_result(
-                {
-                    "items": [
-                        {
-                            "id": "doc-id-only",
-                            "name": "ID-only Document",
-                            "nodeType": "doc",
-                            "workspaceId": "WS1",
-                        }
-                    ]
-                }
-            )
-        )
-        all_nodes: list[dict[str, str]] = []
-
-        await DingTalkWikiSpaceService._list_nodes_in_wikispace(
-            session=session,
-            workspace_id="WS1",
-            all_nodes=all_nodes,
-        )
-        stats = DingTalkDocService._sync_nodes_to_db(
-            test_user.id,
-            all_nodes,
-            datetime.now(),
-            test_db,
-            source=DingTalkNodeSource.WIKISPACE,
-        )
-
-        stored = (
-            test_db.query(DingtalkSyncedNode)
-            .filter(DingtalkSyncedNode.dingtalk_node_id == "doc-id-only")
-            .one()
-        )
-        assert all_nodes[0]["nodeId"] == "doc-id-only"
-        assert stored.name == "ID-only Document"
-        assert stored.workspace_id == "WS1"
-        assert stats["added"] == 1
-
 
 class TestParseListNodesResult:
     """Tests for DingTalkDocService._parse_list_nodes_result."""
@@ -464,30 +276,6 @@ class TestParseListNodesResult:
         assert len(result) == 1
         assert token == "tok2"
 
-    @pytest.mark.parametrize("alias", ["nodeId", "id", "dingtalk_node_id"])
-    def test_normalizes_node_identifier_aliases(self, alias: str) -> None:
-        """Provider node identifiers use nodeId after response parsing."""
-        result, _ = DingTalkDocService._parse_list_nodes_result(
-            _make_mcp_result({"items": [{alias: 123, "name": "Document"}]})
-        )
-
-        assert result == [{alias: 123, "name": "Document", "nodeId": "123"}]
-
-    def test_does_not_use_workspace_id_as_document_id(self) -> None:
-        """A document cannot borrow its containing workspace's identity."""
-        result, _ = DingTalkDocService._parse_list_nodes_result(
-            _make_mcp_result({"items": [{"workspaceId": "WS1", "name": "Missing ID"}]})
-        )
-
-        assert "nodeId" not in result[0]
-
-    def test_raises_before_parsing_mcp_error_content(self) -> None:
-        """Protocol-level MCP errors never become successful parsed payloads."""
-        result = _make_mcp_result({"items": []}, is_error=True)
-
-        with pytest.raises(DingTalkMCPToolError):
-            DingTalkDocService._parse_list_nodes_result(result)
-
 
 # ---------------------------------------------------------------------------
 # _fetch_all_wikispace_nodes
@@ -514,7 +302,7 @@ class TestFetchAllWikispaceNodes:
     @pytest.mark.asyncio
     async def test_adds_kb_root_as_folder_node(self) -> None:
         """Each knowledge base is added as a folder-type root node."""
-        kb_nodes = [{"nodeId": "WSABC", "workspaceId": "WSABC", "name": "Test KB"}]
+        kb_nodes = [{"workspaceId": "WSABC", "name": "Test KB"}]
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
 
@@ -552,22 +340,29 @@ class TestFetchAllWikispaceNodes:
         assert kb_root["name"] == "Test KB"
 
     @pytest.mark.asyncio
-    async def test_raises_when_list_nodes_returns_mcp_error(self) -> None:
-        """An MCP error response aborts the complete knowledge base fetch."""
-        kb_nodes = [
-            {"nodeId": "WS_ERROR", "workspaceId": "WS_ERROR", "name": "Broken KB"}
-        ]
+    async def test_uses_wikispace_mcp_url_as_docs_fallback(self) -> None:
+        """Falls back to wikispace MCP URL when docs MCP URL is not configured."""
+        kb_nodes = [{"workspaceId": "WS1", "name": "KB 1"}]
+        captured_sessions: list = []
+
+        async def capture_session(
+            session: object, workspace_id: str, all_nodes: list
+        ) -> None:
+            captured_sessions.append(session)
+
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
-        mock_session.call_tool.return_value = _make_mcp_result(
-            {"message": "provider failure"}, is_error=True
-        )
 
         with (
             patch.object(
                 DingTalkWikiSpaceService,
                 "_list_wiki_spaces",
                 new=AsyncMock(return_value=kb_nodes),
+            ),
+            patch.object(
+                DingTalkWikiSpaceService,
+                "_list_nodes_in_wikispace",
+                new=AsyncMock(side_effect=capture_session),
             ),
             patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
             patch("mcp.ClientSession") as mock_cls,
@@ -579,27 +374,23 @@ class TestFetchAllWikispaceNodes:
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            with pytest.raises(DingTalkMCPToolError):
-                await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
-                    wikispace_mcp_url="https://ws.mcp.example.com",
-                    docs_mcp_url="https://docs.mcp.example.com",
-                )
-
-    @pytest.mark.asyncio
-    async def test_requires_docs_mcp_for_document_listing(self) -> None:
-        """WikiSpace MCP cannot be used as the Docs MCP fallback."""
-        with pytest.raises(ValueError, match="Docs MCP URL is not configured"):
             await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
                 docs_mcp_url=None,
             )
+
+        assert len(captured_sessions) == 1
+        mock_http.assert_called_once()
+        call_args = mock_http.call_args
+        assert call_args is not None
+        assert call_args.kwargs.get("url") == "https://ws.mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_skips_kb_with_no_workspace_id(self) -> None:
         """Skips KB nodes that have no workspaceId/nodeId/id field."""
         kb_nodes = [
             {"name": "No ID KB"},
-            {"nodeId": "WS2", "workspaceId": "WS2", "name": "Good KB"},
+            {"workspaceId": "WS2", "name": "Good KB"},
         ]
         list_nodes_calls: list[str] = []
 
@@ -634,7 +425,6 @@ class TestFetchAllWikispaceNodes:
 
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
-                docs_mcp_url="https://docs.mcp.example.com",
             )
 
         assert list_nodes_calls == ["WS2"]
@@ -642,19 +432,21 @@ class TestFetchAllWikispaceNodes:
         assert result[0]["workspaceId"] == "WS2"
 
     @pytest.mark.asyncio
-    async def test_stops_after_first_knowledge_base_error(self) -> None:
-        """The first failed knowledge base aborts the complete in-memory snapshot."""
+    async def test_continues_after_kb_error(self) -> None:
+        """Continues syncing remaining KBs even if one fails."""
         kb_nodes = [
-            {"nodeId": "WS_FAIL", "workspaceId": "WS_FAIL", "name": "Failing KB"},
-            {"nodeId": "WS_OK", "workspaceId": "WS_OK", "name": "Good KB"},
+            {"workspaceId": "WS_FAIL", "name": "Failing KB"},
+            {"workspaceId": "WS_OK", "name": "Good KB"},
         ]
-        listed_workspace_ids: list[str] = []
+        call_count = 0
 
         async def maybe_fail(
             session: object, workspace_id: str, all_nodes: list
         ) -> None:
-            listed_workspace_ids.append(workspace_id)
-            raise ConnectionError("MCP connection failed")
+            nonlocal call_count
+            call_count += 1
+            if workspace_id == "WS_FAIL":
+                raise ConnectionError("MCP connection failed")
 
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
@@ -680,13 +472,14 @@ class TestFetchAllWikispaceNodes:
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            with pytest.raises(ConnectionError, match="MCP connection failed"):
-                await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
-                    wikispace_mcp_url="https://ws.mcp.example.com",
-                    docs_mcp_url="https://docs.mcp.example.com",
-                )
+            result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
+                wikispace_mcp_url="https://ws.mcp.example.com",
+            )
 
-        assert listed_workspace_ids == ["WS_FAIL"]
+        assert call_count == 2
+        assert len(result) == 1
+        assert result[0]["workspaceId"] == "WS_OK"
+        assert all(node.get("workspaceId") != "WS_FAIL" for node in result)
 
 
 class TestDedupeNodesById:
@@ -720,26 +513,6 @@ class TestDedupeNodesById:
         assert len(result) == 1
         assert result[0]["name"] == "First"
         assert result[0]["workspaceId"] == "WS1"
-
-    def test_workspace_id_does_not_collapse_distinct_documents(self) -> None:
-        """Two documents in one KB keep separate identities via node-level ids."""
-        nodes = [
-            {"workspaceId": "WS1", "nodeId": "N1", "name": "Doc One"},
-            {"workspaceId": "WS1", "nodeId": "N2", "name": "Doc Two"},
-        ]
-
-        result = DingTalkWikiSpaceService._dedupe_nodes_by_id(nodes)
-
-        assert len(result) == 2
-        assert {node["name"] for node in result} == {"Doc One", "Doc Two"}
-
-    def test_ignores_nodes_not_normalized_at_the_mcp_boundary(self) -> None:
-        """De-duplication relies only on the canonical nodeId field."""
-        nodes = [{"workspaceId": "WS1", "name": "KB Root", "nodeType": "folder"}]
-
-        result = DingTalkWikiSpaceService._dedupe_nodes_by_id(nodes)
-
-        assert result == []
 
 
 class TestReadHelpers:
@@ -919,40 +692,3 @@ class TestSyncWikispaceNodes:
 
         assert captured["wikispace_url"] == "https://ws.mcp.example.com"
         assert captured["docs_url"] == "https://docs.mcp.example.com"
-
-    @pytest.mark.asyncio
-    @patch("app.services.dingtalk_wikispace_service.UserMCPService")
-    async def test_aborts_before_db_write_when_any_knowledge_base_fails(
-        self, mock_mcp_svc: MagicMock
-    ) -> None:
-        """A partial MCP snapshot never advances any persisted sync state."""
-        mock_mcp_svc.get_provider_service_config.return_value = {
-            "enabled": True,
-            "url": "https://ws.mcp.example.com",
-        }
-
-        async def fake_fetch(
-            wikispace_mcp_url: str,
-            docs_mcp_url: str | None = None,
-        ) -> list[dict[str, str]]:
-            raise DingTalkMCPToolError("DingTalk MCP tool returned an error result")
-
-        with (
-            patch.object(
-                DingTalkWikiSpaceService,
-                "_fetch_all_wikispace_nodes",
-                new=fake_fetch,
-            ),
-            patch(
-                "app.services.dingtalk_wikispace_service.DingTalkDocService"
-                ".get_user_dingtalk_mcp_url",
-                return_value="https://docs.mcp.example.com",
-            ),
-            patch.object(DingTalkDocService, "_sync_nodes_to_db") as mock_sync,
-        ):
-            with pytest.raises(DingTalkMCPToolError):
-                await DingTalkWikiSpaceService.sync_wikispace_nodes(
-                    MagicMock(), MagicMock()
-                )
-
-        mock_sync.assert_not_called()

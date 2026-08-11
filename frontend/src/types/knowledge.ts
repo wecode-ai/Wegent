@@ -365,8 +365,6 @@ export interface KnowledgeBase {
   show_generation_task?: boolean
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
-  /** Which model this knowledge base's own generation runs on. */
-  execution_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
   /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
@@ -417,12 +415,6 @@ export interface KnowledgeBaseCreate {
   resolved_name?: string
   /** What the provider says the repository is, used when no description is given. */
   resolved_description?: string
-  /**
-   * Only for `kb_type: 'code_wiki'` — which model the generation agent runs on.
-   * Required by the server there: a wiki reads a whole repository, so which model
-   * sees it is the creator's choice rather than the team bot's default.
-   */
-  execution_model_ref?: SummaryModelRef | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
@@ -458,8 +450,6 @@ export interface KnowledgeBaseUpdate {
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
-  /** Editable: applies to the next run, not one already going. */
-  execution_model_ref?: SummaryModelRef | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   /** Only for a code wiki: whether its generation runs are listed as conversations. */
   show_generation_task?: boolean

@@ -23,7 +23,6 @@ PAYLOAD = {
     "namespace": "default",
     "source_type": "github",
     "source_url": "https://github.com/wecode-ai/Wegent.git",
-    "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
 }
 
 
@@ -791,39 +790,6 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
     spec = test_db.get(Kind, response.json()["id"]).json["spec"]
     assert spec["summaryEnabled"] is True
     assert spec["summaryModelRef"]["name"] == "gpt"
-
-
-def test_a_code_wiki_keeps_the_model_it_was_told_to_generate_with(
-    test_client: TestClient,
-    auth_headers: dict[str, str],
-    test_db: Session,
-    kind_services_use_test_db,
-):
-    """Which model reads the repository is required of the caller, so it has to
-    survive the trip into the spec -- the run reads it from there and from nowhere
-    else. It did not: KnowledgeBaseSpec never declared the field, and pydantic
-    drops what it does not declare, so every wiki silently ran on its team's model
-    however carefully the model was chosen.
-    """
-    from app.models.kind import Kind
-
-    with patch(
-        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
-        return_value={"has_access": True},
-    ):
-        response = test_client.post(
-            CREATE_URL,
-            json={
-                **PAYLOAD,
-                "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
-            },
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 201, response.text
-    spec = test_db.get(Kind, response.json()["id"]).json["spec"]
-    assert spec["executionModelRef"]["name"] == "claude-opus-5"
-    assert spec["executionModelRef"]["type"] == "public"
 
 
 def test_a_code_wiki_records_the_language_its_pages_are_written_in(

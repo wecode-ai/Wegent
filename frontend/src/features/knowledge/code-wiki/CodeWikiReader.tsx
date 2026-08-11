@@ -10,16 +10,6 @@ import { ArrowLeft, PanelLeft, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -108,52 +98,21 @@ export function regenerateControl(
       hint: '',
     }
   }
-  // "Regenerate" reads oddly on a wiki that has never produced a page -- which is
-  // exactly the state a failed first run leaves behind, where this button is the
-  // way out. Anything published means there is something to regenerate.
-  const startOver = status?.last_published_at
-    ? t('codeWiki.reader.regenerate')
-    : t('codeWiki.reader.generateFirst')
   if (status?.status === 'running' && status.is_stale) {
     return {
-      label: startOver,
+      label: t('codeWiki.reader.regenerate'),
       disabled: false,
       busy: false,
       hint: t('codeWiki.reader.previousRunStalled'),
     }
   }
   return {
-    label: startOver,
+    label: t('codeWiki.reader.regenerate'),
     disabled: false,
     busy: false,
     hint:
       status?.status === 'failed' ? failureText(status.failure_code, status.error_message, t) : '',
   }
-}
-
-/**
- * Why this wiki has no pages, in the reader's own words.
- *
- * Generation starts by itself the moment a wiki is created, so the empty state a
- * creator sees first is "working on it", not "press the button". Telling them to
- * generate one asks for something already happening, and the wait -- minutes, not
- * seconds -- is long enough that saying so is the whole message.
- */
-export function emptyStateText(
-  status: CodeWikiRunStatus | null,
-  t: (key: string) => string
-): { title: string; hint: string } {
-  if (status?.status === 'running' && !status.is_stale) {
-    return {
-      title: t('codeWiki.reader.emptyGenerating'),
-      hint: t('codeWiki.reader.emptyGeneratingHint'),
-    }
-  }
-  if (status?.status === 'failed' || status?.is_stale) {
-    // The reason itself is already rendered below this, from the run status.
-    return { title: t('codeWiki.reader.emptyFailed'), hint: t('codeWiki.reader.emptyFailedHint') }
-  }
-  return { title: t('codeWiki.reader.empty'), hint: t('codeWiki.reader.emptyHint') }
 }
 
 export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
@@ -167,10 +126,6 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
   const [activePath, setActivePath] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [regenerating, setRegenerating] = useState(false)
-  // Regenerating rewrites every page of the wiki and costs a full agent run, so it
-  // is asked for twice. The first run after creation is not: creating the wiki was
-  // the request, and confirming it again would be asking about work already agreed.
-  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -198,7 +153,6 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
   )
   const runStatus = useCodeWikiRunStatus(wiki.id)
   const control = regenerateControl(runStatus.status, regenerating, t)
-  const emptyState = emptyStateText(runStatus.status, t)
 
   useEffect(() => {
     let cancelled = false
@@ -247,7 +201,6 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
   }, [])
 
   const handleRegenerate = useCallback(async () => {
-    setConfirmingRegenerate(false)
     setRegenerating(true)
     try {
       const result = await codeWikiApi.regenerate(wiki.id)
@@ -329,7 +282,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setConfirmingRegenerate(true)}
+          onClick={handleRegenerate}
           disabled={control.disabled}
           title={control.hint || undefined}
           data-testid="code-wiki-regenerate"
@@ -339,26 +292,6 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
           {control.label}
         </Button>
       </div>
-
-      <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
-        <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('codeWiki.reader.regenerateConfirmBody')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRegenerate}
-              data-testid="code-wiki-regenerate-confirm-action"
-            >
-              {t('codeWiki.reader.regenerate')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,
@@ -383,17 +316,11 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           {pages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16">
-              <p className="text-text-secondary" data-testid="code-wiki-empty-title">
-                {emptyState.title}
-              </p>
-              <p className="text-sm text-text-tertiary">{emptyState.hint}</p>
+              <p className="text-text-secondary">{t('codeWiki.reader.empty')}</p>
+              <p className="text-sm text-text-tertiary">{t('codeWiki.reader.emptyHint')}</p>
               {control.hint && (
                 <p
-                  // Clamped: this is the summary line, and an agent's error can run
-                  // to hundreds of characters. The run history beside it shows the
-                  // whole reason, which is what that panel is for.
-                  className="line-clamp-3 max-w-lg whitespace-pre-wrap break-words text-center text-xs text-amber-500"
-                  title={control.hint}
+                  className="max-w-lg text-center text-xs text-amber-500"
                   data-testid="code-wiki-run-hint"
                 >
                   {control.hint}

@@ -161,8 +161,8 @@
       "wikispace": "Knowledge Base",
       "wikispaceSyncHint": "Click sync to pull knowledge bases from DingTalk",
       "wikispaceEmpty": "No knowledge base content",
-      "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
-      "wikispaceConfigureHint": "Please configure DingTalk Knowledge Base MCP and DingTalk Docs MCP in settings"
+      "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+      "wikispaceConfigureHint": "Please go to settings to configure DingTalk Knowledge Base MCP"
     },
     "groupFilter": {
       "all": "All Groups"
@@ -1120,11 +1120,7 @@
       "alreadyBuilt": "{{count}} other wiki(s) already document this repository — you could ask for a share",
       "ownedBy": "owned by {{owner}} — ask them for a share",
       "showGenerationTask": "Show generation runs",
-      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id.",
-      "modelLabel": "Generation model",
-      "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
-      "modelPlaceholder": "Select a model",
-      "modelRequired": "Select the model to generate with"
+      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id."
     },
     "reader": {
       "regenerate": "Regenerate",
@@ -1140,14 +1136,7 @@
       "previousRunStalled": "The previous run stalled; you can start another",
       "linkNotFound": "This link points to a page that does not exist",
       "backToChat": "Back to conversation",
-      "openNavigation": "Page navigation",
-      "generateFirst": "Generate",
-      "regenerateConfirmTitle": "Regenerate this wiki?",
-      "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
-      "emptyGenerating": "This wiki is being generated",
-      "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
-      "emptyFailed": "The last run did not finish",
-      "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
+      "openNavigation": "Page navigation"
     },
     "history": {
       "title": "Generation history",
@@ -1168,9 +1157,7 @@
       "taskFailed": "The task failed",
       "republish": "Restore this version",
       "republished": "This version is published again",
-      "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
-      "republishConfirmTitle": "Restore this version?",
-      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break."
+      "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this."
     },
     "failure": {
       "task_ended_without_report": "The task ended without reporting a result",

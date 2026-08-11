@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { groupInputContexts } from '@/features/tasks/components/input/InputBadgeDisplay'
-import { buildDingTalkDocContext } from '@/features/tasks/components/chat/DingTalkDocContextSelector'
 import type { ContextItem } from '@/types/context'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 const t = (key: string, params?: Record<string, unknown>) =>
   params?.folderCount !== undefined
@@ -14,23 +12,6 @@ const t = (key: string, params?: Record<string, unknown>) =>
 
 describe('groupInputContexts', () => {
   it('groups DingTalk knowledge selections by workspace identity', () => {
-    const unscopedWikiNode = (id: string, name: string): DingtalkDocNode => ({
-      id: Number(id.replace(/\D/g, '')),
-      dingtalk_node_id: id,
-      name,
-      doc_url: `https://example.com/${id}`,
-      parent_node_id: '',
-      node_type: 'doc',
-      workspace_id: '',
-      content_type: 'ALIDOC',
-      source: 'wikispace',
-      is_active: true,
-      content_updated_at: '',
-      last_synced_at: '',
-      created_at: '',
-      updated_at: '',
-      children: [],
-    })
     const contexts: ContextItem[] = [
       {
         id: 'docs:doc-1',
@@ -81,8 +62,6 @@ describe('groupInputContexts', () => {
         workspace_id: 'space-2',
         workspace_name: '研发知识库',
       },
-      buildDingTalkDocContext(unscopedWikiNode('doc-5', 'Unscoped 5')),
-      buildDingTalkDocContext(unscopedWikiNode('doc-6', 'Unscoped 6')),
     ]
 
     expect(groupInputContexts(contexts, t)).toEqual([
@@ -102,18 +81,6 @@ describe('groupInputContexts', () => {
         key: 'dingtalk:wikispace:space-2',
         contextIds: ['wikispace:doc-4'],
         displayName: '研发知识库',
-        displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
-      }),
-      expect.objectContaining({
-        key: 'dingtalk:wikispace:context:wikispace:doc-5',
-        contextIds: ['wikispace:doc-5'],
-        displayName: 'chat:dingtalkDocs.wikispaceTab:',
-        displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
-      }),
-      expect.objectContaining({
-        key: 'dingtalk:wikispace:context:wikispace:doc-6',
-        contextIds: ['wikispace:doc-6'],
-        displayName: 'chat:dingtalkDocs.wikispaceTab:',
         displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
       }),
     ])

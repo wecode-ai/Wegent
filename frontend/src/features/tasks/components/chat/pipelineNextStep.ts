@@ -95,7 +95,7 @@ function getStructuredItemId(context: SubtaskContextBrief): string | null {
           ...(context.document_ids ?? []),
         ]
           .sort((a, b) => a - b)
-          .join(',')}:${String(context.include_subfolders ?? true)}`
+          .join(',')}`
       : 'all'
     return `knowledge_base:${context.knowledge_id}:${scopeKey}`
   }

@@ -836,7 +836,7 @@
     "wikispaceSync": "Sync",
     "wikispaceSyncing": "Syncing...",
     "wikispaceEmpty": "No knowledge base content",
-    "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
+    "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
     "wikispaceLastSynced": "Last synced: {{time}}",
     "wikispaceNeverSynced": "Never synced"
   }

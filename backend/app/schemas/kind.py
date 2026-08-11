@@ -1056,14 +1056,6 @@ class KnowledgeBaseSpec(BaseModel):
         default=False,
         description="Enable automatic summary generation for documents",
     )
-    executionModelRef: Optional[SummaryModelRef] = Field(
-        None,
-        description=(
-            "Model this knowledge base's own generation runs on. Only a code wiki "
-            "generates; absent means the run inherits the model bound by its team's "
-            "bot, which is what wikis created before this field existed do."
-        ),
-    )
     summaryModelRef: Optional[SummaryModelRef] = Field(
         None,
         description="Model reference for summary generation. Required when summaryEnabled=True",

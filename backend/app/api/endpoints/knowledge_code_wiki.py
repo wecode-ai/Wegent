@@ -286,7 +286,6 @@ def create_code_wiki(
             direct_access_requirement=data.direct_access_requirement,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
-            execution_model_ref=data.execution_model_ref,
             retrieval_config=(
                 data.retrieval_config.model_dump() if data.retrieval_config else None
             ),

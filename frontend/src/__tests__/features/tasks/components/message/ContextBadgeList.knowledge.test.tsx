@@ -72,17 +72,6 @@ describe('ContextBadgeList knowledge presentation', () => {
             external_target_type: 'document',
             external_node_id: 'doc-2',
           },
-          {
-            id: 5,
-            context_type: 'external_knowledge',
-            name: 'External Folder',
-            status: 'ready',
-            external_provider: 'ap',
-            external_mode: 'explicit',
-            external_id: 'kb-1',
-            external_target_type: 'folder',
-            external_node_id: 'folder-1',
-          },
         ]}
       />
     )
@@ -90,10 +79,8 @@ describe('ContextBadgeList knowledge presentation', () => {
     expect(screen.getByText('全部 · 12 文档')).toBeInTheDocument()
     expect(screen.getByText('2 文件夹 · 1 文档')).toBeInTheDocument()
     expect(screen.getByText('2 文档')).toBeInTheDocument()
-    expect(screen.getAllByText('WeiboAP')).toHaveLength(2)
+    expect(screen.getByText('WeiboAP')).toBeInTheDocument()
     expect(screen.getAllByText('External KB')).toHaveLength(1)
-    expect(screen.getByText('External Folder')).toBeInTheDocument()
-    expect(screen.queryByText('1 文件夹')).not.toBeInTheDocument()
     expect(screen.queryByText('AP')).not.toBeInTheDocument()
     expect(screen.queryByText(/篇文档|个文档|个文件夹/)).not.toBeInTheDocument()
   })

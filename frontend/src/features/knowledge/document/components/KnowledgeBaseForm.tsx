@@ -26,7 +26,7 @@ import type {
   SummaryModelRef,
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
-import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
+import { SummaryModelSelector } from './SummaryModelSelector'
 import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
@@ -369,15 +369,12 @@ export function KnowledgeBaseForm({
 
           {summaryEnabled && (
             <SimpleConfigRow label={t('knowledge:document.summary.selectModel')}>
-              <ModelRefSelector
+              <SummaryModelSelector
                 value={summaryModelRef}
                 onChange={onSummaryModelChange}
                 error={summaryModelError}
-                placeholder={t('knowledge:document.summary.selectModel')}
                 knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                 bindModel={bindModel}
-                preferenceScope="summary"
-                dataTestId="summary-model-select"
               />
             </SimpleConfigRow>
           )}

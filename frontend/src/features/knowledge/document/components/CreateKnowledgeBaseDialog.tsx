@@ -24,7 +24,6 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
-import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   CodeWikiSourceFields,
@@ -156,11 +155,6 @@ export function CreateKnowledgeBaseDialog({
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
-  // Which model reads the repository. Required for a code wiki rather than
-  // inherited from the team's bot: a wiki hands a whole codebase to whichever
-  // model it names, so that has to be a choice the creator sees themselves making.
-  const [executionModelRef, setExecutionModelRef] = useState<SummaryModelRef | null>(null)
-  const [executionModelError, setExecutionModelError] = useState('')
   const {
     validate: validateMultimodal,
     clearError: clearMultimodalError,
@@ -214,7 +208,6 @@ export function CreateKnowledgeBaseDialog({
   const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
-    setExecutionModelError('')
     clearMultimodalError()
 
     // A code wiki may be left unnamed: the server fills in the repository's own
@@ -226,11 +219,6 @@ export function CreateKnowledgeBaseDialog({
 
     if (kind === 'code' && !source.source_url) {
       setError(t('knowledge:codeWiki.create.repositoryRequired'))
-      return
-    }
-
-    if (kind === 'code' && !executionModelRef) {
-      setExecutionModelError(t('knowledge:codeWiki.create.modelRequired'))
       return
     }
 
@@ -286,7 +274,6 @@ export function CreateKnowledgeBaseDialog({
               // again on the server, which has asked the provider once already.
               resolved_name: source.resolution?.name,
               resolved_description: source.resolution?.description,
-              execution_model_ref: executionModelRef,
             }
           : {}),
       })
@@ -299,8 +286,6 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSummaryEnabled(true)
       setSummaryModelRef(null)
-      setExecutionModelRef(null)
-      setExecutionModelError('')
       resetMultimodal()
       setGuidedQuestions([])
       setRagConfigMode('auto')
@@ -323,8 +308,6 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSummaryEnabled(true)
       setSummaryModelRef(null)
-      setExecutionModelRef(null)
-      setExecutionModelError('')
       setSummaryModelError('')
       resetMultimodal()
       setGuidedQuestions([])
@@ -405,30 +388,7 @@ export function CreateKnowledgeBaseDialog({
             typeSection={
               <>
                 {kind === 'code' ? (
-                  <>
-                    <CodeWikiSourceFields value={source} onChange={setSource} />
-                    <SimpleConfigRow
-                      label={t('knowledge:codeWiki.create.modelLabel')}
-                      description={t('knowledge:codeWiki.create.modelDescription')}
-                      align="start"
-                    >
-                      <ModelRefSelector
-                        value={executionModelRef}
-                        onChange={value => {
-                          setExecutionModelRef(value)
-                          // Otherwise the "pick a model" error stays beside a field
-                          // that now has one, until the next submit clears it.
-                          setExecutionModelError('')
-                        }}
-                        error={executionModelError}
-                        placeholder={t('knowledge:codeWiki.create.modelPlaceholder')}
-                        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                        bindModel={bindModel}
-                        preferenceScope="wiki"
-                        dataTestId="code-wiki-execution-model-select"
-                      />
-                    </SimpleConfigRow>
-                  </>
+                  <CodeWikiSourceFields value={source} onChange={setSource} />
                 ) : (
                   /* KB Type selector - subtle style */
                   <SimpleConfigRow label={t('knowledge:document.knowledgeBase.type')} align="start">

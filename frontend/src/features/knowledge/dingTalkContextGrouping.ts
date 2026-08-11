@@ -16,9 +16,7 @@ function getDingTalkContextGroupKey(context: DingTalkDocContext): string {
   if (context.source === 'docs') {
     return 'dingtalk:docs'
   }
-  return context.workspace_id
-    ? `dingtalk:wikispace:${context.workspace_id}`
-    : `dingtalk:wikispace:context:${context.id}`
+  return `dingtalk:wikispace:${context.workspace_id ?? 'unknown'}`
 }
 
 function getDingTalkContextGroupName(context: DingTalkDocContext, t: Translate): string {

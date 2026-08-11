@@ -161,8 +161,8 @@
       "wikispace": "知识库",
       "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
       "wikispaceEmpty": "暂无知识库内容",
-      "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
-      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP 和钉钉文档 MCP"
+      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
     },
     "groupFilter": {
       "all": "全部分组"
@@ -1120,11 +1120,7 @@
       "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
       "ownedBy": "归属 {{owner}}，可向其索要分享",
       "showGenerationTask": "显示生成任务",
-      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。",
-      "modelLabel": "生成模型",
-      "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
-      "modelPlaceholder": "选择模型",
-      "modelRequired": "请选择生成模型"
+      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。"
     },
     "reader": {
       "regenerate": "重新生成",
@@ -1140,14 +1136,7 @@
       "previousRunStalled": "上次运行已中断，可重新生成",
       "linkNotFound": "该链接指向的页面不存在",
       "backToChat": "回到对话",
-      "openNavigation": "页面导航",
-      "generateFirst": "开始生成",
-      "regenerateConfirmTitle": "重新生成这个 wiki？",
-      "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
-      "emptyGenerating": "正在生成这个 wiki",
-      "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
-      "emptyFailed": "上次生成没有完成",
-      "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
+      "openNavigation": "页面导航"
     },
     "history": {
       "title": "生成历史",
@@ -1168,9 +1157,7 @@
       "taskFailed": "执行任务失败",
       "republish": "恢复此版本",
       "republished": "已恢复该版本",
-      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
-      "republishConfirmTitle": "恢复这个版本？",
-      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。"
+      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",

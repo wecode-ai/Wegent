@@ -14,7 +14,7 @@ const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-office
 const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
   preset: officePreset,
   rendererMode: 'replace',
-  styleIsolation: 'shadow',
+  styleIsolation: 'scoped',
   theme: 'light',
   toolbar: {
     download: false,
@@ -36,11 +36,6 @@ const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
   },
 }
 
-const SCOPED_OFFICE_VIEWER_OPTIONS: ViewerOptions = {
-  ...OFFICE_VIEWER_OPTIONS,
-  styleIsolation: 'scoped',
-}
-
 interface FlyfishOfficePreviewProps {
   blob: Blob
   filename: string
@@ -59,7 +54,6 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
   )
   const extension = filename.split('.').pop()?.toLowerCase()
   const isPresentation = extension === 'pptx'
-  const needsDialogScrollAccess = extension === 'doc' || extension === 'docx' || isPresentation
 
   const handleStateChange = (state: ViewerState) => {
     if (!state.error || !onError) return
@@ -74,7 +68,7 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
       type={extension}
       size={file.size}
       className={`h-full w-full${isPresentation ? ' overflow-auto' : ''}`}
-      options={needsDialogScrollAccess ? SCOPED_OFFICE_VIEWER_OPTIONS : OFFICE_VIEWER_OPTIONS}
+      options={OFFICE_VIEWER_OPTIONS}
       onStateChange={handleStateChange}
       data-testid="flyfish-office-file-viewer"
     />

@@ -1096,7 +1096,6 @@ class KnowledgeOrchestrator:
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
-        execution_model_ref: Optional[Dict[str, str]] = None,
         # MCP context: for getting task's model as summary model
         task_id: Optional[int] = None,
         # Multimodal analysis config (KB create). Defaults: enabled=False when
@@ -1194,7 +1193,6 @@ class KnowledgeOrchestrator:
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
-            execution_model_ref=execution_model_ref,
             multimodal_analysis_enabled=(
                 multimodal_analysis_enabled
                 if multimodal_analysis_enabled is not None
@@ -1346,7 +1344,6 @@ class KnowledgeOrchestrator:
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
-        execution_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_enabled: Optional[bool] = None,
         multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_video_prompt: Optional[str] = None,
@@ -1381,7 +1378,6 @@ class KnowledgeOrchestrator:
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
             summary_model_ref=summary_model_ref,
-            execution_model_ref=execution_model_ref,
             multimodal_analysis_enabled=multimodal_analysis_enabled,
             multimodal_analysis_model_ref=multimodal_analysis_model_ref,
             multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,

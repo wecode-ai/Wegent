@@ -836,7 +836,7 @@
     "wikispaceSync": "同步",
     "wikispaceSyncing": "同步中...",
     "wikispaceEmpty": "暂无知识库内容",
-    "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
+    "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
     "wikispaceLastSynced": "上次同步: {{time}}",
     "wikispaceNeverSynced": "从未同步"
   }

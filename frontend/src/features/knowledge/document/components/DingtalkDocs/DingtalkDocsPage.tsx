@@ -27,7 +27,7 @@ import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 interface DingtalkDocsPageProps {
   /** Whether DingTalk Docs MCP is configured for the user */
   isConfigured: boolean
-  /** Whether WikiSpace sync has both WikiSpace MCP and Docs MCP configured */
+  /** Whether DingTalk Wikispace MCP is configured for the user */
   isWikispaceConfigured?: boolean
   /** Callback when sync completes (to refresh sidebar count) */
   onSyncComplete?: () => void
@@ -154,6 +154,10 @@ export function DingtalkDocsPage({
   const isSyncing = activeTab === 'my-docs' ? isSyncingDocs : isSyncingWikispace
   const handleSync = activeTab === 'my-docs' ? handleSyncDocs : handleSyncWikispace
   const activeSyncStatus = activeTab === 'my-docs' ? docSyncStatus : wikispaceSyncStatus
+
+  if (!isConfigured && !isWikispaceConfigured) {
+    return <DingtalkNotConfigured />
+  }
 
   return (
     <div className="flex flex-col h-full" data-testid="dingtalk-docs-page">
@@ -304,22 +308,16 @@ function DingtalkEmptyState({
   )
 }
 
-/** Shown when WikiSpace sync is missing either of its required MCP services. */
+/** Shown in wikispace tab when wikispace MCP is not configured. */
 function WikispaceNotConfigured({ t }: { t: TFunction }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <BookOpen className="w-16 h-16 text-text-muted mb-4" />
       <h3 className="text-lg font-medium text-text-primary mb-2">
-        {t(
-          'document.dingtalk.wikispaceNotConfigured',
-          '同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP'
-        )}
+        {t('document.dingtalk.wikispaceNotConfigured', '钉钉知识库 MCP 未配置')}
       </h3>
       <p className="text-sm text-text-muted mb-4">
-        {t(
-          'document.dingtalk.wikispaceConfigureHint',
-          '请前往设置配置钉钉知识库 MCP 和钉钉文档 MCP'
-        )}
+        {t('document.dingtalk.wikispaceConfigureHint', '请前往设置配置钉钉知识库 MCP')}
       </p>
       <Link
         href="/settings?section=integrations&tab=integrations"

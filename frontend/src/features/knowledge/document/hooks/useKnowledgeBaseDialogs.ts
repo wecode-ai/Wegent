@@ -18,6 +18,7 @@ import type {
   KnowledgeBaseCreate,
   KnowledgeBaseType,
   KnowledgeBaseUpdate,
+  SummaryModelRef,
 } from '@/types/knowledge'
 import type { MigrationTargetGroup } from '../components/MigrateKnowledgeBaseDialog'
 
@@ -32,6 +33,7 @@ interface SidebarLike {
 
 interface UseKnowledgeBaseDialogsParams {
   sidebar: SidebarLike
+  saveSummaryModelToPreference: (summaryModelRef: SummaryModelRef | null | undefined) => void
   reloadGroupKbs: () => void
 }
 
@@ -82,6 +84,7 @@ export interface UseKnowledgeBaseDialogsReturn {
 
 export function useKnowledgeBaseDialogs({
   sidebar,
+  saveSummaryModelToPreference,
   reloadGroupKbs,
 }: UseKnowledgeBaseDialogsParams): UseKnowledgeBaseDialogsReturn {
   const router = useRouter()
@@ -161,7 +164,6 @@ export function useKnowledgeBaseDialogs({
             namespace,
             source_type: data.source_type!,
             source_url: data.source_url!,
-            execution_model_ref: data.execution_model_ref!,
           })
           setShowCreateDialog(false)
           resetCreateDialogState()
@@ -196,6 +198,9 @@ export function useKnowledgeBaseDialogs({
           multimodal_analysis_image_prompt: data.multimodal_analysis_image_prompt,
         })
 
+        if (data.summary_enabled && data.summary_model_ref) {
+          saveSummaryModelToPreference(data.summary_model_ref)
+        }
         setShowCreateDialog(false)
         resetCreateDialogState()
 
@@ -216,6 +221,7 @@ export function useKnowledgeBaseDialogs({
       createGroupName,
       createKbType,
       sidebar,
+      saveSummaryModelToPreference,
       reloadGroupKbs,
       resetCreateDialogState,
       router,
@@ -230,13 +236,17 @@ export function useKnowledgeBaseDialogs({
         const { updateKnowledgeBase } = await import('@/apis/knowledge')
         await updateKnowledgeBase(editingKb.id, data)
 
+        if (data.summary_enabled && data.summary_model_ref) {
+          saveSummaryModelToPreference(data.summary_model_ref)
+        }
+
         await sidebar.refreshAll()
         setEditingKb(null)
       } finally {
         setIsUpdating(false)
       }
     },
-    [editingKb, sidebar]
+    [editingKb, sidebar, saveSummaryModelToPreference]
   )
 
   const handleDelete = useCallback(async () => {

@@ -6,62 +6,35 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
+import {
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  getGlobalModelPreference,
-  saveGlobalModelPreference,
-  type ModelPreferenceScope,
-} from '@/utils/modelPreferences'
-/** What a caller stores: enough to name one model among every scope. */
-export interface ModelRef {
-  name: string
-  namespace: string
-  type: 'public' | 'user' | 'group' | 'runtime'
-}
+import { getGlobalModelPreference } from '@/utils/modelPreferences'
+import type { SummaryModelRef } from '@/types/knowledge'
 
-interface ModelRefSelectorProps {
-  value?: ModelRef | null
-  onChange: (value: ModelRef | null) => void
+interface SummaryModelSelectorProps {
+  value?: SummaryModelRef | null
+  onChange: (value: SummaryModelRef | null) => void
   disabled?: boolean
   error?: string
-  /** Shown when nothing is selected yet. Each caller names its own purpose. */
-  placeholder: string
   /** Optional team ID to read cached model preference from localStorage */
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
-  /**
-   * What this choice is for. Summaries and wiki generation want different models,
-   * so they remember separately rather than overwriting one another. Omitted, the
-   * choice shares the conversation's slot.
-   */
-  preferenceScope?: ModelPreferenceScope
-  /**
-   * Whether to fill the box in when nothing is selected. On by default, which is
-   * what a create form wants. Off where an empty box is a fact rather than a gap:
-   * an existing knowledge base with no model of its own runs on its team's, and
-   * showing a model there would misreport that -- and, if the form then saved,
-   * would turn the guess into a stored choice nobody made.
-   */
-  autoSelect?: boolean
-  dataTestId: string
 }
 
-export function ModelRefSelector({
+export function SummaryModelSelector({
   value,
   onChange,
   disabled = false,
   error,
-  placeholder,
   knowledgeDefaultTeamId,
   bindModel,
-  preferenceScope,
-  autoSelect = true,
-  dataTestId,
-}: ModelRefSelectorProps) {
-  const { t } = useTranslation('common')
+}: SummaryModelSelectorProps) {
+  const { t } = useTranslation('knowledge')
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(false)
   // Track the last team ID for which we attempted preselection
@@ -70,11 +43,6 @@ export function ModelRefSelector({
   // preselection before team info was loaded, allowing re-attempt when team info arrives
   const ATTEMPTED_WITHOUT_TEAM = -1
   const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
-  // Whether the current value is this effect's own guess rather than a real choice.
-  // A guess made before the team id arrived could not consult the cache, so it has
-  // to stay replaceable -- otherwise the re-attempt below can never happen and the
-  // remembered model loses to whatever sorted first.
-  const guessedRef = useRef(false)
 
   // Fetch models on mount
   useEffect(() => {
@@ -112,12 +80,8 @@ export function ModelRefSelector({
   // - Valid knowledgeDefaultTeamId is provided (for cache and tracking)
   // - Haven't attempted preselection for this team ID yet
   useEffect(() => {
-    if (!autoSelect || loading || models.length === 0) {
-      return
-    }
-    // A value the caller loaded or the user picked is never second-guessed. One this
-    // effect guessed is provisional until the team id has had its turn.
-    if (value && !guessedRef.current) {
+    // Skip if value exists, still loading
+    if (value || loading || models.length === 0) {
       return
     }
 
@@ -142,13 +106,7 @@ export function ModelRefSelector({
 
     // Priority 1: Try cached preference from localStorage
     if (knowledgeDefaultTeamId) {
-      // Always an llm here -- this selector only ever fetches those -- so the
-      // category slot stays empty and the scope is what tells these keys apart.
-      const cachedPreference = getGlobalModelPreference(
-        knowledgeDefaultTeamId,
-        undefined,
-        preferenceScope
-      )
+      const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
 
       if (cachedPreference?.modelName) {
         const matchedModel = models.find(model => {
@@ -162,8 +120,6 @@ export function ModelRefSelector({
         })
 
         if (matchedModel) {
-          // Remembered, so no longer a guess: this is what was chosen last time.
-          guessedRef.current = false
           onChange({
             name: matchedModel.name,
             namespace: matchedModel.namespace || 'default',
@@ -180,7 +136,6 @@ export function ModelRefSelector({
         model => model.name === bindModel || model.displayName === bindModel
       )
       if (matchedModel) {
-        guessedRef.current = true
         onChange({
           name: matchedModel.name,
           namespace: matchedModel.namespace || 'default',
@@ -193,23 +148,13 @@ export function ModelRefSelector({
     // Priority 3: Select the first available model
     const firstModel = models[0]
     if (firstModel) {
-      guessedRef.current = true
       onChange({
         name: firstModel.name,
         namespace: firstModel.namespace || 'default',
         type: firstModel.type,
       })
     }
-  }, [
-    models,
-    value,
-    loading,
-    autoSelect,
-    knowledgeDefaultTeamId,
-    bindModel,
-    preferenceScope,
-    onChange,
-  ])
+  }, [models, value, loading, knowledgeDefaultTeamId, bindModel, onChange])
 
   // Find selected model
   const selectedModel = useMemo(() => {
@@ -238,32 +183,10 @@ export function ModelRefSelector({
       // Model not found in list but value exists
       return value.name
     }
-    return placeholder
-  }, [selectedModel, value, placeholder])
+    return t('document.summary.selectModel')
+  }, [selectedModel, value, t])
 
   const handleSelect = (model: UnifiedModel) => {
-    // Picked deliberately, so nothing may overwrite it.
-    guessedRef.current = false
-    // Remembered here rather than when the form is submitted, which is what the
-    // chat does. Saving on submit only meant a dialog closed without submitting
-    // forgot the choice, and the next one opened on the fallback again.
-    //
-    // Only a deliberate pick is remembered: the preselect above must not write
-    // back its own guess, or the first model in the list would install itself as
-    // the preference simply by being shown.
-    if (knowledgeDefaultTeamId) {
-      saveGlobalModelPreference(
-        knowledgeDefaultTeamId,
-        {
-          modelName: model.name,
-          modelType: model.type,
-          forceOverride: true,
-          updatedAt: Date.now(),
-        },
-        undefined,
-        preferenceScope
-      )
-    }
     onChange({
       name: model.name,
       namespace: model.namespace || 'default',
@@ -309,7 +232,7 @@ export function ModelRefSelector({
         onSelectModel={handleSelect}
         placeholder={loading ? t('common:loading', 'Loading...') : displayValue}
         disabled={disabled || loading}
-        dataTestId={dataTestId}
+        dataTestId="summary-model-select"
         triggerClassName={error ? 'border-red-500' : undefined}
         getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
         renderModelBadges={model => (
