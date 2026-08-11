@@ -71,7 +71,7 @@ interface ProjectChatComposerProps {
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void

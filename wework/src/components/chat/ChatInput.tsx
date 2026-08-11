@@ -677,9 +677,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       !isSameModel(controls.activeModel, model)
     ) {
       setPendingModelSelection({ model, options })
-      return
+      return false
     }
     applyModelSelection(model, options)
+    return true
   }
 
   const confirmModelSelection = () => {

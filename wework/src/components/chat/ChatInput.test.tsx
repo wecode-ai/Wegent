@@ -552,6 +552,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
