@@ -436,7 +436,7 @@ class TestKnowledgeBaseTool:
         assert result_dict["chunks_used"] == 1
 
     @pytest.mark.asyncio
-    async def test_format_direct_injection_result_adds_video_segments(self):
+    async def test_format_direct_injection_result_keeps_plain_source(self):
         tool = KnowledgeBaseTool()
         injection_result = {
             "injected_content": "Video content",
@@ -449,8 +449,9 @@ class TestKnowledgeBaseTool:
                     "source": "811.video.md",
                     "score": 0.9,
                     "knowledge_base_id": 211,
-                    "document_id": 811,
+                    "document_id": "llama-index-uuid",
                     "metadata": {
+                        "doc_ref": "811",
                         "video_segment_id": "segment_6_15",
                         "video_start_sec": 6,
                         "video_end_sec": 15,
@@ -465,10 +466,9 @@ class TestKnowledgeBaseTool:
         )
 
         source = result["sources"][0]
-        assert source["source_type"] == "wegent_video_segment"
-        assert source["document_id"] == 811
-        assert source["segments"][0]["start_sec"] == 6
-        assert source["segments"][0]["end_sec"] == 15
+        assert source["source_type"] is None
+        assert source["document_id"] == "llama-index-uuid"
+        assert "segments" not in source
 
     @pytest.mark.asyncio
     async def test_format_rag_result(self):
@@ -529,6 +529,47 @@ class TestKnowledgeBaseTool:
         assert result["sources"][0]["segments"][0]["title"] == "元数据中的片段标题"
         assert result["sources"][0]["segments"][0]["description"] == (
             "元数据中的片段摘要。"
+        )
+
+    @pytest.mark.asyncio
+    async def test_format_rag_result_keeps_same_name_documents_separate(self):
+        tool = KnowledgeBaseTool()
+        kb_chunks = {
+            211: [
+                {
+                    "content": "First video chapter",
+                    "source": "chapter.video.md",
+                    "score": 0.9,
+                    "document_id": "uuid-a",
+                    "knowledge_base_id": 211,
+                    "metadata": {
+                        "doc_ref": "811",
+                        "video_start_sec": 0,
+                        "video_end_sec": 10,
+                    },
+                },
+                {
+                    "content": "Second video chapter",
+                    "source": "chapter.video.md",
+                    "score": 0.8,
+                    "document_id": "uuid-b",
+                    "knowledge_base_id": 211,
+                    "metadata": {
+                        "doc_ref": "812",
+                        "video_start_sec": 10,
+                        "video_end_sec": 20,
+                    },
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 10))
+
+        assert len(result["sources"]) == 2
+        assert {source["document_id"] for source in result["sources"]} == {811, 812}
+        assert all(
+            source["source_type"] == "wegent_video_segment"
+            for source in result["sources"]
         )
 
     @pytest.mark.asyncio

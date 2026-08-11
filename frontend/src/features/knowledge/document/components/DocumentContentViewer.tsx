@@ -23,10 +23,7 @@ import {
   isImageDocument,
   InlineImageViewer,
 } from '@/features/knowledge/multimodal/components/InlineImageViewer'
-import {
-  InlineVideoViewer,
-  isVideoDocument,
-} from '@/features/knowledge/multimodal/components/InlineVideoViewer'
+import { DocumentPreviewExtension } from './DocumentPreviewExtension'
 import { resolveWikiLink } from '../utils/wikiLinkResolver'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
@@ -207,19 +204,16 @@ export function DocumentContentViewer({
         />
       )
     }
-    // Video documents show the player even when extracted text is empty.
-    if (isVideoDocument(document)) {
-      return (
-        <InlineVideoViewer
-          document={document}
-          className="p-4 bg-white rounded-lg border border-border"
-        />
-      )
-    }
     return (
-      <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
-        {t('document.document.detail.noContent')}
-      </div>
+      <DocumentPreviewExtension
+        document={document}
+        className="p-4 bg-white rounded-lg border border-border"
+        fallback={
+          <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
+            {t('document.document.detail.noContent')}
+          </div>
+        }
+      />
     )
   }
 
@@ -230,8 +224,7 @@ export function DocumentContentViewer({
         document={document}
         className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
       />
-      {/* Video document: show the player above the extracted text content */}
-      <InlineVideoViewer
+      <DocumentPreviewExtension
         document={document}
         className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
       />

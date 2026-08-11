@@ -3,33 +3,47 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import {
   resolveVideoSegmentBounds,
   VideoSegmentSource,
 } from '@wecode/features/knowledge/video-segment-source-opener'
 
+const mockRetry = jest.fn()
+let mockHasError = false
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
-jest.mock('@/features/knowledge/multimodal/components/MultimodalVideoPreview', () => ({
+jest.mock('@wecode/features/knowledge/document-video-preview', () => ({
   useVideoPlayUrl: () => ({
     playUrl: 'https://cdn.example.com/video.mp4',
     coverUrl: null,
     mimeType: 'video/mp4',
     isLoading: false,
     notReady: false,
+    hasError: mockHasError,
+    retry: mockRetry,
   }),
 }))
 
 describe('resolveVideoSegmentBounds', () => {
-  it('clamps the segment end to the actual video duration', () => {
-    expect(resolveVideoSegmentBounds({ start_sec: 6, end_sec: 15 }, 10)).toEqual({
+  beforeEach(() => {
+    mockHasError = false
+    mockRetry.mockReset()
+  })
+
+  it('clamps only a small encoding tail difference', () => {
+    expect(resolveVideoSegmentBounds({ start_sec: 6, end_sec: 11 }, 10)).toEqual({
       startSec: 6,
       endSec: 10,
       duration: 4,
     })
+  })
+
+  it('rejects a segment that substantially exceeds the actual duration', () => {
+    expect(resolveVideoSegmentBounds({ start_sec: 6, end_sec: 15 }, 10)).toBeNull()
   })
 
   it('rejects a segment whose start is outside the actual video duration', () => {
@@ -85,11 +99,35 @@ describe('resolveVideoSegmentBounds', () => {
       />
     )
 
-    expect(document.querySelectorAll('video')).toHaveLength(2)
+    expect(document.querySelectorAll('video')).toHaveLength(0)
     expect(screen.queryByTestId('video-segment-selector')).not.toBeInTheDocument()
     expect(screen.getByTestId('video-segment-card-0')).toBeInTheDocument()
     expect(screen.getByTestId('video-segment-card-6')).toBeInTheDocument()
     expect(screen.getAllByText(/sourceReferences.videoSegmentTitle/)).toHaveLength(2)
     expect(screen.getByText(/sourceReferences.videoSegmentSummary/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('video-segment-toggle-0'))
+    expect(document.querySelectorAll('video')).toHaveLength(1)
+    fireEvent.click(screen.getByTestId('video-segment-toggle-6'))
+    expect(document.querySelectorAll('video')).toHaveLength(1)
+  })
+
+  it('allows a failed signed URL to be refreshed from the active card', () => {
+    mockHasError = true
+    render(
+      <VideoSegmentSource
+        source={{
+          index: 1,
+          title: '811.video.md',
+          document_id: 811,
+          segments: [{ id: 'segment_0_6', start_sec: 0, end_sec: 6 }],
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('video-segment-toggle-0'))
+    fireEvent.click(screen.getByTestId('video-segment-card-retry-0'))
+
+    expect(mockRetry).toHaveBeenCalledTimes(1)
   })
 })

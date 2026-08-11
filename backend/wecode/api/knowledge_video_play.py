@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -49,6 +49,7 @@ class VideoPlayUrlResponse(BaseModel):
 )
 async def resolve_video_play_url(
     document_id: int,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> VideoPlayUrlResponse:
@@ -58,12 +59,22 @@ async def resolve_video_play_url(
     the video exists but is not yet playable (e.g. transcoding in progress).
     """
     document = (
-        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        .first()
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Video document not found")
     attachment_id = document.attachment_id
-    context = _get_kb_video_attachment(db, attachment_id, current_user.id)
+    context = _get_kb_video_attachment(
+        db,
+        attachment_id,
+        current_user.id,
+        document_id=document.id,
+    )
     type_data = context.type_data if isinstance(context.type_data, dict) else {}
     fid = type_data.get("fid")
     if not fid:
@@ -76,8 +87,12 @@ async def resolve_video_play_url(
     # Backend only resolves the URL; the browser <video src> reaches OSS
     # directly (no byte proxying). The signed URL embeds credentials in the
     # query string, so it works as a plain <video src> without auth headers.
+    try:
+        numeric_fid = int(fid)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid Weibo video fid") from exc
     play_url = await run_in_threadpool(
-        weibo_media_service.get_download_url, int(fid), current_user
+        weibo_media_service.get_download_url, numeric_fid, current_user
     )
     if not play_url:
         logger.info(
@@ -95,6 +110,7 @@ async def resolve_video_play_url(
         attachment_id,
         fid,
     )
+    response.headers["Cache-Control"] = "no-store, private"
     return VideoPlayUrlResponse(
         url=play_url,
         mime_type=_safe_video_mime(context.mime_type),

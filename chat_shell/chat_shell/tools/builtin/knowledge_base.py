@@ -57,6 +57,22 @@ def _extract_video_segment_copy(content: str) -> tuple[str | None, str | None]:
     return title, summary
 
 
+def _chunk_source_identity(
+    chunk: dict[str, Any],
+    *,
+    kb_id: Any,
+    source_file: str,
+) -> tuple[str, str, str]:
+    """Return a stable citation identity without merging same-name KB documents."""
+    source_id = chunk.get("source_id")
+    if source_id is not None:
+        return "external", str(source_id), source_file
+    doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+    if doc_ref is not None:
+        return "internal-document", str(kb_id), str(doc_ref)
+    return "internal-title", str(kb_id), source_file
+
+
 def _retrieval_source_entry(provider: Any, source_id: Any) -> dict[str, str] | None:
     """Build a provider/source entry when source identity exists."""
     if source_id is None:
@@ -1653,7 +1669,6 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 source_index += 1
 
-        self._upgrade_video_source_references(source_references, chunks_used)
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )
@@ -1775,11 +1790,10 @@ class KnowledgeBaseTool(BaseTool):
     ) -> None:
         """Upgrade video-document sources to wegent_video_segment with time ranges.
 
-        Shared by the RAG and direct-injection formatting paths. For each chunk
-        whose metadata carries ``video_start_sec``/``video_end_sec``, find its
-        source reference (matched by document_id) and set ``source_type`` plus a
-        ``segments`` list so the frontend renders a video segment player instead
-        of a plain text card.
+        For each final RAG chunk whose metadata carries
+        ``video_start_sec``/``video_end_sec``, find its source reference (matched
+        by document_id) and set ``source_type`` plus a ``segments`` list so the
+        frontend renders a video segment player instead of a plain text card.
         """
         sources_by_document_id: dict[Any, dict[str, Any]] = {}
         for source in source_references:
@@ -1862,14 +1876,18 @@ class KnowledgeBaseTool(BaseTool):
         all_chunks = []
         source_references = []
         source_index = 1
-        seen_sources: dict[tuple[Any, str], int] = {}
+        seen_sources: dict[tuple[str, str, str], int] = {}
 
         for kb_id, chunks in kb_chunks.items():
             for chunk in chunks:
                 source_file = chunk.get("source", "Unknown")
                 source_id = chunk.get("source_id")
                 internal_kb_id = chunk.get("knowledge_base_id")
-                source_key = (source_id or internal_kb_id or kb_id, source_file)
+                source_key = _chunk_source_identity(
+                    chunk,
+                    kb_id=internal_kb_id or kb_id,
+                    source_file=source_file,
+                )
                 source_title = (
                     self._display_source_title(source_file, source_index)
                     if redact_source_titles

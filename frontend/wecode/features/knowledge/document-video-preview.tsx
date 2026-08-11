@@ -2,15 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Video viewer for video-type KB documents (multimodal pipeline).
- *
- * Mirrors MultimodalImagePreview, but instead of fetching an authenticated
- * blob, it resolves a browser-reachable OSS signed URL via the
- * video-play-url endpoint (downloadlink API on the backend). The
- * <video> element then reaches OSS directly — the backend proxies no
- * bytes.
- */
+'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
@@ -19,12 +11,16 @@ import { Spinner } from '@/components/ui/spinner'
 import { isVideoExtension } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  registerKnowledgeDocumentPreviewExtension,
+  type KnowledgeDocumentPreviewExtension,
+} from '@/features/knowledge/document/document-preview-registry'
 
-/**
- * Detect if a document is a video-type multimodal document.
- * document.file_extension is stored dot-less (e.g. "mp4"), while
- * isVideoExtension expects a leading dot — normalize before checking.
- */
+interface PlayUrlResponse {
+  url: string
+  mime_type?: string
+}
+
 export function isVideoDocument(
   document: { file_extension?: string; attachment_id?: number | null } | null | undefined
 ): boolean {
@@ -34,12 +30,6 @@ export function isVideoDocument(
   return isVideoExtension(dottedExt)
 }
 
-interface PlayUrlResponse {
-  url: string
-  mime_type?: string
-}
-
-/** Resolve the signed CDN play URL ONCE (stable, no re-fetch on re-render). */
 export function useVideoPlayUrl(
   documentId: number,
   enabled: boolean
@@ -68,6 +58,7 @@ export function useVideoPlayUrl(
       setIsLoading(false)
       return
     }
+
     let isMounted = true
     const controller = new AbortController()
     const resolve = async () => {
@@ -77,10 +68,10 @@ export function useVideoPlayUrl(
         const response = await fetch(`/api/knowledge-documents/${documentId}/video-play-url`, {
           method: 'GET',
           headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+          cache: 'no-store',
           signal: controller.signal,
         })
         if (!response.ok) {
-          // 409 = video exists but not playable yet (transcoding in progress).
           if (response.status === 409) {
             if (isMounted) setNotReady(true)
             return
@@ -104,7 +95,7 @@ export function useVideoPlayUrl(
         if (isMounted) setIsLoading(false)
       }
     }
-    resolve()
+    void resolve()
     return () => {
       isMounted = false
       controller.abort()
@@ -114,21 +105,7 @@ export function useVideoPlayUrl(
   return { playUrl, mimeType, isLoading, notReady, hasError, retry }
 }
 
-/**
- * Inline video preview for video-type documents.
- * Renders a <video> bound to the resolved signed CDN URL with native controls.
- */
-export function MultimodalVideoPreview({
-  documentId,
-  name,
-  startSec,
-  endSec,
-}: {
-  documentId: number
-  name: string
-  startSec?: number
-  endSec?: number
-}) {
+function MultimodalVideoPreview({ documentId, name }: { documentId: number; name: string }) {
   const { t } = useTranslation('knowledge')
   const { playUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
     documentId,
@@ -137,28 +114,10 @@ export function MultimodalVideoPreview({
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoError, setVideoError] = useState(false)
 
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || startSec === undefined) return
-    const seek = () => {
-      video.currentTime = startSec
-    }
-    video.addEventListener('loadedmetadata', seek)
-    return () => video.removeEventListener('loadedmetadata', seek)
-  }, [playUrl, startSec])
-
-  const handleTimeUpdate = () => {
-    const video = videoRef.current
-    if (video && endSec !== undefined && video.currentTime >= endSec) {
-      video.pause()
-    }
-  }
-
   if (isLoading) {
     return (
       <div
-        className="flex items-center justify-center bg-surface animate-pulse rounded-lg"
-        style={{ minWidth: 200, minHeight: 120 }}
+        className="flex min-h-[120px] min-w-[200px] animate-pulse items-center justify-center rounded-lg bg-surface"
         data-testid="multimodal-video-preview-loading"
       >
         <Spinner />
@@ -166,32 +125,19 @@ export function MultimodalVideoPreview({
     )
   }
 
-  if (notReady) {
+  if (notReady || !playUrl || videoError) {
+    const showError = hasError || videoError
     return (
-      <div className="flex flex-col items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
+      <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-surface p-4 text-xs text-text-muted">
         <AlertCircle className="h-4 w-4" />
-        <span>{t('document.multimodal.videoPreview.notReady')}</span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={retry}
-          data-testid="video-preview-retry"
-        >
-          {t('document.multimodal.videoPreview.retry')}
-        </Button>
-      </div>
-    )
-  }
-
-  const showVideoError = hasError || videoError
-
-  if (!playUrl || videoError) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 bg-surface rounded-lg border border-border text-xs text-text-muted p-4">
-        <AlertCircle className="h-4 w-4" />
-        <span>{showVideoError ? t('document.multimodal.videoPreview.loadFailed') : name}</span>
-        {showVideoError && (
+        <span>
+          {notReady
+            ? t('document.multimodal.videoPreview.notReady')
+            : showError
+              ? t('document.multimodal.videoPreview.loadFailed')
+              : name}
+        </span>
+        {(notReady || showError) && (
           <Button
             type="button"
             variant="outline"
@@ -214,12 +160,22 @@ export function MultimodalVideoPreview({
       ref={videoRef}
       controls
       preload="metadata"
-      onTimeUpdate={handleTimeUpdate}
       onError={() => setVideoError(true)}
-      className="rounded-lg border border-border max-h-[600px] max-w-full bg-black"
+      className="max-h-[600px] max-w-full rounded-lg border border-border bg-black"
       data-testid="multimodal-video-preview"
     >
       <source src={playUrl} type={mimeType} />
     </video>
   )
 }
+
+const videoDocumentPreviewExtension: KnowledgeDocumentPreviewExtension = {
+  supports: isVideoDocument,
+  render: ({ document, className }) => (
+    <div className={className}>
+      <MultimodalVideoPreview documentId={document.id} name={document.name || 'Video document'} />
+    </div>
+  ),
+}
+
+registerKnowledgeDocumentPreviewExtension(videoDocumentPreviewExtension)

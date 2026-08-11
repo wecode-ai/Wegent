@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, Maximize, Minimize, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useVideoPlayUrl } from '@/features/knowledge/multimodal/components/MultimodalVideoPreview'
+import { useVideoPlayUrl } from './document-video-preview'
 import {
   registerExternalSourceOpener,
   type ExternalSourceOpener,
@@ -23,6 +23,8 @@ export interface VideoSegmentBounds {
   endSec: number
   duration: number
 }
+
+const VIDEO_DURATION_TOLERANCE_SECONDS = 2
 
 function reinterpretShiftedMinuteSecond(seconds: number): number | null {
   if (!Number.isInteger(seconds) || seconds < 0 || seconds % 60 !== 0) return null
@@ -62,6 +64,9 @@ export function resolveVideoSegmentBounds(
     }
   }
   if (hasMediaDuration && segment.start_sec >= mediaDuration) return null
+  if (hasMediaDuration && segment.end_sec > mediaDuration + VIDEO_DURATION_TOLERANCE_SECONDS) {
+    return null
+  }
   const endSec = hasMediaDuration ? Math.min(segment.end_sec, mediaDuration) : segment.end_sec
   if (endSec <= segment.start_sec) return null
   return {
@@ -82,11 +87,23 @@ function VideoSegmentCard({
   playUrl,
   mimeType,
   fallbackTitle,
+  isActive,
+  isLoading,
+  notReady,
+  hasUrlError,
+  onActivate,
+  onRetry,
 }: {
   segment: VideoSegment
   playUrl: string
   mimeType: string
   fallbackTitle: string
+  isActive: boolean
+  isLoading: boolean
+  notReady: boolean
+  hasUrlError: boolean
+  onActivate: () => void
+  onRetry: () => void
 }) {
   const { t } = useTranslation('chat')
   const cardRef = useRef<HTMLElement>(null)
@@ -101,6 +118,7 @@ function VideoSegmentCard({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [videoError, setVideoError] = useState(false)
+  const playWhenReadyRef = useRef(false)
   const fullscreenAvailable = typeof document !== 'undefined' && document.fullscreenEnabled
 
   const seekToSegmentStart = useCallback(() => {
@@ -113,6 +131,15 @@ function VideoSegmentCard({
   useEffect(() => {
     seekToSegmentStart()
   }, [playUrl, seekToSegmentStart])
+
+  useEffect(() => {
+    if (isActive) return
+    playWhenReadyRef.current = false
+    setMediaDuration(undefined)
+    setPosition(0)
+    setIsPlaying(false)
+    setVideoError(false)
+  }, [isActive])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -140,6 +167,11 @@ function VideoSegmentCard({
   }
 
   const togglePlayback = async () => {
+    if (!isActive) {
+      playWhenReadyRef.current = true
+      onActivate()
+      return
+    }
     const video = videoRef.current
     if (!video || !bounds) return
     if (!video.paused) {
@@ -182,16 +214,19 @@ function VideoSegmentCard({
   const handleLoadedMetadata = () => {
     const video = videoRef.current
     if (!video) return
-    if (Number.isFinite(video.duration) && video.duration > 0) {
-      setMediaDuration(video.duration)
-    }
-    // Seek to segment start on first metadata load. bounds may still be null
-    // at this point (it derives from mediaDuration which we just set), so use
-    // the raw segment value directly. resolveVideoSegmentBounds will clamp on
-    // the next render if needed.
-    if (segment.start_sec >= 0 && segment.start_sec < video.duration) {
-      video.currentTime = segment.start_sec
+    const nextDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+    if (nextDuration > 0) setMediaDuration(nextDuration)
+    const nextBounds = resolveVideoSegmentBounds(segment, nextDuration || undefined)
+    if (nextBounds) {
+      video.currentTime = nextBounds.startSec
       setPosition(0)
+      if (playWhenReadyRef.current) {
+        playWhenReadyRef.current = false
+        void video.play().then(
+          () => setIsPlaying(true),
+          () => setIsPlaying(false)
+        )
+      }
     }
   }
 
@@ -206,24 +241,46 @@ function VideoSegmentCard({
       data-testid={`video-segment-card-${segment.start_sec}`}
     >
       <div className={`relative bg-black ${isFullscreen ? 'flex min-h-0 flex-1' : ''}`}>
-        <video
-          ref={videoRef}
-          preload="metadata"
-          playsInline
-          onLoadedMetadata={handleLoadedMetadata}
-          onTimeUpdate={handleTimeUpdate}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-          onError={() => setVideoError(true)}
-          className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
-          data-testid={`video-segment-player-${segment.start_sec}`}
-        >
-          <source src={playUrl} type={mimeType} />
-        </video>
-        {videoError && (
+        {isActive && playUrl ? (
+          <video
+            ref={videoRef}
+            preload="metadata"
+            playsInline
+            onLoadedMetadata={handleLoadedMetadata}
+            onTimeUpdate={handleTimeUpdate}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            onError={() => setVideoError(true)}
+            className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
+            data-testid={`video-segment-player-${segment.start_sec}`}
+          >
+            <source src={playUrl} type={mimeType} />
+          </video>
+        ) : (
+          <div className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full bg-black`} />
+        )}
+        {isActive && isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+            <Spinner />
+          </div>
+        )}
+        {isActive && (videoError || hasUrlError || notReady) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80 px-4 text-sm text-white">
             <AlertCircle className="h-5 w-5 shrink-0" />
-            {t('sourceReferences.videoLoadFailed')}
+            {notReady ? t('sourceReferences.videoNotReady') : t('sourceReferences.videoLoadFailed')}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setVideoError(false)
+                playWhenReadyRef.current = true
+                onRetry()
+              }}
+              data-testid={`video-segment-card-retry-${segment.start_sec}`}
+            >
+              {t('common:actions.retry')}
+            </Button>
           </div>
         )}
         {!bounds && mediaDuration !== undefined && (
@@ -232,20 +289,22 @@ function VideoSegmentCard({
             {t('sourceReferences.invalidVideoSegmentRange')}
           </div>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="absolute inset-0 m-auto h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/75"
-          onClick={togglePlayback}
-          disabled={!bounds}
-          aria-label={t(
-            isPlaying ? 'sourceReferences.pauseVideoSegment' : 'sourceReferences.playVideoSegment'
-          )}
-          data-testid={`video-segment-toggle-${segment.start_sec}`}
-        >
-          {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-        </Button>
+        {(!isActive || (!isLoading && !videoError && !hasUrlError && !notReady)) && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute inset-0 m-auto h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/75"
+            onClick={togglePlayback}
+            disabled={!bounds}
+            aria-label={t(
+              isPlaying ? 'sourceReferences.pauseVideoSegment' : 'sourceReferences.playVideoSegment'
+            )}
+            data-testid={`video-segment-toggle-${segment.start_sec}`}
+          >
+            {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+          </Button>
+        )}
         {fullscreenAvailable && (
           <Button
             type="button"
@@ -324,50 +383,34 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
   const { t } = useTranslation('chat')
   const segments = source.segments ?? []
   const documentId = source.document_id ?? 0
+  const [activeSegmentKey, setActiveSegmentKey] = useState<string | null>(null)
   const { playUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
     documentId,
-    documentId > 0 && segments.length > 0
+    documentId > 0 && segments.length > 0 && activeSegmentKey !== null
   )
 
   if (!documentId || segments.length === 0) return null
-  if (isLoading) {
-    return (
-      <div className="flex h-36 w-full max-w-md items-center justify-center rounded-lg bg-surface">
-        <Spinner />
-      </div>
-    )
-  }
-  if (!playUrl) {
-    return (
-      <div className="flex min-h-24 w-full max-w-md flex-col items-center justify-center gap-2 rounded-lg border border-border bg-surface p-3 text-xs text-text-muted">
-        <AlertCircle className="h-4 w-4" />
-        {notReady ? t('sourceReferences.videoNotReady') : t('sourceReferences.videoUnavailable')}
-        {(notReady || hasError) && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={retry}
-            data-testid="video-segment-retry"
-          >
-            {t('common:actions.retry')}
-          </Button>
-        )}
-      </div>
-    )
-  }
 
   return (
     <div className="grid w-full grid-cols-1 gap-3 lg:grid-cols-2">
-      {segments.map(segment => (
-        <VideoSegmentCard
-          key={segment.id ?? `${segment.start_sec}-${segment.end_sec}`}
-          segment={segment}
-          playUrl={playUrl}
-          mimeType={mimeType}
-          fallbackTitle={t('sourceReferences.videoSegment')}
-        />
-      ))}
+      {segments.map(segment => {
+        const segmentKey = segment.id ?? `${segment.start_sec}-${segment.end_sec}`
+        return (
+          <VideoSegmentCard
+            key={segmentKey}
+            segment={segment}
+            playUrl={playUrl ?? ''}
+            mimeType={mimeType}
+            fallbackTitle={t('sourceReferences.videoSegment')}
+            isActive={activeSegmentKey === segmentKey}
+            isLoading={isLoading}
+            notReady={notReady}
+            hasUrlError={hasError}
+            onActivate={() => setActiveSegmentKey(segmentKey)}
+            onRetry={retry}
+          />
+        )
+      })}
     </div>
   )
 }
