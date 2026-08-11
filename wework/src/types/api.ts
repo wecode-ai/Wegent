@@ -2275,6 +2275,8 @@ export interface ChatBlock {
   timestamp?: number | string | null
   created_at?: number | string | null
   createdAt?: number | string | null
+  completed_at?: number | string | null
+  completedAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -2300,6 +2302,8 @@ export interface ChatBlockUpdatedPayload {
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
+  completedAt?: number
+  durationMs?: number
   deviceId?: string
 }
 

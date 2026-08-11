@@ -167,6 +167,12 @@ A Codex web search may not include its query action in `item/started`; the final
 
 The Wework presentation layer accepts both Responses API snake_case action names (`open_page`, `find_in_page`) and Codex app-server camelCase names (`openPage`, `findInPage`). Normalize this naming difference at the tool-detail parsing boundary; do not mask missing completion events with UI placeholder content or status fallbacks.
 
+### Tool Call Duration
+
+Tool start time, completion time, and duration come from the Codex item lifecycle forwarded by the executor. This lifecycle is the shared authoritative source for both the live stream and historical transcript. The executor must preserve millisecond-precision `createdAt`, `completedAt`, and `durationMs` fields in started/completed events and transcript projections, and merge the function call, command execution, and output for one invocation into a single block.
+
+Pane caches and React components only restore and present those timing fields. A running local timer may temporarily anchor the start time from its first render to avoid jumps during incremental updates. Once the executor supplies a completion time or duration, the completed presentation must use the current block's authoritative fields. Switching panes, refreshing the transcript, or reusing a component must not retain a local completion time or start anchor from the previous pane state.
+
 ### Tool Activity Preview Scrolling
 
 The collapsed tool activity preview shows at most three rows and follows the latest activity while no tool detail is expanded. Auto-scroll must react both to changes in the tool row count and to the bottom “Thinking” row appearing or disappearing. When a tool completes without changing the row count, the thinking row must remain inside the inner scroll area's visible range. Expanding a detail removes the preview height limit, so forced scrolling must not override the user's reading position in that state.

@@ -548,9 +548,10 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
     wasRunning.current = isRunning
   }, [isRunning])
 
+  const durationStartedAt = fallbackEndAt === undefined ? anchoredStartedAt : startedAt
   const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
   if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
-  return `${(Math.max(0, endedAt - anchoredStartedAt) / 1000).toFixed(1)}s`
+  return `${(Math.max(0, endedAt - durationStartedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(

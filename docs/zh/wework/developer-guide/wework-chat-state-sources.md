@@ -134,6 +134,12 @@ Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `it
 
 Wework 展示层兼容 Responses API 的 snake_case 动作名（如 `open_page`、`find_in_page`）和 Codex app-server 的 camelCase 动作名（如 `openPage`、`findInPage`）。动作名差异只能在工具详情解析边界处理，不能通过 UI 占位内容或状态兜底掩盖缺失的完成事件。
 
+### 工具调用时长
+
+工具调用的开始时间、完成时间和时长来自 executor 转发的 Codex item 生命周期，是实时 stream 和历史 transcript 的共同权威来源。executor 必须在 started/completed 事件和 transcript 投影中保留毫秒精度的 `createdAt`、`completedAt` 与 `durationMs`，并把同一调用的 function call、command execution 和 output 合并为一个 block。
+
+pane 缓存和 React 组件只负责恢复与展示这些时间字段。运行中的本地计时器可以临时锚定首次渲染的开始时间，避免增量更新导致跳动；一旦收到 executor 的完成时间或时长，完成态必须按当前 block 的权威字段计算。切换 pane、刷新 transcript 或复用组件都不能继续使用旧 pane 的本地完成时间或开始锚点。
+
 ### 工具活动预览滚动
 
 折叠的工具活动预览最多显示三行，并在用户没有展开工具详情时跟随最新活动。自动滚动必须同时响应工具行数量变化和底部“正在思考”行的出现或消失；工具完成后即使行数不变，“正在思考”也必须保持在内层滚动区域的可见范围内。展开详情时预览解除高度限制，不能用强制滚动覆盖用户阅读位置。
