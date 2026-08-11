@@ -2723,7 +2723,12 @@ class DesktopE2EServer {
         response.write(createSse([responseCreated(responseId)]))
         await this.sideChatQueueRelease
         if (response.destroyed || response.writableEnded) return
-        response.end(createSse([responseCompleted(responseId)]))
+        response.end(
+          createSse([
+            assistantMessage('WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL_COMPLETE'),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       assert.ok(
