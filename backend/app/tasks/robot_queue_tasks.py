@@ -414,16 +414,17 @@ async def _dispatch_queued_executions(db: Session) -> int:
 
     dispatched = 0
     for device_id, environment in _queued_devices(db):
-        # ``local-device`` is the desktop puller's compatibility alias, not a
-        # routable Socket.IO device identity. Pushing it can match an unrelated
-        # online session and repeatedly requeue the run before the App pulls it.
-        if environment == "local" and device_id == "local-device":
-            continue
         with distributed_lock.acquire_context(
             f"robot_exec:{device_id}",
             expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
         ) as device_acquired:
             if not device_acquired:
+                logger.info(
+                    "[RobotQueue] Queued run not dispatched: device lock busy "
+                    "device=%s environment=%s",
+                    device_id,
+                    environment,
+                )
                 continue
             sample = (
                 db.query(LoopItemExecution)
@@ -463,6 +464,14 @@ async def _dispatch_queued_executions(db: Session) -> int:
                     sample.id,
                 )
                 continue
+            logger.info(
+                "[RobotQueue] Dispatch route resolved device=%s environment=%s "
+                "routing_user=%s sample_execution=%s",
+                device_id,
+                environment,
+                routing_user_id,
+                sample.id,
+            )
             capacity = (
                 settings.ROBOT_CLOUD_DEVICE_SLOTS
                 if environment == "cloud"
