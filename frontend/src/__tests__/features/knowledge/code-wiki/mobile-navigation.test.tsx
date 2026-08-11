@@ -15,12 +15,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import type { KnowledgeBase } from '@/types/knowledge'
 
+const mockPush = jest.fn()
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ replace: jest.fn(), push: mockPush }),
   usePathname: () => '/knowledge/default/wecode-ai%2FWegent',
   useSearchParams: () => new URLSearchParams(''),
 }))
@@ -94,6 +96,10 @@ async function renderReader() {
 }
 
 describe('navigating a wiki on a narrow screen', () => {
+  beforeEach(() => {
+    mockPush.mockReset()
+  })
+
   it('offers a way into the page tree', async () => {
     await renderReader()
 
@@ -156,6 +162,25 @@ describe('navigating a wiki on a narrow screen', () => {
     // sidebar column and a tall row costs visible pages.
     const row = screen.getAllByTestId('wiki-nav-page-other')[1]
     expect(row).toHaveClass('min-h-11', 'lg:min-h-0')
+  })
+
+  it('shows the configuration control only when the page grants manage permission', async () => {
+    const onConfigure = jest.fn()
+
+    render(<CodeWikiReader wiki={WIKI} canConfigure onConfigure={onConfigure} />)
+
+    const configure = await screen.findByTestId('code-wiki-configure')
+    expect(configure).toHaveClass('h-11', 'w-11')
+    fireEvent.click(configure)
+    expect(onConfigure).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns to the unified knowledge-base list', async () => {
+    await renderReader()
+
+    fireEvent.click(screen.getByTestId('code-wiki-back-to-list'))
+
+    expect(mockPush).toHaveBeenCalledWith('/knowledge?type=document')
   })
 
   it('offers nothing to open when the wiki has no pages', async () => {

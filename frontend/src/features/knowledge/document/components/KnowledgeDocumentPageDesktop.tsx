@@ -25,6 +25,7 @@ import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
+import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
@@ -84,16 +85,38 @@ export function KnowledgeDocumentPageDesktop({
     sidebar.selectedKb?.id
   )
   const selectedKbId = sidebar.selectedKb?.id
+  const selectedKbType = sidebar.selectedKb?.kb_type
 
   useEffect(() => {
     onKnowledgeViewStateChange?.({
-      visible: Boolean(selectedKbId),
+      visible: Boolean(selectedKbId && selectedKbType !== 'code_wiki'),
       currentView,
       onViewChange: setCurrentView,
     })
-  }, [currentView, onKnowledgeViewStateChange, selectedKbId, setCurrentView])
+  }, [currentView, onKnowledgeViewStateChange, selectedKbId, selectedKbType, setCurrentView])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: selectedKbId ?? 0,
+  })
+
+  useEffect(() => {
+    if (sidebar.selectedKb?.kb_type === 'code_wiki' && user) {
+      void fetchMyPermission()
+    }
+  }, [fetchMyPermission, sidebar.selectedKb?.kb_type, user])
+
+  const canConfigureSelectedCodeWiki = useMemo(() => {
+    const selectedKb = sidebar.selectedKb
+    if (!selectedKb || selectedKb.kb_type !== 'code_wiki' || !user) return false
+
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase: selectedKb,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
+    })
+  }, [sidebar.selectedKb, user, myPermission?.role, namespaceRoleMap])
 
   // Group KBs hook (extracted from inline logic)
   const {
@@ -461,7 +484,14 @@ export function KnowledgeDocumentPageDesktop({
       // one needed a redirect, and that redirect lost a race with this page's own
       // history.pushState and rendered the wiki as a notebook anyway.
       if (sidebar.selectedKb.kb_type === 'code_wiki') {
-        return <CodeWikiReader key={sidebar.selectedKb.id} wiki={sidebar.selectedKb} />
+        return (
+          <CodeWikiReader
+            key={sidebar.selectedKb.id}
+            wiki={sidebar.selectedKb}
+            canConfigure={canConfigureSelectedCodeWiki}
+            onConfigure={() => dialogs.setEditingKb(sidebar.selectedKb!)}
+          />
+        )
       }
 
       return (
