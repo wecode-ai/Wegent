@@ -8369,6 +8369,67 @@ describe('DesktopWorkbenchLayout', () => {
     })
   })
 
+  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+    const runtimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-worktree-creating',
+    }
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              workspaceKind: 'worktree',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: runtimeTask.taskId,
+                  workspacePath: runtimeTask.workspacePath,
+                  workspaceKind: 'worktree',
+                  title: 'Create isolated workspace',
+                  runtime: 'codex',
+                  status: 'creating',
+                  optimistic: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: runtimeTask,
+          runtimeWork,
+          isSending: true,
+        }}
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Implement the feature',
+            status: 'complete',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
+    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+  })
+
   test('loads environment info automatically for the current project workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',

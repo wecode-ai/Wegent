@@ -177,6 +177,8 @@ import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import { isWorktreeCreationPending } from './worktreeCreationState'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -1206,10 +1208,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [activeLocalHarnessSession?.sessionId, paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const closeRightPanel = useCallback(() => {
+  const closeRightPanel = () => {
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
-  }, [])
+  }
   const onlyTemporaryChatOpen =
     rightPanelTabs.length === 1 &&
     rightPanelTabs[0].startsWith('chat:') &&
@@ -2024,25 +2026,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         preferLocalTerminal: preferLocalWorkspaceTerminal,
       })
   const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
-  const activeBottomPanelContext = useMemo<BottomPanelRenderContext>(
-    () => ({
-      key: bottomPanelWorkspaceKey,
-      currentProject: workspaceProject,
-      devices,
-      workspaceTarget: workspacePanelTarget,
-      preferLocalTerminal: workspacePanelPrefersLocalTerminal,
-      terminalContextTitle: workbenchTitle,
-    }),
-    [
-      bottomPanelWorkspaceKey,
-      devices,
-      workspacePanelPrefersLocalTerminal,
-      workspacePanelTarget,
-      workbenchTitle,
-      workspaceProject,
-    ]
-  )
-  const rememberActiveBottomPanelContext = useCallback(() => {
+  const activeBottomPanelContext: BottomPanelRenderContext = {
+    key: bottomPanelWorkspaceKey,
+    currentProject: workspaceProject,
+    devices,
+    workspaceTarget: workspacePanelTarget,
+    preferLocalTerminal: workspacePanelPrefersLocalTerminal,
+    terminalContextTitle: workbenchTitle,
+  }
+  const rememberActiveBottomPanelContext = () => {
     setBottomPanelContexts(current => {
       const existingIndex = current.findIndex(context => context.key === bottomPanelWorkspaceKey)
       if (existingIndex < 0) {
@@ -2055,32 +2047,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       next[existingIndex] = activeBottomPanelContext
       return next
     })
-  }, [activeBottomPanelContext, bottomPanelWorkspaceKey, setBottomPanelContexts])
-  const setCurrentBottomPanelOpen = useCallback(
-    (next: boolean | ((open: boolean) => boolean)) => {
-      rememberActiveBottomPanelContext()
-      onTerminalPanePinChange(paneKey, 'bottom-panel', true)
-      setBottomPanelOpenByKey(current => {
-        const currentOpen = current[bottomPanelWorkspaceKey] ?? false
-        const nextOpen = typeof next === 'function' ? next(currentOpen) : next
-        if (currentOpen === nextOpen) return current
-        return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
-      })
-    },
-    [
-      bottomPanelWorkspaceKey,
-      onTerminalPanePinChange,
-      paneKey,
-      rememberActiveBottomPanelContext,
-      setBottomPanelOpenByKey,
-    ]
+  }
+  const setCurrentBottomPanelOpen = (next: boolean | ((open: boolean) => boolean)) => {
+    rememberActiveBottomPanelContext()
+    onTerminalPanePinChange(paneKey, 'bottom-panel', true)
+    setBottomPanelOpenByKey(current => {
+      const currentOpen = current[bottomPanelWorkspaceKey] ?? false
+      const nextOpen = typeof next === 'function' ? next(currentOpen) : next
+      if (currentOpen === nextOpen) return current
+      return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
+    })
+  }
+  const inactiveBottomPanelContexts = bottomPanelContexts.filter(
+    context => context.key !== bottomPanelWorkspaceKey
   )
-  const bottomPanelContextsToRender = useMemo(() => {
-    const inactiveContexts = bottomPanelContexts.filter(
-      context => context.key !== bottomPanelWorkspaceKey
-    )
-    return [...inactiveContexts, activeBottomPanelContext]
-  }, [activeBottomPanelContext, bottomPanelContexts, bottomPanelWorkspaceKey])
+  const bottomPanelContextsToRender = [...inactiveBottomPanelContexts, activeBottomPanelContext]
   const reviewRequestSequence = useRef(0)
   const previousTurnReviewRef = useRef<{
     loadDiff: () => Promise<string>
@@ -2124,6 +2105,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
+  const isCreatingWorktree = isWorktreeCreationPending(
+    runtimeTaskSummary,
+    paneSession.status.sendPhase
+  )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
@@ -2453,52 +2438,49 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [openRightPanelTab, setSelectedAssistantPlan]
   )
-  const closeRightPanelTab = useCallback(
-    (tab: RightWorkspacePanelTab) => {
-      const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
-      if (
-        browserState?.hasActiveDownload &&
-        !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
-      ) {
-        return
-      }
-      track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
-      if (tab.startsWith('chat:')) {
-        temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
-      }
-      if (tab === 'files') {
-        setOpenFileRequest(null)
-      }
-      if (browserState?.label) {
-        void closeEmbeddedBrowsers([browserState.label]).catch(error => {
-          console.error('Failed to close embedded browser tab:', error)
-        })
-      }
-      if (isRightWorkspaceBrowserTab(tab)) {
-        setBrowserStates(current => {
-          if (!current[tab]) return current
-          const next = { ...current }
-          delete next[tab]
-          return next
-        })
-      }
-      setRightPanelTabs(current => {
-        const currentTabs = current.includes(tab) ? current : [...current, tab]
-        const next = currentTabs.filter(openTab => openTab !== tab)
-        if (next.length === 0) {
-          setRightPanelExpanded(false)
-          setRightPanelOpen(false)
-          setRightPanelView('launcher')
-          return next
-        }
-        if (rightPanelView === tab) {
-          setRightPanelView(next[next.length - 1])
-        }
+  const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
+    if (
+      browserState?.hasActiveDownload &&
+      !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
+    ) {
+      return
+    }
+    track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
+    if (tab.startsWith('chat:')) {
+      temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+    }
+    if (tab === 'files') {
+      setOpenFileRequest(null)
+    }
+    if (browserState?.label) {
+      void closeEmbeddedBrowsers([browserState.label]).catch(error => {
+        console.error('Failed to close embedded browser tab:', error)
+      })
+    }
+    if (isRightWorkspaceBrowserTab(tab)) {
+      setBrowserStates(current => {
+        if (!current[tab]) return current
+        const next = { ...current }
+        delete next[tab]
         return next
       })
-    },
-    [browserStates, rightPanelView, setOpenFileRequest, setRightPanelTabs, setRightPanelView, t]
-  )
+    }
+    setRightPanelTabs(current => {
+      const currentTabs = current.includes(tab) ? current : [...current, tab]
+      const next = currentTabs.filter(openTab => openTab !== tab)
+      if (next.length === 0) {
+        setRightPanelExpanded(false)
+        setRightPanelOpen(false)
+        setRightPanelView('launcher')
+        return next
+      }
+      if (rightPanelView === tab) {
+        setRightPanelView(next[next.length - 1])
+      }
+      return next
+    })
+  }
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -2805,7 +2787,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? reviewState.sourceSubtaskId
       : null
 
-  const toggleRightPanel = useCallback(() => {
+  const toggleRightPanel = () => {
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -2817,14 +2799,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       return nextOpen
     })
-  }, [effectiveRightPanelTabs, setRightPanelView])
-  const toggleRightPanelExpanded = useCallback(() => {
+  }
+  const toggleRightPanelExpanded = () => {
     setRightPanelExpanded(expanded => !expanded)
-  }, [])
-  const toggleBottomPanel = useCallback(
-    () => setCurrentBottomPanelOpen(open => !open),
-    [setCurrentBottomPanelOpen]
-  )
+  }
+  const toggleBottomPanel = () => setCurrentBottomPanelOpen(open => !open)
   const {
     pauseCurrentResponse: pauseCurrentResponseAction,
     compactContext: compactContextAction,
@@ -2860,9 +2839,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setBottomPanelOpenByKey]
   )
-  const handleTerminalTabsEmpty = useCallback(() => {
+  const handleTerminalTabsEmpty = () => {
     onTerminalPanePinChange(paneKey, 'bottom-panel', false)
-  }, [onTerminalPanePinChange, paneKey])
+  }
 
   useEffect(() => {
     if (!paneActive) return
@@ -3235,6 +3214,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
+          ) : isCreatingWorktree ? (
+            <WorktreeCreationStatus className="min-h-full" />
           ) : activeLocalHarnessSession ? (
             <div className="relative flex min-h-0 min-w-0">
               {activeLocalHarnessSession.active ? (
