@@ -11,6 +11,10 @@ describe('TransientNotice', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Saved')
     expect(screen.getByTestId('transient-notice')).toBeInTheDocument()
+    expect(screen.getByTestId('transient-notice')).toHaveAttribute(
+      'data-embedded-browser-occlusion'
+    )
+    expect(screen.getByTestId('transient-notice')).toHaveClass('z-system')
 
     act(() => {
       vi.advanceTimersByTime(2200)
