@@ -222,7 +222,8 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
-    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
+    expect(evidence.boundKnowledgeBases.total).toBe(0)
+    expect(evidence.boundKnowledgeBases.items).toHaveLength(0)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [fixture.folders.requirements.id])
     expect(evidence.modelText).toContain(

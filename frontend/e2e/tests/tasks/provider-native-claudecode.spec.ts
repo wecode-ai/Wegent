@@ -86,6 +86,8 @@ test.describe('Provider-native ClaudeCode access', () => {
     )
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
+    const dispatchedTask = await getTask(request, resources.token, taskId)
+    expect((dispatchedTask as { model_id?: string }).model_id).toBe(CLAUDE_MODEL_NAME)
     await waitForTaskTerminal(request, resources.token, taskId)
     const task = await getTask(request, resources.token, taskId)
     const bodies = await getScenarioModelBodies(request, prompt)
@@ -236,5 +238,13 @@ test.describe('Provider-native ClaudeCode access', () => {
     } finally {
       resources.teamId = originalTeamId
     }
+    const modelSelector = page.getByTestId('model-selector')
+    await expect(modelSelector).toBeEnabled()
+    await modelSelector.click()
+    await page.getByTestId('model-cascade-search-input').fill(CLAUDE_MODEL_NAME)
+    const claudeModelOption = page.getByTestId(`model-option-${CLAUDE_MODEL_NAME}`)
+    await expect(claudeModelOption).toBeVisible()
+    await claudeModelOption.click()
+    await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
   }
 })
