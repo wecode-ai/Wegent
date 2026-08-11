@@ -211,6 +211,7 @@ class QuickLaunchFunctionConfig(InputPresetMixin):
 class QuickLaunchFunctionResponse(QuickLaunchFunctionConfig):
     type: Literal["system_function"] = "system_function"
     name: str
+    bind_mode: list[str] = Field(default_factory=list)
     recommended_mode: Literal["chat", "code", "both"] = "both"
 
 
@@ -222,6 +223,7 @@ class QuickLaunchFavoriteAgent(QuickPhraseMixin, InputPresetMixin):
     title: str
     description: Optional[str] = None
     icon: Optional[str] = None
+    bind_mode: list[str] = Field(default_factory=list)
     recommended_mode: Optional[Literal["chat", "code", "both"]] = "both"
     agent_type: Optional[str] = None
 
