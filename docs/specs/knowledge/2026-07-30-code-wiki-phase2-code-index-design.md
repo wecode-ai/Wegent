@@ -158,8 +158,8 @@ app 上,没有额外网络隔离。
 
 **`ShareLinkDialog` 现在没有任何挂载点。** 它在
 `features/knowledge/permission/components/ShareLinkDialog.tsx`,唯一渲染它的地方是
-`KnowledgeDialogs.tsx` —— 那个文件在 1.5 期作为死代码删掉了(全仓零引用,而且它死后还被
-#1842 和 #2069 两次写进新功能)。删之前它就已经够不到了,删除只是让这件事显形。
+`KnowledgeDialogs.tsx` —— 那个文件在 1.5 期作为死代码删掉了(全仓零引用,而且它死后
+还被 #1842 和 #2069 两次写进新功能)。删之前它就已经够不到了,删除只是让这件事显形。
 
 所以**"生成分享链接"这个入口在产品里已经不存在**。知识库分享本身没丢,
 `PermissionManagementTab` 还在用,走的是权限管理那条路。

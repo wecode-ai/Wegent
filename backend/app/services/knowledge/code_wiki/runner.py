@@ -34,7 +34,7 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
-from app.schemas.knowledge import KnowledgeBaseType
+from app.schemas.knowledge import KnowledgeBaseType, validated_model_ref
 from app.schemas.task import TaskCreate
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
@@ -405,12 +405,27 @@ def _execution_model_of(knowledge_base: Kind) -> Optional[Dict[str, str]]:
     Required when creating a wiki, so None here means a wiki created before the
     field existed. Those keep running on whatever model their team's bot binds,
     which is what they have always run on.
+
+    A stored value is re-checked rather than trusted: the request schema rejects a
+    reference that names nothing, but rows written before it did are still in the
+    table. Anything unusable degrades to the same team fallback, because a half
+    applied override -- a task pinned to a model that does not resolve -- fails the
+    whole run, while the fallback is a model that works.
     """
     spec = (knowledge_base.json or {}).get("spec", {})
     model_ref = spec.get(EXECUTION_MODEL_REF_KEY)
-    if not isinstance(model_ref, dict) or not model_ref.get("name"):
+    if not isinstance(model_ref, dict):
         return None
-    return model_ref
+    try:
+        return validated_model_ref(model_ref)
+    except ValueError as error:
+        logger.warning(
+            "[code_wiki] kb %s has an unusable %s (%s); running on the team's model",
+            knowledge_base.id,
+            EXECUTION_MODEL_REF_KEY,
+            error,
+        )
+        return None
 
 
 def _create_task(

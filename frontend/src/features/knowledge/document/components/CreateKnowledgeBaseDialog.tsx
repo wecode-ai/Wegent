@@ -300,6 +300,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
+      setExecutionModelError('')
       resetMultimodal()
       setGuidedQuestions([])
       setRagConfigMode('auto')
@@ -323,6 +324,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
+      setExecutionModelError('')
       setSummaryModelError('')
       resetMultimodal()
       setGuidedQuestions([])
@@ -412,7 +414,12 @@ export function CreateKnowledgeBaseDialog({
                     >
                       <ModelRefSelector
                         value={executionModelRef}
-                        onChange={setExecutionModelRef}
+                        onChange={value => {
+                          setExecutionModelRef(value)
+                          // Otherwise the "pick a model" error stays beside a field
+                          // that now has one, until the next submit clears it.
+                          setExecutionModelError('')
+                        }}
                         error={executionModelError}
                         placeholder={t('knowledge:codeWiki.create.modelPlaceholder')}
                         knowledgeDefaultTeamId={knowledgeDefaultTeamId}

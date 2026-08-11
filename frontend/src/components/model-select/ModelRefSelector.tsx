@@ -38,6 +38,14 @@ interface ModelRefSelectorProps {
    * choice shares the conversation's slot.
    */
   preferenceScope?: ModelPreferenceScope
+  /**
+   * Whether to fill the box in when nothing is selected. On by default, which is
+   * what a create form wants. Off where an empty box is a fact rather than a gap:
+   * an existing knowledge base with no model of its own runs on its team's, and
+   * showing a model there would misreport that -- and, if the form then saved,
+   * would turn the guess into a stored choice nobody made.
+   */
+  autoSelect?: boolean
   dataTestId: string
 }
 
@@ -50,6 +58,7 @@ export function ModelRefSelector({
   knowledgeDefaultTeamId,
   bindModel,
   preferenceScope,
+  autoSelect = true,
   dataTestId,
 }: ModelRefSelectorProps) {
   const { t } = useTranslation('common')
@@ -103,7 +112,7 @@ export function ModelRefSelector({
   // - Valid knowledgeDefaultTeamId is provided (for cache and tracking)
   // - Haven't attempted preselection for this team ID yet
   useEffect(() => {
-    if (loading || models.length === 0) {
+    if (!autoSelect || loading || models.length === 0) {
       return
     }
     // A value the caller loaded or the user picked is never second-guessed. One this
@@ -191,7 +200,16 @@ export function ModelRefSelector({
         type: firstModel.type,
       })
     }
-  }, [models, value, loading, knowledgeDefaultTeamId, bindModel, preferenceScope, onChange])
+  }, [
+    models,
+    value,
+    loading,
+    autoSelect,
+    knowledgeDefaultTeamId,
+    bindModel,
+    preferenceScope,
+    onChange,
+  ])
 
   // Find selected model
   const selectedModel = useMemo(() => {

@@ -191,6 +191,43 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
+# Scopes a model reference may name. Four, not three: `runtime` is a real scope --
+# see the same list in `app/schemas/user.py` -- and whitelisting only the obvious
+# three would reject a legitimate reference.
+MODEL_REF_TYPES = ("public", "user", "group", "runtime")
+
+
+def validated_model_ref(
+    value: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """A model reference that can actually select a model, or None for "unset".
+
+    Checked here because nothing downstream does. A name of spaces is truthy, so
+    it passes into the spec, and the run then reads any truthy name as a
+    deliberate override and pins its task to a model that does not exist -- which
+    surfaces much later, as a failed generation rather than a rejected request.
+    An unsupported `type` fails the same way.
+    """
+    if value is None:
+        return None
+
+    name = (value.get("name") or "").strip()
+    if not name:
+        raise ValueError("model reference requires a model name")
+
+    model_type = (value.get("type") or "").strip()
+    if model_type and model_type not in MODEL_REF_TYPES:
+        raise ValueError(
+            f"unsupported model type {model_type!r}; "
+            f"expected one of {', '.join(MODEL_REF_TYPES)}"
+        )
+
+    normalised = {**value, "name": name}
+    if model_type:
+        normalised["type"] = model_type
+    return normalised
+
+
 class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
@@ -250,10 +287,14 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         None,
         description=(
             "Model that runs this knowledge base's own generation, as "
-            "{'name': ..., 'type': 'public|user|group'}. Only a code wiki generates, "
-            "and CodeWikiCreate requires it there. Unset means the team's bot "
-            "supplies the model, which is what wikis created before this field do."
+            "{'name': ..., 'type': 'public|user|group|runtime'}. Only a code wiki "
+            "generates, and CodeWikiCreate requires it there. Unset means the team's "
+            "bot supplies the model, which is what wikis created before this field do."
         ),
+    )
+
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -325,8 +366,15 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         description=(
             "Model that runs this knowledge base's own generation. Editable so a "
             "wiki created before the field existed can be given one; the next run "
-            "picks it up, and one already running keeps the model it started with."
+            "picks it up, and one already running keeps the model it started with. "
+            "Explicit null clears it, returning the wiki to its team's model."
         ),
+    )
+
+    # Explicit null stays a valid way to clear the field; anything else has to name
+    # a model, because this value is persisted straight into the spec.
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
     )
     show_generation_task: Optional[bool] = Field(
         None,
@@ -453,10 +501,10 @@ class CodeWikiCreate(KnowledgeBaseCreate):
     @field_validator("execution_model_ref")
     @classmethod
     def model_ref_names_a_model(cls, value: Dict[str, str]) -> Dict[str, str]:
-        """Reject a ref that names nothing, which would silently fall back."""
-        if not value.get("name"):
-            raise ValueError("execution_model_ref requires a model name")
-        return value
+        """Reject a ref that cannot select a model. Required here, so never None."""
+        checked = validated_model_ref(value)
+        assert checked is not None
+        return checked
 
 
 class CodeWikiChangedPath(BaseModel):

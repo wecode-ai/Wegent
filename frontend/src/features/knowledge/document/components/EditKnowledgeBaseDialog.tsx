@@ -71,6 +71,14 @@ export function EditKnowledgeBaseDialog({
   // Editable so a wiki created before the field existed can be given a model. Left
   // unset it keeps falling back to the team's bot, which is what it runs on today.
   const [executionModelRef, setExecutionModelRef] = useState<SummaryModelRef | null>(null)
+  // Whether the model in this dialog is a choice or just what the selector filled in.
+  //
+  // The selector preselects, so opening this dialog on a wiki that has no model puts
+  // one in the box without anyone asking. Sending that on submit would pin a model
+  // nobody chose -- and replace the team fallback the wiki runs on -- as a side
+  // effect of saving some unrelated setting. So the field is only sent once it has
+  // been touched, or when the wiki already had one to update.
+  const [executionModelTouched, setExecutionModelTouched] = useState(false)
   const [summaryModelError, setSummaryModelError] = useState('')
   const {
     multimodalAnalysisEnabled,
@@ -155,6 +163,7 @@ export function EditKnowledgeBaseDialog({
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)
+      setExecutionModelTouched(false)
       setSummaryModelError('')
       loadMultimodalFromKB({
         multimodalAnalysisEnabled: kb.multimodal_analysis_enabled || false,
@@ -240,13 +249,12 @@ export function EditKnowledgeBaseDialog({
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
-        ...(isCodeWiki
-          ? {
-              show_generation_task: showGenerationTask,
-              // Applies to the next run. One already going keeps the model it was
-              // started with, which is the model its pages were written by.
-              execution_model_ref: executionModelRef,
-            }
+        ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
+        // Applies to the next run. One already going keeps the model it was started
+        // with, which is the model its pages were written by. Omitted entirely when
+        // untouched on a wiki that had none, so "unset" survives an unrelated save.
+        ...(isCodeWiki && (executionModelTouched || kb?.execution_model_ref)
+          ? { execution_model_ref: executionModelRef }
           : {}),
       }
 
@@ -358,12 +366,19 @@ export function EditKnowledgeBaseDialog({
                     >
                       <ModelRefSelector
                         value={executionModelRef}
-                        onChange={setExecutionModelRef}
+                        onChange={value => {
+                          setExecutionModelRef(value)
+                          setExecutionModelTouched(true)
+                        }}
                         placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
-                        knowledgeDefaultTeamId={
-                          !kb?.execution_model_ref ? knowledgeDefaultTeamId : undefined
-                        }
+                        // Passed unconditionally: with autoSelect off it no longer
+                        // risks the cache overriding what the wiki already has, and
+                        // it is what lets a pick made here be remembered.
+                        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                         preferenceScope="wiki"
+                        // Nothing is filled in for a wiki that has no model: an empty
+                        // box is the truth there, and only a real pick may change it.
+                        autoSelect={false}
                         dataTestId="code-wiki-execution-model-select"
                       />
                     </SimpleConfigRow>

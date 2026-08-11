@@ -188,3 +188,56 @@ describe('what each choice is remembered for', () => {
     expect(getGlobalModelPreference(TEAM_ID)).toBeNull()
   })
 })
+
+describe('not filling in a box that is meant to be empty', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    jest.clearAllMocks()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: MODELS })
+  })
+
+  it('selects nothing when autoSelect is off, however tempting the cache is', async () => {
+    // An existing knowledge base with no model of its own runs on its team's. A
+    // preselect there reports a model that is not configured, and a form that then
+    // saved would turn the guess into a stored choice nobody made.
+    remember('zzz-remembered', 'wiki')
+    const onChange = jest.fn()
+
+    render(
+      <ModelRefSelector
+        value={null}
+        onChange={onChange}
+        placeholder="pick"
+        knowledgeDefaultTeamId={TEAM_ID}
+        preferenceScope="wiki"
+        autoSelect={false}
+        dataTestId="model-select"
+      />
+    )
+
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalled())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('still reports a deliberate pick, and still remembers it', async () => {
+    const onChange = jest.fn()
+    render(
+      <ModelRefSelector
+        value={null}
+        onChange={onChange}
+        placeholder="pick"
+        knowledgeDefaultTeamId={TEAM_ID}
+        preferenceScope="wiki"
+        autoSelect={false}
+        dataTestId="model-select"
+      />
+    )
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('model-select'))
+    fireEvent.click(await screen.findByText('ZZZ'))
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'zzz-remembered' }))
+    expect(getGlobalModelPreference(TEAM_ID, undefined, 'wiki')?.modelName).toBe('zzz-remembered')
+  })
+})

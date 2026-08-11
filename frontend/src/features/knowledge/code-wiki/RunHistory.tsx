@@ -201,14 +201,17 @@ function RunRow({
           </AlertDialogContent>
         </AlertDialog>
         {reason && (
-          <p
-            className={`mt-0.5 whitespace-pre-wrap break-words text-[11px] text-amber-500 ${
+          // A button because it does something. It was a <p> with a click handler,
+          // which reads the same but cannot be focused, so the only way to open a
+          // clamped reason was a mouse. Styled back down to look like the text it is.
+          <button
+            type="button"
+            aria-expanded={reasonExpanded}
+            className={`mt-0.5 block w-full cursor-pointer whitespace-pre-wrap break-words text-left text-[11px] text-amber-500 ${
               reasonExpanded ? '' : 'line-clamp-3'
             }`}
             onClick={event => {
-              // Not a button: the reason is the text, and wrapping it in one would
-              // put a control in the middle of a list of facts. Stops the click
-              // from reaching the row behind it.
+              // Stops the click from reaching the row behind it.
               event.stopPropagation()
               setReasonExpanded(current => !current)
             }}
@@ -216,7 +219,7 @@ function RunRow({
             data-testid="code-wiki-run-error"
           >
             {reason}
-          </p>
+          </button>
         )}
       </div>
     </li>

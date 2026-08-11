@@ -795,6 +795,59 @@ def test_a_model_ref_naming_nothing_is_not_sent_as_an_override(
     assert tasks.created[0].force_override_bot_model is False
 
 
+def test_a_stored_name_of_spaces_is_not_sent_as_an_override(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A name of spaces is truthy, so it used to reach the task, which reads any
+    truthy name as a deliberate override -- pinning the run to a model that cannot
+    resolve. The request schema rejects this now, but rows written before it did are
+    still in the table, so the run re-checks what it reads.
+    """
+    _set_spec(test_db, knowledge_base, executionModelRef={"name": "   "})
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].model_id is None
+    assert tasks.created[0].force_override_bot_model is False
+
+
+def test_a_stored_type_that_is_not_a_model_scope_falls_back_whole(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """An unsupported scope fails to resolve as surely as a missing name, so the
+    whole reference is dropped rather than half of it applied: the team's model runs
+    the wiki, which is a model that works.
+    """
+    _set_spec(
+        test_db,
+        knowledge_base,
+        executionModelRef={"name": "claude-opus-5", "type": "not-a-scope"},
+    )
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].model_id is None
+    assert tasks.created[0].force_override_bot_model is False
+
+
+def test_a_stored_name_is_trimmed_before_it_reaches_the_task(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """Surrounding space would make the id miss a model that is really there."""
+    _set_spec(
+        test_db,
+        knowledge_base,
+        executionModelRef={"name": "  claude-opus-5  ", "type": "runtime"},
+    )
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].model_id == "claude-opus-5"
+    # runtime is a real scope, so it must survive the check rather than be rejected
+    # along with the genuinely unsupported values.
+    assert tasks.created[0].force_override_bot_model_type == "runtime"
+
+
 def test_the_hiding_namespace_is_the_one_the_listing_query_excludes():
     """The whole mechanism is that these two agree. The exclusion is written into raw
     SQL rather than expressed through the model, so nothing else ties the constant
