@@ -297,12 +297,13 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This task does not enter the left task list and does not navigate the main pane.
 - Follow-up messages must continue the already loaded temporary thread. The Codex app-server path uses `direct_thread_id` and calls `turn/start` directly; it must not use the normal `resume_thread_id` / `thread/resume` path, because temporary threads do not have rollout mappings and would otherwise fail with `no rollout found`.
+- `TemporaryChatPanel` must preserve the running-send options supplied by `BufferedChatInput`. When the user selects **Guide current response** or sends a queued row as guidance, the temporary chat must call `runtime.tasks.guidance` and settle the matching queue item by `clientGuidanceId`; it must not downgrade guidance to a regular follow-up after the active turn.
 - Temporary chats reuse only the current workspace and current thread context. If no main thread source is available, sending should be blocked and the user should be asked to open an existing conversation first.
 - After a runtime-work refresh, the reducer must hydrate the current task address with the authoritative `threadId/runtimeHandle` from the same device and task. Keeping an optimistic address without its thread merely because the device is still online prevents the temporary chat from establishing `sideSource`.
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, verifies that the main composer never inherits that attachment, and confirms that a running temporary-chat follow-up enters the same active turn through guidance. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 
