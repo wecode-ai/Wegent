@@ -1373,16 +1373,19 @@ async function loadReadStateSnapshot(
   const requestedMarketplaceId = params.mergeAllMarketplaces
     ? ''
     : params.marketplaceId?.trim() || selectedMarketplaceId()
-  // Restrict to local marketplace kinds so Codex skips remote GitHub refresh
-  // (often ~10s timeout). Cached OpenAI curated plugins under the local Codex
-  // home still appear; cloud Wework catalog is loaded separately by the UI.
+  // Do not restrict marketplaceKinds: Codex must sync the OpenAI curated
+  // marketplace (github.com/openai/plugins) so the OpenAI官方 tab can populate
+  // on a cold Codex home. This path is only used from the Plugins page; chat /
+  // composer use loadInstalledPluginsOnly and must never call plugin/list.
+  // Durable peek + personal disk paint keep first paint responsive while this
+  // request may take several seconds on first sync. Cloud Wework catalog is
+  // loaded separately by the UI.
   const [availableResponse, installedResponse] = await Promise.all([
     codexAppServerRequest<{
       marketplaces: CodexPluginMarketplaceEntry[]
       featuredPluginIds?: string[]
     }>('plugin/list', {
       cwds: null,
-      marketplaceKinds: ['local'],
     }),
     codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/installed', {
       cwds: null,

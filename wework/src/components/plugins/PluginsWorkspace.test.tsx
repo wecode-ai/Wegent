@@ -1256,6 +1256,45 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
+  test('shows OpenAI official sync empty state when the official catalog is empty', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [],
+    })
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/plugins/marketplace')) {
+        return new Response(JSON.stringify({ items: [], total: 0 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url.includes('/api/plugins/installed')) {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
+
+    expect(await screen.findByTestId('plugins-openai-official-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-openai-official-empty')).toHaveTextContent(
+      'OpenAI 官方市场暂无可用插件'
+    )
+    expect(screen.getByTestId('plugins-openai-official-empty-refresh')).toBeInTheDocument()
+    expect(screen.queryByText('没有匹配的插件')).not.toBeInTheDocument()
+  })
+
   test('refreshes the selected marketplace from the top bar', async () => {
     render(<PluginsWorkspace />)
 
@@ -2865,7 +2904,7 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Linear')).toBeInTheDocument()
     expect(screen.getByText('Documents')).toBeInTheDocument()
-    expectCodexAppServerRequest('plugin/list', { marketplaceKinds: ['local'] })
+    expectCodexAppServerRequest('plugin/list', { cwds: null })
   })
 
   test('paints local installed strip when Codex readState arrives after cloud catalog', async () => {

@@ -244,10 +244,13 @@ describe('local codex plugin readState cache', () => {
             expect.objectContaining({
               method: 'plugin/list',
               params: expect.objectContaining({
-                marketplaceKinds: ['local'],
+                cwds: null,
               }),
             })
           )
+          expect(
+            (params as { params?: { marketplaceKinds?: unknown } }).params?.marketplaceKinds
+          ).toBeUndefined()
           return await new Promise(resolve => {
             resolveList = resolve
           })

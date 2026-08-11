@@ -4000,28 +4000,71 @@ export function PluginsWorkspace({
                 </p>
               </div>
             ) : visibleMarketplaceItems.length === 0 ? (
-              <div className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm">
-                <h2 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.plugins_no_marketplace_results', '没有匹配的插件')}
-                </h2>
-                <p className="text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.plugins_no_marketplace_results_hint',
-                    '可以清除搜索和分类后重新浏览。'
-                  )}
-                </p>
-                <button
-                  type="button"
-                  data-testid="plugins-clear-marketplace-filters"
-                  className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
-                  onClick={() => {
-                    setQuery('')
-                    setMarketplaceDistributionFilter('all')
-                  }}
+              marketplaceDistributionFilter === 'official' &&
+              !marketplaceSourceFilterKey &&
+              !normalizedQuery &&
+              !pluginMarketplaceState.isLoading &&
+              !isMarketplaceRefreshing ? (
+                <div
+                  data-testid="plugins-openai-official-empty"
+                  className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm"
                 >
-                  {t('workbench.plugins_view_all', '查看全部')}
-                </button>
-              </div>
+                  <h2 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.plugins_openai_official_empty', 'OpenAI 官方市场暂无可用插件')}
+                  </h2>
+                  <p className="text-xs leading-5 text-text-secondary">
+                    {t(
+                      'workbench.plugins_openai_official_empty_hint',
+                      '首次打开需要从 GitHub 同步 openai/plugins。请检查网络后刷新重试。'
+                    )}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="plugins-openai-official-empty-refresh"
+                      className="h-8 rounded-[10px] bg-text-primary px-3 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={pluginMarketplaceState.isLoading || isMarketplaceRefreshing}
+                      onClick={refreshMarketplace}
+                    >
+                      {t('workbench.plugins_openai_official_empty_refresh', '刷新并重试')}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="plugins-clear-marketplace-filters"
+                      className="h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
+                      onClick={() => {
+                        setQuery('')
+                        setMarketplaceDistributionFilter('all')
+                      }}
+                    >
+                      {t('workbench.plugins_view_all', '查看全部')}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm">
+                  <h2 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.plugins_no_marketplace_results', '没有匹配的插件')}
+                  </h2>
+                  <p className="text-xs leading-5 text-text-secondary">
+                    {t(
+                      'workbench.plugins_no_marketplace_results_hint',
+                      '可以清除搜索和分类后重新浏览。'
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="plugins-clear-marketplace-filters"
+                    className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
+                    onClick={() => {
+                      setQuery('')
+                      setMarketplaceDistributionFilter('all')
+                    }}
+                  >
+                    {t('workbench.plugins_view_all', '查看全部')}
+                  </button>
+                </div>
+              )
             ) : (
               <section data-testid="plugins-all-section">
                 <div className="plugin-market-section-head">
