@@ -14970,17 +14970,26 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY) {
       phase = 'model-routing-project'
+      const projectMenusBeforeModelRouting = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('project-menu-')
+        )
+      )
       await createSingleRootLocalProject(control, workspacePath, 'workspace')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       const projectSnapshot = await waitForSnapshot(
         control,
-        snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+        snapshot =>
+          snapshot.testIds.some(
+            testId =>
+              testId.startsWith('project-menu-') && !projectMenusBeforeModelRouting.has(testId)
+          ),
         'The model-routing project was not shown in the sidebar'
       )
-      const projectMenuTestId = projectSnapshot.testIds.find(testId =>
-        testId.startsWith('project-menu-')
+      const projectMenuTestId = projectSnapshot.testIds.find(
+        testId => testId.startsWith('project-menu-') && !projectMenusBeforeModelRouting.has(testId)
       )
       assert.ok(projectMenuTestId, 'The model-routing project identity was not found')
       const projectId = projectMenuTestId.slice('project-menu-'.length)
@@ -15407,10 +15416,6 @@ last_updated = "2026-07-30T00:00:00Z"`
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
         'utf8'
       )
-      if (MODEL_SWITCH_ONLY) {
-        console.log(`Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`)
-        return
-      }
       if (shouldStopAfterDesktopCheckpoint('model-routing')) {
         console.log(`Wework desktop model-routing checkpoint passed. Evidence: ${resultDir}`)
         return
