@@ -6,7 +6,12 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
-    let mut block = new_tool_block(item, timestamp, "bash", Some(command_input(item)));
+    let mut block = new_tool_block(
+        item,
+        item_timestamp(item).unwrap_or(timestamp),
+        "bash",
+        Some(command_input(item)),
+    );
     enrich_tool_block(&mut block, item, options, false);
     block
 }
@@ -18,7 +23,12 @@ pub(super) fn tool_block(item: &Value, timestamp: i64, options: TranscriptBuildO
     ) {
         return command_block(item, timestamp, options);
     }
-    let mut block = new_tool_block(item, timestamp, &tool_name(item), Some(tool_input(item)));
+    let mut block = new_tool_block(
+        item,
+        item_timestamp(item).unwrap_or(timestamp),
+        &tool_name(item),
+        Some(tool_input(item)),
+    );
     enrich_tool_block(&mut block, item, options, true);
     block
 }
@@ -38,18 +48,41 @@ pub(super) fn merge_tool_output(
     }) {
         if let Some(object) = block.as_object_mut() {
             merge_tool_input(object, command_input_from_output(item));
+            merge_tool_timing(object, item);
         }
         enrich_tool_block(block, item, options, true);
         return;
     }
+    if item_type(item) == "commandexecution" {
+        blocks.push(command_block(item, timestamp, options));
+        return;
+    }
     let mut block = new_tool_block(
         item,
-        timestamp,
+        item_timestamp(item).unwrap_or(timestamp),
         &tool_name(item),
         command_input_from_output(item),
     );
     enrich_tool_block(&mut block, item, options, true);
     blocks.push(block);
+}
+
+fn merge_tool_timing(object: &mut Map<String, Value>, item: &Value) {
+    let completed_at = item_completed_at(item);
+    let duration_ms =
+        integer_field(item, "durationMs").or_else(|| integer_field(item, "duration_ms"));
+    if completed_at.is_none() && duration_ms.is_none() {
+        return;
+    }
+    if let Some(timestamp) = item_timestamp(item) {
+        object.insert("timestamp".to_owned(), json!(timestamp));
+    }
+    if let Some(completed_at) = completed_at {
+        object.insert("completedAt".to_owned(), json!(completed_at));
+    }
+    if let Some(duration_ms) = duration_ms {
+        object.insert("durationMs".to_owned(), json!(duration_ms.max(0)));
+    }
 }
 
 fn new_tool_block(
@@ -69,6 +102,16 @@ fn new_tool_block(
     });
     if let (Some(object), Some(tool_input)) = (block.as_object_mut(), tool_input) {
         object.insert("tool_input".to_owned(), tool_input);
+    }
+    if let Some(object) = block.as_object_mut() {
+        if let Some(completed_at) = item_completed_at(item) {
+            object.insert("completedAt".to_owned(), json!(completed_at));
+        }
+        if let Some(duration_ms) =
+            integer_field(item, "durationMs").or_else(|| integer_field(item, "duration_ms"))
+        {
+            object.insert("durationMs".to_owned(), json!(duration_ms.max(0)));
+        }
     }
     block
 }
@@ -294,7 +337,10 @@ fn command_output_ref(item: &Value) -> Option<&str> {
 }
 
 pub(super) fn command_input_from_output(item: &Value) -> Option<Value> {
-    if item_type(item) != "execcommandend" {
+    if !matches!(
+        item_type(item).as_str(),
+        "commandexecution" | "execcommandend"
+    ) {
         return None;
     }
     Some(command_input(item))
