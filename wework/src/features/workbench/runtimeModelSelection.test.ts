@@ -225,27 +225,36 @@ describe('runtimeModelSelection', () => {
     })
   })
 
-  test('honors explicit native Responses tool capability overrides', () => {
-    const cloudModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'user',
-      namespace: 'default',
-      resourceUserId: 42,
-      provider: 'openai',
-      runtime: { family: 'openai.openai-responses' },
-      config: {
-        native_tool_search: false,
-        nativeNamespaceTools: false,
-      },
-    }
+  test.each([
+    {
+      override: { native_tool_search: false },
+      disabledOption: 'weworkCloudModelNativeToolSearch',
+      inferredOption: 'weworkCloudModelNativeNamespaceTools',
+    },
+    {
+      override: { nativeNamespaceTools: false },
+      disabledOption: 'weworkCloudModelNativeNamespaceTools',
+      inferredOption: 'weworkCloudModelNativeToolSearch',
+    },
+  ])(
+    'honors an explicit false override for $disabledOption independently',
+    ({ override, disabledOption, inferredOption }) => {
+      const cloudModel: UnifiedModel = {
+        name: 'gpt-5.6-sol',
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'openai',
+        runtime: { family: 'openai.openai-responses' },
+        config: override,
+      }
 
-    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toEqual(
-      expect.objectContaining({
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
-      })
-    )
-  })
+      const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
+
+      expect(modelOptions).not.toHaveProperty(disabledOption)
+      expect(modelOptions).toHaveProperty(inferredOption, 'true')
+    }
+  )
 
   test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
