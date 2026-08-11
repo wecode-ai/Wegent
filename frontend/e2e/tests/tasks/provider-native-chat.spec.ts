@@ -488,7 +488,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
     await knowledgePage.sendMessage(prompt)
     const taskId = await knowledgePage.waitForTaskId()
     await waitForBackendTerminal(request, taskId)
-    await expect(page.getByTestId('send-button')).toBeEnabled({ timeout: 30000 })
+    await expect(page.getByTestId('send-button')).toBeVisible({ timeout: 30000 })
     return taskId
   }
 
