@@ -21,7 +21,6 @@ import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
-import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { CloudWorkPage } from '@/pages/CloudWorkPage'
@@ -90,14 +89,11 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
+import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
+import { LocalManagementSection } from '@wecode/features/local-executor/LocalManagementSection'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
-
-interface ViewportSize {
-  width: number
-  height: number
-}
 
 function isPopoutWindowRuntime() {
   if (!isTauriRuntime()) return false
@@ -162,7 +158,8 @@ function telemetryFeatureForPath(path: string) {
   if (path === '/cloud-work') return 'cloud_work' as const
   if (path === '/sites') return 'sites' as const
   if (path === '/automations') return 'automations' as const
-  if (path === '/apps' || path.startsWith('/app/')) return 'apps' as const
+  if (path === '/local-management') return 'settings' as const
+  if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
   if (path.startsWith('/project-space')) return 'project_space' as const
   if (path === '/') return 'workbench' as const
@@ -197,7 +194,7 @@ function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations') return <AutomationsPage />
-  if (path === '/apps') return <AppsPage />
+  if (path === '/local-management') return <LocalManagementSection />
   return null
 }
 
@@ -442,65 +439,6 @@ function browserWorkspaceTabStorageScope(): string {
   return `browser:${window.name}`
 }
 
-function useTauriViewportSize(isTauri: boolean): ViewportSize | null {
-  const [viewportSize, setViewportSize] = useState<ViewportSize | null>(() => {
-    if (!isTauri || window.innerWidth <= 0 || window.innerHeight <= 0) return null
-    return { width: window.innerWidth, height: window.innerHeight }
-  })
-
-  useEffect(() => {
-    if (!isTauri) return undefined
-
-    const appWindow = getCurrentWindow()
-    let disposed = false
-    let unlisten: (() => void) | undefined
-
-    const applyPhysicalSize = async (
-      physicalSize: Awaited<ReturnType<typeof appWindow.innerSize>>
-    ) => {
-      const scaleFactor = await appWindow.scaleFactor()
-      const logicalSize = physicalSize.toLogical(scaleFactor)
-      if (disposed || logicalSize.width <= 0 || logicalSize.height <= 0) return
-      setViewportSize(current =>
-        current?.width === logicalSize.width && current.height === logicalSize.height
-          ? current
-          : { width: logicalSize.width, height: logicalSize.height }
-      )
-    }
-
-    void appWindow
-      .innerSize()
-      .then(applyPhysicalSize)
-      .catch(error => {
-        console.error('[Wework] Failed to read the Tauri viewport size:', error)
-      })
-
-    void appWindow
-      .onResized(({ payload }) => {
-        void applyPhysicalSize(payload).catch(error => {
-          console.error('[Wework] Failed to update the Tauri viewport size:', error)
-        })
-      })
-      .then(unlistenFn => {
-        if (disposed) {
-          unlistenFn()
-          return
-        }
-        unlisten = unlistenFn
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to listen for Tauri viewport changes:', error)
-      })
-
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  }, [isTauri])
-
-  return viewportSize
-}
-
 function AppShell() {
   const { t } = useTranslation('common')
   const { pathname: path, search } = useCurrentLocation()
@@ -533,9 +471,8 @@ function AppShell() {
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
         sites: t('workbench.workspace_tab_sites', '站点与小程序'),
-        automations: t('workbench.workspace_tab_automations', '自动化'),
+        automations: t('workbench.automation', '已安排'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
-        apps: t('workbench.workspace_tab_apps', '应用'),
       },
     }),
     [t]

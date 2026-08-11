@@ -11,9 +11,11 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   uploadFile,
   deleteAttachment,
-  validateFile,
+  validateFile as validateAttachmentFile,
   getErrorMessageFromCode,
   getFileExtension,
+  isAudioExtension,
+  isImageExtension,
   isVideoExtension,
 } from '@/apis/attachments'
 import { ApiError } from '@/apis/client'
@@ -33,6 +35,8 @@ interface UseMultiAttachmentReturn {
   addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   /** Remove specific attachment */
   handleRemove: (attachmentId: number) => Promise<void>
+  /** Swap two attachments without re-uploading them */
+  swapAttachments: (firstAttachmentId: number, secondAttachmentId: number) => void
   /** Reset state */
   reset: () => void
   /** Check if ready to send (no upload in progress, all attachments ready) */
@@ -45,14 +49,22 @@ interface UseMultiAttachmentReturn {
   weiboBindingPrompt: ReactNode
 }
 
+export type AttachmentTypeLimits = Partial<
+  Record<'image' | 'imageWithVideo' | 'video' | 'audio', number>
+>
+
 export function useMultiAttachment(options?: {
   maxAttachments?: number
   showTruncationToast?: boolean
+  maxByType?: AttachmentTypeLimits
+  validateFile?: (file: File) => Promise<string | null>
 }): UseMultiAttachmentReturn {
   const { t } = useTranslation()
   const { user, refresh } = useUser()
   const maxAttachments = options?.maxAttachments
   const showTruncationToast = options?.showTruncationToast ?? false
+  const maxByType = options?.maxByType
+  const customValidateFile = options?.validateFile
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -88,12 +100,71 @@ export function useMultiAttachment(options?: {
         }
       }
 
+      const getMediaType = (filename: string) => {
+        const extension = getFileExtension(filename)
+        if (isImageExtension(extension)) return 'image' as const
+        if (isVideoExtension(extension)) return 'video' as const
+        if (isAudioExtension(extension)) return 'audio' as const
+        return null
+      }
+      const counts = { image: 0, video: 0, audio: 0 }
+      for (const attachment of state.attachments) {
+        const type = getMediaType(attachment.filename)
+        if (type) counts[type] += 1
+      }
+      for (const uploading of state.uploadingFiles.values()) {
+        const type = getMediaType(uploading.file.name)
+        if (type) counts[type] += 1
+      }
+
       for (const file of fileList) {
         // Use only filename as fileId to avoid duplicate errors for the same file
         const fileId = file.name
+        const mediaType = getMediaType(file.name)
+
+        if (
+          mediaType === 'video' &&
+          maxByType?.imageWithVideo !== undefined &&
+          counts.image > maxByType.imageWithVideo
+        ) {
+          toast({
+            title: t('chat:generate.max_material_type', {
+              count: maxByType.imageWithVideo,
+            }),
+            variant: 'destructive',
+          })
+          continue
+        }
+
+        const maximum =
+          mediaType === 'image' && counts.video > 0
+            ? (maxByType?.imageWithVideo ?? maxByType?.image)
+            : mediaType
+              ? maxByType?.[mediaType]
+              : undefined
+        if (mediaType && maximum !== undefined) {
+          if (counts[mediaType] >= maximum) {
+            toast({
+              title: t('chat:generate.max_material_type', { count: maximum }),
+              variant: 'destructive',
+            })
+            continue
+          }
+        }
+
+        if (customValidateFile) {
+          const validationError = await customValidateFile(file)
+          if (validationError) {
+            toast({
+              title: validationError,
+              variant: 'destructive',
+            })
+            continue
+          }
+        }
 
         // Validate file
-        const validationError = validateFile(file, t)
+        const validationError = validateAttachmentFile(file, t)
         if (validationError) {
           setState(prev => {
             const newErrors = new Map(prev.errors)
@@ -208,6 +279,7 @@ export function useMultiAttachment(options?: {
               uploadingFiles: newUploadingFiles,
             }
           })
+          if (mediaType) counts[mediaType] += 1
         } catch (err) {
           setState(prev => {
             const newUploadingFiles = new Map(prev.uploadingFiles)
@@ -226,7 +298,7 @@ export function useMultiAttachment(options?: {
         }
       }
     },
-    [state, t, maxAttachments, showTruncationToast]
+    [state, t, maxAttachments, maxByType, customValidateFile, showTruncationToast]
   )
 
   const handleFileSelect = useCallback(
@@ -380,6 +452,25 @@ export function useMultiAttachment(options?: {
     [state.attachments]
   )
 
+  const swapAttachments = useCallback((firstAttachmentId: number, secondAttachmentId: number) => {
+    setState(prev => {
+      const firstIndex = prev.attachments.findIndex(
+        attachment => attachment.id === firstAttachmentId
+      )
+      const secondIndex = prev.attachments.findIndex(
+        attachment => attachment.id === secondAttachmentId
+      )
+      if (firstIndex < 0 || secondIndex < 0) return prev
+
+      const attachments = [...prev.attachments]
+      ;[attachments[firstIndex], attachments[secondIndex]] = [
+        attachments[secondIndex],
+        attachments[firstIndex],
+      ]
+      return { ...prev, attachments }
+    })
+  }, [])
+
   const reset = useCallback(() => {
     setState({
       attachments: [],
@@ -399,6 +490,7 @@ export function useMultiAttachment(options?: {
     handleFileSelect,
     addExistingAttachment,
     handleRemove,
+    swapAttachments,
     reset,
     isReadyToSend,
     isUploading,

@@ -1,9 +1,10 @@
 import { useLocalManagementAdvancedSettings } from '@wecode/hooks/useLocalManagementAdvancedSettings'
-import type { DeviceInfo } from '@/types/devices'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { LocalManagementPage } from './LocalManagementPage'
 import { useLocalExecutorManagement } from './useLocalExecutorManagement'
 
-export function LocalManagementSection({ devices }: { devices: DeviceInfo[] }) {
+export function LocalManagementSection() {
+  const { state } = useWorkbench()
   const localExecutor = useLocalExecutorManagement()
   const { advancedSettingsEnabled, showAdvancedSettingsToast, handleTitleClick } =
     useLocalManagementAdvancedSettings()
@@ -12,7 +13,7 @@ export function LocalManagementSection({ devices }: { devices: DeviceInfo[] }) {
     <>
       <LocalManagementPage
         state={localExecutor.state}
-        devices={devices}
+        devices={state.devices}
         onRefresh={localExecutor.refreshLocalExecutor}
         onRunAction={localExecutor.runExecutorAction}
         onOpenLogs={localExecutor.openExecutorLogs}

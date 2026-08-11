@@ -117,6 +117,7 @@ export function DesktopAppSwitcher({
   const menuRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
   const blurTimerRef = useRef<number | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
   const [menuMounted, setMenuMounted] = useState(false)
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
@@ -171,31 +172,40 @@ export function DesktopAppSwitcher({
     blurTimerRef.current = null
   }, [])
 
+  const clearAnimationFrame = useCallback(() => {
+    if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current)
+    animationFrameRef.current = null
+  }, [])
+
   useEffect(
     () => () => {
+      clearAnimationFrame()
       clearTimer()
       clearBlurTimer()
     },
-    [clearBlurTimer, clearTimer]
+    [clearAnimationFrame, clearBlurTimer, clearTimer]
   )
 
   const closeMenu = useCallback(() => {
     setOpen(false)
     setMenuBlurred(false)
+    clearAnimationFrame()
     clearBlurTimer()
     clearTimer()
     timerRef.current = window.setTimeout(() => {
       setMenuMounted(false)
       setMenuPosition(null)
     }, MENU_TRANSITION_MS)
-  }, [clearBlurTimer, clearTimer])
+  }, [clearAnimationFrame, clearBlurTimer, clearTimer])
 
   const openMenu = () => {
+    clearAnimationFrame()
     clearTimer()
     clearBlurTimer()
     setMenuBlurred(false)
     setMenuMounted(true)
-    window.requestAnimationFrame(() => {
+    animationFrameRef.current = window.requestAnimationFrame(() => {
+      animationFrameRef.current = null
       setOpen(true)
       blurTimerRef.current = window.setTimeout(() => {
         setMenuBlurred(true)

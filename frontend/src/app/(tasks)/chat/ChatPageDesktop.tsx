@@ -118,6 +118,7 @@ export function ChatPageDesktop() {
   const _hasShareId = !!getSearchParam(searchParams, 'share_id')
   const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
   const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
+  const requestedMode = getSearchParam(searchParams, 'mode')
   const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
@@ -133,10 +134,24 @@ export function ChatPageDesktop() {
     selectedTask: selectedTaskDetail,
     selectedDeviceId,
     isCodeAgentMode,
+    requestedMode,
   })
-  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
-    taskType === 'task' ? 'task' : taskType === 'code' ? 'code' : hasWeworkCodeUrl ? 'all' : 'chat'
-  const showRepositorySelector = taskType !== 'task' && teamModeFilter !== 'chat'
+  const isGenerationMode = taskType === 'video' || taskType === 'image'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' = isGenerationMode
+    ? 'all'
+    : taskType === 'task'
+      ? 'task'
+      : taskType === 'code'
+        ? 'code'
+        : hasWeworkCodeUrl
+          ? 'all'
+          : 'chat'
+  const showRepositorySelector =
+    !isGenerationMode && taskType !== 'task' && teamModeFilter !== 'chat'
+  const visibleTeams = useMemo(
+    () => (isGenerationMode ? teams.filter(team => team.bind_mode?.includes(taskType)) : teams),
+    [isGenerationMode, taskType, teams]
+  )
 
   // Compute disabled reason for device mode
   const disabledReason =
@@ -345,6 +360,17 @@ export function ChatPageDesktop() {
     return await refreshTeams()
   }
 
+  const handleGenerateModeChange = useCallback(
+    (mode: 'video' | 'image') => {
+      if (taskId) return
+      const nextParams = new URLSearchParams(searchParams.toString())
+      nextParams.set('mode', mode)
+      nextParams.delete('agent')
+      router.replace(`/chat?${nextParams.toString()}`)
+    },
+    [router, searchParams, taskId]
+  )
+
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
       const newValue = !prev
@@ -359,7 +385,9 @@ export function ChatPageDesktop() {
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
     // Force a hard reload to ensure a fresh start when already on /chat
-    window.location.href = paths.chat.getHref()
+    window.location.href = isGenerationMode
+      ? `${paths.chat.getHref()}?mode=${taskType}`
+      : paths.chat.getHref()
   }
 
   // Handle expand for collapsed sidebar buttons
@@ -406,9 +434,10 @@ export function ChatPageDesktop() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
+          hideGroupChatOptions={isGenerationMode}
         >
           {/* Create Group Chat Button - only show when no task is open */}
-          {!hasOpenTask && (
+          {!hasOpenTask && !isGenerationMode && (
             <Button
               variant="outline"
               size="sm"
@@ -445,7 +474,7 @@ export function ChatPageDesktop() {
             }}
           >
             <ChatArea
-              teams={teams}
+              teams={visibleTeams}
               isTeamsLoading={isTeamsLoading}
               selectedTeamForNewTask={_selectedTeamForNewTask}
               showRepositorySelector={showRepositorySelector}
@@ -453,6 +482,7 @@ export function ChatPageDesktop() {
               teamModeFilter={teamModeFilter}
               onShareButtonRender={handleShareButtonRender}
               onRefreshTeams={handleRefreshTeams}
+              onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
               disabledReason={disabledReason}
               extension={{ teamEdit: teamEditExtension }}
             />

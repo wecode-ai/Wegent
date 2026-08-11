@@ -61,7 +61,7 @@ export function LocalExecutorStartupIndicator() {
 
   const openLocalManagement = () => {
     setOpen(false)
-    navigateTo('/apps?section=local-management')
+    navigateTo('/local-management')
   }
 
   return (

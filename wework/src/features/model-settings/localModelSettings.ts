@@ -4,6 +4,7 @@ import {
 } from './localModelCatalog'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
+export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
 export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
@@ -219,8 +220,10 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
         })
       : undefined)
   const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
-  const kimiCatalogModelId =
-    providerProfileId === 'kimi-coding'
+  const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
+  const kimiCatalogModelId = isKimiOpenPlatformK3
+    ? KIMI_K3_CATALOG_MODEL_ID
+    : providerProfileId === 'kimi-coding'
       ? legacyConfig.modelId === 'k3'
         ? KIMI_K3_CATALOG_MODEL_ID
         : legacyConfig.modelId === 'kimi-for-coding' ||
@@ -247,7 +250,9 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     ...(providerCatalogModelId
       ? {
           contextWindow: kimiCatalogModelId
-            ? KIMI_CODING_CONTEXT_WINDOW
+            ? isKimiOpenPlatformK3
+              ? KIMI_K3_CONTEXT_WINDOW
+              : KIMI_CODING_CONTEXT_WINDOW
             : DEEPSEEK_V4_CONTEXT_WINDOW,
         }
       : legacyConfig.contextWindow

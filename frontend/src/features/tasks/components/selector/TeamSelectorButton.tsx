@@ -26,10 +26,17 @@ import type { Team, TaskDetail } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 import TeamSelectorList from './TeamSelectorList'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
-import { filterTeamsByMode, getRecentTeams, getTeamDisplayName } from './team-selector-utils'
+import {
+  buildTeamTargetHref,
+  filterTeamsByMode,
+  getRecentTeams,
+  getTeamDisplayName,
+  getTeamTargetPage,
+} from './team-selector-utils'
 import type { TeamModeFilter } from './team-selector-utils'
 import { useTeamFavorites } from './useTeamFavorites'
 import { useRecentTeams } from './useRecentTeams'
+import { getCurrentTargetPageByMode } from '../chat/quick-launch/launch-intent'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -75,18 +82,29 @@ export default function TeamSelectorButton({
   } = useTeamFavorites()
   const { recentTeamIds, refreshRecentTeams } = useRecentTeams(currentMode)
 
-  // Filter teams by bind_mode based on current mode
-  const filteredTeamsByMode = useMemo(
-    () => filterTeamsByMode(teams, currentMode),
+  const recentTeamCandidates = useMemo(
+    () =>
+      currentMode === 'code'
+        ? filterTeamsByMode(teams, 'code')
+        : filterTeamsByMode(teams, 'all').filter(
+            team => !team.bind_mode || team.bind_mode.some(mode => mode !== 'code')
+          ),
     [teams, currentMode]
   )
 
   const recentTeams = useMemo(
-    () => getRecentTeams(filteredTeamsByMode, recentTeamIds),
-    [filteredTeamsByMode, recentTeamIds]
+    () => getRecentTeams(recentTeamCandidates, recentTeamIds),
+    [recentTeamCandidates, recentTeamIds]
   )
 
   const handleSelectTeam = (team: Team) => {
+    const targetPage = getTeamTargetPage(team, 'all')
+    const currentPage = getCurrentTargetPageByMode(currentMode)
+    if (targetPage !== currentPage) {
+      router.push(buildTeamTargetHref(targetPage, new URLSearchParams({ teamId: String(team.id) })))
+      setOpen(false)
+      return
+    }
     setSelectedTeam(team)
     setOpen(false)
   }

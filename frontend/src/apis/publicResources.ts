@@ -13,7 +13,7 @@
 
 import type { Bot, SkillRefMeta } from '@/types/api'
 import { UnifiedShell } from './shells'
-import { UnifiedModel } from './models'
+import { UnifiedModel, type ModelCategoryType } from './models'
 import { adminApis, AdminPublicBot, AdminPublicShell, AdminPublicModel } from './admin'
 
 /**
@@ -192,7 +192,7 @@ export const publicResourceApis = {
    */
   async getPublicModels(
     shellType?: string,
-    modelCategoryType?: 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
+    modelCategoryType?: ModelCategoryType
   ): Promise<UnifiedModel[]> {
     const response = await adminApis.getPublicModels(1, 1000)
     let models = response.items.map(transformPublicModelToUnifiedModel)

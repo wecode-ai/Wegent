@@ -71,6 +71,11 @@ class TestDocumentParser:
             ".gif",
             ".bmp",
             ".webp",
+            ".tiff",
+            ".mp4",
+            ".mov",
+            ".mp3",
+            ".wav",
             ".xmind",
         ]
         for ext in expected_extensions:
@@ -153,6 +158,14 @@ class TestDocumentParser:
         assert result.text == content
         assert result.text_length == len(content)
         assert result.truncation_info is None
+
+    @pytest.mark.parametrize("extension", [".mp4", ".mov", ".mp3", ".wav"])
+    def test_parse_reference_media_without_text(self, extension: str) -> None:
+        """Reference video/audio uploads are accepted without text extraction."""
+        result = self.parser.parse(b"binary-media-placeholder", extension)
+
+        assert result.text == ""
+        assert result.text_length == 0
 
     def test_parse_text_file_with_truncation(self):
         """Test that text files are auto-truncated when exceeding max length."""

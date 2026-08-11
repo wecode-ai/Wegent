@@ -1,5 +1,6 @@
 {
   "title": "历史记录",
+  "description": "选择并删除历史任务。",
   "sections": {
     "recent": "最近",
     "today": "今天",
@@ -14,7 +15,16 @@
     "restore": "恢复",
     "clear_all": "清空全部",
     "export": "导出",
-    "search": "搜索历史"
+    "search": "搜索历史",
+    "bulk_delete": "批量删除",
+    "select_all": "全选",
+    "select_task": "选择{{title}}",
+    "selected_count": "已选择 {{count}} 项",
+    "selected_count_one": "已选择 {{count}} 项",
+    "selected_count_other": "已选择 {{count}} 项",
+    "select_all_count": "全选所有 {{count}} 条",
+    "select_all_count_one": "全选这 1 条",
+    "select_all_count_other": "全选所有 {{count}} 条"
   },
   "filters": {
     "all": "全部",

@@ -1551,7 +1551,7 @@ class ContextService:
                 SubtaskContext.context_type == ContextType.KNOWLEDGE_BASE.value,
                 SubtaskContext.status == ContextStatus.READY.value,
             )
-            .order_by(SubtaskContext.created_at)
+            .order_by(SubtaskContext.created_at, SubtaskContext.id)
             .all()
         )
 

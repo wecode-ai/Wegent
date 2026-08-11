@@ -34,7 +34,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { Skeleton } from '@/components/ui/skeleton'
-import { buildChatCodeHref } from '@/config/coding-route'
+import {
+  buildTeamTargetHref,
+  getBindModesTargetPage,
+} from '@/features/tasks/components/selector/team-selector-utils'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -111,16 +114,9 @@ function matchesKeyword(listing: ResourceLibraryListing, keyword: string): boole
 }
 
 function buildAgentUseHref(listing: ResourceLibraryListing, teamId: number): string {
-  const isCodeOnlyAgent = listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
-  if (!isCodeOnlyAgent) {
-    return `/chat?teamId=${teamId}`
-  }
-
-  return buildChatCodeHref(
-    new URLSearchParams([
-      ['agent', 'code'],
-      ['teamId', String(teamId)],
-    ])
+  return buildTeamTargetHref(
+    getBindModesTargetPage(listing.bind_modes, 'all'),
+    new URLSearchParams({ teamId: String(teamId) })
   )
 }
 

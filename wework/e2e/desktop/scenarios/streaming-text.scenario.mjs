@@ -439,6 +439,7 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
 async function completedToolDuration(control, timeoutMs) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+  await control.command('waitFor', finalToggle, { timeoutMs })
   if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
     await control.command('click', finalToggle)
   }
