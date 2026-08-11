@@ -1089,6 +1089,8 @@
     "plugins_marketplace_search": "Search plugins",
     "plugins_frequent": "Frequently used",
     "plugins_all": "All plugins",
+    "plugins_featured": "Featured",
+    "plugins_category_other": "Other",
     "plugins_search_mcp": "Search MCP",
     "plugins_filter_all": "All",
     "plugins_recommended": "Recommended",

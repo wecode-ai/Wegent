@@ -1088,6 +1088,8 @@
     "plugins_marketplace_search": "搜索插件",
     "plugins_frequent": "常用插件",
     "plugins_all": "全部插件",
+    "plugins_featured": "精选",
+    "plugins_category_other": "其他",
     "plugins_search_mcp": "搜索 MCP",
     "plugins_filter_all": "全部",
     "plugins_recommended": "推荐",

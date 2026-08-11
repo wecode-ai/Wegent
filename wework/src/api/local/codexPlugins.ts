@@ -27,11 +27,13 @@ import {
   WEWORK_PERSONAL_MARKETPLACE_ID,
 } from '@/features/plugins/builtinPlugins'
 import {
+  INTERNAL_DEVICE_MARKETPLACE_ID,
   isBuiltInMarketplaceId,
   isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
+import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -387,8 +389,74 @@ function writePersistedReadStateStore(store: PersistedReadStateStore): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, JSON.stringify(store))
-  } catch {
-    // Ignore quota / private-mode failures; memory cache still works for the session.
+    return
+  } catch (error) {
+    console.warn(
+      '[Wework] durable Codex plugin cache write failed; retrying with latest entry only',
+      error
+    )
+  }
+  // Quota / private-mode: keep a single latest snapshot so cold launches still paint.
+  try {
+    const latest = Object.values(store.entries).sort(
+      (left, right) => right.cachedAt - left.cachedAt
+    )[0]
+    if (!latest) return
+    window.localStorage.setItem(
+      READ_STATE_LOCAL_STORAGE_KEY,
+      JSON.stringify({ version: 1 as const, entries: { [latest.paramsKey]: latest } })
+    )
+  } catch (error) {
+    console.warn('[Wework] durable Codex plugin cache write failed', error)
+  }
+}
+
+function slimPluginInterfaceForDurableCache(
+  value: PluginInterface | null | undefined
+): PluginInterface | null {
+  if (!value) return null
+  // Remote OpenAI summaries often stash HTTPS icons on logo/logoDark after normalize.
+  // Drop longDescription / screenshots / policy URLs to keep localStorage under quota.
+  return {
+    displayName: value.displayName ?? null,
+    shortDescription: value.shortDescription ?? null,
+    developerName: value.developerName ?? null,
+    category: value.category ?? null,
+    logo: value.logo ?? null,
+    logoDark: value.logoDark ?? null,
+    composerIcon: value.composerIcon ?? null,
+    brandColor: value.brandColor ?? null,
+  }
+}
+
+/**
+ * Persist a compact catalog snapshot so cold launches can paint OpenAI/local tabs
+ * before plugin/list (~10s). Dropping components/screenshots avoids localStorage quota
+ * failures that would otherwise force every launch to wait on the network.
+ */
+function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsState {
+  return {
+    ...state,
+    marketplaceItems: state.marketplaceItems.map(item => ({
+      ...item,
+      description:
+        item.interface?.shortDescription?.trim() ||
+        (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
+      components: emptyComponents(),
+      interface: slimPluginInterfaceForDurableCache(item.interface),
+    })),
+    installedPlugins: state.installedPlugins.map(plugin => ({
+      ...plugin,
+      spec: {
+        ...plugin.spec,
+        description:
+          typeof plugin.spec.description === 'string' && plugin.spec.description.length > 240
+            ? `${plugin.spec.description.slice(0, 240)}…`
+            : plugin.spec.description,
+        components: emptyComponents(),
+        interface: slimPluginInterfaceForDurableCache(plugin.spec.interface),
+      },
+    })),
   }
 }
 
@@ -398,7 +466,11 @@ function persistReadStateSnapshot(
   cachedAt: number
 ) {
   const store = readPersistedReadStateStore()
-  store.entries[paramsKey] = { paramsKey, cachedAt, state }
+  store.entries[paramsKey] = {
+    paramsKey,
+    cachedAt,
+    state: toDurableReadState(state),
+  }
   writePersistedReadStateStore(store)
 }
 
@@ -847,6 +919,34 @@ function catalogItemId(
   return `${marketplace.name}:${plugin.id}`
 }
 
+function featuredPluginIdSet(featuredPluginIds: string[] | null | undefined): Set<string> {
+  const ids = new Set<string>()
+  for (const value of featuredPluginIds ?? []) {
+    const trimmed = String(value || '').trim()
+    if (trimmed) ids.add(trimmed)
+  }
+  return ids
+}
+
+function isFeaturedMarketplacePlugin(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  featuredIds: Set<string>
+): boolean {
+  if (featuredIds.size === 0) return false
+  const candidates = [
+    plugin.id,
+    plugin.remotePluginId,
+    plugin.name,
+    catalogItemId(marketplace, plugin),
+    `${plugin.name}@${marketplace.name}`,
+  ]
+  return candidates.some(candidate => {
+    const value = String(candidate || '').trim()
+    return value !== '' && featuredIds.has(value)
+  })
+}
+
 function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry): {
   sourceProvider: 'wegent' | 'codex' | 'user'
   sourceLabel: string
@@ -1005,13 +1105,114 @@ function toLocalDeviceSkill(skill: CodexSkillMetadata): LocalDeviceSkill {
   }
 }
 
-function toMarketplaceItem(
+function safeRelativePluginAssetPath(value: string): string | null {
+  const segments = value.replace(/\\/g, '/').split('/')
+  const safeSegments: string[] = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') return null
+    safeSegments.push(segment)
+  }
+  return safeSegments.length > 0 ? safeSegments.join('/') : null
+}
+
+function isRelativePluginAssetPath(value: string): boolean {
+  if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)) return false
+  return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value)
+}
+
+function localPluginRoot(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary,
   detail?: CodexPluginDetail | null
+): string | null {
+  if (marketplace.path && isLocalMarketplacePath(marketplace.path)) {
+    const sourcePath =
+      plugin.source && typeof plugin.source.path === 'string' ? plugin.source.path.trim() : ''
+    if (sourcePath) {
+      if (isLocalMarketplacePath(sourcePath)) return sourcePath.replace(/[\\/]+$/, '')
+      const relativeSourcePath = safeRelativePluginAssetPath(sourcePath)
+      if (relativeSourcePath) {
+        return `${normalizeMarketplaceSource(marketplace.path).replace(/[\\/]+$/, '')}/${relativeSourcePath}`
+      }
+    }
+  }
+
+  for (const path of (detail?.skills ?? []).map(skill => skill.path)) {
+    if (!path || !isLocalMarketplacePath(path)) continue
+    const normalized = path.replace(/\\/g, '/')
+    const skillsIndex = normalized.lastIndexOf('/skills/')
+    if (skillsIndex > 0) return normalized.slice(0, skillsIndex)
+  }
+  return null
+}
+
+type CodexPluginInterfaceAssets = PluginInterface & {
+  logoUrl?: string | null
+  logoUrlDark?: string | null
+  composerIconUrl?: string | null
+  screenshotUrls?: string[] | null
+}
+
+function firstPluginAssetUrl(...candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    const value = candidate?.trim()
+    if (value) return value
+  }
+  return null
+}
+
+function normalizePluginInterfaceAssets(interfaceData: PluginInterface): PluginInterface {
+  const raw = interfaceData as CodexPluginInterfaceAssets
+  const screenshots =
+    raw.screenshots && raw.screenshots.length > 0
+      ? raw.screenshots
+      : raw.screenshotUrls && raw.screenshotUrls.length > 0
+        ? raw.screenshotUrls
+        : raw.screenshots
+  return {
+    ...interfaceData,
+    composerIcon: firstPluginAssetUrl(raw.composerIcon, raw.composerIconUrl),
+    logo: firstPluginAssetUrl(raw.logo, raw.logoUrl),
+    logoDark: firstPluginAssetUrl(raw.logoDark, raw.logoUrlDark),
+    screenshots,
+  }
+}
+
+function resolvePluginInterfaceAssets(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null
+): PluginInterface | null {
+  const interfaceData = plugin.interface
+  if (!interfaceData) return null
+  const normalized = normalizePluginInterfaceAssets(interfaceData)
+  const root = localPluginRoot(marketplace, plugin, detail)
+  if (!root) return normalized
+  const resolve = (value?: string | null): string | null | undefined => {
+    const source = value?.trim()
+    if (!source || !isRelativePluginAssetPath(source)) return value
+    const relativePath = safeRelativePluginAssetPath(source)
+    return relativePath ? `${root}/${relativePath}` : null
+  }
+  return {
+    ...normalized,
+    composerIcon: resolve(normalized.composerIcon),
+    logo: resolve(normalized.logo),
+    logoDark: resolve(normalized.logoDark),
+    screenshots: normalized.screenshots?.map(screenshot => resolve(screenshot) || screenshot),
+  }
+}
+
+function toMarketplaceItem(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null,
+  featuredIds: Set<string> = new Set()
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
   const source = localMarketplaceSource(marketplace)
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
   return {
     id: catalogItemId(marketplace, plugin),
     remotePluginId: plugin.remotePluginId ?? plugin.id,
@@ -1019,14 +1220,14 @@ function toMarketplaceItem(
     displayName: pluginDisplayName(plugin),
     description: pluginDescription(plugin, detail),
     version: plugin.localVersion ?? null,
-    author: plugin.interface?.developerName ?? null,
+    author: resolvedInterface?.developerName ?? null,
     visibility: source.visibility,
-    featured: false,
+    featured: isFeaturedMarketplacePlugin(marketplace, plugin, featuredIds),
     installed: plugin.installed,
     installedPluginId: plugin.installed ? plugin.id : null,
     enabled: plugin.enabled,
     sourceType: 'marketplace',
-    interface: plugin.interface ?? null,
+    interface: resolvedInterface,
     components,
     manifest: {
       name: plugin.name,
@@ -1095,6 +1296,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
   const isCreated = isPersonalMarketplaceId(marketplace.name)
   const source = localMarketplaceSource(marketplace)
   const skillStates = Object.fromEntries(
@@ -1124,7 +1326,7 @@ function toInstalledPlugin(
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
-      author: plugin.interface?.developerName ?? null,
+      author: resolvedInterface?.developerName ?? null,
       installState: plugin.installed ? 'installed' : 'not_installed',
       enabled: plugin.enabled !== false,
       componentStates: skillStates,
@@ -1137,7 +1339,7 @@ function toInstalledPlugin(
         availability: plugin.availability ?? null,
       },
       components,
-      interface: plugin.interface ?? null,
+      interface: resolvedInterface,
       packageRef: null,
       sourcePayload: {
         ...sourcePayload(marketplace, plugin),
@@ -1256,10 +1458,23 @@ export function applyPluginCloudLinks(
 
 function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string): string {
   const plugin = pluginName.trim().toLowerCase()
-  const marketplace = isPersonalMarketplaceId(marketplaceName)
+  const rawMarketplace = marketplaceName.trim().toLowerCase()
+  const marketplace = isPersonalMarketplaceId(rawMarketplace)
     ? WEWORK_PERSONAL_MARKETPLACE_ID
-    : marketplaceName.trim().toLowerCase()
+    : isWegentCloudMarketplace(rawMarketplace)
+      ? INTERNAL_DEVICE_MARKETPLACE_ID
+      : rawMarketplace
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
+}
+
+function marketplaceItemInstallIdentity(item: PluginMarketplaceItem): string {
+  const marketplaceId =
+    typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
+  // Cloud Wework listings often omit marketplaceId; treat release-backed rows as wegent
+  // so local wegent installs (快速建站 etc.) overlay onto the catalog card immediately.
+  const marketplaceName =
+    marketplaceId || (item.latestReleaseId != null ? INTERNAL_DEVICE_MARKETPLACE_ID : '')
+  return pluginMarketplaceIdentity(item.name, marketplaceName)
 }
 
 export function applyInstalledPluginsToMarketplaceItems(
@@ -1276,16 +1491,15 @@ export function applyInstalledPluginsToMarketplaceItems(
         : plugin.metadata.namespace)
     const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
     const identity = pluginMarketplaceIdentity(
-      String(plugin.spec.source.pluginKey),
+      String(plugin.spec.source.pluginKey || plugin.metadata.name || ''),
       marketplaceName
     )
     if (identity) installedByIdentity.set(identity, plugin)
   }
 
   return items.map(item => {
-    const marketplaceName =
-      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
-    const installed = installedByIdentity.get(pluginMarketplaceIdentity(item.name, marketplaceName))
+    if (item.installed && item.installedPluginId != null) return item
+    const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) return item
     const id = installedPluginId(installed)
     return {
@@ -1393,6 +1607,7 @@ async function loadReadStateSnapshot(
     }),
   ])
   const availableMarketplaces = withInitializedBundledMarketplace(availableResponse.marketplaces)
+  const featuredIds = featuredPluginIdSet(availableResponse.featuredPluginIds)
   const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
   const selectedId = availableMarketplaces.some(
     marketplace => marketplace.name === requestedSelectedId
@@ -1414,7 +1629,7 @@ async function loadReadStateSnapshot(
       }).catch(() => [] as LocalPluginCloudLink[])
     : []
   const availableMarketplaceItems = selectedMarketplaces.flatMap(marketplace =>
-    marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
+    marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin, null, featuredIds))
   )
   // plugin/installed is authoritative for membership; summaries sometimes omit
   // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
@@ -2004,41 +2219,103 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async uninstallInstalledPlugin(id) {
-      const currentState = cachedState ?? (await readState())
-      const installed = currentState.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(id)
+      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
+      const requestedId = String(id)
+      const marketplaceItem = currentState.marketplaceItems.find(
+        item =>
+          String(item.id) === requestedId ||
+          String(item.installedPluginId ?? '') === requestedId ||
+          String(item.remotePluginId ?? '') === requestedId
       )
+      const installed =
+        currentState.installedPlugins.find(
+          plugin => String(installedPluginId(plugin)) === requestedId
+        ) ||
+        (marketplaceItem
+          ? currentState.installedPlugins.find(plugin => {
+              const marketplaceName =
+                plugin.spec.source.marketplace ||
+                plugin.spec.source.providerKey ||
+                (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+                  ? plugin.spec.sourcePayload.marketplaceName
+                  : plugin.metadata.namespace)
+              return (
+                plugin.spec.source.pluginKey === marketplaceItem.name &&
+                pluginMarketplaceIdentity(
+                  marketplaceItem.name,
+                  typeof marketplaceName === 'string' ? marketplaceName : ''
+                ) ===
+                  pluginMarketplaceIdentity(
+                    marketplaceItem.name,
+                    typeof marketplaceItem.manifest?.marketplaceId === 'string'
+                      ? marketplaceItem.manifest.marketplaceId
+                      : ''
+                  )
+              )
+            })
+          : undefined)
+      const payload =
+        installed?.spec.sourcePayload && typeof installed.spec.sourcePayload === 'object'
+          ? (installed.spec.sourcePayload as Record<string, unknown>)
+          : {}
       const marketplace =
         installed?.spec.source.marketplace ||
         installed?.spec.source.providerKey ||
+        (typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '') ||
         installed?.metadata.namespace ||
-        ''
+        (typeof marketplaceItem?.manifest?.marketplaceId === 'string'
+          ? marketplaceItem.manifest.marketplaceId
+          : '')
       const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
-      const pluginName = installed?.spec.source.pluginKey ?? String(id).split('@')[0]
-      const pluginIds = isPersonalMarketplaceId(marketplaceName)
-        ? Array.from(
-            new Set([
-              String(id),
-              `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
-              `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
-            ])
-          )
-        : [String(id)]
+      const pluginName =
+        installed?.spec.source.pluginKey ||
+        marketplaceItem?.name ||
+        requestedId.split('@')[0] ||
+        requestedId
+      const remotePluginId =
+        (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
+        (typeof installed?.spec.source.catalogItemId === 'string' &&
+          installed.spec.source.catalogItemId.trim()) ||
+        (typeof marketplaceItem?.remotePluginId === 'string' &&
+          marketplaceItem.remotePluginId.trim()) ||
+        ''
+      const installedId = installed ? installedPluginId(installed) : null
+      const pluginIds = Array.from(
+        new Set(
+          [
+            requestedId,
+            remotePluginId,
+            pluginName,
+            marketplaceName ? `${pluginName}@${marketplaceName}` : '',
+            marketplaceItem ? String(marketplaceItem.id) : '',
+            typeof installedId === 'string' || typeof installedId === 'number'
+              ? String(installedId)
+              : '',
+            ...(isPersonalMarketplaceId(marketplaceName)
+              ? [
+                  `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
+                  `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
+                ]
+              : []),
+          ].filter(value => Boolean(value && String(value).trim()))
+        )
+      )
+      let uninstallAccepted = false
       for (const pluginId of pluginIds) {
         try {
           await codexAppServerRequest('plugin/uninstall', { pluginId })
+          uninstallAccepted = true
         } catch (error) {
-          if (pluginId === String(id)) {
-            throw error
-          }
           if (
-            /not found|not installed|unknown plugin/i.test(
+            /not found|not installed|unknown plugin|unexpected plugin id/i.test(
               getErrorMessage(error, 'Plugin uninstall failed')
             )
           ) {
             continue
           }
-          // Primary uninstall already succeeded; alias cleanup must not look like a hard fail.
+          if (!uninstallAccepted) throw error
+          // A previous candidate already uninstalled; alias cleanup must not look
+          // like a hard fail.
           throw new LocalPluginUninstallCleanupError(
             getErrorMessage(error, 'Failed to uninstall plugin alias'),
             { cause: error }
@@ -2066,6 +2343,38 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             )
           }
         }
+      }
+      const after = await readState({ mergeAllMarketplaces: true, refresh: true })
+      const stillInstalled =
+        after.installedPlugins.some(plugin => {
+          if (plugin.spec.installState !== 'installed') return false
+          const marketplace =
+            plugin.spec.source.marketplace ||
+            plugin.spec.source.providerKey ||
+            (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+              ? plugin.spec.sourcePayload.marketplaceName
+              : plugin.metadata.namespace)
+          return (
+            plugin.spec.source.pluginKey === pluginName &&
+            (!marketplaceName ||
+              pluginMarketplaceIdentity(pluginName, String(marketplace || '')) ===
+                pluginMarketplaceIdentity(pluginName, marketplaceName))
+          )
+        }) ||
+        after.marketplaceItems.some(
+          item =>
+            item.installed &&
+            item.name === pluginName &&
+            (!marketplaceName ||
+              pluginMarketplaceIdentity(
+                item.name,
+                typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
+              ) === pluginMarketplaceIdentity(pluginName, marketplaceName))
+        )
+      if (stillInstalled) {
+        throw new Error(
+          `Plugin "${pluginName}" is still installed after uninstall; tried ids: ${pluginIds.join(', ')}`
+        )
       }
     },
   }
