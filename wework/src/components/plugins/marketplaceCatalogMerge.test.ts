@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
+  mergeDiskPersonalIntoLocalRows,
   mergeMarketplaceCatalog,
   shouldShowInstalledMarketplaceActions,
 } from './marketplaceCatalogMerge'
@@ -126,5 +127,143 @@ describe('mergeMarketplaceCatalog', () => {
   test('keeps local installed actions available while signed out', () => {
     expect(shouldShowInstalledMarketplaceActions(localCatalogPlugin(), false)).toBe(true)
     expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)
+  })
+
+  test('marks a cloud row installed from account InstalledPlugin when catalog lags', () => {
+    const cloudInstalled: InstalledPlugin = {
+      apiVersion: 'wegent.ai/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'weibo-api-wiki', namespace: 'default', labels: { id: '267433' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'weibo-api-wiki',
+          marketplace: 'wegent',
+        },
+        pluginId: 4,
+        releaseId: 6,
+        installState: 'installed',
+        enabled: true,
+        displayName: '微博小程序H5开发助手',
+        description: '',
+        componentStates: {},
+        components,
+        interface: null,
+        packageRef: null,
+        sourcePayload: {},
+      },
+      status: { state: 'enabled' },
+    }
+
+    const merged = mergeMarketplaceCatalog([cloudPlugin()], [], [cloudInstalled])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 4,
+      installed: true,
+      installedPluginId: '267433',
+      enabled: true,
+    })
+    expect(shouldShowInstalledMarketplaceActions(merged[0], true)).toBe(true)
+  })
+})
+
+describe('mergeDiskPersonalIntoLocalRows', () => {
+  test('uses disk personal rows when Codex local rows are empty', () => {
+    const disk = [{ ...localCatalogPlugin(), id: 'personal-disk:notes', name: 'notes' }]
+    expect(mergeDiskPersonalIntoLocalRows([], disk)).toEqual(disk)
+  })
+
+  test('keeps Codex rows and appends disk-only personal plugins', () => {
+    const diskOnly = {
+      ...localCatalogPlugin(),
+      id: 'personal-disk:notes',
+      name: 'notes',
+      displayName: 'Notes',
+    }
+    const merged = mergeDiskPersonalIntoLocalRows(
+      [localCatalogPlugin()],
+      [localCatalogPlugin(), diskOnly]
+    )
+    expect(merged.map(item => item.name).sort()).toEqual(['dev-tools', 'notes'])
+  })
+
+  test('collapses Codex and disk copies of the same personal plugin', () => {
+    const codex = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools',
+      description: 'Use developer tools in Codex.',
+      author: 'Local developer',
+      installed: false,
+      installedPluginId: null,
+      installedLocally: false,
+    }
+    const disk = {
+      ...localCatalogPlugin(),
+      id: 'personal-disk:dev-tools',
+      description: 'Developer tools plugin with IP geolocation lookup.',
+      author: null,
+      sourceLabel: '个人分享',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'dev-tools@wework-personal',
+    }
+    const merged = mergeDiskPersonalIntoLocalRows([codex], [disk])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'dev-tools',
+      description: 'Use developer tools in Codex.',
+      author: 'Local developer',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'dev-tools@wework-personal',
+    })
+  })
+
+  test('collapses personal and wework-personal aliases for the same plugin name', () => {
+    const legacyPersonal = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools@personal',
+      manifest: { marketplaceId: 'personal' },
+      installed: false,
+      installedPluginId: null,
+      installedLocally: false,
+    }
+    const disk = {
+      ...localCatalogPlugin(),
+      id: 'personal-disk:dev-tools',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'dev-tools@wework-personal',
+    }
+    const merged = mergeDiskPersonalIntoLocalRows([legacyPersonal], [disk])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.installed).toBe(true)
+  })
+})
+
+describe('mergeMarketplaceCatalog personal dedupe', () => {
+  test('keeps a single personal slot when Codex and disk rows both arrive', () => {
+    const codex = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools',
+      author: 'Local developer',
+      installed: false,
+      installedPluginId: null,
+    }
+    const disk = {
+      ...localCatalogPlugin(),
+      id: 'personal-disk:dev-tools',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'dev-tools@wework-personal',
+    }
+    const merged = mergeMarketplaceCatalog([], [codex, disk], [])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'dev-tools',
+      installed: true,
+      installedPluginId: 'dev-tools@wework-personal',
+    })
   })
 })

@@ -5182,6 +5182,9 @@ async function verifyMarketplacePluginLifecycle({
       'The installed plugin card did not reappear under its marketplace tab'
     )
   }
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   await control.command('waitFor', trySelector, {

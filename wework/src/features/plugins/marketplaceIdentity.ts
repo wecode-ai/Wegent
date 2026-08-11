@@ -2,9 +2,14 @@ import { CODEX_PERSONAL_MARKETPLACE_ID, WEWORK_PERSONAL_MARKETPLACE_ID } from '.
 
 export const INTERNAL_DEVICE_MARKETPLACE_ID = 'wegent'
 
+// Keep in sync with executor plugin_source_priority official OpenAI sources.
+// Do not use an openai-* prefix match; that is too broad for non-marketplace ids.
 const OPENAI_OFFICIAL_MARKETPLACE_IDS = new Set([
   'openai-api-curated',
   'openai-bundled',
+  'openai-curated',
+  'openai-curated-remote',
+  'openai-official',
   'openai-primary-runtime',
 ])
 
