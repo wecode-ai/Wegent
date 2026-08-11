@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 
 interface CapturedRequest {
   timestamp: string
@@ -475,6 +476,85 @@ function writeAnthropicStreamingResponse(
   sendChunk()
 }
 
+function writeAnthropicStreamingToolCalls(
+  res: http.ServerResponse,
+  request: ModelRequest | null,
+  model: string,
+  toolCalls: ToolCallRule[]
+): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  writeAnthropicSseEvent(res, 'message_start', {
+    type: 'message_start',
+    message: {
+      id: `msg_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      model,
+      content: [],
+      stop_reason: null,
+      usage: { input_tokens: 100, output_tokens: 0 },
+    },
+  })
+  toolCalls.forEach((toolCall, index) => {
+    writeAnthropicSseEvent(res, 'content_block_start', {
+      type: 'content_block_start',
+      index,
+      content_block: {
+        type: 'tool_use',
+        id: `toolu_${Date.now()}_${index}`,
+        name: resolveToolName(request, toolCall.toolName),
+        input: {},
+      },
+    })
+    writeAnthropicSseEvent(res, 'content_block_delta', {
+      type: 'content_block_delta',
+      index,
+      delta: {
+        type: 'input_json_delta',
+        partial_json: JSON.stringify(toolCall.arguments),
+      },
+    })
+    writeAnthropicSseEvent(res, 'content_block_stop', {
+      type: 'content_block_stop',
+      index,
+    })
+  })
+  writeAnthropicSseEvent(res, 'message_delta', {
+    type: 'message_delta',
+    delta: { stop_reason: 'tool_use', stop_sequence: null },
+    usage: { output_tokens: toolCalls.length * 10 },
+  })
+  writeAnthropicSseEvent(res, 'message_stop', { type: 'message_stop' })
+  res.end()
+}
+
+function writeAnthropicJsonToolCalls(
+  res: http.ServerResponse,
+  request: ModelRequest | null,
+  model: string,
+  toolCalls: ToolCallRule[]
+): void {
+  writeJson(res, 200, {
+    id: `msg_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model,
+    content: toolCalls.map((toolCall, index) => ({
+      type: 'tool_use',
+      id: `toolu_${Date.now()}_${index}`,
+      name: resolveToolName(request, toolCall.toolName),
+      input: toolCall.arguments,
+    })),
+    stop_reason: 'tool_use',
+    stop_sequence: null,
+    usage: { input_tokens: 100, output_tokens: toolCalls.length * 10 },
+  })
+}
+
 function writeAnthropicJsonResponse(
   res: http.ServerResponse,
   content: string,
@@ -541,6 +621,10 @@ const server = http.createServer((req, res) => {
     }
     if (contextToken) {
       console.log(`Context token: ${contextToken}`)
+    }
+
+    if (handleProviderMcpHttpRequest(req, res, body, PORT)) {
+      return
     }
 
     // Check for image_url in messages
@@ -636,9 +720,28 @@ const server = http.createServer((req, res) => {
         input_tokens: Math.max(1, Math.ceil(getRequestText(parsedBody).length / 4)),
       })
     } else if (req.url?.includes('/messages')) {
+      const toolScenario = findToolScenario(parsedBody)
+      if (toolScenario && parsedBody) {
+        toolScenario.capturedRequests.push(parsedBody)
+      }
+      const scenarioStep = toolScenario?.steps[toolScenario.nextStep]
+      if (toolScenario && scenarioStep) {
+        toolScenario.nextStep += 1
+        if (scenarioStep.toolCalls?.length) {
+          const model = parsedBody?.model || 'mock-claude'
+          if (parsedBody?.stream === true) {
+            writeAnthropicStreamingToolCalls(res, parsedBody, model, scenarioStep.toolCalls)
+          } else {
+            writeAnthropicJsonToolCalls(res, parsedBody, model, scenarioStep.toolCalls)
+          }
+          return
+        }
+      }
       const streamRule = findStreamRule(parsedBody)
       const responseContent =
-        streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
+        scenarioStep?.responseContent ||
+        streamRule?.responseContent ||
+        buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-claude'
       const isStreaming = parsedBody?.stream === true
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
@@ -745,6 +848,7 @@ const server = http.createServer((req, res) => {
         capturedCount: capturedRequests.length,
         streamRuleCount: streamRules.length,
         toolScenarioCount: toolScenarios.length,
+        mcpToolCallCount: providerMcpToolCallCount(),
       })
     } else {
       // Default response
@@ -773,6 +877,9 @@ server.listen(PORT, () => {
 ║    POST /tool-scenarios      - Add a tool-call scenario    ║
 ║    GET  /tool-scenarios      - View one tool-call scenario ║
 ║    DELETE /tool-scenarios    - Clear tool-call scenarios   ║
+║    POST /mcp                 - Mock Streamable HTTP MCP    ║
+║    GET  /mcp-control/calls   - View provider tool calls    ║
+║    POST /mcp-control/reset   - Reset provider state        ║
 ║    GET  /health              - Health check                ║
 ║                                                            ║
 ║  Configure your model to use:                              ║

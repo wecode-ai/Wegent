@@ -77,7 +77,15 @@ export async function createProviderNativeKnowledgeFixture(
     knowledgeBase.id,
     requirements.id,
     'Doc-A1_新版方案.md',
-    `# 新版方案\n\n唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.a1}\``
+    [
+      '# 新版方案',
+      '',
+      `唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.a1}\``,
+      '',
+      '结论：采用 Provider 原生能力，减少后端聚合逻辑。',
+      '',
+      '核心设计第 5 点：Chat Shell 与 ClaudeCode 使用相同的 selected_knowledge_sources 提示词结构。',
+    ].join('\n')
   )
   const a2 = await createDocument(
     request,
@@ -86,7 +94,7 @@ export async function createProviderNativeKnowledgeFixture(
     knowledgeBase.id,
     history.id,
     'Doc-A2_旧版方案.md',
-    `# 旧版方案\n\n唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.a2}\``
+    `# 旧版方案\n\n唯一断言标记：\`${PROVIDER_NATIVE_MARKERS.a2}\`\n\n结论：由统一知识控制面聚合检索结果。`
   )
   const a3 = await createDocument(
     request,

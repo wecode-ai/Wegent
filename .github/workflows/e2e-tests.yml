@@ -372,6 +372,16 @@ jobs:
           pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
+      - name: Run Provider-native E2E tests serially
+        if: matrix.shardIndex == 1
+        working-directory: ./frontend
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          CI: true
+        run: pnpm exec playwright test --project=provider-native-chromium --workers=1
+
       - name: Stop Mock Model Server
         if: always()
         working-directory: ./frontend

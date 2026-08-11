@@ -49,6 +49,42 @@ export class ProviderNativeKnowledgePage {
     await this.closePicker()
   }
 
+  async selectDingTalkDocuments(nodeIds: string[]): Promise<void> {
+    await this.openDingTalkSource('wikispace')
+    await this.page.getByTestId('knowledge-picker-dingtalk-space-space-d').click()
+    for (const nodeId of nodeIds) {
+      const node = this.page.getByTestId(`knowledge-picker-dingtalk-node-wikispace-${nodeId}`)
+      await expect(node).toBeVisible()
+      await node.click()
+    }
+    await this.closePicker()
+  }
+
+  async selectDingTalkFolder(nodeId: string): Promise<void> {
+    await this.openDingTalkSource('wikispace')
+    await this.page.getByTestId('knowledge-picker-dingtalk-space-space-d').click()
+    const control = this.page.getByTestId(
+      `knowledge-picker-dingtalk-node-select-wikispace-${nodeId}`
+    )
+    await expect(control).toBeVisible()
+    await control.click()
+    await this.closePicker()
+  }
+
+  async selectDingTalkSpace(): Promise<void> {
+    await this.openDingTalkSource('wikispace')
+    await this.page.getByTestId('knowledge-picker-dingtalk-space-select-space-d').click()
+    await this.closePicker()
+  }
+
+  async selectDingTalkMyDocument(nodeId: string): Promise<void> {
+    await this.openDingTalkSource('docs')
+    const node = this.page.getByTestId(`knowledge-picker-dingtalk-node-docs-${nodeId}`)
+    await expect(node).toBeVisible()
+    await node.click()
+    await this.closePicker()
+  }
+
   async sendMessage(message: string): Promise<void> {
     const input = this.page.getByTestId('message-input')
     await expect(input).toBeVisible()
@@ -76,6 +112,14 @@ export class ProviderNativeKnowledgePage {
     await this.openPicker()
     await this.searchKnowledgeBase(knowledgeBaseId, knowledgeBaseName)
     await this.page.getByTestId(`knowledge-picker-kb-${knowledgeBaseId}`).click()
+  }
+
+  private async openDingTalkSource(source: 'docs' | 'wikispace'): Promise<void> {
+    await this.openPicker()
+    await this.page.getByTestId('knowledge-picker-dingtalk-parent').click()
+    const sourceButton = this.page.getByTestId(`knowledge-picker-dingtalk-${source}`)
+    await expect(sourceButton).toBeVisible()
+    await sourceButton.click()
   }
 
   private async searchKnowledgeBase(

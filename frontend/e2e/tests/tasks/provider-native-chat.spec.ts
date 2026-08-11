@@ -113,7 +113,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
   })
 
   test('E2E-A2-001 selects a whole Wegent knowledge base', async ({ page, request }) => {
-    const prompt = `${TEST_PREFIX} 先列出所选知识库的全部文档并逐份读取，按文档标题原样输出每份文档的唯一断言标记。`
+    const prompt = `${TEST_PREFIX} 输出所选知识库中每份文档的标题和唯一断言标记。`
     const selectedDocuments = [fixture.documents.a1, fixture.documents.a2, fixture.documents.a3]
     const expectedMarkers = [
       PROVIDER_NATIVE_MARKERS.a1,
@@ -135,7 +135,11 @@ test.describe('Provider-native Wegent knowledge access', () => {
           arguments: { document_id: document.id },
         })),
       },
-      { responseContent: expectedMarkers.join(' ') },
+      {
+        responseContent: selectedDocuments
+          .map((document, index) => `${document.name} ${expectedMarkers[index]}`)
+          .join('\n'),
+      },
     ])
 
     const knowledgePage = new ProviderNativeKnowledgePage(page)
@@ -177,12 +181,15 @@ test.describe('Provider-native Wegent knowledge access', () => {
       [fixture.documents.a2.id, PROVIDER_NATIVE_MARKERS.a2],
       [fixture.documents.a3.id, PROVIDER_NATIVE_MARKERS.a3],
     ])
-    expectFinalAnswer(evidence.finalAnswer, expectedMarkers)
+    selectedDocuments.forEach((document, index) => {
+      expect(evidence.finalAnswer).toContain(document.name)
+      expect(evidence.finalAnswer).toContain(expectedMarkers[index])
+    })
     await expectMarkers(page, expectedMarkers)
   })
 
   test('E2E-A2-002 selects a folder including descendants', async ({ page, request }) => {
-    const prompt = `${TEST_PREFIX} 只在所选文件夹及其后代中，分别读取新版方案和旧版方案，原样输出两份文档的唯一断言标记和结论；不要读取其他文档。`
+    const prompt = `${TEST_PREFIX} 输出新版方案和旧版方案的唯一断言标记与结论。`
     await configureToolScenario(request, prompt, [
       {
         toolCalls: [
@@ -202,7 +209,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
         })),
       },
       {
-        responseContent: `${PROVIDER_NATIVE_MARKERS.a1} ${PROVIDER_NATIVE_MARKERS.a2}`,
+        responseContent: `${fixture.documents.a1.name} ${PROVIDER_NATIVE_MARKERS.a1} 结论：采用 Provider 原生能力。 ${fixture.documents.a2.name} ${PROVIDER_NATIVE_MARKERS.a2} 结论：统一知识控制面聚合。`,
       },
     ])
 
@@ -248,10 +255,10 @@ test.describe('Provider-native Wegent knowledge access', () => {
       [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
       [fixture.documents.a2.id, PROVIDER_NATIVE_MARKERS.a2],
     ])
-    expectFinalAnswer(evidence.finalAnswer, [
-      PROVIDER_NATIVE_MARKERS.a1,
-      PROVIDER_NATIVE_MARKERS.a2,
-    ])
+    expect(evidence.finalAnswer).toContain(PROVIDER_NATIVE_MARKERS.a1)
+    expect(evidence.finalAnswer).toContain('采用 Provider 原生能力')
+    expect(evidence.finalAnswer).toContain(PROVIDER_NATIVE_MARKERS.a2)
+    expect(evidence.finalAnswer).toContain('统一知识控制面聚合')
     await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1, PROVIDER_NATIVE_MARKERS.a2])
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a3
@@ -262,7 +269,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
   })
 
   test('E2E-A2-003 selects one exact document', async ({ page, request }) => {
-    const prompt = `${TEST_PREFIX} 只读取所选文档，原样输出“唯一断言标记”，不要搜索或读取其他文档。`
+    const prompt = `${TEST_PREFIX} 输出唯一断言标记。`
     await configureToolScenario(request, prompt, [
       {
         toolCalls: [
@@ -320,7 +327,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
   })
 
   test('E2E-A2-004 groups multiple documents under one source', async ({ page, request }) => {
-    const prompt = `${TEST_PREFIX} 只读取所选的两份文档，按标题原样输出各自的唯一断言标记；不要读取其他文档。`
+    const prompt = `${TEST_PREFIX} 按标题输出各自的唯一断言标记。`
     await configureToolScenario(request, prompt, [
       {
         toolCalls: [fixture.documents.a1, fixture.documents.a3].map(document => ({
@@ -329,7 +336,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
         })),
       },
       {
-        responseContent: `${PROVIDER_NATIVE_MARKERS.a1} ${PROVIDER_NATIVE_MARKERS.a3}`,
+        responseContent: `${fixture.documents.a1.name} ${PROVIDER_NATIVE_MARKERS.a1}\n${fixture.documents.a3.name} ${PROVIDER_NATIVE_MARKERS.a3}`,
       },
     ])
 
@@ -366,10 +373,10 @@ test.describe('Provider-native Wegent knowledge access', () => {
       [fixture.documents.a1.id, PROVIDER_NATIVE_MARKERS.a1],
       [fixture.documents.a3.id, PROVIDER_NATIVE_MARKERS.a3],
     ])
-    expectFinalAnswer(evidence.finalAnswer, [
-      PROVIDER_NATIVE_MARKERS.a1,
-      PROVIDER_NATIVE_MARKERS.a3,
-    ])
+    expect(evidence.finalAnswer).toContain(fixture.documents.a1.name)
+    expect(evidence.finalAnswer).toContain(PROVIDER_NATIVE_MARKERS.a1)
+    expect(evidence.finalAnswer).toContain(fixture.documents.a3.name)
+    expect(evidence.finalAnswer).toContain(PROVIDER_NATIVE_MARKERS.a3)
     await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1, PROVIDER_NATIVE_MARKERS.a3])
     await expect(page.getByTestId('messages-container')).not.toContainText(
       PROVIDER_NATIVE_MARKERS.a2
