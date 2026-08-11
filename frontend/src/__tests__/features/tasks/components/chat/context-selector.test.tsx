@@ -10,19 +10,8 @@ import type { ContextItem } from '@/types/context'
 
 type ContextSelectorProps = ComponentProps<typeof ContextSelectorBase>
 
-function ContextSelector({
-  onReplaceContexts,
-  ...props
-}: Omit<ContextSelectorProps, 'onReplaceContexts'> & {
-  onReplaceContexts?: ContextSelectorProps['onReplaceContexts']
-}) {
-  const replaceContexts =
-    onReplaceContexts ??
-    ((idsToRemove, contextsToAdd) => {
-      idsToRemove.forEach(id => props.onDeselect(id))
-      contextsToAdd.forEach(context => props.onSelect(context))
-    })
-  return <ContextSelectorBase {...props} onReplaceContexts={replaceContexts} />
+function ContextSelector(props: ContextSelectorProps) {
+  return <ContextSelectorBase {...props} />
 }
 
 const mockListKnowledgeBases = jest.fn()
@@ -36,9 +25,10 @@ const mockGetDingTalkSyncStatus = jest.fn()
 const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
 
+const mockT = (key: string) => key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: mockT,
   }),
 }))
 
@@ -231,6 +221,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -255,6 +246,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -269,6 +261,7 @@ describe('ContextSelector organization grouping', () => {
 
   it('opens an internal knowledge base without selecting it and uses a separate scope control', async () => {
     const onSelect = jest.fn()
+    const onReplaceContexts = jest.fn()
 
     render(
       <ContextSelector
@@ -277,6 +270,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -297,12 +291,9 @@ describe('ContextSelector organization grouping', () => {
 
     expect(onSelect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 1,
-        name: 'Org KB',
-        type: 'knowledge_base',
-      })
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [expect.objectContaining({ id: 1, name: 'Org KB', type: 'knowledge_base' })]
     )
     await waitFor(() => {
       expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
@@ -337,6 +328,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -390,6 +382,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -399,7 +392,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-source-group')).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId('knowledge-picker-source-group')).toHaveTextContent('2')
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-group')).toHaveTextContent('2')
+    })
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-group-empty-group')).toBeInTheDocument()
@@ -416,6 +411,7 @@ describe('ContextSelector organization grouping', () => {
 
   it('shows group-chat bound knowledge bases even though they are filtered from normal lists', async () => {
     const onSelect = jest.fn()
+    const onReplaceContexts = jest.fn()
     mockGetBoundKnowledgeBases.mockResolvedValue({
       items: [
         {
@@ -450,6 +446,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
         taskId={42}
         isGroupChat={true}
       >
@@ -465,12 +462,9 @@ describe('ContextSelector organization grouping', () => {
     fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
     expect(onSelect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-77'))
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 77,
-        name: 'Bound KB',
-        type: 'knowledge_base',
-      })
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [expect.objectContaining({ id: 77, name: 'Bound KB', type: 'knowledge_base' })]
     )
   })
 
@@ -500,6 +494,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -724,6 +719,59 @@ describe('ContextSelector organization grouping', () => {
     expect(onReplaceContexts).toHaveBeenCalledWith([1], [])
   })
 
+  it('preserves disjoint folder scopes when removing an effectively selected folder', async () => {
+    const onReplaceContexts = jest.fn()
+    mockGetFolderTree.mockResolvedValue([
+      { id: 10, name: 'Specs', children: [] },
+      { id: 20, name: 'Guides', children: [] },
+    ])
+    mockListDocuments.mockResolvedValue({
+      items: [
+        { id: 101, name: 'API.md', folder_id: 10 },
+        { id: 102, name: 'Guide.md', folder_id: 20 },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[
+          {
+            id: 1,
+            name: 'Org KB',
+            type: 'knowledge_base',
+            scope_restricted: true,
+            folder_ids: [10, 20],
+            folder_names: ['Specs', 'Guides'],
+            include_subfolders: true,
+          },
+        ]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    fireEvent.click(await screen.findByTestId('knowledge-picker-source-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-folder-scope-10'))
+
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [1],
+      [
+        expect.objectContaining({
+          folder_ids: [20],
+          folder_names: ['Guides'],
+          include_subfolders: true,
+          document_ids: [102],
+        }),
+      ]
+    )
+  })
+
   it('allows removing a child document from an inherited folder selection', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
@@ -905,6 +953,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -941,6 +990,7 @@ describe('ContextSelector organization grouping', () => {
       folder_id: 0,
     }))
     const onSelect = jest.fn()
+    const onReplaceContexts = jest.fn()
 
     mockListDocuments.mockClear()
     mockListDocuments
@@ -966,6 +1016,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -995,14 +1046,17 @@ describe('ContextSelector organization grouping', () => {
     })
     fireEvent.click(screen.getByTestId('knowledge-picker-document-node-document-201'))
 
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 1,
-        type: 'knowledge_base',
-        scope_restricted: true,
-        document_ids: [201],
-        document_names: ['Beyond First Page.md'],
-      })
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          id: 1,
+          type: 'knowledge_base',
+          scope_restricted: true,
+          document_ids: [201],
+          document_names: ['Beyond First Page.md'],
+        }),
+      ]
     )
   })
 
@@ -1024,6 +1078,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -1118,6 +1173,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
         onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
@@ -1202,6 +1258,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
         onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
@@ -1288,6 +1345,7 @@ describe('ContextSelector organization grouping', () => {
         ]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>

@@ -13,19 +13,8 @@ import type { ExternalKbNode, ExternalKnowledgeBase } from '@/types/external-kno
 
 type ContextSelectorProps = ComponentProps<typeof ContextSelectorBase>
 
-function ContextSelector({
-  onReplaceContexts,
-  ...props
-}: Omit<ContextSelectorProps, 'onReplaceContexts'> & {
-  onReplaceContexts?: ContextSelectorProps['onReplaceContexts']
-}) {
-  const replaceContexts =
-    onReplaceContexts ??
-    ((idsToRemove, contextsToAdd) => {
-      idsToRemove.forEach(id => props.onDeselect(id))
-      contextsToAdd.forEach(context => props.onSelect(context))
-    })
-  return <ContextSelectorBase {...props} onReplaceContexts={replaceContexts} />
+function ContextSelector(props: ContextSelectorProps) {
+  return <ContextSelectorBase {...props} />
 }
 
 const mockListKnowledgeBases = jest.fn()
@@ -35,10 +24,11 @@ const mockUseKnowledgeBaseOptions = jest.fn()
 const mockListFakeKnowledgeBases = jest.fn()
 const mockListFakeNodes = jest.fn()
 
+const mockT = (key: string, fallback?: string | Record<string, unknown>) =>
+  typeof fallback === 'string' ? fallback : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : key,
+    t: mockT,
   }),
 }))
 
@@ -198,6 +188,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -242,6 +233,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -286,6 +278,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -322,6 +315,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
 
   it('writes a full ExternalKnowledgeRef (incl. mode/scope) onto the selectedContexts channel', async () => {
     const onSelect = jest.fn()
+    const onReplaceContexts = jest.fn()
     render(
       <ContextSelector
         open={true}
@@ -329,6 +323,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -356,20 +351,22 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     })
     expect(onSelect).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
-    expect(onSelect).toHaveBeenCalledTimes(1)
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'external_knowledge',
-        id: 'external:fake-provider:explicit:lib-1',
-        name: 'Fake Lib',
-        ref: {
-          provider: FAKE_PROVIDER,
-          mode: 'explicit',
-          id: 'lib-1',
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          type: 'external_knowledge',
+          id: 'external:fake-provider:explicit:lib-1',
           name: 'Fake Lib',
-          scope: 'organization',
-        },
-      })
+          ref: {
+            provider: FAKE_PROVIDER,
+            mode: 'explicit',
+            id: 'lib-1',
+            name: 'Fake Lib',
+            scope: 'organization',
+          },
+        }),
+      ]
     )
   })
 
@@ -560,6 +557,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -622,6 +620,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         selectedContexts={[]}
         onSelect={onSelect}
         onDeselect={jest.fn()}
+        onReplaceContexts={jest.fn()}
       >
         <button>trigger</button>
       </ContextSelector>

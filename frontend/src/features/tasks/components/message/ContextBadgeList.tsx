@@ -82,19 +82,39 @@ interface MessageContextGroup {
 export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageContextGroup[] {
   const groups: MessageContextGroup[] = []
   const groupIndexes = new Map<string, number>()
+  const wholeExternalScopes = new Set(
+    contexts.flatMap(context => {
+      const isWholeKnowledgeBase =
+        context.context_type === 'external_knowledge' &&
+        context.external_provider &&
+        context.external_mode &&
+        (!context.external_target_type || context.external_target_type === 'knowledge_base')
+      return isWholeKnowledgeBase
+        ? [
+            `external:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}`,
+          ]
+        : []
+    })
+  )
 
   for (const context of contexts) {
     const isExternalKnowledge =
       context.context_type === 'external_knowledge' &&
       context.external_provider &&
       context.external_mode
-    const key = isExternalKnowledge
+    const externalScopeKey = isExternalKnowledge
       ? `external:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}`
-      : `${context.context_type}:${context.id}`
-    const existingIndex = groupIndexes.get(key)
+      : undefined
     const isWholeKnowledgeBase =
       isExternalKnowledge &&
       (!context.external_target_type || context.external_target_type === 'knowledge_base')
+    if (externalScopeKey && !isWholeKnowledgeBase && wholeExternalScopes.has(externalScopeKey)) {
+      continue
+    }
+    const key = isExternalKnowledge
+      ? `${externalScopeKey}:${context.name}`
+      : `${context.context_type}:${context.id}`
+    const existingIndex = groupIndexes.get(key)
     const folderCount = isExternalKnowledge && context.external_target_type === 'folder' ? 1 : 0
     const documentCount = isExternalKnowledge && context.external_target_type === 'document' ? 1 : 0
 
@@ -345,9 +365,7 @@ function ExternalKnowledgeBadge({
     source => source.providerId === context.external_provider
   )
   const scopeLabel =
-    folderCount > 0 || documentCount > 0
-      ? formatCompactKnowledgeScope(folderCount, documentCount, t)
-      : undefined
+    documentCount > 0 ? formatCompactKnowledgeScope(folderCount, documentCount, t) : undefined
   const sourceLabel = context.external_provider
     ? getExternalKnowledgeSourceLabel(context.external_provider, externalSource)
     : undefined

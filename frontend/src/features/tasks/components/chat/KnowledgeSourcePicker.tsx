@@ -22,6 +22,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
@@ -58,7 +59,24 @@ import {
   DingTalkWikispaceRows,
   useDingTalkKnowledgeSelection,
 } from './DingTalkKnowledgePicker'
+import {
+  InternalDocumentNode,
+  InternalDocumentSearchResults,
+} from './InternalKnowledgeDocumentTree'
 import { KnowledgeSelectionControl } from './KnowledgeSelectionControl'
+import {
+  buildExternalContextId,
+  collectExternalDocuments,
+  collectInternalDocuments,
+  countSelectedInternalDocuments,
+  findInternalDocumentNode,
+  findInternalFolderNode,
+  getEffectiveInternalDocuments,
+  isCoveredBySelectedAncestorFolder,
+  toExternalDocumentContext,
+  toExternalKnowledgeBaseRef,
+  type InternalTreeNode,
+} from './knowledgeSourcePickerHelpers'
 
 export interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
@@ -113,18 +131,6 @@ interface ActiveExternalKnowledgeBase {
 
 type ActiveKnowledgeBase = ActiveInternalKnowledgeBase | ActiveExternalKnowledgeBase
 
-interface InternalTreeNode {
-  id: string
-  name: string
-  type: 'folder' | 'document'
-  folderId?: number
-  document?: KnowledgeDocument
-  path: string[]
-  folderPathIds: number[]
-  documentCount: number
-  children: InternalTreeNode[]
-}
-
 interface KnowledgeContextScopeInput {
   documents?: KnowledgeDocument[]
   folderIds?: number[]
@@ -157,15 +163,6 @@ function toKnowledgeContext(
     include_subfolders: folderIds.length > 0 ? (scope.includeSubfolders ?? true) : undefined,
     scope_restricted: scopeRestricted,
   }
-}
-
-function buildExternalContextId(ref: ExternalKnowledgeRef) {
-  const targetType = ref.target_type ?? 'knowledge_base'
-  if (targetType !== 'knowledge_base') {
-    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
-    return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
-  }
-  return `external:${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 function supportsExternalKnowledgeBaseSelection(source: ExternalKnowledgeSource) {
@@ -201,12 +198,6 @@ export function countSelectedExternalKnowledgeBaseIds(
   })
 
   return selectedIds.size
-}
-
-function stripTypedExternalId(value?: string | null) {
-  if (!value) return undefined
-  const index = value.indexOf(':')
-  return index >= 0 ? value.slice(index + 1) : value
 }
 
 function groupMatchesSearch(text: string, query: string) {
@@ -319,44 +310,6 @@ function flattenInternalSearchResults(nodes: InternalTreeNode[]) {
   return result
 }
 
-function collectInternalDocuments(node: InternalTreeNode): KnowledgeDocument[] {
-  if (node.document) return [node.document]
-  return node.children.flatMap(collectInternalDocuments)
-}
-
-function findInternalDocumentNode(
-  nodes: InternalTreeNode[],
-  documentId: number
-): InternalTreeNode | undefined {
-  for (const node of nodes) {
-    if (node.document?.id === documentId) return node
-    const match = findInternalDocumentNode(node.children, documentId)
-    if (match) return match
-  }
-  return undefined
-}
-
-function getEffectiveInternalDocuments(
-  existing: KnowledgeBaseContext,
-  tree: InternalTreeNode[],
-  documents: KnowledgeDocument[]
-): KnowledgeDocument[] {
-  if (!existing.scope_restricted) return documents
-
-  const selectedDocumentIds = new Set(existing.document_ids ?? [])
-  const selectedFolderIds = new Set(existing.folder_ids ?? [])
-  const selectedByFolder = tree
-    .flatMap(function collectSelectedFolderDocuments(node): KnowledgeDocument[] {
-      if (node.type === 'folder' && node.folderId && selectedFolderIds.has(node.folderId)) {
-        return collectInternalDocuments(node)
-      }
-      return node.children.flatMap(collectSelectedFolderDocuments)
-    })
-    .map(document => document.id)
-  selectedByFolder.forEach(id => selectedDocumentIds.add(id))
-  return documents.filter(document => selectedDocumentIds.has(document.id))
-}
-
 function flattenExternalDocuments(nodes: ExternalKbNode[]) {
   const result: Array<{ node: ExternalKbNode; path: string[] }> = []
 
@@ -372,11 +325,6 @@ function flattenExternalDocuments(nodes: ExternalKbNode[]) {
 
   nodes.forEach(node => walk(node, []))
   return result
-}
-
-function collectExternalDocuments(node: ExternalKbNode): ExternalKbNode[] {
-  if (node.node_type !== 'folder') return [node]
-  return (node.children ?? []).flatMap(collectExternalDocuments)
 }
 
 function countExternalDocuments(node: ExternalKbNode): number {
@@ -416,61 +364,6 @@ function getExternalScopeLabel(
   return scope.key
 }
 
-function hasSelectedInternalDocument(node: InternalTreeNode, selectedDocIds: Set<number>): boolean {
-  if (node.document) {
-    return selectedDocIds.has(node.document.id)
-  }
-  return node.children.some(child => hasSelectedInternalDocument(child, selectedDocIds))
-}
-
-function hasSelectedInternalFolder(
-  node: InternalTreeNode,
-  selectedFolderIds: Set<number>
-): boolean {
-  if (
-    node.type === 'folder' &&
-    node.folderId !== undefined &&
-    selectedFolderIds.has(node.folderId)
-  ) {
-    return true
-  }
-  return node.children.some(child => hasSelectedInternalFolder(child, selectedFolderIds))
-}
-
-function isCoveredBySelectedAncestorFolder(
-  node: InternalTreeNode,
-  selectedFolderIds: Set<number>
-): boolean {
-  const ancestorFolderIds =
-    node.type === 'folder' ? node.folderPathIds.slice(0, -1) : node.folderPathIds
-  return ancestorFolderIds.some(folderId => selectedFolderIds.has(folderId))
-}
-
-function countSelectedInternalDocuments(
-  node: InternalTreeNode,
-  wholeKnowledgeBaseSelected: boolean,
-  selectedDocIds: Set<number>,
-  selectedFolderIds: Set<number>
-): number {
-  const inheritedSelected =
-    wholeKnowledgeBaseSelected ||
-    isCoveredBySelectedAncestorFolder(node, selectedFolderIds) ||
-    Boolean(node.folderId && selectedFolderIds.has(node.folderId))
-  if (inheritedSelected) return node.documentCount
-  if (node.document) return selectedDocIds.has(node.document.id) ? 1 : 0
-  return node.children.reduce(
-    (total, child) =>
-      total +
-      countSelectedInternalDocuments(
-        child,
-        wholeKnowledgeBaseSelected,
-        selectedDocIds,
-        selectedFolderIds
-      ),
-    0
-  )
-}
-
 function hasSelectedExternalDocument(node: ExternalKbNode, selectedNodeIds: Set<string>): boolean {
   if (node.node_type !== 'folder') {
     return selectedNodeIds.has(node.node_id)
@@ -490,21 +383,6 @@ function getKnowledgeContext(
     (ctx): ctx is KnowledgeBaseContext =>
       ctx.type === 'knowledge_base' && ctx.id === knowledgeBaseId
   )
-}
-
-function toExternalKnowledgeBaseRef(
-  source: ExternalKnowledgeSource,
-  knowledgeBase: ExternalKnowledgeBase
-): ExternalKnowledgeRef {
-  return source.toRef
-    ? source.toRef(knowledgeBase)
-    : {
-        provider: source.providerId,
-        mode: 'explicit',
-        id: knowledgeBase.knowledge_base_id,
-        name: knowledgeBase.knowledge_base_name,
-        scope: knowledgeBase.scope ?? undefined,
-      }
 }
 
 function getExternalContext(
@@ -544,27 +422,6 @@ function getExternalChildContexts(
       Boolean(ctx.ref.target_type) &&
       ctx.ref.target_type !== 'knowledge_base'
   )
-}
-
-function toExternalDocumentContext(
-  source: ExternalKnowledgeSource,
-  kb: ExternalKnowledgeBase,
-  node: ExternalKbNode
-): ExternalKnowledgeContext {
-  const ref: ExternalKnowledgeRef = {
-    ...toExternalKnowledgeBaseRef(source, kb),
-    target_type: 'document',
-    node_id: node.node_id,
-    document_id: stripTypedExternalId(node.raw_id ?? node.node_id),
-    parent_id: stripTypedExternalId(node.parent_id),
-    target_name: node.name,
-  }
-  return {
-    type: 'external_knowledge',
-    id: buildExternalContextId(ref),
-    name: node.name,
-    ref,
-  }
 }
 
 export function KnowledgeSourcePicker({
@@ -854,9 +711,31 @@ export function KnowledgeSourcePicker({
         treeState.tree,
         treeState.documents
       ).filter(document => !removedDocumentIds.has(document.id))
+      const remainingFolders = existingFolderIds.flatMap((folderId, index) => {
+        if (folderId === node.folderId) return []
+        const folderNode = findInternalFolderNode(treeState.tree, folderId)
+        if (
+          !folderNode ||
+          collectInternalDocuments(folderNode).some(document => removedDocumentIds.has(document.id))
+        ) {
+          return []
+        }
+        return [{ id: folderId, name: existingFolderNames[index] }]
+      })
       replaceContexts(
         [existing.id],
-        nextDocuments.length > 0 ? [toKnowledgeContext(kb, { documents: nextDocuments })] : []
+        nextDocuments.length > 0 || remainingFolders.length > 0
+          ? [
+              toKnowledgeContext(kb, {
+                documents: nextDocuments,
+                folderIds: remainingFolders.map(folder => folder.id),
+                folderNames: remainingFolders
+                  .map(folder => folder.name)
+                  .filter((name): name is string => Boolean(name)),
+                includeSubfolders: existing.include_subfolders ?? true,
+              }),
+            ]
+          : []
       )
       return
     }
@@ -1246,7 +1125,10 @@ export function KnowledgeSourcePicker({
           error={dingtalkTrees.error}
           configured={dingtalkTrees.isConfigured}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
+          lastSyncedAt={dingtalkTrees.lastSyncedAt}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={() => toggleDingTalkNodeList(dingtalkTrees.nodes)}
         />
       )
@@ -1262,7 +1144,10 @@ export function KnowledgeSourcePicker({
           configured={dingtalkTrees.wikispaceConfigured}
           selectedIds={selectedDingTalkIds}
           activeNode={activeDingTalkSpace}
+          syncing={dingtalkTrees.wikispaceSyncing}
+          lastSyncedAt={dingtalkTrees.wikispaceLastSyncedAt}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onOpen={setActiveDingTalkSpace}
           onToggle={node => toggleDingTalkNode(node, node)}
         />
@@ -1339,7 +1224,7 @@ export function KnowledgeSourcePicker({
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Icon className="h-4 w-4 shrink-0" />
-                <span className="truncate text-sm font-medium">{row.label}</span>
+                <TruncatedText text={row.label} focusable={false} className="text-sm font-medium" />
               </span>
               <Badge variant="secondary" size="sm">
                 {row.count}
@@ -1374,7 +1259,11 @@ export function KnowledgeSourcePicker({
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <Users className="h-4 w-4 shrink-0 text-text-muted" />
-                          <span className="truncate text-sm font-medium">{group.displayName}</span>
+                          <TruncatedText
+                            text={group.displayName}
+                            focusable={false}
+                            className="text-sm font-medium"
+                          />
                         </span>
                         <Badge variant="secondary" size="sm">
                           {group.items.length}
@@ -1410,9 +1299,11 @@ export function KnowledgeSourcePicker({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <ScopeIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">
-                          {getExternalScopeLabel(scope, t)}
-                        </span>
+                        <TruncatedText
+                          text={getExternalScopeLabel(scope, t)}
+                          focusable={false}
+                          className="text-sm font-medium"
+                        />
                       </span>
                       <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
                     </button>
@@ -1464,7 +1355,11 @@ export function KnowledgeSourcePicker({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <SectionIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">{section.label}</span>
+                        <TruncatedText
+                          text={section.label}
+                          focusable={false}
+                          className="text-sm font-medium"
+                        />
                       </span>
                       <Badge variant="secondary" size="sm">
                         {section.count}
@@ -1497,7 +1392,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.empty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={toggleDingTalkNode}
           onToggleAll={toggleDingTalkNodeList}
         />
@@ -1520,7 +1417,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.wikispaceSyncing}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onToggle={node => toggleDingTalkNode(node, activeDingTalkSpace)}
           onToggleAll={nodes => toggleDingTalkNodeList(nodes, activeDingTalkSpace)}
         />
@@ -1718,9 +1617,11 @@ function KnowledgeBaseRows({
             >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.name}
-                </span>
+                <TruncatedText
+                  text={item.name}
+                  focusable={false}
+                  className="text-sm font-medium text-text-primary"
+                />
                 <span className="block text-xs text-text-muted">
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
@@ -1780,9 +1681,11 @@ function ExternalKnowledgeBaseRows({
             >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.knowledge_base_name}
-                </span>
+                <TruncatedText
+                  text={item.knowledge_base_name}
+                  focusable={false}
+                  className="text-sm font-medium text-text-primary"
+                />
                 <span className="block text-xs text-text-muted">
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
@@ -1808,7 +1711,11 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
   return (
     <div className="shrink-0 border-b border-border px-3 py-2">
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-text-primary">{title}</div>
+        <TruncatedText
+          text={title}
+          focusable={false}
+          className="text-sm font-semibold text-text-primary"
+        />
         <div className="text-xs text-text-muted">
           {t('picker.count.documents', { count: documentCount })}
         </div>
@@ -1817,105 +1724,13 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
   )
 }
 
+function formatKnowledgePath(path: string[], name: string) {
+  return path.length > 0 ? [...path, name].join(' / ') : name
+}
+
 function PathLabel({ path }: { path: string[] }) {
   if (path.length === 0) return null
   return <span className="block truncate text-xs text-text-muted">{path.join(' / ')}</span>
-}
-
-function InternalDocumentSearchResults({
-  items,
-  wholeKnowledgeBaseSelected,
-  selectedDocIds,
-  selectedFolderIds,
-  onToggleDocument,
-  onToggleFolder,
-}: {
-  items: Array<{ node: InternalTreeNode; path: string[] }>
-  wholeKnowledgeBaseSelected: boolean
-  selectedDocIds: Set<number>
-  selectedFolderIds: Set<number>
-  onToggleDocument: (doc: KnowledgeDocument) => void
-  onToggleFolder: (node: InternalTreeNode) => void
-}) {
-  const { t } = useTranslation('knowledge')
-  if (items.length === 0) {
-    return <PickerEmpty label={t('picker.emptyDocuments')} />
-  }
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {items.map(({ node, path }) => {
-        const isFolder = node.type === 'folder'
-        const document = node.document
-        const inheritedSelected =
-          wholeKnowledgeBaseSelected || isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
-        const selectedDocumentCount = countSelectedInternalDocuments(
-          node,
-          wholeKnowledgeBaseSelected,
-          selectedDocIds,
-          selectedFolderIds
-        )
-        const selected =
-          isFolder && node.folderId !== undefined
-            ? inheritedSelected || selectedFolderIds.has(node.folderId)
-            : inheritedSelected || Boolean(document && selectedDocIds.has(document.id))
-        const Icon = isFolder ? Folder : FileText
-        const folderPartiallySelected =
-          isFolder && selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
-        const folderSelected =
-          isFolder &&
-          (selected || (selectedDocumentCount === node.documentCount && node.documentCount > 0))
-        return (
-          <button
-            key={node.id}
-            type="button"
-            role={isFolder ? 'checkbox' : undefined}
-            aria-checked={
-              isFolder ? (folderPartiallySelected ? 'mixed' : folderSelected) : undefined
-            }
-            aria-pressed={!isFolder ? selected : undefined}
-            className={cn(
-              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
-              selected ? 'bg-primary/10 text-primary' : ''
-            )}
-            onClick={() => {
-              if (isFolder) {
-                onToggleFolder(node)
-              } else if (document) {
-                onToggleDocument(document)
-              }
-            }}
-            data-testid={
-              isFolder
-                ? `knowledge-picker-search-folder-${node.folderId}`
-                : `knowledge-picker-document-node-document-${document?.id}`
-            }
-          >
-            <span className="flex min-w-0 items-start gap-2">
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
-                <PathLabel path={path} />
-              </span>
-            </span>
-            {isFolder ? (
-              <span className="flex items-center gap-2">
-                <Badge variant="secondary" size="sm">
-                  {node.documentCount}
-                </Badge>
-                <SelectionIndicator
-                  checked={folderSelected}
-                  indeterminate={folderPartiallySelected}
-                />
-              </span>
-            ) : (
-              <SelectionIndicator checked={selected} />
-            )}
-          </button>
-        )
-      })}
-    </div>
-  )
 }
 
 function ExternalDocumentSearchResults({
@@ -1958,7 +1773,12 @@ function ExternalDocumentSearchResults({
             <span className="flex min-w-0 items-start gap-2">
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
+                <TruncatedText
+                  text={node.name}
+                  tooltipText={formatKnowledgePath(path, node.name)}
+                  focusable={false}
+                  className="text-text-primary"
+                />
                 <PathLabel path={path} />
               </span>
             </span>
@@ -1966,143 +1786,6 @@ function ExternalDocumentSearchResults({
           </button>
         )
       })}
-    </div>
-  )
-}
-
-function InternalDocumentNode({
-  node,
-  depth,
-  disabled,
-  wholeKnowledgeBaseSelected,
-  selectedDocIds,
-  selectedFolderIds,
-  onToggleDocument,
-  onToggleFolder,
-}: {
-  node: InternalTreeNode
-  depth: number
-  disabled: boolean
-  wholeKnowledgeBaseSelected: boolean
-  selectedDocIds: Set<number>
-  selectedFolderIds: Set<number>
-  onToggleDocument: (doc: KnowledgeDocument) => void
-  onToggleFolder: (node: InternalTreeNode) => void
-}) {
-  const isFolder = node.type === 'folder'
-  const inheritedSelected =
-    wholeKnowledgeBaseSelected || isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
-  const selectedDocumentCount = countSelectedInternalDocuments(
-    node,
-    wholeKnowledgeBaseSelected,
-    selectedDocIds,
-    selectedFolderIds
-  )
-  const folderScopeSelected = Boolean(
-    isFolder && (inheritedSelected || (node.folderId && selectedFolderIds.has(node.folderId)))
-  )
-  const folderSelected = Boolean(
-    isFolder &&
-    (folderScopeSelected ||
-      (node.documentCount > 0 && selectedDocumentCount === node.documentCount))
-  )
-  const folderPartiallySelected =
-    isFolder && selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
-  const containsSelected =
-    hasSelectedInternalDocument(node, selectedDocIds) ||
-    (isFolder && hasSelectedInternalFolder(node, selectedFolderIds))
-  const [open, setOpen] = useState(depth < 1 || containsSelected)
-  useEffect(() => {
-    if (containsSelected) {
-      setOpen(true)
-    }
-  }, [containsSelected])
-  const selected =
-    inheritedSelected || Boolean(node.document && selectedDocIds.has(node.document.id))
-  const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
-
-  return (
-    <div>
-      {isFolder ? (
-        <div
-          className={cn(
-            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-            folderSelected ? 'bg-primary/10 text-primary' : ''
-          )}
-          style={{ paddingLeft: 8 + depth * 16 }}
-          data-testid={`knowledge-picker-document-node-${node.id}`}
-        >
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-start gap-2 text-left"
-            onClick={() => setOpen(!open)}
-          >
-            <ChevronRight
-              className={cn(
-                'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
-                open ? 'rotate-90' : ''
-              )}
-            />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-            <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
-            </span>
-          </button>
-          <span className="flex shrink-0 items-center gap-2">
-            <Badge variant="secondary" size="sm">
-              {node.documentCount}
-            </Badge>
-            <KnowledgeSelectionControl
-              state={folderSelected ? 'checked' : folderPartiallySelected ? 'mixed' : 'unchecked'}
-              onToggle={() => onToggleFolder(node)}
-              testId={`knowledge-picker-folder-scope-${node.folderId}`}
-              label={node.name}
-            />
-          </span>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className={cn(
-            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-            selected ? 'bg-primary/10 text-primary' : '',
-            disabled ? 'opacity-50' : ''
-          )}
-          aria-pressed={selected}
-          style={{ paddingLeft: 8 + depth * 16 }}
-          onClick={() => {
-            if (node.document && !disabled) {
-              onToggleDocument(node.document)
-            }
-          }}
-          data-testid={`knowledge-picker-document-node-${node.id}`}
-        >
-          <span className="flex min-w-0 items-start gap-2">
-            <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-            <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
-              <PathLabel path={node.path} />
-            </span>
-          </span>
-          <SelectionIndicator checked={selected} />
-        </button>
-      )}
-      {isFolder && open
-        ? node.children.map(child => (
-            <InternalDocumentNode
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              disabled={disabled}
-              wholeKnowledgeBaseSelected={wholeKnowledgeBaseSelected}
-              selectedDocIds={selectedDocIds}
-              selectedFolderIds={selectedFolderIds}
-              onToggleDocument={onToggleDocument}
-              onToggleFolder={onToggleFolder}
-            />
-          ))
-        : null}
     </div>
   )
 }
@@ -2168,7 +1851,7 @@ function ExternalDocumentNode({
             />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
+              <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
             </span>
           </button>
           <span className="flex shrink-0 items-center gap-2">
@@ -2202,7 +1885,7 @@ function ExternalDocumentNode({
             <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
+              <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
             </span>
           </span>
           <SelectionIndicator checked={selected} />
