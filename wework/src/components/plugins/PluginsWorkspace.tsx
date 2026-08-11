@@ -2714,10 +2714,10 @@ export function PluginsWorkspace({
           cachedMarketplaceItems.filter(isLocalMarketplaceItem),
         diskPersonalItemsForMerge
       )
+      // When this key has a warm snapshot, its installed list is authoritative even if
+      // empty — never fall back to installedPluginsRef (may still be the prior account).
       const previousInstalledRaw = hasCachedCatalog
-        ? cachedInstalledRaw.length > 0
-          ? cachedInstalledRaw
-          : installedPluginsRef.current.map(plugin => plugin.raw)
+        ? cachedInstalledRaw
         : (localStateForMerge?.installedPlugins ?? [])
       // Local-first paint must not blank cloud installs for THIS account. Never keep
       // prior-account strip rows when the current key has no warm snapshot.
