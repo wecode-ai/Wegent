@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import io
 import json
 import zipfile
@@ -6,13 +10,17 @@ from types import SimpleNamespace
 from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_storage import plugin_package_storage
-from app.services.plugin_upstream_adapter import (
-    OPENAI_GITHUB_SKILL_DESCRIPTIONS,
-    adapt_upstream_package,
+from app.services.plugin_upstream_adapter import adapt_upstream_package
+
+GITHUB_UPSTREAM_SKILL_PATHS = (
+    "skills/gh-address-comments/SKILL.md",
+    "skills/gh-fix-ci/SKILL.md",
+    "skills/github/SKILL.md",
+    "skills/yeet/SKILL.md",
 )
 
 
-def _adapted_github_package() -> bytes:
+def _official_github_package() -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr(
@@ -28,14 +36,19 @@ def _adapted_github_package() -> bytes:
                     },
                     "apps": ["app_123"],
                     "mcpServers": {"github": {"command": "legacy"}},
-                    "interface": {"displayName": "GitHub"},
+                    "interface": {
+                        "displayName": "GitHub",
+                        "logo": "./assets/logo.png",
+                        "composerIcon": "./assets/github-small.svg",
+                    },
                 }
             ),
         )
         archive.writestr(".app.json", "{}")
         archive.writestr(".mcp.json", "{}")
         archive.writestr("assets/logo.png", b"png")
-        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+        archive.writestr("assets/github-small.svg", b"<svg/>")
+        for path in GITHUB_UPSTREAM_SKILL_PATHS:
             name = path.split("/")[-2]
             archive.writestr(
                 path,
@@ -52,35 +65,32 @@ def _adapted_github_package() -> bytes:
     ).package
 
 
-def test_mirrored_github_plugin_uses_wework_connector_contract() -> None:
-    parsed = plugin_package_parser.parse_package(_adapted_github_package())
+def test_mirrored_github_plugin_keeps_official_package_contract() -> None:
+    parsed = plugin_package_parser.parse_package(_official_github_package())
 
     assert parsed.name == "github"
-    assert parsed.version == "0.1.6+wegent.3"
-    assert [connector.model_dump() for connector in parsed.components.connectors] == [
-        {"slug": "github", "authPolicy": "on_install"}
-    ]
-    assert parsed.components.mcps == []
+    assert parsed.version == "0.1.6"
+    assert parsed.components.connectors == []
     assert parsed.author.startswith("OpenAI")
     assert parsed.interface is not None
     assert parsed.interface.logo.startswith("data:image/png;base64,")
-    assert parsed.interface.composerIcon.startswith("data:image/png;base64,")
-    assert {skill.name: skill.description for skill in parsed.components.skills} == {
-        path.split("/")[-2]: description
-        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items()
+    assert parsed.interface.composerIcon.startswith("data:image/svg+xml;base64,")
+    assert parsed.interface.logoDark is None
+    assert {skill.name for skill in parsed.components.skills} == {
+        path.split("/")[-2] for path in GITHUB_UPSTREAM_SKILL_PATHS
     }
 
 
-def test_marketplace_icon_resolution_preserves_localized_interface(monkeypatch) -> None:
-    package = _adapted_github_package()
+def test_marketplace_icon_resolution_preserves_official_interface(monkeypatch) -> None:
+    package = _official_github_package()
     monkeypatch.setattr(plugin_package_storage, "get", lambda _key: package)
     release = SimpleNamespace(
         interface_json={
             "displayName": "GitHub",
-            "shortDescription": "检查仓库和处理拉取请求",
-            "category": "开发工具",
+            "shortDescription": "Triage PRs, issues, CI, and publish flows",
+            "category": "Developer Tools",
             "logo": "./assets/logo.png",
-            "composerIcon": "./assets/logo.png",
+            "composerIcon": "./assets/github-small.svg",
         },
         sha256="github-release",
         storage_key="plugins/github.zip",
@@ -89,6 +99,6 @@ def test_marketplace_icon_resolution_preserves_localized_interface(monkeypatch) 
 
     resolved = PluginMarketplaceService()._marketplace_interface(release, plugin)
 
-    assert resolved["shortDescription"] == "检查仓库和处理拉取请求"
-    assert resolved["category"] == "开发工具"
+    assert resolved["shortDescription"] == "Triage PRs, issues, CI, and publish flows"
+    assert resolved["category"] == "Developer Tools"
     assert resolved["logo"].startswith("data:image/png;base64,")
