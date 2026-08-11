@@ -144,22 +144,28 @@ function isMediaCompletionMessage(content: string): boolean {
 
 const IMAGE_GENERATION_PROGRESS_DURATION_MS = 120_000
 
-function ImageGenerationPlaceholder({ imageSize }: { imageSize?: string }) {
+function ImageGenerationPlaceholder({
+  imageSize,
+  startedAt,
+}: {
+  imageSize?: string
+  startedAt?: number
+}) {
   const { t } = useTranslation('chat')
   const [progress, setProgress] = useState(0)
   const layout = resolveGeneratedImageDisplayLayout(imageSize)
 
   useEffect(() => {
-    const startedAt = Date.now()
+    const progressStartedAt = startedAt && startedAt > 0 ? startedAt : Date.now()
     const updateProgress = () => {
-      const elapsed = Date.now() - startedAt
+      const elapsed = Math.max(0, Date.now() - progressStartedAt)
       setProgress(Math.min(99, Math.floor((elapsed / IMAGE_GENERATION_PROGRESS_DURATION_MS) * 99)))
     }
 
     updateProgress()
     const timer = window.setInterval(updateProgress, 500)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [startedAt])
 
   return (
     <div
@@ -294,6 +300,7 @@ const MixedContentView = memo(function MixedContentView({
               imageAttachmentIds: block.image_attachment_ids || [],
               imageCount: block.image_count ?? 0,
               imageSize: block.image_size,
+              startedAt: block.timestamp,
               status: block.status,
               message: block.content, // Progress message
             }
@@ -673,7 +680,7 @@ const MixedContentView = memo(function MixedContentView({
             <div key={item.blockId} className="space-y-2">
               {item.isPlaceholder ? (
                 // Show loading state for placeholder images
-                <ImageGenerationPlaceholder imageSize={item.imageSize} />
+                <ImageGenerationPlaceholder imageSize={item.imageSize} startedAt={item.startedAt} />
               ) : item.imageUrls && item.imageUrls.length > 0 ? (
                 // Show generated images
                 <ImageGallery
