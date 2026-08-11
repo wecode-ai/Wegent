@@ -28,6 +28,32 @@ require_line() {
     fi
 }
 
+reject_line() {
+    local file="$1"
+    local pattern="$2"
+    local description="$3"
+
+    if grep -Fq "$pattern" "$file"; then
+        echo "Rejected ${description}: ${pattern}"
+        exit 1
+    fi
+}
+
+require_step_line() {
+    local file="$1"
+    local start_step="$2"
+    local end_step="$3"
+    local pattern="$4"
+    local description="$5"
+    local step
+
+    step="$(sed -n "/- name: ${start_step}/,/- name: ${end_step}/p" "$file")"
+    if ! grep -Fq "$pattern" <<<"$step"; then
+        echo "Expected ${description} in ${start_step}: ${pattern}"
+        exit 1
+    fi
+}
+
 require_file "$POLICY_WORKFLOW"
 require_line "$POLICY_WORKFLOW" "pull_request_target:" "trusted fork PR trigger"
 require_line "$POLICY_WORKFLOW" "merge_group:" "merge queue trigger"
@@ -37,9 +63,17 @@ require_line "$POLICY_WORKFLOW" "path: trusted-policy" "trusted script checkout 
 require_line "$POLICY_WORKFLOW" "path: policy-target" "PR content checkout path"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-require_line "$POLICY_WORKFLOW" 'repository: ${{ github.event.pull_request.head.repo.full_name }}' "PR head repository checkout"
+require_step_line "$POLICY_WORKFLOW" "Checkout pull request head tree" "Checkout merge group" \
+    "if: github.event_name == 'pull_request_target'" "pull request event guard"
 # shellcheck disable=SC2016
-require_line "$POLICY_WORKFLOW" 'ref: ${{ github.event.pull_request.head.sha }}' "immutable PR head SHA checkout"
+require_step_line "$POLICY_WORKFLOW" "Checkout pull request head tree" "Checkout merge group" \
+    'repository: ${{ github.event.pull_request.head.repo.full_name }}' "PR head repository checkout"
+# shellcheck disable=SC2016
+require_step_line "$POLICY_WORKFLOW" "Checkout pull request head tree" "Checkout merge group" \
+    'ref: ${{ github.event.pull_request.head.sha }}' "immutable PR head SHA checkout"
+# shellcheck disable=SC2016
+reject_line "$POLICY_WORKFLOW" 'refs/pull/${{ github.event.pull_request.number }}/merge' "short-lived PR merge ref"
+reject_line "$POLICY_WORKFLOW" "allow-unsafe-pr-checkout" "unsafe checkout input"
 require_line "$POLICY_WORKFLOW" "Checkout merge group" "merge group checkout step"
 # shellcheck disable=SC2016
 require_line "$POLICY_WORKFLOW" 'ref: ${{ github.sha }}' "merge group SHA checkout"
