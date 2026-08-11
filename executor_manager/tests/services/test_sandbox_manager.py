@@ -718,6 +718,12 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
+        ensure_workspace = mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
         resolved = ResolvedTaskSkills(
             skills=["abtest-file-analyzer"],
             required_skills=["abtest-file-analyzer"],
@@ -749,6 +755,7 @@ class TestSandboxManager:
 
         assert error is None
         assert sandbox.metadata["required_skills"] == ["abtest-file-analyzer"]
+        ensure_workspace.assert_awaited_once_with(sandbox)
         sync.assert_awaited_once()
         start.assert_not_called()
 
