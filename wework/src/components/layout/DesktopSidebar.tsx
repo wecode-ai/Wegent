@@ -1136,7 +1136,7 @@ function GlobalImNotificationBell({
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.away_im_reminder_description',
-                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                    '锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
                   )}
                 </p>
               </div>

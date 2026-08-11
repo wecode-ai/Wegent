@@ -2585,6 +2585,9 @@ export function createRuntimeWorkApiFromIpc(
     updateGlobalImNotification() {
       return cloudConnectionRequired('updateGlobalImNotification')
     },
+    updateImNotificationPresence() {
+      return cloudConnectionRequired('updateImNotificationPresence')
+    },
     subscribeRuntimeTaskNotifications() {
       return cloudConnectionRequired('subscribeRuntimeTaskNotifications')
     },

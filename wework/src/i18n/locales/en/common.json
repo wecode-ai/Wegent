@@ -739,7 +739,7 @@
     "continue_im_failed": "Failed to continue in IM",
     "away_im_reminder_title": "Away reminder",
     "away_im_reminder_on": "Away reminder is on",
-    "away_im_reminder_description": "All task progress will be pushed to IM without changing any task's IM session ownership.",
+    "away_im_reminder_description": "Task progress is pushed to IM while the screen is locked or Wework is not focused, without changing any task's IM session ownership.",
     "away_im_reminder_target": "Deliver to",
     "away_im_reminder_no_target": "No IM session selected",
     "away_im_reminder_enable": "Turn on away reminder",
