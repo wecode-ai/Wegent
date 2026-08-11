@@ -21,7 +21,6 @@ import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
-import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { CloudWorkPage } from '@/pages/CloudWorkPage'
@@ -158,7 +157,7 @@ function telemetryFeatureForPath(path: string) {
   if (path === '/cloud-work') return 'cloud_work' as const
   if (path === '/sites') return 'sites' as const
   if (path === '/automations') return 'automations' as const
-  if (path === '/apps' || path.startsWith('/app/')) return 'apps' as const
+  if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
   if (path.startsWith('/project-space')) return 'project_space' as const
   if (path === '/') return 'workbench' as const
@@ -193,7 +192,6 @@ function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations') return <AutomationsPage />
-  if (path === '/apps') return <AppsPage />
   return null
 }
 
@@ -472,7 +470,6 @@ function AppShell() {
         sites: t('workbench.workspace_tab_sites', '应用'),
         automations: t('workbench.automation', '已安排'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
-        apps: t('workbench.workspace_tab_apps', '应用'),
       },
     }),
     [t]
