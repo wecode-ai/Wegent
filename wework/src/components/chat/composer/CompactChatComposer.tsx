@@ -90,7 +90,7 @@ interface CompactChatComposerProps {
   selectedModel?: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
-  onSelectModel?: (model: UnifiedModel | null) => void
+  onSelectModel?: (model: UnifiedModel | null) => boolean | void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   isModelSelectionReady?: boolean
   isStreaming?: boolean

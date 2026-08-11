@@ -18,6 +18,20 @@ Wegent marketplace publication and upload accept packages containing either `.co
 
 Local mode must be connected to Wegent cloud first. Click a plugin badge in the composer to open its matching detail page in the Wegent cloud marketplace.
 
+## Use plugins in local harnesses
+
+The experimental OpenCode, Claude Code, and Kimi Code harnesses consume the Wework plugins selected
+for the task. Wework prefers the [Agent Plugins](https://agent-plugins.org/) `plugin.json`,
+`skills/`, and `mcp.json` standard while remaining compatible with existing Codex and Claude
+plugin manifests. At session launch, Wework creates an isolated adapter for the selected harness
+and translates Skills and MCP servers into that harness's native configuration. Persistent plugin
+data is isolated by plugin rather than copied separately for every session.
+
+Every local harness session also receives the `wework_browser` MCP server and its companion Skill.
+The AI uses those controlled tools to open, inspect, and operate the Wework built-in browser
+without launching an external browser. Restored sessions reuse the plugin set recorded when they
+were created, so restarting Wework does not remove their plugin capabilities.
+
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
 Use **Settings → Coding → Skills** to manage local Skills. Unified management places Codex and Claude Code Skills under `~/.agents/skills`; name collisions are preserved with source suffixes.

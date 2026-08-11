@@ -10,24 +10,27 @@ This directory contains YAML configuration files for initializing the Wegent sys
 
 1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
 2. **Auto-apply**: All resources are loaded and checked against the database
-3. **Create-only**: Resources are **only created if they don't exist** - existing resources are **skipped**
-4. **User modifications preserved**: Any changes made through the UI/API are **never overwritten** on restart
-5. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
+3. **Create-only resources**: Existing YAML resources and unversioned Skills are **skipped**
+4. **Versioned Skill upgrades**: An existing built-in Skill is updated in place only when the packaged `version` is newer
+5. **User modifications preserved**: Same-version resources are never overwritten on restart
+6. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
 
 ### ⚠️ Important: Non-Destructive Initialization
 
-**The initialization is create-only, NOT create-or-update.**
+**YAML resources remain create-only. Built-in Skills opt into upgrades by raising their version.**
 
 - ✅ First startup: Creates all resources from YAML files
 - ✅ User modifies a resource (e.g., edits a Ghost's system prompt)
-- ✅ Service restart: **User's modifications are preserved** - YAML file is ignored for that resource
-- ❌ YAML changes after first startup: **Not applied to existing resources**
+- ✅ Service restart with the same Skill version: **User's modifications are preserved**
+- ✅ Built-in Skill package with a higher version: the existing public Skill is updated in place, preserving its ID and references
+- ❌ YAML changes after first startup: **Not applied to existing YAML resources**
 
 This design ensures:
 
-- User customizations are never lost
+- User-owned resources and same-version Skill customizations are preserved
+- Versioned public built-in Skills can receive source-controlled fixes
 - Safe to restart services without data loss
-- YAML files serve as initial templates only
+- YAML files remain initial templates only
 
 If you want to update an existing resource to match YAML:
 

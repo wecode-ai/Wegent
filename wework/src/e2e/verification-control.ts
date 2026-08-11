@@ -2,6 +2,7 @@ import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
 } from '@/extensions/desktop-control-contract'
+import { getLocalTerminalSnapshot } from '@/lib/local-terminal'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 
 interface VerificationControlDependencies {
@@ -61,6 +62,14 @@ async function seedLocalProject(command: DesktopControlCommand): Promise<string>
   return JSON.stringify(response)
 }
 
+async function readLocalTerminalSnapshot(command: DesktopControlCommand): Promise<string> {
+  const sessionId = command.value?.trim()
+  if (!sessionId) {
+    throw new Error('readLocalTerminalSnapshot requires a session ID')
+  }
+  return JSON.stringify(await getLocalTerminalSnapshot(sessionId))
+}
+
 function reloadApp(): string {
   window.setTimeout(() => window.location.reload(), 50)
   return ''
@@ -75,6 +84,8 @@ export async function executeVerificationControlCommand(
       return { handled: true, value: clickAt(command, dependencies) }
     case 'seedLocalProject':
       return { handled: true, value: await seedLocalProject(command) }
+    case 'readLocalTerminalSnapshot':
+      return { handled: true, value: await readLocalTerminalSnapshot(command) }
     case 'reloadApp':
       return { handled: true, value: reloadApp() }
     default:

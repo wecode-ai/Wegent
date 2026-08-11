@@ -1185,6 +1185,7 @@ jobs:
           body: ${{ steps.release-notes.outputs.body }}
           draft: false
           prerelease: false
+          make_latest: false
           files: |
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64

@@ -24,10 +24,11 @@ describe('resolvePluginLogo', () => {
     expect(result).toEqual({
       url: 'https://cdn.example/logo-dark.png',
       source: 'provided',
+      contrastPad: false,
     })
   })
 
-  test('falls back to logo in dark mode when logoDark is missing', () => {
+  test('uses a soft contrast pad in dark mode when logoDark is missing', () => {
     const result = resolvePluginLogo({
       pluginKey: 'documents',
       logo: 'https://cdn.example/logo-light.png',
@@ -36,10 +37,11 @@ describe('resolvePluginLogo', () => {
     expect(result).toEqual({
       url: 'https://cdn.example/logo-light.png',
       source: 'provided',
+      contrastPad: true,
     })
   })
 
-  test('ignores logoDark in light mode', () => {
+  test('ignores logoDark in light mode and never pads', () => {
     const result = resolvePluginLogo({
       pluginKey: 'documents',
       logo: 'https://cdn.example/logo-light.png',
@@ -49,22 +51,27 @@ describe('resolvePluginLogo', () => {
     expect(result).toEqual({
       url: 'https://cdn.example/logo-light.png',
       source: 'provided',
+      contrastPad: false,
     })
   })
 
-  test('uses github dark fallback icon in dark mode', () => {
+  test('uses the neutral default icon without a contrast pad when the package has no logo', () => {
     expect(
-      resolvePluginLogoUrl({
+      resolvePluginLogo({
         pluginKey: 'github',
         appearanceMode: 'dark',
       })
-    ).toBe('/plugin-icons/github-dark.svg')
+    ).toEqual({
+      url: '/plugin-icons/wework.svg',
+      source: 'fallback',
+      contrastPad: false,
+    })
     expect(
       resolvePluginLogoUrl({
         pluginKey: 'github',
         appearanceMode: 'light',
       })
-    ).toBe('/plugin-icons/github.svg')
+    ).toBe('/plugin-icons/wework.svg')
   })
 
   test('reads appearance mode from the document theme attribute', () => {

@@ -552,6 +552,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
@@ -1477,7 +1478,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop model menu with real model options', async () => {
+  test('opens the desktop model menu with real model options and closes it after selection', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1588,8 +1589,9 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
 
+    await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
 
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
@@ -2296,7 +2298,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('keeps the desktop model menu open after selecting a model opened by external signal', async () => {
+  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
     const model: UnifiedModel = {
       name: 'ali-qwen3-coder-plus',
       type: 'user',
@@ -2333,7 +2335,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
   test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {

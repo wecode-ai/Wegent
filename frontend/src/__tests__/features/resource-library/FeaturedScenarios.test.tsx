@@ -35,6 +35,7 @@ jest.mock('@/apis/user', () => ({
           title: 'Coding Agent',
           description: 'Build software',
           recommended_mode: 'code',
+          bind_mode: [],
           enabled: true,
           order: 2,
           input_presets: [
@@ -42,6 +43,30 @@ jest.mock('@/apis/user', () => ({
             { id: 'test', title: 'Write tests' },
             { id: 'explain', title: 'Explain this module' },
           ],
+        },
+        {
+          type: 'system_function',
+          id: 'image',
+          team_id: 3,
+          name: 'image',
+          title: 'Image Agent',
+          recommended_mode: 'chat',
+          bind_mode: ['image'],
+          enabled: true,
+          order: 3,
+          input_presets: [{ id: 'draw', title: 'Draw an image' }],
+        },
+        {
+          type: 'system_function',
+          id: 'video',
+          team_id: 4,
+          name: 'video',
+          title: 'Video Agent',
+          recommended_mode: 'chat',
+          bind_mode: ['video'],
+          enabled: true,
+          order: 4,
+          input_presets: [{ id: 'create', title: 'Create a video' }],
         },
       ],
       favorite_agents: [],
@@ -131,6 +156,26 @@ describe('FeaturedScenarios', () => {
     fireEvent.click(screen.getByTestId('featured-agent-coder-example-review'))
     expect(mockPush).toHaveBeenCalledWith(
       '/chat?teamId=2&quickLauncher=system%3Acoder&quickPreset=review&agent=code'
+    )
+
+    fireEvent.click(screen.getByTestId('featured-agent-image-example-draw'))
+    expect(mockPush).toHaveBeenCalledWith(
+      '/chat?teamId=3&quickLauncher=system%3Aimage&quickPreset=draw&mode=image'
+    )
+
+    fireEvent.click(screen.getByTestId('featured-agent-image-open'))
+    expect(mockPush).toHaveBeenCalledWith(
+      '/chat?teamId=3&quickLauncher=system%3Aimage&showPresets=1&mode=image'
+    )
+
+    fireEvent.click(screen.getByTestId('featured-agent-video-example-create'))
+    expect(mockPush).toHaveBeenCalledWith(
+      '/chat?teamId=4&quickLauncher=system%3Avideo&quickPreset=create&mode=video'
+    )
+
+    fireEvent.click(screen.getByTestId('featured-agent-video-open'))
+    expect(mockPush).toHaveBeenCalledWith(
+      '/chat?teamId=4&quickLauncher=system%3Avideo&showPresets=1&mode=video'
     )
   })
 })

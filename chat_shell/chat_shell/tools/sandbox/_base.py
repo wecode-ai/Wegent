@@ -210,6 +210,7 @@ class SandboxManager:
         bot_config: list = None,
         auth_token: str = "",
         skill_identity_token: str = "",
+        load_skill_tool: Any = None,
     ):
         """Initialize sandbox manager.
 
@@ -223,6 +224,7 @@ class SandboxManager:
             bot_config: Bot configuration list (optional)
             auth_token: API auth token for skill downloads (optional)
             skill_identity_token: JWT token for skill identity verification (optional)
+            load_skill_tool: Tool tracking skills active in the current chat session
         """
         self.task_id = task_id
         self.user_id = user_id
@@ -231,6 +233,7 @@ class SandboxManager:
         self.bot_config = bot_config or []
         self.auth_token = auth_token
         self.skill_identity_token = skill_identity_token
+        self.load_skill_tool = load_skill_tool
 
         # Ensure E2B SDK is patched
         patch_e2b_sdk()
@@ -245,6 +248,7 @@ class SandboxManager:
         bot_config: list = None,
         auth_token: str = "",
         skill_identity_token: str = "",
+        load_skill_tool: Any = None,
     ) -> "SandboxManager":
         """Get or create a singleton SandboxManager instance for the given task_id.
 
@@ -256,6 +260,7 @@ class SandboxManager:
             bot_config: Bot configuration list (optional)
             auth_token: API auth token for skill downloads (optional)
             skill_identity_token: JWT token for skill identity verification (optional)
+            load_skill_tool: Tool tracking skills active in the current chat session
 
         Returns:
             SandboxManager instance for the task_id
@@ -270,6 +275,7 @@ class SandboxManager:
                 bot_config,
                 auth_token,
                 skill_identity_token,
+                load_skill_tool,
             )
         else:
             instance = cls._instances[task_id]
@@ -279,6 +285,8 @@ class SandboxManager:
                 instance.skill_identity_token = skill_identity_token
             if bot_config:
                 instance.bot_config = bot_config
+            if load_skill_tool is not None:
+                instance.load_skill_tool = load_skill_tool
             logger.debug(
                 f"[SandboxManager] Reusing existing instance for task_id={task_id}"
             )
@@ -350,6 +358,17 @@ class SandboxManager:
 
             if self.skill_identity_token:
                 metadata["skill_identity_token"] = self.skill_identity_token
+
+            if self.load_skill_tool is not None and hasattr(
+                self.load_skill_tool, "get_loaded_skills"
+            ):
+                required_skills = sorted(
+                    set(self.load_skill_tool.get_loaded_skills()) - {"sandbox"}
+                )
+                if required_skills:
+                    metadata["required_skills"] = json.dumps(
+                        required_skills, ensure_ascii=False
+                    )
 
             # Serialize bot_config to JSON string if available
             # E2B SDK only accepts string values in metadata
@@ -429,6 +448,7 @@ try:
         bot_config: list = []  # Bot config list [{shell_type, agent_config}, ...]
         auth_token: str = ""  # API auth token for skill downloads
         skill_identity_token: str = ""  # JWT token for skill identity verification
+        load_skill_tool: Any = None  # Tracks skills active in this chat session
 
         # Configuration
         default_shell_type: str = "ClaudeCode"
@@ -454,6 +474,7 @@ try:
                 bot_config=self.bot_config,
                 auth_token=self.auth_token,
                 skill_identity_token=self.skill_identity_token,
+                load_skill_tool=self.load_skill_tool,
             )
 
         def kill_sandbox(self) -> None:

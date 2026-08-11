@@ -119,13 +119,6 @@ async function reconcileBundledPluginMarketplace(
       },
     })
     const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
-    if (
-      existing &&
-      normalizedMarketplacePath(existing.path) === normalizedMarketplacePath(marketplace.path)
-    ) {
-      reconciledBundledPluginMarketplaceKey = reconciliationKey
-      return
-    }
     if (!existing) {
       throw new Error(`Bundled plugin marketplace ${marketplace.id} could not be registered`, {
         cause: addError,

@@ -69,7 +69,6 @@ export function parseQuickLaunchIntent(searchParams: URLSearchParams): QuickLaun
 
 export function removeQuickLaunchQueryParams(searchParams: URLSearchParams): URLSearchParams {
   const nextParams = new URLSearchParams(searchParams.toString())
-  nextParams.delete(QUICK_LAUNCH_QUERY.teamId)
   nextParams.delete(QUICK_LAUNCH_QUERY.launcher)
   nextParams.delete(QUICK_LAUNCH_QUERY.preset)
   nextParams.delete(QUICK_LAUNCH_QUERY.showPresets)

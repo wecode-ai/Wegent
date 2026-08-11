@@ -11,8 +11,10 @@ files from Wegent Backend to the sandbox environment via API.
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from pydantic import BaseModel, Field
@@ -21,6 +23,28 @@ logger = logging.getLogger(__name__)
 
 # Default API base URL for attachment downloads
 DEFAULT_API_BASE_URL = "http://backend:8000"
+_ATTACHMENT_DOWNLOAD_PATH = re.compile(
+    r"^/api/attachments/(?P<attachment_id>\d+)/download/?$"
+)
+
+
+def _build_download_url(attachment_url: str, api_base_url: str) -> str:
+    """Build a URL that accepts the task token available to sandbox tools."""
+    relative_url = (
+        attachment_url if attachment_url.startswith("/") else f"/{attachment_url}"
+    )
+    parsed = urlsplit(
+        attachment_url
+        if attachment_url.startswith(("http://", "https://"))
+        else relative_url
+    )
+    match = _ATTACHMENT_DOWNLOAD_PATH.fullmatch(parsed.path)
+    if not match:
+        raise ValueError("Only Wegent attachment download URLs are supported")
+
+    backend = urlsplit(api_base_url.rstrip("/"))
+    executor_path = f"/api/attachments/{match.group('attachment_id')}/executor-download"
+    return urlunsplit((backend.scheme, backend.netloc, executor_path, "", ""))
 
 
 class SandboxDownloadAttachmentInput(BaseModel):
@@ -61,7 +85,7 @@ class SandboxDownloadAttachmentTool(BaseSandboxTool):
     """Tool for downloading files from Wegent Backend to E2B sandbox.
 
     This tool downloads files from Wegent's attachment storage to the
-    sandbox environment via the /api/attachments/{id}/download endpoint.
+    sandbox environment via the task-token attachment endpoint.
     """
 
     name: str = "download_attachment"
@@ -132,8 +156,8 @@ Example:
         effective_timeout = timeout_seconds or self.default_download_timeout
 
         logger.info(
-            f"[SandboxDownloadAttachmentTool] Downloading: {attachment_url} -> {save_path}, "
-            f"timeout={effective_timeout}s"
+            "[SandboxDownloadAttachmentTool] Downloading attachment: "
+            f"save_path={save_path}, timeout={effective_timeout}s"
         )
 
         # Emit status update via WebSocket if available
@@ -159,7 +183,7 @@ Example:
 
             # Get or create sandbox
             logger.info(
-                f"[SandboxDownloadAttachmentTool] Getting or creating sandbox..."
+                "[SandboxDownloadAttachmentTool] Getting or creating sandbox..."
             )
             sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=self.default_shell_type,
@@ -202,17 +226,10 @@ Example:
             )
             api_base_url = api_base_url.rstrip("/")
 
-            # Build full download URL
-            # attachment_url can be relative (e.g., /api/attachments/123/download) or full URL
-            if attachment_url.startswith("http://") or attachment_url.startswith(
-                "https://"
-            ):
-                download_url = attachment_url
-            else:
-                # Ensure attachment_url starts with /
-                if not attachment_url.startswith("/"):
-                    attachment_url = f"/{attachment_url}"
-                download_url = f"{api_base_url}{attachment_url}"
+            # The attachment block exposes the browser download URL. Translate
+            # that exact Wegent route to the executor route because sandbox tools
+            # authenticate with a task token rather than a browser login token.
+            download_url = _build_download_url(attachment_url, api_base_url)
 
             # Get auth token
             auth_token = self.auth_token
@@ -226,23 +243,27 @@ Example:
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Build curl command to download file
+            # Keep credentials and user-provided paths out of the command string.
+            # E2B passes these values directly as process environment variables.
             curl_cmd = (
-                f"curl -s -f -L "
-                f'-H "Authorization: Bearer {auth_token}" '
-                f'-o "{save_path}" '
-                f'"{download_url}"'
+                "curl --silent --show-error --fail --location "
+                '--header "Authorization: Bearer $WEGENT_ATTACHMENT_TOKEN" '
+                '--output "$WEGENT_ATTACHMENT_SAVE_PATH" '
+                '"$WEGENT_ATTACHMENT_DOWNLOAD_URL"'
             )
 
-            logger.info(
-                f"[SandboxDownloadAttachmentTool] Executing download via curl from {download_url}"
-            )
+            logger.info("[SandboxDownloadAttachmentTool] Executing attachment download")
 
             # Execute curl command
             result_obj = await sandbox.commands.run(
                 cmd=curl_cmd,
                 cwd="/home/user",
                 timeout=effective_timeout,
+                envs={
+                    "WEGENT_ATTACHMENT_TOKEN": auth_token,
+                    "WEGENT_ATTACHMENT_SAVE_PATH": save_path,
+                    "WEGENT_ATTACHMENT_DOWNLOAD_URL": download_url,
+                },
             )
 
             execution_time = time.time() - start_time
