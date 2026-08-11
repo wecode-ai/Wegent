@@ -92,24 +92,36 @@ test.describe('Provider-native Wegent knowledge access', () => {
   })
 
   test.afterAll(async ({ request }) => {
-    await clearConfiguredToolScenario(request)
+    const cleanupErrors: unknown[] = []
+    const attemptCleanup = async (cleanup: () => Promise<void>) => {
+      try {
+        await cleanup()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+
+    await attemptCleanup(() => clearConfiguredToolScenario(request))
     if (fixture?.knowledgeBase.id) {
-      await deleteProviderNativeKnowledgeFixture(
-        request,
-        API_BASE_URL,
-        token,
-        fixture.knowledgeBase.id
-      ).catch(() => {})
+      await attemptCleanup(() =>
+        deleteProviderNativeKnowledgeFixture(request, API_BASE_URL, token, fixture.knowledgeBase.id)
+      )
     }
     if (fixture?.otherKnowledgeBase.id) {
-      await deleteProviderNativeKnowledgeFixture(
-        request,
-        API_BASE_URL,
-        token,
-        fixture.otherKnowledgeBase.id
-      ).catch(() => {})
+      await attemptCleanup(() =>
+        deleteProviderNativeKnowledgeFixture(
+          request,
+          API_BASE_URL,
+          token,
+          fixture.otherKnowledgeBase.id
+        )
+      )
     }
-    await cleanupChatResources(request)
+    await attemptCleanup(() => cleanupChatResources(request))
+
+    if (cleanupErrors.length > 0) {
+      throw cleanupErrors[0]
+    }
   })
 
   test('E2E-A2-001 selects a whole Wegent knowledge base', async ({ page, request }) => {

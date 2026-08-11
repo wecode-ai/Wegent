@@ -41,7 +41,7 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 jest.mock('@/features/knowledge/externalKnowledgeSourceRegistry', () => ({
-  useExternalKnowledgeSources: jest.fn(() => [{ providerId: 'ap', label: 'WeiboAP' }]),
+  useExternalKnowledgeSources: jest.fn(() => [{ providerId: 'demo', label: 'Demo' }]),
   getExternalKnowledgeSourceLabel: jest.fn(
     (provider: string, source?: { shortLabel?: string; label?: string }) =>
       source?.shortLabel ?? source?.label ?? provider
@@ -76,7 +76,7 @@ const internalKnowledgeBase = {
 }
 
 const externalRef = {
-  provider: 'ap',
+  provider: 'demo',
   mode: 'explicit',
   id: 'lib-1',
   name: '测试1111',
@@ -118,7 +118,7 @@ describe('TaskKnowledgeBindingPanel', () => {
 
     expect(await screen.findByText('测试mcp')).toBeInTheDocument()
     expect(screen.getByText('测试1111')).toBeInTheDocument()
-    expect(screen.getByText('WeiboAP')).toBeInTheDocument()
+    expect(screen.getByText('Demo')).toBeInTheDocument()
     expect(screen.getByText('External knowledge source')).toBeInTheDocument()
   })
 
@@ -147,7 +147,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     await screen.findByText('测试1111')
     fireEvent.click(
       screen.getByTestId(
-        'task-knowledge-binding-remove-external:ap:explicit:lib-1:knowledge_base:source'
+        'task-knowledge-binding-remove-external:demo:explicit:lib-1:knowledge_base:source'
       )
     )
 
