@@ -198,9 +198,9 @@ function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
 }
 
 /**
- * Resolve a warm marketplace snapshot. Exact cache-key match wins. While auth is
- * still `anon`, reuse only the in-memory snapshot for the same API base (same
- * session token handoff) — never promote another account's durable disk entry.
+ * Resolve a warm marketplace snapshot by exact cache key only. Do not reuse an
+ * authenticated in-memory/disk entry under `anon` — token clear / account switch
+ * must miss so callers clear prior-account catalog and installs.
  */
 export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCacheSnapshot | null {
   if (snapshot?.cacheKey === cacheKey) return snapshot
@@ -209,16 +209,6 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
   if (exact) {
     snapshot = exact
     return snapshot
-  }
-
-  const { apiBase, tokenHint } = splitPluginMarketplaceCacheKey(cacheKey)
-  if (
-    tokenHint === 'anon' &&
-    apiBase &&
-    snapshot &&
-    splitPluginMarketplaceCacheKey(snapshot.cacheKey).apiBase === apiBase
-  ) {
-    return { ...snapshot, cacheKey }
   }
 
   return null

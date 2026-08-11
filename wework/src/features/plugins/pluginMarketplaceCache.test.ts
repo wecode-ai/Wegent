@@ -100,7 +100,7 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.logosStripped).not.toBe(true)
   })
 
-  test('anon cache key reuses in-memory snapshot for the same API base only', () => {
+  test('anon cache key never reuses an authenticated snapshot', () => {
     const authedKey = pluginMarketplaceCacheKey('http://api', 'token-warm-start')
     setPluginMarketplaceCache({
       cacheKey: authedKey,
@@ -118,13 +118,10 @@ describe('pluginMarketplaceCache', () => {
 
     const anonKey = pluginMarketplaceCacheKey('http://api', null)
     expect(splitPluginMarketplaceCacheKey(anonKey).tokenHint).toBe('anon')
-    expect(getPluginMarketplaceCache(anonKey)?.marketplaceItems).toEqual([
+    expect(getPluginMarketplaceCache(anonKey)).toBeNull()
+    expect(getPluginMarketplaceCache(authedKey)?.marketplaceItems).toEqual([
       expect.objectContaining({ id: 9, name: 'wework-official' }),
     ])
-
-    resetPluginMarketplaceCacheMemory()
-    // Durable authed entries must not leak into a fresh anon session after logout/restart.
-    expect(getPluginMarketplaceCache(anonKey)).toBeNull()
   })
 
   test('rehydrates installed plugins from durable storage after memory reset', () => {
