@@ -547,11 +547,7 @@ class TaskRequestBuilder:
                 explicit_ref["namespace"] = "default"
                 explicit_ref["is_public"] = True
 
-            if (
-                skill_name == SELECTED_KB_PRELOAD_SKILL
-                and request.knowledge_base_ids
-                and request.is_user_selected_kb
-            ):
+            if skill_name == SELECTED_KB_PRELOAD_SKILL and request.knowledge_base_ids:
                 explicit_ref["namespace"] = "default"
                 explicit_ref["is_public"] = True
 
