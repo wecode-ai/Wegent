@@ -33,6 +33,8 @@ import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
+import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import type { LocalHarnessId } from '@/lib/local-harness'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -899,6 +901,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         params: { proxyUrl: proxyUrl || null },
       })
       return JSON.stringify(config)
+    }
+    case 'setLocalHarnessExecutablePaths': {
+      const executablePaths = JSON.parse(command.value ?? '{}') as Partial<
+        Record<LocalHarnessId, string>
+      >
+      const preferences = await getAppPreferences()
+      const updated = await updateAppPreferences({
+        localHarnesses: preferences.localHarnesses.map(preference => ({
+          ...preference,
+          executablePath: executablePaths[preference.id]?.trim() || null,
+        })),
+      })
+      return JSON.stringify(updated.localHarnesses)
     }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })

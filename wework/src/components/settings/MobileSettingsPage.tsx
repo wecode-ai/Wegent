@@ -276,7 +276,7 @@ export function MobileSettingsPage({
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="flex items-center gap-2 text-lg font-semibold">
-            <span>{t('workbench.settings_nav_harnesses', '运行工具')}</span>
+            <span>{t('workbench.settings_nav_harnesses', '编码工具')}</span>
             <ExperimentalBadge testId="mobile-harness-settings-experimental-badge" />
           </h1>
           <div className="h-11 min-w-[44px]" />
@@ -492,7 +492,7 @@ export function MobileSettingsPage({
           >
             <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
-              {t('workbench.settings_nav_harnesses', '运行工具')}
+              {t('workbench.settings_nav_harnesses', '编码工具')}
             </span>
             <ExperimentalBadge testId="mobile-settings-harnesses-experimental-badge" />
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />

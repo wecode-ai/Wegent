@@ -7,6 +7,7 @@ import { HarnessSettingsPage } from './HarnessSettingsPage'
 
 const listLocalHarnessesMock = vi.hoisted(() => vi.fn())
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
+const openNativeExecutablePickerMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
   useAppPreferencesState: () => ({
@@ -17,6 +18,10 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
 
 vi.mock('@/lib/local-terminal', () => ({
   listLocalHarnesses: listLocalHarnessesMock,
+}))
+
+vi.mock('@/lib/native-executable-picker', () => ({
+  openNativeExecutablePicker: openNativeExecutablePickerMock,
 }))
 
 vi.mock('@/tauri/appPreferences', async importOriginal => {
@@ -31,6 +36,8 @@ describe('HarnessSettingsPage', () => {
   beforeEach(() => {
     listLocalHarnessesMock.mockReset()
     updateAppPreferencesMock.mockReset()
+    openNativeExecutablePickerMock.mockReset()
+    openNativeExecutablePickerMock.mockResolvedValue('/opt/claude/bin/claude')
     listLocalHarnessesMock.mockResolvedValue([
       {
         id: 'opencode',
@@ -69,10 +76,16 @@ describe('HarnessSettingsPage', () => {
     )
     expect(screen.getByTestId('harness-settings-opencode')).toHaveTextContent('1.2.3')
     expect(screen.getByTestId('harness-settings-claude_code')).toHaveTextContent('2.1.0')
+    expect(screen.queryByTestId('harness-settings-panel-opencode')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('harness-settings-panel-claude_code')).not.toBeInTheDocument()
 
-    await userEvent.clear(screen.getByTestId('harness-executable-claude_code'))
-    await userEvent.type(
-      screen.getByTestId('harness-executable-claude_code'),
+    await userEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+    await userEvent.click(screen.getByTestId('harness-executable-select-claude_code'))
+    expect(openNativeExecutablePickerMock).toHaveBeenCalledWith(
+      '/usr/local/bin/claude',
+      '选择 Claude Code 可执行文件'
+    )
+    expect(screen.getByTestId('harness-executable-path-claude_code')).toHaveTextContent(
       '/opt/claude/bin/claude'
     )
     await userEvent.selectOptions(screen.getByTestId('harness-permission-mode-claude_code'), 'plan')
@@ -85,8 +98,6 @@ describe('HarnessSettingsPage', () => {
       'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-west-2'
     )
     await userEvent.click(screen.getByTestId('harness-enabled-opencode'))
-    await userEvent.click(screen.getByTestId('save-harness-settings'))
-
     await waitFor(() =>
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
         localHarnesses: [
@@ -120,19 +131,48 @@ describe('HarnessSettingsPage', () => {
         ],
       })
     )
-    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent('运行工具设置已保存')
+    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
+      '编码工具设置已自动保存'
+    )
   })
 
   test('does not persist malformed environment variables', async () => {
     render(<HarnessSettingsPage />)
 
     await screen.findByText('1.2.3')
+    await userEvent.click(screen.getByTestId('harness-settings-toggle-opencode'))
     await userEvent.type(screen.getByTestId('harness-env-opencode'), 'MISSING_VALUE')
-    await userEvent.click(screen.getByTestId('save-harness-settings'))
-
-    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
-      'OpenCode 的环境变量第 1 行无效'
+    await waitFor(() =>
+      expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
+        'OpenCode 的环境变量第 1 行无效'
+      )
     )
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+  })
+
+  test('shows one tool-specific settings panel at a time', async () => {
+    render(<HarnessSettingsPage />)
+
+    await screen.findByText('1.2.3')
+    await userEvent.click(screen.getByTestId('harness-settings-toggle-opencode'))
+
+    expect(screen.getByTestId('harness-settings-toggle-opencode')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('harness-settings-panel-opencode')).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-permission-mode-claude_code')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+
+    expect(screen.getByTestId('harness-settings-toggle-opencode')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByTestId('harness-settings-panel-opencode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('harness-settings-panel-claude_code')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-permission-mode-claude_code')).toBeInTheDocument()
+    expect(screen.queryByTestId('refresh-harness-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('save-harness-settings')).not.toBeInTheDocument()
   })
 })

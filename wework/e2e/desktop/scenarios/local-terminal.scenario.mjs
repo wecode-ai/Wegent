@@ -209,15 +209,36 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   }
   await control.command('click', '[data-testid="settings-nav-harnesses"]')
   await control.command('waitFor', '[data-testid="harness-settings-page"]', { timeoutMs })
+  const collapsedSettingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.match(collapsedSettingsSnapshot.text, /编码工具/)
+  assert.equal(
+    collapsedSettingsSnapshot.testIds.some(testId => testId.startsWith('harness-settings-panel-')),
+    false,
+    'Coding tool settings should start collapsed'
+  )
   await capturePage(control, 'local-harness-01-settings-open.png')
-  await control.command('fill', '[data-testid="harness-executable-opencode"]', {
-    value: executables.openCodeExecutable,
+  await control.command('setLocalHarnessExecutablePaths', 'body', {
+    value: JSON.stringify({
+      opencode: executables.openCodeExecutable,
+      claude_code: executables.claudeCodeExecutable,
+      kimi_code: executables.kimiCodeExecutable,
+    }),
   })
-  await control.command('fill', '[data-testid="harness-executable-claude_code"]', {
-    value: executables.claudeCodeExecutable,
+  await control.command('click', '[data-testid="harness-settings-toggle-opencode"]')
+  await control.command('waitFor', '[data-testid="harness-executable-path-opencode"]', {
+    text: executables.openCodeExecutable,
+    timeoutMs,
   })
-  await control.command('fill', '[data-testid="harness-executable-kimi_code"]', {
-    value: executables.kimiCodeExecutable,
+  assert.equal(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.includes(
+      'harness-executable-opencode'
+    ),
+    false,
+    'Executable configuration must not expose a command-name text input'
+  )
+  await control.command('click', '[data-testid="harness-settings-toggle-claude_code"]')
+  await control.command('waitFor', '[data-testid="harness-settings-panel-claude_code"]', {
+    timeoutMs,
   })
   await control.command('select', '[data-testid="harness-permission-mode-claude_code"]', {
     value: 'plan',
@@ -228,7 +249,20 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   await control.command('fill', '[data-testid="harness-env-claude_code"]', {
     value: 'WEWORK_HARNESS_E2E=claude-settings',
   })
-  await control.command('clickWhenEnabled', '[data-testid="save-harness-settings"]', {
+  await capturePage(control, 'local-harness-02-claude-settings.png')
+  await control.command('click', '[data-testid="harness-settings-toggle-kimi_code"]')
+  const kimiSettingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    kimiSettingsSnapshot.testIds.includes('harness-permission-mode-claude_code'),
+    false,
+    'Kimi Code must not inherit Claude Code-specific settings'
+  )
+  assert.ok(
+    kimiSettingsSnapshot.testIds.includes('harness-executable-select-kimi_code'),
+    'Expanded coding tools should expose the executable file picker'
+  )
+  await control.command('waitFor', '[data-testid="harness-settings-status"]', {
+    text: '编码工具设置已自动保存',
     timeoutMs,
   })
   await control.command('waitFor', '[data-testid="harness-settings-opencode"]', {
@@ -243,9 +277,7 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
     text: 'kimi-code-e2e 3.0.0',
     timeoutMs,
   })
-  await capturePage(control, 'local-harness-02-settings-detected.png')
-  await control.command('scrollIntoView', '[data-testid="harness-permission-mode-claude_code"]')
-  await capturePage(control, 'local-harness-03-claude-settings.png')
+  await capturePage(control, 'local-harness-03-settings-detected.png')
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', { timeoutMs })
 }

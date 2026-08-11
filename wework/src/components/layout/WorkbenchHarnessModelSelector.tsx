@@ -24,7 +24,7 @@ export function WorkbenchHarnessModelSelector({
 
   return (
     <ActionMenu
-      ariaLabel={t('workbench.harness_model_selector', '选择运行工具模型')}
+      ariaLabel={t('workbench.harness_model_selector', '选择编码工具模型')}
       testId="workbench-harness-model-selector"
       icon={Cpu}
       triggerLabel={

@@ -200,7 +200,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'harnesses',
     icon: Code2,
     label: 'settings_nav_harnesses',
-    fallback: '运行工具',
+    fallback: '编码工具',
     category: 'coding',
     experimental: true,
   },

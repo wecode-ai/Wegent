@@ -1667,7 +1667,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setCentralHarnessError(
           error instanceof Error
             ? error.message
-            : t('workbench.harness_start_failed', '启动运行工具失败')
+            : t('workbench.harness_start_failed', '启动编码工具失败')
         )
       } finally {
         setCentralHarnessStarting(false)
@@ -1819,7 +1819,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setCentralHarnessError(
         error instanceof Error
           ? error.message
-          : t('workbench.harness_start_failed', '启动运行工具失败')
+          : t('workbench.harness_start_failed', '启动编码工具失败')
       )
     }
   }
@@ -1866,7 +1866,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setCentralHarnessError(
           error instanceof Error
             ? error.message
-            : t('workbench.harness_start_failed', '启动运行工具失败')
+            : t('workbench.harness_start_failed', '启动编码工具失败')
         )
       }
     },
@@ -3018,8 +3018,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         type="button"
         data-testid="central-harness-close-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.close_harness', '关闭运行工具')}
-        title={t('workbench.close_harness', '关闭运行工具')}
+        aria-label={t('workbench.close_harness', '关闭编码工具')}
+        title={t('workbench.close_harness', '关闭编码工具')}
         onClick={() => {
           void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
         }}
@@ -3647,7 +3647,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 setCentralHarnessError(
                                   t(
                                     'workbench.harness_model_save_failed',
-                                    '运行工具模型选择保存失败'
+                                    '编码工具模型选择保存失败'
                                   )
                                 )
                               })

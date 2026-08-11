@@ -2038,7 +2038,7 @@ function LocalHarnessSessionRow({
             event.stopPropagation()
             void onClose(session.sessionId)
           }}
-          aria-label={t('workbench.close_harness', '关闭运行工具')}
+          aria-label={t('workbench.close_harness', '关闭编码工具')}
           className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
         >
           <X className="h-3.5 w-3.5" />

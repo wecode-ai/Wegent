@@ -45,7 +45,7 @@ export function CentralHarnessTerminal({
               data-testid="central-harness-close-button"
               onClick={onClose}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-              aria-label={t('workbench.close_harness', '关闭运行工具')}
+              aria-label={t('workbench.close_harness', '关闭编码工具')}
             >
               <X className="h-4 w-4" />
             </button>

@@ -27,7 +27,7 @@ export function WorkbenchHarnessSelector({
 
   return (
     <ActionMenu
-      ariaLabel={t('workbench.harness_selector', '选择运行工具')}
+      ariaLabel={t('workbench.harness_selector', '选择编码工具')}
       testId="workbench-harness-selector"
       icon={runtime === 'codex' ? Bot : SquareTerminal}
       triggerLabel={
