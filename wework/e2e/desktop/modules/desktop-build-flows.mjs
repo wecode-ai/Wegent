@@ -462,6 +462,22 @@ async function verifyConnectedModelsOnLocalExecution({
   )
 }
 
+async function verifyCloudVisionFlows(control, composerSelector) {
+  const projectRowSelector = '[data-testid^="project-row-"]'
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: CLOUD_VISION_SIDECAR_CASE,
+    projectRowSelector,
+  })
+  await verifyMultimodalVision({
+    composerSelector,
+    control,
+    modelCase: CLOUD_MULTIMODAL_VISION_CASE,
+    projectRowSelector,
+  })
+}
+
 async function verifyCloudProjectFlow(
   control,
   cloudEnvironment,
@@ -600,18 +616,7 @@ async function verifyCloudProjectFlow(
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
 
   if (visionOnly) {
-    await verifyVisionSidecar({
-      composerSelector,
-      control,
-      modelCase: CLOUD_VISION_SIDECAR_CASE,
-      projectRowSelector: '[data-testid^="project-row-"]',
-    })
-    await verifyMultimodalVision({
-      composerSelector,
-      control,
-      modelCase: CLOUD_MULTIMODAL_VISION_CASE,
-      projectRowSelector: '[data-testid^="project-row-"]',
-    })
+    await verifyCloudVisionFlows(control, composerSelector)
     return
   }
 
@@ -727,18 +732,7 @@ async function verifyCloudProjectFlow(
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
-  await verifyVisionSidecar({
-    composerSelector,
-    control,
-    modelCase: CLOUD_VISION_SIDECAR_CASE,
-    projectRowSelector: '[data-testid^="project-row-"]',
-  })
-  await verifyMultimodalVision({
-    composerSelector,
-    control,
-    modelCase: CLOUD_MULTIMODAL_VISION_CASE,
-    projectRowSelector: '[data-testid^="project-row-"]',
-  })
+  await verifyCloudVisionFlows(control, composerSelector)
 
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 

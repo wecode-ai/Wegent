@@ -22,9 +22,11 @@ function attachment(overrides: Partial<Attachment> = {}): Attachment {
 
 function device(deviceId: string, deviceType: DeviceInfo['device_type']): DeviceInfo {
   return {
+    id: 1,
     device_id: deviceId,
     name: deviceId,
     status: 'online',
+    is_default: false,
     device_type: deviceType,
   }
 }

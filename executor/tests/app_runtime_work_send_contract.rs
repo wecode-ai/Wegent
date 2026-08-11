@@ -2563,6 +2563,7 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
         .await
         .expect("create should be accepted");
     let pid = wait_for_logged_pid(&log_path, "persistent-pid:").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
 
     let cancelled = handler
         .handle_runtime_rpc(json!({
