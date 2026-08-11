@@ -3688,30 +3688,18 @@ export function PluginsWorkspace({
             }
           }}
           onUninstall={() => {
-            const installedPluginId =
-              installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
-            if (installedPluginId === null || installedPluginId === undefined) {
-              // Stale "installed" UI with no Kind id — reconcile from cloud/local state.
-              setPluginMarketplaceState(previous => ({
-                ...previous,
-                error: null,
-                items: previous.items.map(item =>
-                  item.id === selectedMarketplacePlugin.id
-                    ? {
-                        ...item,
-                        installed: false,
-                        installedPluginId: null,
-                        enabled: false,
-                        currentDeviceInstallation: null,
-                      }
-                    : item
-                ),
-              }))
-              setMarketplaceRefreshTick(previous => previous + 1)
-              return
-            }
+            const marketplaceId =
+              typeof selectedMarketplacePlugin.manifest?.marketplaceId === 'string'
+                ? selectedMarketplacePlugin.manifest.marketplaceId
+                : ''
+            const uninstallId =
+              installedDetail?.id ??
+              selectedMarketplacePlugin.installedPluginId ??
+              (marketplaceId
+                ? `${selectedMarketplacePlugin.name}@${marketplaceId}`
+                : selectedMarketplacePlugin.id)
             requestUninstallPlugin(
-              installedPluginId,
+              uninstallId,
               selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
             )
           }}
@@ -4235,32 +4223,15 @@ export function PluginsWorkspace({
                           onTry={() => tryMarketplacePluginInChat(item)}
                           onManage={() => openMarketplacePluginDetail(item)}
                           onUninstall={() => {
-                            if (
-                              item.installedPluginId === null ||
-                              item.installedPluginId === undefined
-                            ) {
-                              setPluginMarketplaceState(previous => ({
-                                ...previous,
-                                error: null,
-                                items: previous.items.map(candidate =>
-                                  candidate.id === item.id
-                                    ? {
-                                        ...candidate,
-                                        installed: false,
-                                        installedPluginId: null,
-                                        enabled: false,
-                                        currentDeviceInstallation: null,
-                                      }
-                                    : candidate
-                                ),
-                              }))
-                              setMarketplaceRefreshTick(previous => previous + 1)
-                              return
-                            }
-                            requestUninstallPlugin(
-                              item.installedPluginId,
-                              item.displayName || item.name
-                            )
+                            // Always call real uninstall. Clearing the card alone left
+                            // Codex membership installed (composer picker still listed it).
+                            const uninstallId =
+                              item.installedPluginId ??
+                              (typeof item.manifest?.marketplaceId === 'string' &&
+                              item.manifest.marketplaceId
+                                ? `${item.name}@${item.manifest.marketplaceId}`
+                                : item.id)
+                            requestUninstallPlugin(uninstallId, item.displayName || item.name)
                           }}
                         />
                       ))}

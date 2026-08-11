@@ -1468,30 +1468,100 @@ function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string):
 }
 
 /** UI catalog rows for user-added markets use `${marketplace}:${codexPluginId}`. */
-function denamespacedCatalogPluginId(pluginId: string, marketplaceName: string): string {
+function splitNamespacedCatalogPluginId(
+  pluginId: string
+): { marketplaceName: string; innerId: string } | null {
   const trimmedId = pluginId.trim()
+  const separator = trimmedId.indexOf(':')
+  if (separator <= 0 || separator >= trimmedId.length - 1) return null
+  const marketplaceName = trimmedId.slice(0, separator).trim()
+  const innerId = trimmedId.slice(separator + 1).trim()
+  // Marketplace ids are slug-like; skip Windows paths / URLs.
+  if (!marketplaceName || !innerId) return null
+  if (/[\\/]/.test(marketplaceName) || marketplaceName.includes('://')) return null
+  return { marketplaceName, innerId }
+}
+
+function denamespacedCatalogPluginId(pluginId: string, marketplaceName: string): string {
   const trimmedMarketplace = marketplaceName.trim()
-  if (!trimmedId || !trimmedMarketplace) return ''
-  const prefix = `${trimmedMarketplace}:`
-  if (!trimmedId.startsWith(prefix)) return ''
-  return trimmedId.slice(prefix.length).trim()
+  if (!trimmedMarketplace) return splitNamespacedCatalogPluginId(pluginId)?.innerId ?? ''
+  const split = splitNamespacedCatalogPluginId(pluginId)
+  if (!split || split.marketplaceName !== trimmedMarketplace) return ''
+  return split.innerId
+}
+
+/**
+ * Codex treats ids matching `[A-Za-z0-9_-~]+` as remote ChatGPT plugin ids.
+ * Bare local plugin names (e.g. `desktop-e2e-plugin`) match and incorrectly
+ * require remote-catalog auth during uninstall.
+ */
+function looksLikeCodexRemotePluginId(pluginId: string): boolean {
+  const trimmed = pluginId.trim()
+  return trimmed.length > 0 && /^[A-Za-z0-9_~-]+$/.test(trimmed)
 }
 
 function isRetriablePluginUninstallCandidateError(message: string): boolean {
   return (
     /not found|not installed|unknown plugin|unexpected plugin id/i.test(message) ||
+    /invalid remote plugin id/i.test(message) ||
     // After unrestricted plugin/list syncs openai-curated-remote, Codex may try to
-    // resolve the remote catalog while probing a bad/namespaced uninstall id.
+    // resolve the remote catalog while probing a bare/namespaced uninstall id.
     /chatgpt authentication required for remote plugin catalog/i.test(message) ||
     /resolve remote plugin before uninstall/i.test(message)
   )
 }
 
+function resolveLocalUninstallIdentity(input: {
+  requestedId: string
+  pluginName: string
+  marketplaceName: string
+  remotePluginId: string
+  marketplaceItemId: string
+  installedId: string
+}): { pluginName: string; marketplaceName: string; qualifiedId: string } {
+  let marketplaceName = input.marketplaceName.trim()
+  let pluginName = input.pluginName.trim()
+
+  for (const candidate of [
+    input.requestedId,
+    input.marketplaceItemId,
+    input.installedId,
+    input.remotePluginId,
+  ]) {
+    const namespaced = splitNamespacedCatalogPluginId(candidate)
+    if (namespaced) {
+      if (!marketplaceName) marketplaceName = namespaced.marketplaceName
+      const at = namespaced.innerId.indexOf('@')
+      const innerName = at > 0 ? namespaced.innerId.slice(0, at) : namespaced.innerId
+      if (!pluginName || looksLikeCodexRemotePluginId(pluginName) || pluginName.includes(':')) {
+        pluginName = innerName
+      }
+      if (!marketplaceName && at > 0) {
+        marketplaceName = namespaced.innerId.slice(at + 1)
+      }
+      continue
+    }
+    const at = candidate.trim().indexOf('@')
+    if (at <= 0) continue
+    if (!pluginName || looksLikeCodexRemotePluginId(pluginName)) {
+      pluginName = candidate.trim().slice(0, at)
+    }
+    if (!marketplaceName) marketplaceName = candidate.trim().slice(at + 1)
+  }
+
+  const qualifiedId =
+    pluginName && marketplaceName && !pluginName.includes('@')
+      ? `${pluginName}@${marketplaceName}`
+      : pluginName.includes('@')
+        ? pluginName
+        : ''
+  return { pluginName, marketplaceName, qualifiedId }
+}
+
 /**
  * Build uninstall id probes for Codex plugin/uninstall.
- * Prefer Codex-native ids (`name@marketplace`, denamespaced plugin id). The UI
- * namespaced catalog id (`marketplace:pluginId`) is last for local markets — it
- * is not a valid Codex uninstall id and can force remote-catalog auth.
+ * Local markets must use `name@marketplace`. Bare alphanumeric ids are remote
+ * ChatGPT plugin ids and must not be probed for local uninstalls.
  */
 function buildPluginUninstallCandidateIds(input: {
   requestedId: string
@@ -1501,38 +1571,48 @@ function buildPluginUninstallCandidateIds(input: {
   marketplaceItemId: string
   installedId: string
 }): string[] {
-  const qualified = input.marketplaceName ? `${input.pluginName}@${input.marketplaceName}` : ''
+  const resolved = resolveLocalUninstallIdentity(input)
   const denamespacedRequested = denamespacedCatalogPluginId(
     input.requestedId,
-    input.marketplaceName
+    resolved.marketplaceName
   )
   const denamespacedItem = denamespacedCatalogPluginId(
     input.marketplaceItemId,
-    input.marketplaceName
+    resolved.marketplaceName
   )
-  const remoteOpenAi = isOpenAiOfficialMarketplaceId(input.marketplaceName)
+  const remoteOpenAi = isOpenAiOfficialMarketplaceId(resolved.marketplaceName)
+  const localNativeIds = [
+    resolved.qualifiedId,
+    denamespacedRequested.includes('@') ? denamespacedRequested : '',
+    denamespacedItem.includes('@') ? denamespacedItem : '',
+    input.installedId.includes('@') ? input.installedId : '',
+    input.requestedId.includes('@') && !input.requestedId.includes(':') ? input.requestedId : '',
+    // If denamespaced inner id is bare, rebuild the qualified local id.
+    denamespacedRequested && !denamespacedRequested.includes('@') && resolved.marketplaceName
+      ? `${denamespacedRequested}@${resolved.marketplaceName}`
+      : '',
+    denamespacedItem && !denamespacedItem.includes('@') && resolved.marketplaceName
+      ? `${denamespacedItem}@${resolved.marketplaceName}`
+      : '',
+  ]
   const ordered = remoteOpenAi
     ? [
         // Remote OpenAI installs often require the connector-style remotePluginId.
         input.remotePluginId,
-        qualified,
-        denamespacedRequested,
-        denamespacedItem,
+        ...localNativeIds,
         input.requestedId,
         input.pluginName,
         input.marketplaceItemId,
         input.installedId,
       ]
     : [
-        qualified,
-        denamespacedRequested,
-        denamespacedItem,
-        input.installedId,
-        input.pluginName,
-        // Local markets should not lead with remotePluginId / namespaced catalog ids.
-        input.remotePluginId,
-        input.requestedId,
-        input.marketplaceItemId,
+        ...localNativeIds,
+        // Keep non-remote-shaped leftovers last; never probe bare remote-shaped
+        // local names — they force ChatGPT remote-catalog auth.
+        !looksLikeCodexRemotePluginId(input.remotePluginId) ? input.remotePluginId : '',
+        !looksLikeCodexRemotePluginId(input.requestedId) && !input.requestedId.includes(':')
+          ? input.requestedId
+          : '',
       ]
   return Array.from(new Set(ordered.filter(value => Boolean(value && String(value).trim()))))
 }

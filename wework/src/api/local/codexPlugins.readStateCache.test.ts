@@ -899,8 +899,10 @@ describe('local codex plugin readState cache', () => {
           throw new Error(`Unexpected executor method ${method}`)
         }
         if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          // Mirror CI: Codex may return a bare local plugin id. Bare alphanumeric ids
+          // are treated as remote ChatGPT plugin ids by plugin/uninstall.
           const plugin = {
-            id: 'desktop-e2e-plugin@desktop-e2e-marketplace',
+            id: 'desktop-e2e-plugin',
             name: 'desktop-e2e-plugin',
             installed,
             enabled: installed,
@@ -922,12 +924,13 @@ describe('local codex plugin readState cache', () => {
         if (params.method === 'plugin/uninstall') {
           const pluginId = String(params.params?.pluginId ?? '')
           uninstallAttempts.push(pluginId)
-          // Namespaced UI catalog ids must not be required; Codex treats them as a
-          // remote resolve and demands ChatGPT auth once openai-curated-remote is synced.
-          if (pluginId === 'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace') {
+          if (/^[A-Za-z0-9_~-]+$/.test(pluginId)) {
             throw new Error(
               'resolve remote plugin before uninstall: chatgpt authentication required for remote plugin catalog'
             )
+          }
+          if (pluginId.includes(':')) {
+            throw new Error('invalid remote plugin id')
           }
           if (pluginId === 'desktop-e2e-plugin@desktop-e2e-marketplace') {
             installed = false
@@ -943,16 +946,16 @@ describe('local codex plugin readState cache', () => {
     const before = await api.readState({ mergeAllMarketplaces: true })
     expect(before.marketplaceItems[0]).toEqual(
       expect.objectContaining({
-        id: 'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace',
+        id: 'desktop-e2e-marketplace:desktop-e2e-plugin',
         installed: true,
+        installedPluginId: 'desktop-e2e-plugin',
       })
     )
 
-    await api.uninstallInstalledPlugin(
-      'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace'
-    )
-    expect(uninstallAttempts).toContain('desktop-e2e-plugin@desktop-e2e-marketplace')
-    expect(uninstallAttempts[0]).toBe('desktop-e2e-plugin@desktop-e2e-marketplace')
+    // UI uninstalls via installedPluginId (bare) or namespaced catalog id.
+    await api.uninstallInstalledPlugin('desktop-e2e-plugin')
+    expect(uninstallAttempts).toEqual(['desktop-e2e-plugin@desktop-e2e-marketplace'])
+    expect(uninstallAttempts).not.toContain('desktop-e2e-plugin')
 
     const after = await api.readState({ mergeAllMarketplaces: true, refresh: true })
     expect(after.marketplaceItems).toEqual([
