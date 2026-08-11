@@ -140,7 +140,7 @@ The workflow can only be started manually from GitHub Actions and does not respo
 
 For example, when the latest stable version is `1.2.3`, the first Beta is `1.2.4-beta.1`, followed by `1.2.4-beta.2` and `1.2.4-beta.3`. After publishing stable `1.2.4`, the next automatic Beta is `1.2.5-beta.1`.
 
-A formal run creates or updates a `wework-v<version>` draft release. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
+A formal run creates or updates a `wework-v<version>` draft release. The Release changelog collects commits under `wework/` and `executor/` since the previous Wework tag. When no previous tag exists, the first release includes all matching history reachable from the release commit. Squash-merged PR entries include the PR number and `@contributor`; direct commits retain their short commit SHA and include `@contributor` when GitHub can identify the author's account. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
 
 After publishing the versioned Release, the workflow updates rolling manifests in the fixed `wework-updater` Release:
 

@@ -134,7 +134,7 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 
 例如最新正式版是 `1.2.3` 时，第一次 Beta 发布得到 `1.2.4-beta.1`，后续依次得到 `1.2.4-beta.2`、`1.2.4-beta.3`。正式发布 `1.2.4` 后，下一个自动 Beta 是 `1.2.5-beta.1`。
 
-正式发布会创建或更新 `wework-v<version>` draft release。构建完成后，workflow 生成该版本自己的 `latest.json` 并上传到同一个 Release，再发布 Release。正式版设置为 GitHub latest；Beta 设置为 prerelease，不改变 GitHub latest。禁止 tag push 自动触发可以避免 workflow 创建 tag 时再次启动同版本构建并覆盖已签名产物。
+正式发布会创建或更新 `wework-v<version>` draft release。Release changelog 会收集自上一个 Wework tag 以来 `wework/` 和 `executor/` 下的提交；首次发布没有上一个 tag 时，会收集当前发布提交可达的全部匹配历史。通过 squash PR 合入的条目会包含 PR 编号和 `@贡献者`，直接提交则保留短 commit SHA，并在 GitHub 能识别作者账号时包含 `@贡献者`。构建完成后，workflow 生成该版本自己的 `latest.json` 并上传到同一个 Release，再发布 Release。正式版设置为 GitHub latest；Beta 设置为 prerelease，不改变 GitHub latest。禁止 tag push 自动触发可以避免 workflow 创建 tag 时再次启动同版本构建并覆盖已签名产物。
 
 发布完成后，workflow 更新固定 `wework-updater` Release 中的滚动 manifest：
 
