@@ -235,6 +235,10 @@ export function EmbeddedLocalTerminal({
         if (!disposed && payload.session_id === sessionId) {
           onExitRef.current?.()
         }
+      },
+      {
+        taskId: contextRef.current.taskId,
+        workspacePath: contextRef.current.workspacePath,
       }
     )
       .then(unlisten => {

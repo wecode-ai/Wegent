@@ -70,21 +70,51 @@ import {
 import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
-import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
+import {
+  filterTeamsByMode,
+  getTeamGenerateMode,
+  teamSupportsBothGenerationModes,
+  type TeamModeFilter,
+} from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 import {
+  getTaskQueryParam,
+  removeGenerationModeQueryParam,
   removeTaskQueryParams,
   removeTeamQueryParam,
 } from '@/features/tasks/utils/task-query-params'
+import type { ImageGenerationConfig, VideoCapabilities, VideoGenerationMode } from '@/apis/models'
+import { readVideoFrameRate } from './mediaMetadata'
+import {
+  exceedsReferenceMaterialLimits,
+  resolveReferenceMaterialLimits,
+} from './referenceMaterialLimits'
+import { formatAspectRatioLimit, formatVideoPixelLimit } from './generationFormatting'
+import {
+  formatsToAcceptString,
+  getFileExtension,
+  isAudioExtension,
+  isImageExtension,
+  isVideoExtension,
+} from '@/apis/attachments'
+import type { AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
  * When the controls container width is less than this value, selectors will collapse.
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
+
+function isAllowedGenerationFormat(format: string, formats: string[]): boolean {
+  const normalized = format.toLowerCase().replace(/^\./, '')
+  return formats.some(value => {
+    const allowed = value.toLowerCase().replace(/^\./, '')
+    return allowed === normalized || (allowed === 'jpeg' && normalized === 'jpg')
+  })
+}
 
 function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
   if (!context.external_provider || !context.external_mode) return null
@@ -112,6 +142,10 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
+
+function isGenerateMode(taskType: TaskType): taskType is GenerateMode {
+  return taskType === 'video' || taskType === 'image'
+}
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
@@ -290,60 +324,581 @@ function ChatAreaContent({
     [taskState?.messages]
   )
 
-  // Video model selection state - only enabled for video mode
-  // Uses unified useModelSelection hook with modelCategoryType='video'
-  // NOTE: Must be called before useChatAreaState to provide maxAttachments
-  const videoModelSelection = useModelSelection({
-    teamId: null,
-    taskId: null,
-    selectedTeam: null,
-    disabled: taskType !== 'video',
-    modelCategoryType: 'video',
-  })
+  const [mediaAttachmentLimits, setMediaAttachmentLimits] = useState<{
+    maxAttachments?: number
+    maxByType?: AttachmentTypeLimits
+  }>({})
+  const validateAttachmentFileRef = useRef<(file: File) => Promise<string | null>>(async () => null)
+  const validateAttachmentFileProxy = useCallback(
+    (file: File) => validateAttachmentFileRef.current(file),
+    []
+  )
 
-  // Image model selection state - only enabled for image mode
-  // Uses unified useModelSelection hook with modelCategoryType='image'
-  // NOTE: Must be called before useChatAreaState to provide maxAttachments
-  const imageModelSelection = useModelSelection({
-    teamId: null,
-    taskId: null,
-    selectedTeam: null,
-    disabled: taskType !== 'image',
-    modelCategoryType: 'image',
-  })
-
-  // Compute maxAttachments from selected model's imageConfig
-  // This value is passed to useChatAreaState for attachment upload limits
-  const maxAttachmentsFromModel = useMemo(() => {
-    if (taskType === 'image') {
-      const imageConfig = imageModelSelection.selectedModel?.config?.imageConfig as
-        | { max_reference_images?: number }
-        | undefined
-      return imageConfig?.max_reference_images
-    }
-    // Video mode can also use reference images, use same field if available
-    if (taskType === 'video') {
-      const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
-        | { max_reference_images?: number }
-        | undefined
-      return videoConfig?.max_reference_images
-    }
-    return undefined
-  }, [
-    taskType,
-    imageModelSelection.selectedModel?.config,
-    videoModelSelection.selectedModel?.config,
-  ])
-
-  // Chat area state (team, repo, branch, model, input, toggles, etc.)
+  // Select the team before resolving generation models. Attachment limits are synchronized
   const chatState = useChatAreaState({
     teams,
     taskType,
     teamModeFilter,
     selectedTeamForNewTask,
     initialKnowledgeBase,
-    maxAttachments: maxAttachmentsFromModel,
+    maxAttachments: mediaAttachmentLimits.maxAttachments,
+    maxAttachmentsByType: mediaAttachmentLimits.maxByType,
+    validateAttachmentFile: validateAttachmentFileProxy,
   })
+
+  // Video model selection state - only enabled for video mode
+  // Uses unified useModelSelection hook with modelCategoryType='video'
+  const videoModelSelection = useModelSelection({
+    teamId: chatState.selectedTeam?.id ?? null,
+    taskId: effectiveTaskId ?? null,
+    selectedTeam: chatState.selectedTeam,
+    disabled: taskType !== 'video',
+    modelCategoryType: 'video',
+  })
+
+  // Image model selection state - only enabled for image mode
+  // Uses unified useModelSelection hook with modelCategoryType='image'
+  const imageModelSelection = useModelSelection({
+    teamId: chatState.selectedTeam?.id ?? null,
+    taskId: effectiveTaskId ?? null,
+    selectedTeam: chatState.selectedTeam,
+    disabled: taskType !== 'image',
+    modelCategoryType: 'image',
+  })
+
+  const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+    | {
+        resolution?: string
+        ratio?: string
+        duration?: number
+        max_reference_images?: number
+        capabilities?: VideoCapabilities
+      }
+    | undefined
+  const videoCapabilities = videoConfig?.capabilities
+  const imageConfig = imageModelSelection.selectedModel?.config?.imageConfig as
+    | ImageGenerationConfig
+    | undefined
+  const imageCapabilities = imageConfig?.capabilities
+  const imageReferenceFormats = imageCapabilities?.image_formats
+  const videoGenerationModes = useMemo(
+    () => videoCapabilities?.generation_modes ?? [],
+    [videoCapabilities?.generation_modes]
+  )
+  const [selectedVideoGenerationMode, setSelectedVideoGenerationMode] = useState<
+    string | undefined
+  >(undefined)
+
+  useEffect(() => {
+    setSelectedVideoGenerationMode(videoGenerationModes[0]?.id)
+  }, [videoModelSelection.selectedModel?.name, videoGenerationModes])
+
+  const activeVideoGenerationMode = useMemo<VideoGenerationMode | undefined>(
+    () =>
+      videoGenerationModes.find(mode => mode.id === selectedVideoGenerationMode) ??
+      videoGenerationModes[0],
+    [selectedVideoGenerationMode, videoGenerationModes]
+  )
+
+  const hasReferenceVideo = useMemo(
+    () =>
+      chatState.attachmentState.attachments.some(attachment =>
+        isVideoExtension(attachment.file_extension)
+      ) ||
+      Array.from(chatState.attachmentState.uploadingFiles.values()).some(uploading =>
+        isVideoExtension(getFileExtension(uploading.file.name))
+      ),
+    [chatState.attachmentState.attachments, chatState.attachmentState.uploadingFiles]
+  )
+
+  const videoMaterialLimits = useMemo(
+    () =>
+      resolveReferenceMaterialLimits({
+        capabilities: videoCapabilities,
+        mode: activeVideoGenerationMode,
+        legacyImageLimit: videoConfig?.max_reference_images,
+        hasReferenceVideo,
+      }),
+    [
+      activeVideoGenerationMode,
+      hasReferenceVideo,
+      videoCapabilities,
+      videoConfig?.max_reference_images,
+    ]
+  )
+
+  const maxAttachmentsFromModel = useMemo(() => {
+    if (taskType === 'image') {
+      return imageCapabilities?.max_reference_images ?? imageConfig?.max_reference_images
+    }
+    if (taskType === 'video') {
+      return videoMaterialLimits.total ?? videoConfig?.max_reference_images
+    }
+    return undefined
+  }, [
+    taskType,
+    imageCapabilities?.max_reference_images,
+    imageConfig?.max_reference_images,
+    videoMaterialLimits.total,
+    videoConfig?.max_reference_images,
+  ])
+
+  const maxAttachmentsByType = useMemo(() => {
+    if (taskType !== 'video') return undefined
+    return {
+      image: videoMaterialLimits.image,
+      imageWithVideo: videoCapabilities?.max_reference_images_with_video,
+      video: videoMaterialLimits.video,
+      audio: videoMaterialLimits.audio,
+    }
+  }, [taskType, videoMaterialLimits])
+
+  const videoImageMaterialAccept = useMemo(
+    () => formatsToAcceptString(videoCapabilities?.image_formats, 'image/*'),
+    [videoCapabilities?.image_formats]
+  )
+  const imageMaterialAccept = useMemo(
+    () => formatsToAcceptString(imageReferenceFormats, 'image/*'),
+    [imageReferenceFormats]
+  )
+
+  const materialAccept = useMemo(() => {
+    if (taskType === 'image') return imageMaterialAccept
+    if (taskType !== 'video') return undefined
+    const isKeyframeMode =
+      activeVideoGenerationMode?.id === 'first_last_frame' ||
+      activeVideoGenerationMode?.id === 'keyframe'
+    const imageAllowed =
+      activeVideoGenerationMode?.image_required ||
+      activeVideoGenerationMode?.first_frame_required ||
+      videoCapabilities?.supports_image_input !== false
+    const videoAllowed =
+      !isKeyframeMode &&
+      videoCapabilities?.supports_video_input === true &&
+      activeVideoGenerationMode?.video_allowed !== false
+    const audioAllowed =
+      !isKeyframeMode &&
+      videoCapabilities?.supports_audio_input === true &&
+      activeVideoGenerationMode?.audio_allowed !== false
+    return [
+      imageAllowed ? videoImageMaterialAccept : '',
+      videoAllowed ? formatsToAcceptString(videoCapabilities?.video_formats, 'video/*') : '',
+      audioAllowed ? formatsToAcceptString(videoCapabilities?.audio_formats, 'audio/*') : '',
+    ]
+      .filter(Boolean)
+      .join(',')
+  }, [
+    activeVideoGenerationMode,
+    imageMaterialAccept,
+    taskType,
+    videoCapabilities,
+    videoImageMaterialAccept,
+  ])
+
+  const validateAttachmentFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      const extension = getFileExtension(file.name)
+      const format = extension.replace(/^\./, '').toLowerCase()
+      if (taskType === 'image') {
+        if (
+          imageCapabilities?.supports_image_input === false ||
+          (imageCapabilities?.max_reference_images ?? imageConfig?.max_reference_images) === 0
+        ) {
+          return t('generate.material_errors.model_image')
+        }
+        if (
+          imageReferenceFormats?.length &&
+          !isAllowedGenerationFormat(format, imageReferenceFormats)
+        ) {
+          return t('generate.material_errors.format', {
+            format: format.toUpperCase(),
+            formats: imageReferenceFormats.map(value => value.toUpperCase()).join(', '),
+          })
+        }
+        const maxSizeMb = imageCapabilities?.image_max_size_mb
+        if (maxSizeMb && file.size > maxSizeMb * 1024 * 1024) {
+          return t('generate.material_errors.max_size', {
+            current: Number((file.size / (1024 * 1024)).toFixed(1)),
+            max: maxSizeMb,
+          })
+        }
+        return null
+      }
+      if (taskType !== 'video' || !videoCapabilities) return null
+      const isImage = isImageExtension(extension)
+      const isVideo = isVideoExtension(extension)
+      const isAudio = isAudioExtension(extension)
+      const isImageMime = file.type.toLowerCase().startsWith('image/')
+      const isKeyframeMode =
+        activeVideoGenerationMode?.id === 'first_last_frame' ||
+        activeVideoGenerationMode?.id === 'keyframe'
+      if (isKeyframeMode && !isImage) {
+        if (isImageMime && videoCapabilities.image_formats?.length) {
+          return t('generate.material_errors.format', {
+            format: format.toUpperCase(),
+            formats: videoCapabilities.image_formats.map(value => value.toUpperCase()).join(', '),
+          })
+        }
+        return t('generate.material_errors.mode_image_only')
+      }
+      if (!isImage && !isVideo && !isAudio) {
+        return t('generate.material_errors.material_type')
+      }
+      if (isImage && videoCapabilities.supports_image_input === false) {
+        return t('generate.material_errors.model_image')
+      }
+      if (isVideo && activeVideoGenerationMode?.video_allowed === false) {
+        return t('generate.material_errors.mode_video')
+      }
+      if (isAudio && activeVideoGenerationMode?.audio_allowed === false) {
+        return t('generate.material_errors.mode_audio')
+      }
+      if (isVideo && videoCapabilities.supports_video_input !== true) {
+        return t('generate.material_errors.model_video')
+      }
+      if (isAudio && videoCapabilities.supports_audio_input !== true) {
+        return t('generate.material_errors.model_audio')
+      }
+      const formats = isImage
+        ? videoCapabilities.image_formats
+        : isVideo
+          ? videoCapabilities.video_formats
+          : videoCapabilities.audio_formats
+      if (formats?.length && !isAllowedGenerationFormat(format, formats)) {
+        return t('generate.material_errors.format', {
+          format: format.toUpperCase(),
+          formats: formats.map(value => value.toUpperCase()).join(', '),
+        })
+      }
+      const maxSizeMb = isImage
+        ? videoCapabilities.image_max_size_mb
+        : isVideo
+          ? videoCapabilities.video_max_size_mb
+          : videoCapabilities.audio_max_size_mb
+      if (maxSizeMb && file.size > maxSizeMb * 1024 * 1024) {
+        return t('generate.material_errors.max_size', {
+          current: Number((file.size / (1024 * 1024)).toFixed(1)),
+          max: maxSizeMb,
+        })
+      }
+      if (isImage) {
+        const dimensions = await new Promise<{ width: number; height: number } | null>(resolve => {
+          const image = new Image()
+          const url = URL.createObjectURL(file)
+          image.onload = () => {
+            URL.revokeObjectURL(url)
+            resolve({ width: image.naturalWidth, height: image.naturalHeight })
+          }
+          image.onerror = () => {
+            URL.revokeObjectURL(url)
+            resolve(null)
+          }
+          image.src = url
+        })
+        if (
+          !dimensions &&
+          (videoCapabilities.image_min_dimension != null ||
+            videoCapabilities.image_max_dimension != null ||
+            videoCapabilities.image_min_aspect_ratio != null ||
+            videoCapabilities.image_max_aspect_ratio != null)
+        ) {
+          return t('generate.material_errors.image_metadata_unreadable')
+        }
+        if (dimensions) {
+          const min = videoCapabilities.image_min_dimension
+          const max = videoCapabilities.image_max_dimension
+          const aspectRatio = dimensions.width / dimensions.height
+          if (
+            (min && (dimensions.width < min || dimensions.height < min)) ||
+            (max && (dimensions.width > max || dimensions.height > max))
+          ) {
+            return t('generate.material_errors.image_dimension', {
+              min: min ?? 1,
+              max: max ?? t('generate.material_errors.unlimited'),
+              width: dimensions.width,
+              height: dimensions.height,
+            })
+          }
+          if (
+            (videoCapabilities.image_min_aspect_ratio &&
+              aspectRatio < videoCapabilities.image_min_aspect_ratio) ||
+            (videoCapabilities.image_max_aspect_ratio &&
+              aspectRatio > videoCapabilities.image_max_aspect_ratio)
+          ) {
+            return t('generate.material_errors.image_aspect_ratio', {
+              min:
+                videoCapabilities.image_min_aspect_ratio != null
+                  ? formatAspectRatioLimit(videoCapabilities.image_min_aspect_ratio)
+                  : t('generate.material_errors.unlimited'),
+              max:
+                videoCapabilities.image_max_aspect_ratio != null
+                  ? formatAspectRatioLimit(videoCapabilities.image_max_aspect_ratio)
+                  : t('generate.material_errors.unlimited'),
+              width: dimensions.width,
+              height: dimensions.height,
+            })
+          }
+        }
+      }
+      if (isVideo || isAudio) {
+        const metadata = await new Promise<{
+          duration: number | null
+          width: number
+          height: number
+        } | null>(resolve => {
+          const media = document.createElement(isVideo ? 'video' : 'audio')
+          const url = URL.createObjectURL(file)
+          media.onloadedmetadata = () => {
+            URL.revokeObjectURL(url)
+            const video = media as HTMLVideoElement
+            resolve({
+              duration: Number.isFinite(media.duration) ? media.duration : null,
+              width: isVideo ? video.videoWidth : 0,
+              height: isVideo ? video.videoHeight : 0,
+            })
+          }
+          media.onerror = () => {
+            URL.revokeObjectURL(url)
+            resolve(null)
+          }
+          media.src = url
+        })
+        const duration = metadata?.duration ?? null
+        const min = isVideo
+          ? videoCapabilities.video_min_duration_sec
+          : videoCapabilities.audio_min_duration_sec
+        const max = isVideo
+          ? videoCapabilities.video_max_duration_sec
+          : videoCapabilities.audio_max_duration_sec
+        const requiresVideoMetadata =
+          isVideo &&
+          (videoCapabilities.video_min_dimension != null ||
+            videoCapabilities.video_max_dimension != null ||
+            videoCapabilities.video_min_pixels != null ||
+            videoCapabilities.video_max_pixels != null ||
+            videoCapabilities.video_min_aspect_ratio != null ||
+            videoCapabilities.video_max_aspect_ratio != null ||
+            videoCapabilities.video_min_fps != null ||
+            videoCapabilities.video_max_fps != null)
+        if (!metadata && requiresVideoMetadata) {
+          return t('generate.material_errors.video_metadata_unreadable')
+        }
+        if (duration == null && (min != null || max != null)) {
+          return t('generate.material_errors.duration_unreadable')
+        }
+        if (
+          duration != null &&
+          ((min != null && duration < min) || (max != null && duration > max))
+        ) {
+          return t('generate.material_errors.duration_range', {
+            min: min ?? 0,
+            max: max ?? t('generate.material_errors.unlimited'),
+            current: Number(duration.toFixed(1)),
+          })
+        }
+        if (isVideo && metadata?.width && metadata.height) {
+          const { width, height } = metadata
+          const minDimension = videoCapabilities.video_min_dimension
+          const maxDimension = videoCapabilities.video_max_dimension
+          const pixels = width * height
+          const aspectRatio = width / height
+          if (
+            (minDimension && (width < minDimension || height < minDimension)) ||
+            (maxDimension && (width > maxDimension || height > maxDimension))
+          ) {
+            return t('generate.material_errors.video_dimension', {
+              min: minDimension ?? 1,
+              max: maxDimension ?? t('generate.material_errors.unlimited'),
+              width,
+              height,
+            })
+          }
+          if (
+            (videoCapabilities.video_min_pixels && pixels < videoCapabilities.video_min_pixels) ||
+            (videoCapabilities.video_max_pixels && pixels > videoCapabilities.video_max_pixels)
+          ) {
+            return t('generate.material_errors.video_pixels', {
+              min:
+                videoCapabilities.video_min_pixels != null
+                  ? formatVideoPixelLimit(videoCapabilities.video_min_pixels)
+                  : t('generate.material_errors.unlimited'),
+              max:
+                videoCapabilities.video_max_pixels != null
+                  ? formatVideoPixelLimit(videoCapabilities.video_max_pixels)
+                  : t('generate.material_errors.unlimited'),
+              current: formatVideoPixelLimit(pixels),
+              width,
+              height,
+            })
+          }
+          if (
+            (videoCapabilities.video_min_aspect_ratio &&
+              aspectRatio < videoCapabilities.video_min_aspect_ratio) ||
+            (videoCapabilities.video_max_aspect_ratio &&
+              aspectRatio > videoCapabilities.video_max_aspect_ratio)
+          ) {
+            return t('generate.material_errors.video_aspect_ratio', {
+              min:
+                videoCapabilities.video_min_aspect_ratio != null
+                  ? formatAspectRatioLimit(videoCapabilities.video_min_aspect_ratio)
+                  : t('generate.material_errors.unlimited'),
+              max:
+                videoCapabilities.video_max_aspect_ratio != null
+                  ? formatAspectRatioLimit(videoCapabilities.video_max_aspect_ratio)
+                  : t('generate.material_errors.unlimited'),
+              width,
+              height,
+            })
+          }
+          const minFps = videoCapabilities.video_min_fps
+          const maxFps = videoCapabilities.video_max_fps
+          if (minFps != null || maxFps != null) {
+            const fps = await readVideoFrameRate(file)
+            if (fps == null) {
+              return t('generate.material_errors.video_fps_unreadable')
+            }
+            if ((minFps != null && fps < minFps) || (maxFps != null && fps > maxFps)) {
+              return t('generate.material_errors.video_fps', {
+                min: minFps ?? 0,
+                max: maxFps ?? t('generate.material_errors.unlimited'),
+                current: Number(fps.toFixed(2)),
+              })
+            }
+          }
+        }
+      }
+      return null
+    },
+    [
+      activeVideoGenerationMode,
+      imageCapabilities,
+      imageConfig?.max_reference_images,
+      imageReferenceFormats,
+      t,
+      taskType,
+      videoCapabilities,
+    ]
+  )
+
+  useEffect(() => {
+    validateAttachmentFileRef.current = validateAttachmentFile
+  }, [validateAttachmentFile])
+
+  useEffect(() => {
+    setMediaAttachmentLimits({
+      maxAttachments: maxAttachmentsFromModel,
+      maxByType: maxAttachmentsByType,
+    })
+  }, [maxAttachmentsByType, maxAttachmentsFromModel])
+
+  const handleVideoGenerationModeChange = useCallback(
+    (modeId: string) => {
+      const mode = videoGenerationModes.find(item => item.id === modeId)
+      if (!mode) return
+      const counts = chatState.attachmentState.attachments.reduce(
+        (result, attachment) => {
+          if (isImageExtension(attachment.file_extension)) result.image += 1
+          if (isVideoExtension(attachment.file_extension)) result.video += 1
+          if (isAudioExtension(attachment.file_extension)) result.audio += 1
+          return result
+        },
+        { image: 0, video: 0, audio: 0 }
+      )
+      const limits = resolveReferenceMaterialLimits({
+        capabilities: videoCapabilities,
+        mode,
+        legacyImageLimit: videoConfig?.max_reference_images,
+        hasReferenceVideo: counts.video > 0,
+      })
+      const incompatible =
+        (mode.video_allowed === false && counts.video > 0) ||
+        (mode.audio_allowed === false && counts.audio > 0) ||
+        exceedsReferenceMaterialLimits(counts, limits)
+      if (incompatible) {
+        toast({
+          variant: 'destructive',
+          title: t('generate.material_errors.mode_switch'),
+        })
+        return
+      }
+      setSelectedVideoGenerationMode(modeId)
+    },
+    [
+      chatState.attachmentState.attachments,
+      t,
+      toast,
+      videoCapabilities,
+      videoConfig?.max_reference_images,
+      videoGenerationModes,
+    ]
+  )
+
+  const handleVideoModelChange = useCallback(
+    (model: Model) => {
+      const nextConfig = model.config?.videoConfig as
+        | {
+            max_reference_images?: number
+            capabilities?: VideoCapabilities
+          }
+        | undefined
+      const capabilities = nextConfig?.capabilities
+      const mode = capabilities?.generation_modes?.[0]
+      const counts = chatState.attachmentState.attachments.reduce(
+        (result, attachment) => {
+          if (isImageExtension(attachment.file_extension)) result.image += 1
+          if (isVideoExtension(attachment.file_extension)) result.video += 1
+          if (isAudioExtension(attachment.file_extension)) result.audio += 1
+          return result
+        },
+        { image: 0, video: 0, audio: 0 }
+      )
+      const limits = resolveReferenceMaterialLimits({
+        capabilities,
+        mode,
+        legacyImageLimit: nextConfig?.max_reference_images ?? 2,
+        hasReferenceVideo: counts.video > 0,
+      })
+      const hasInvalidFile = chatState.attachmentState.attachments.some(attachment => {
+        const extension = attachment.file_extension.replace(/^\./, '').toLowerCase()
+        const isImage = isImageExtension(attachment.file_extension)
+        const isVideo = isVideoExtension(attachment.file_extension)
+        const isAudio = isAudioExtension(attachment.file_extension)
+        const formats = isImage
+          ? capabilities?.image_formats
+          : isVideo
+            ? capabilities?.video_formats
+            : capabilities?.audio_formats
+        if (formats?.length && !formats.map(value => value.toLowerCase()).includes(extension)) {
+          return true
+        }
+        const maxSizeMb = isImage
+          ? capabilities?.image_max_size_mb
+          : isVideo
+            ? capabilities?.video_max_size_mb
+            : isAudio
+              ? capabilities?.audio_max_size_mb
+              : undefined
+        return maxSizeMb != null && attachment.file_size > maxSizeMb * 1024 * 1024
+      })
+      const incompatible =
+        hasInvalidFile ||
+        (capabilities?.supports_image_input === false && counts.image > 0) ||
+        ((!capabilities || capabilities.supports_video_input !== true) && counts.video > 0) ||
+        ((!capabilities || capabilities.supports_audio_input !== true) && counts.audio > 0) ||
+        (mode?.video_allowed === false && counts.video > 0) ||
+        (mode?.audio_allowed === false && counts.audio > 0) ||
+        exceedsReferenceMaterialLimits(counts, limits)
+      if (incompatible) {
+        toast({
+          variant: 'destructive',
+          title: t('generate.material_errors.model_switch'),
+        })
+        return
+      }
+      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`)
+    },
+    [chatState.attachmentState.attachments, t, toast, videoModelSelection.selectModelByKey]
+  )
 
   const effectiveTaskType = useMemo<TaskType>(() => {
     if (
@@ -382,23 +937,9 @@ function ChatAreaContent({
   const [selectedDuration, setSelectedDuration] = useState(5)
 
   // Derive available options and defaults from selected video model's config
-  const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
-    | {
-        resolution?: string
-        ratio?: string
-        duration?: number
-        capabilities?: {
-          aspect_ratios?: { value: string }[]
-          resolutions?: { label: string }[]
-          durations_sec?: number[]
-        }
-      }
-    | undefined
-  const videoCapabilities = videoConfig?.capabilities
-
   const availableResolutions = useMemo(() => {
     if (videoCapabilities?.resolutions?.length) {
-      return videoCapabilities.resolutions.map(r => r.label)
+      return videoCapabilities.resolutions.map(r => r.value ?? r.label)
     }
     return ['480p', '720p', '1080p']
   }, [videoCapabilities?.resolutions])
@@ -421,12 +962,22 @@ function ChatAreaContent({
   const videoModelName = videoModelSelection.selectedModel?.name
   useEffect(() => {
     if (!videoConfig) return
-    if (videoConfig.resolution && availableResolutions.includes(videoConfig.resolution)) {
+    const configuredResolution = videoCapabilities?.resolutions?.find(
+      option => option.value === videoConfig.resolution || option.label === videoConfig.resolution
+    )
+    if (configuredResolution) {
+      setSelectedResolution(configuredResolution.value ?? configuredResolution.label)
+    } else if (videoConfig.resolution && availableResolutions.includes(videoConfig.resolution)) {
       setSelectedResolution(videoConfig.resolution)
     } else if (availableResolutions.length) {
       setSelectedResolution(availableResolutions[0])
     }
-    if (videoConfig.ratio && availableRatios.includes(videoConfig.ratio)) {
+    const configuredRatio = videoCapabilities?.aspect_ratios?.find(
+      option => option.value === videoConfig.ratio || option.label === videoConfig.ratio
+    )
+    if (configuredRatio) {
+      setSelectedRatio(configuredRatio.value)
+    } else if (videoConfig.ratio && availableRatios.includes(videoConfig.ratio)) {
       setSelectedRatio(videoConfig.ratio)
     } else if (availableRatios.length) {
       setSelectedRatio(availableRatios[0])
@@ -503,6 +1054,7 @@ function ChatAreaContent({
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
   const ignoredTeamIdParamRef = useRef<string | null>(null)
+  const isExitingGenerationRef = useRef(false)
 
   // Filter teams by bind_mode based on current visible agent mode.
   const filteredTeams = useMemo(
@@ -514,9 +1066,36 @@ function ChatAreaContent({
   const selectedTeam = chatState.selectedTeam
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
+  const showGenerateModeSelector =
+    isGenerateMode(taskType) && teamSupportsBothGenerationModes(selectedTeam)
+
+  const handleUserTeamChange = useCallback(
+    (team: Team | null) => {
+      handleTeamChange(team)
+      const routeTaskId =
+        typeof window === 'undefined'
+          ? null
+          : getTaskQueryParam(new URLSearchParams(window.location.search))
+      if (effectiveTaskId || routeTaskId || !onGenerateModeChange || !isGenerateMode(taskType)) {
+        return
+      }
+      const nextMode = getTeamGenerateMode(team, taskType)
+      if (nextMode && nextMode !== taskType) {
+        onGenerateModeChange(nextMode)
+      }
+    },
+    [effectiveTaskId, handleTeamChange, onGenerateModeChange, taskType]
+  )
+
+  useEffect(() => {
+    if (!isExitingGenerationRef.current || isGenerateMode(taskType)) return
+    isExitingGenerationRef.current = false
+    hasInitializedTeamRef.current = false
+  }, [taskType])
 
   // Team selection logic - using default team from server configuration
   useEffect(() => {
+    if (isExitingGenerationRef.current) return
     if (filteredTeams.length === 0) return
     if (!teamIdFromUrl) {
       ignoredTeamIdParamRef.current = null
@@ -605,10 +1184,6 @@ function ChatAreaContent({
         const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
         handleTeamChange(defaultTeamForMode || filteredTeams[0])
       }
-    } else if (!taskIdFromUrl) {
-      // No selection and no task - select default team
-      const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
-      handleTeamChange(defaultTeamForMode || filteredTeams[0])
     }
   }, [
     filteredTeams,
@@ -634,9 +1209,9 @@ function ChatAreaContent({
       if (effectiveTaskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
         setSelectedDeviceId(null)
       }
-      handleTeamChange(team)
+      handleUserTeamChange(team)
     },
-    [effectiveTaskType, handleTeamChange, setSelectedDeviceId]
+    [effectiveTaskType, handleUserTeamChange, setSelectedDeviceId]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -688,6 +1263,7 @@ function ChatAreaContent({
         ratio: selectedRatio,
         duration: selectedDuration,
         model: videoModelSelection.selectedModel?.name,
+        generation_mode_id: selectedVideoGenerationMode,
       }
     }
     if (effectiveTaskType === 'image') {
@@ -702,6 +1278,7 @@ function ChatAreaContent({
     selectedResolution,
     selectedRatio,
     selectedDuration,
+    selectedVideoGenerationMode,
     selectedImageSize,
     videoModelSelection.selectedModel?.name,
     imageModelSelection.selectedModel?.name,
@@ -853,20 +1430,76 @@ function ChatAreaContent({
     imageModelSelection.selectedModel,
   ])
 
+  const generationAttachmentCounts = useMemo(() => {
+    const material = chatState.attachmentState.attachments.filter(
+      attachment =>
+        isImageExtension(attachment.file_extension) ||
+        isVideoExtension(attachment.file_extension) ||
+        isAudioExtension(attachment.file_extension)
+    ).length
+    const image = chatState.attachmentState.attachments.filter(attachment =>
+      isImageExtension(attachment.file_extension)
+    ).length
+    return { image, material }
+  }, [chatState.attachmentState.attachments])
+
+  const submitBlockedReason = useMemo(() => {
+    if (disabledReason) return disabledReason
+    if (isModelSelectionRequired) {
+      return t('generate.material_errors.model_required')
+    }
+    if (!chatState.isAttachmentReadyToSend) {
+      return t('generate.material_errors.attachment_uploading')
+    }
+    if (effectiveTaskType !== 'video') return null
+
+    if (
+      (activeVideoGenerationMode?.id === 'first_last_frame' ||
+        activeVideoGenerationMode?.first_frame_required) &&
+      generationAttachmentCounts.image === 0
+    ) {
+      return t('generate.material_errors.first_frame_required')
+    }
+    if (
+      (activeVideoGenerationMode?.image_required || videoCapabilities?.image_input_required) &&
+      generationAttachmentCounts.image === 0
+    ) {
+      return t('generate.material_errors.reference_image_required')
+    }
+    if (
+      videoCapabilities?.reference_material_required &&
+      generationAttachmentCounts.material === 0
+    ) {
+      return t('generate.material_errors.reference_material_required')
+    }
+    return null
+  }, [
+    activeVideoGenerationMode?.first_frame_required,
+    activeVideoGenerationMode?.id,
+    activeVideoGenerationMode?.image_required,
+    chatState.isAttachmentReadyToSend,
+    disabledReason,
+    effectiveTaskType,
+    generationAttachmentCounts.image,
+    generationAttachmentCounts.material,
+    isModelSelectionRequired,
+    t,
+    videoCapabilities?.image_input_required,
+    videoCapabilities?.reference_material_required,
+  ])
+
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
     return (
-      !disabledReason &&
+      !submitBlockedReason &&
       (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
-      !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
   }, [
-    disabledReason,
+    chatState.isAttachmentReadyToSend,
     streamHandlers.isStreaming,
     streamHandlers.canQueueMessage,
-    isModelSelectionRequired,
-    chatState.isAttachmentReadyToSend,
+    submitBlockedReason,
   ])
 
   // Collapse selectors when space is limited
@@ -908,7 +1541,18 @@ function ChatAreaContent({
   const handleRestoreDefaultTeam = useCallback(() => {
     const url = new URL(window.location.href)
     ignoredTeamIdParamRef.current = teamIdFromUrl
-    if (removeTeamQueryParam(url.searchParams)) {
+    setQuickLaunchIntent(null)
+    const removedTeam = removeTeamQueryParam(url.searchParams)
+
+    if (isGenerateMode(effectiveTaskType)) {
+      isExitingGenerationRef.current = true
+      removeGenerationModeQueryParam(url.searchParams)
+      chatState.handleTeamChange(null)
+      router.replace(`${url.pathname}${url.search}${url.hash}`)
+      return
+    }
+
+    if (removedTeam) {
       window.history.replaceState(
         window.history.state,
         '',
@@ -916,7 +1560,7 @@ function ChatAreaContent({
       )
     }
     restoreDefaultTeam()
-  }, [restoreDefaultTeam, teamIdFromUrl])
+  }, [chatState.handleTeamChange, effectiveTaskType, restoreDefaultTeam, router, teamIdFromUrl])
 
   const shouldConfirmPendingReplacement =
     runtimeTaskStatus === 'PENDING' &&
@@ -1050,6 +1694,13 @@ function ChatAreaContent({
 
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string, options?: SendMessageOptions) => {
+      if (submitBlockedReason) {
+        toast({
+          variant: 'destructive',
+          title: submitBlockedReason,
+        })
+        return
+      }
       const trimmedMessage = message.trim()
       const hasAttachments = chatState.attachmentState.attachments.length > 0
       if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
@@ -1076,6 +1727,8 @@ function ChatAreaContent({
       pendingInteractiveForm,
       shouldConfirmPendingReplacement,
       streamHandlers,
+      submitBlockedReason,
+      toast,
     ]
   )
 
@@ -1656,7 +2309,7 @@ function ChatAreaContent({
     selectedTeam: chatState.selectedTeam,
     teams: teams,
     externalApiParams: chatState.externalApiParams,
-    onTeamChange: chatState.handleTeamChange,
+    onTeamChange: handleUserTeamChange,
     onTeamsRefresh: async () => {
       if (onRefreshTeams) {
         await onRefreshTeams()
@@ -1664,8 +2317,10 @@ function ChatAreaContent({
     },
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
-    // Only enable restore when default team exists
-    onRestoreDefaultTeam: chatState.defaultTeam ? handleRestoreDefaultTeam : undefined,
+    onRestoreDefaultTeam:
+      isGenerateMode(effectiveTaskType) || chatState.defaultTeam
+        ? handleRestoreDefaultTeam
+        : undefined,
     isUsingDefaultTeam: chatState.isUsingDefaultTeam,
     taskType: effectiveTaskType,
     teamModeFilter,
@@ -1677,6 +2332,7 @@ function ChatAreaContent({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
+    submitBlockedReason,
     canQueueMessage: streamHandlers.canQueueMessage,
     canCancelTask: streamHandlers.canCancelTask,
     queuedMessages: streamHandlers.queuedMessages,
@@ -1736,6 +2392,7 @@ function ChatAreaContent({
     attachmentState: chatState.attachmentState,
     onFileSelect: handleUserFileSelect,
     onAttachmentRemove: handleInputAttachmentRemove,
+    onSwapAttachments: chatState.swapAttachments,
     isStreaming: streamHandlers.isStreaming,
     isStopping: streamHandlers.isStopping,
     hasMessages,
@@ -1771,18 +2428,23 @@ function ChatAreaContent({
     // Video mode props - only passed when taskType is 'video'
     // Note: videoModels is no longer passed - ModelSelector fetches models internally via useModelSelection
     selectedVideoModel: videoModelSelection.selectedModel,
-    onVideoModelChange: (model: Model) =>
-      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
+    onVideoModelChange: handleVideoModelChange,
     isVideoModelsLoading: videoModelSelection.isLoading,
     selectedResolution,
     onResolutionChange: setSelectedResolution,
     availableResolutions,
+    resolutionOptions: videoCapabilities?.resolutions,
     selectedRatio,
     onRatioChange: setSelectedRatio,
     availableRatios,
+    ratioOptions: videoCapabilities?.aspect_ratios,
     selectedDuration,
     onDurationChange: setSelectedDuration,
     availableDurations,
+    videoGenerationModes,
+    selectedVideoGenerationMode,
+    onVideoGenerationModeChange: handleVideoGenerationModeChange,
+    materialAccept,
     // Image mode props - only passed when taskType is 'image'
     // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
     selectedImageModel: imageModelSelection.selectedModel,
@@ -1792,7 +2454,7 @@ function ChatAreaContent({
     selectedImageSize,
     onImageSizeChange: setSelectedImageSize,
     // Generate mode switch props - only passed when in generate page
-    onGenerateModeChange,
+    onGenerateModeChange: showGenerateModeSelector ? onGenerateModeChange : undefined,
     // Hide all selectors (for OpenClaw devices)
     hideSelectors,
     // Team edit callback - only provided when team is editable

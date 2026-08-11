@@ -367,12 +367,15 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         except TypeError:
             result = executor.delete_executor(request.executor_name)
 
-        # Clean up running task tracker if we got task_id
+        # Clean up running task state and the warm-pool binding if we got task_id.
         if task_id_str:
             try:
                 from executor_manager.services.heartbeat_manager import (
                     HeartbeatType,
                     get_heartbeat_manager,
+                )
+                from executor_manager.services.sandbox.repository import (
+                    get_sandbox_repository,
                 )
                 from executor_manager.services.task_heartbeat_manager import (
                     get_running_task_tracker,
@@ -388,6 +391,8 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                     f"(source: delete_executor, executor_name={request.executor_name})"
                 )
                 tracker.remove_running_task(task_id)
+                if result.get("status") in ("success", "not_found"):
+                    get_sandbox_repository().delete_executor_binding(task_id)
             except Exception as e:
                 logger.warning(f"Failed to clean up running task tracker: {e}")
 

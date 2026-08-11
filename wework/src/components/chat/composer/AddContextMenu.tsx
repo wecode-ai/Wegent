@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
@@ -272,18 +273,24 @@ export function AddContextMenu({
           </div>,
           document.body
         )}
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid="add-context-button"
-        onClick={() => !disabled && setOpen(current => !current)}
-        disabled={disabled}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-primary hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-50"
-        aria-expanded={open}
-        aria-label={t('workbench.add_context', '添加上下文')}
+      <Tooltip
+        label={t('workbench.add_context', '添加上下文')}
+        align="start"
+        testId="composer-add-context-tooltip"
       >
-        <Plus className="h-5 w-5" strokeWidth={1.5} />
-      </button>
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid="add-context-button"
+          onClick={() => !disabled && setOpen(current => !current)}
+          disabled={disabled}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-primary hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-expanded={open}
+          aria-label={t('workbench.add_context', '添加上下文')}
+        >
+          <Plus className="h-5 w-5" strokeWidth={1.5} />
+        </button>
+      </Tooltip>
     </div>
   )
 }

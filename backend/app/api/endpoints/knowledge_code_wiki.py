@@ -286,6 +286,7 @@ def create_code_wiki(
             direct_access_requirement=data.direct_access_requirement,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            execution_model_ref=data.execution_model_ref,
             retrieval_config=(
                 data.retrieval_config.model_dump() if data.retrieval_config else None
             ),
@@ -321,9 +322,20 @@ def create_code_wiki(
                 KnowledgeService._get_knowledge_base_record(db, settled),
                 KnowledgeService.get_document_count(db, settled),
             )
+
+        # Reaching here means the constraint that failed was not the one this
+        # handler is about, so the database's own account of it is the only thing
+        # that can say what went wrong. It used to be discarded in favour of
+        # "already exists" -- a cause nobody had checked, and one that sent two
+        # separate investigations looking for a duplicate name that did not exist.
+        logger.exception(
+            "[code_wiki] create failed for %s (owner %s): unexpected constraint",
+            source.source_url,
+            current_user.id,
+        )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Knowledge base with name '{data.name}' already exists",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create the code wiki; see the server log",
         ) from e
     except ValueError as e:
         db.rollback()

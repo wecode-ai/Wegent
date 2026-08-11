@@ -4,7 +4,7 @@ sidebar_position: 21
 
 # Wework 插件市场开发指南
 
-面向需要开发、迁移或发布 Wework 插件的同学。架构细节见 [插件市场 V2](./plugin-marketplace-v2.md)；本机 Codex 运行时细节见 [Codex 插件运行时](./wework-codex-plugins.md)。
+面向需要开发、迁移或发布 Wework 插件的同学。架构细节见 [插件市场 V2](./plugin-marketplace-v2.md)；本机 Codex 运行时细节见 [Codex 插件运行时](./wework-codex-plugins.md)；亮色/暗色图标见 [插件图标指南](./wework-plugin-icons.md)。
 
 ## 1. 先建立正确心智模型
 
@@ -64,6 +64,9 @@ my-plugin/
     "shortDescription": "GitLab review and CI workflows",
     "developerName": "Wegent",
     "category": "Productivity",
+    "logo": "./assets/app-icon.svg",
+    "composerIcon": "./assets/app-icon.svg",
+    "logoDark": "./assets/app-icon-dark.svg",
     "defaultPrompt": [
       {
         "title": "审查 MR",
@@ -79,6 +82,7 @@ my-plugin/
 - `name` 必须是 slug：小写字母、数字、`.` `_` `-`，最长约 100 字符。
 - `version` 必须是 SemVer，例如 `1.2.0`。官方发布禁止用更低版本覆盖更高的 `latest`。
 - `interface.displayName` / `shortDescription` 会出现在市场卡片；尽量写清楚价值，而不是技术实现。
+- `interface.logo` / `logoDark` / `composerIcon` 指向包内 `assets/`；暗色不可读时必须提供 `logoDark`，细则见 [插件图标指南](./wework-plugin-icons.md)。
 - 单 Skill 插件投稿时，系统可识别为 `listing_type=skill`。
 
 ### `SKILL.md` 示例
@@ -209,7 +213,7 @@ uv run python scripts/publish_official_plugin.py \
 - `license_info`
 - `sync_policy`（默认 `auto_after_scan`，可选 `review_required`）
 
-系统定时同步：下载 → 扫描 → 适配 → 写入 S3。`auto_after_scan` 会在扫描
+系统定时同步：下载 → 扫描 → 透传官方包 → 写入 S3。`auto_after_scan` 会在扫描
 通过后单调提升 `latest_release_id`；`review_required` 只生成待审核 Release，
 管理员批准后才提升 latest。开源镜像默认使用 `auto_after_scan`，高风险上游可
 显式切换为 `review_required`。上游回退版本不会拉低 latest。
@@ -232,6 +236,7 @@ uv run python scripts/publish_official_plugin.py \
 - [ ] `name` 改成稳定 slug；不要用空格或中文。
 - [ ] 补齐 SemVer `version`。
 - [ ] 补齐 `interface.displayName` / `shortDescription`，方便市场展示。
+- [ ] 补齐 `interface.logo`（建议同时设 `composerIcon`）；暗色对比不足时补 `logoDark`（见 [插件图标指南](./wework-plugin-icons.md)）。
 - [ ] 删除 `.env`、密钥、session、私钥、符号链接。
 - [ ] 去掉仓库无关文件：`.git`、`node_modules`、测试缓存、超大样例数据。
 - [ ] 多插件上游 ZIP 只保留目标插件根目录内容。

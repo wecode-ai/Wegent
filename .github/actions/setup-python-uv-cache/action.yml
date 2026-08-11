@@ -1,0 +1,33 @@
+name: Set up Python and shared uv cache
+description: Install Python and uv with a main-owned cache shared by CI jobs
+
+inputs:
+  python-version:
+    description: Python version to install
+    required: true
+  save-cache:
+    description: Whether this job may save the shared uv cache
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      with:
+        version: "0.11.17"
+        enable-cache: true
+        cache-dependency-glob: |
+          backend/uv.lock
+          executor_manager/uv.lock
+          knowledge_engine/uv.lock
+          shared/uv.lock
+        cache-suffix: python-${{ inputs.python-version }}
+        save-cache: ${{ inputs.save-cache }}
+        prune-cache: true

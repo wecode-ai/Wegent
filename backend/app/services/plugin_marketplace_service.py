@@ -99,6 +99,15 @@ class PublishedRelease:
     created: bool
 
 
+@dataclass(frozen=True)
+class _UserPluginAccessContext:
+    """Preloaded namespace membership used by marketplace list access checks."""
+
+    namespace_ids: set[str]
+    namespace_names: list[str]
+    namespace_names_by_id: dict[str, str]
+
+
 class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
 
@@ -273,9 +282,66 @@ class PluginMarketplaceService:
             .all()
         )
         normalized_query = (query or "").strip().lower()
+        installed_by_plugin_id = (
+            self._load_installed_kinds_by_plugin_id(db, user_id=user_id)
+            if user_id is not None
+            else {}
+        )
+        release_ids = [
+            plugin.latest_release_id for plugin in rows if plugin.latest_release_id
+        ]
+        releases_by_id = (
+            {
+                release.id: release
+                for release in db.query(PluginRelease)
+                .filter(
+                    PluginRelease.id.in_(release_ids),
+                    PluginRelease.status == "ready",
+                    PluginRelease.scan_status == "passed",
+                )
+                .all()
+            }
+            if release_ids
+            else {}
+        )
+        owner_ids = {plugin.owner_user_id for plugin in rows if plugin.owner_user_id}
+        owners_by_id = (
+            {
+                owner.id: owner
+                for owner in db.query(User).filter(User.id.in_(owner_ids)).all()
+            }
+            if owner_ids
+            else {}
+        )
+        plugin_ids = [plugin.id for plugin in rows]
+        grants_by_plugin_id = self._load_grants_by_plugin_ids(db, plugin_ids)
+        access_context = self._load_user_plugin_access_context(
+            db,
+            user_id=user_id,
+            grants_by_plugin_id=grants_by_plugin_id,
+        )
+        installed_kind_ids = [row.id for row in installed_by_plugin_id.values()]
+        device_rows_by_kind_id: dict[int, PluginDeviceInstallation] = {}
+        if device_id and installed_kind_ids:
+            device_rows_by_kind_id = {
+                row.installed_kind_id: row
+                for row in db.query(PluginDeviceInstallation)
+                .filter(
+                    PluginDeviceInstallation.installed_kind_id.in_(installed_kind_ids),
+                    PluginDeviceInstallation.device_id == device_id,
+                )
+                .all()
+            }
+
         items: list[PluginMarketplaceItem] = []
         for plugin in rows:
-            if not self._can_access_plugin(db, plugin=plugin, user_id=user_id):
+            if not self._can_access_plugin(
+                db,
+                plugin=plugin,
+                user_id=user_id,
+                grants=grants_by_plugin_id.get(plugin.id, []),
+                access_context=access_context,
+            ):
                 continue
             if listing_type and plugin.listing_type != listing_type:
                 continue
@@ -283,9 +349,10 @@ class PluginMarketplaceService:
                 continue
             if normalized_query and normalized_query not in self._search_text(plugin):
                 continue
-            release = self._latest_release(db, plugin)
+            release = releases_by_id.get(plugin.latest_release_id)
             if not release:
                 continue
+            installed = installed_by_plugin_id.get(plugin.id)
             items.append(
                 self._to_marketplace_item(
                     db,
@@ -293,6 +360,18 @@ class PluginMarketplaceService:
                     release,
                     user_id=user_id,
                     device_id=device_id,
+                    installed=installed,
+                    installed_preloaded=True,
+                    owner=(
+                        owners_by_id.get(plugin.owner_user_id)
+                        if plugin.owner_user_id
+                        else None
+                    ),
+                    grants=grants_by_plugin_id.get(plugin.id, []),
+                    device_row=(
+                        device_rows_by_kind_id.get(installed.id) if installed else None
+                    ),
+                    resolve_package_assets=False,
                 )
             )
         return PluginMarketplaceListResponse(items=items)
@@ -343,6 +422,7 @@ class PluginMarketplaceService:
         plugin_id: int,
         release_id: int | None = None,
     ) -> InstalledPlugin:
+        self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
         plugin = db.query(Plugin).filter(Plugin.id == plugin.id).with_for_update().one()
         existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
@@ -1577,18 +1657,18 @@ class PluginMarketplaceService:
         *,
         user_id: int | None,
         device_id: str | None = None,
+        installed: Kind | None = None,
+        installed_preloaded: bool = False,
+        owner: User | None = None,
+        grants: list[ResourceMember] | None = None,
+        device_row: PluginDeviceInstallation | None = None,
+        resolve_package_assets: bool = True,
     ):
-        installed = (
-            self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
-            if user_id is not None
-            else None
-        )
+        if installed is None and not installed_preloaded and user_id is not None:
+            installed = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
         installed_spec = installed.json.get("spec", {}) if installed else {}
-        device_row = (
-            self._device_installation(db, installed.id, device_id)
-            if installed and device_id
-            else None
-        )
+        if device_row is None and installed and device_id:
+            device_row = self._device_installation(db, installed.id, device_id)
         installed_for_device = bool(
             installed
             and installed.is_active
@@ -1602,8 +1682,10 @@ class PluginMarketplaceService:
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
-        grants = self._plugin_grants(db, plugin.id)
-        owner = db.get(User, plugin.owner_user_id) if plugin.owner_user_id else None
+        if grants is None:
+            grants = self._plugin_grants(db, plugin.id)
+        if owner is None and plugin.owner_user_id:
+            owner = db.get(User, plugin.owner_user_id)
         access_role = (
             "owner"
             if user_id is not None and plugin.owner_user_id == user_id
@@ -1626,7 +1708,11 @@ class PluginMarketplaceService:
             enabled=(
                 bool(installed_spec.get("enabled")) if installed_for_device else False
             ),
-            interface=self._marketplace_interface(release, plugin),
+            interface=self._marketplace_interface(
+                release,
+                plugin,
+                resolve_package_assets=resolve_package_assets,
+            ),
             components=scan_report.get("components") or {},
             manifest=release.manifest_json or {},
             ownerUserId=plugin.owner_user_id or 0,
@@ -1653,6 +1739,8 @@ class PluginMarketplaceService:
         self,
         release: PluginRelease,
         plugin: Plugin,
+        *,
+        resolve_package_assets: bool = True,
     ) -> dict[str, Any] | None:
         interface = release.interface_json or plugin.interface_json or {}
         asset_values = (
@@ -1664,6 +1752,9 @@ class PluginMarketplaceService:
             isinstance(value, str) and value.startswith(("./", "assets/"))
             for value in asset_values
         ):
+            return interface or None
+        if not resolve_package_assets:
+            # List path must stay light; detail views can resolve package assets.
             return interface or None
         cache_key = release.sha256 or release.storage_key
         cached = self._resolved_interface_cache.get(cache_key)
@@ -1808,7 +1899,13 @@ class PluginMarketplaceService:
         return plugin
 
     def _can_access_plugin(
-        self, db: Session, *, plugin: Plugin, user_id: int | None
+        self,
+        db: Session,
+        *,
+        plugin: Plugin,
+        user_id: int | None,
+        grants: list[ResourceMember] | None = None,
+        access_context: _UserPluginAccessContext | None = None,
     ) -> bool:
         """Apply optional direct-user or department grants to workspace plugins.
 
@@ -1816,6 +1913,8 @@ class PluginMarketplaceService:
             db: Database session
             plugin: Plugin to check access for
             user_id: User ID, or None for unauthenticated access
+            grants: Optional preloaded approved plugin grants
+            access_context: Optional preloaded user/namespace membership
 
         Returns:
             True if user can access plugin, False otherwise
@@ -1836,17 +1935,19 @@ class PluginMarketplaceService:
         # Owner can always access their own plugins
         if plugin.owner_user_id == user_id:
             return True
-        plugin_type_values = (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
-        approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
-        grants = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(plugin_type_values),
-                ResourceMember.resource_id == plugin.id,
-                ResourceMember.status.in_(approved_values),
+
+        if grants is None:
+            plugin_type_values = (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+            approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
+            grants = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type.in_(plugin_type_values),
+                    ResourceMember.resource_id == plugin.id,
+                    ResourceMember.status.in_(approved_values),
+                )
+                .all()
             )
-            .all()
-        )
         if not grants:
             return plugin.visibility == "workspace"
         if any(
@@ -1859,6 +1960,42 @@ class PluginMarketplaceService:
         }
         if not granted_namespace_ids:
             return False
+
+        if access_context is None:
+            access_context = self._load_user_plugin_access_context(
+                db,
+                user_id=user_id,
+                grants_by_plugin_id={plugin.id: grants},
+            )
+        if access_context is None:
+            return False
+        if access_context.namespace_ids & granted_namespace_ids:
+            return True
+        if not access_context.namespace_names:
+            return False
+        granted_names = [
+            access_context.namespace_names_by_id[namespace_id]
+            for namespace_id in granted_namespace_ids
+            if namespace_id in access_context.namespace_names_by_id
+        ]
+        return any(
+            member_name == granted_name or member_name.startswith(f"{granted_name}/")
+            for member_name in access_context.namespace_names
+            for granted_name in granted_names
+        )
+
+    def _load_user_plugin_access_context(
+        self,
+        db: Session,
+        *,
+        user_id: int | None,
+        grants_by_plugin_id: dict[int, list[ResourceMember]],
+    ) -> _UserPluginAccessContext | None:
+        """Load user namespace membership once for a marketplace list/access pass."""
+        if user_id is None:
+            return None
+
+        approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
         user_namespaces = (
             db.query(Namespace.id, Namespace.name)
             .join(
@@ -1876,29 +2013,31 @@ class PluginMarketplaceService:
             )
             .all()
         )
-        direct_ids = {str(row.id) for row in user_namespaces}
-        if direct_ids & granted_namespace_ids:
-            return True
-        user_namespace_names = [row.name for row in user_namespaces]
-        if not user_namespace_names:
-            return False
-        granted_names = [
-            row.name
-            for row in db.query(Namespace.name)
-            .filter(
-                Namespace.id.in_(
-                    int(namespace_id)
-                    for namespace_id in granted_namespace_ids
-                    if namespace_id.isdigit()
-                ),
-                Namespace.is_active.is_(True),
-            )
-            .all()
-        ]
-        return any(
-            member_name == granted_name or member_name.startswith(f"{granted_name}/")
-            for member_name in user_namespace_names
-            for granted_name in granted_names
+        granted_namespace_ids = {
+            grant.entity_id
+            for grants in grants_by_plugin_id.values()
+            for grant in grants
+            if grant.entity_type == "namespace"
+        }
+        namespace_names_by_id: dict[str, str] = {}
+        if granted_namespace_ids:
+            namespace_names_by_id = {
+                str(row.id): row.name
+                for row in db.query(Namespace.id, Namespace.name)
+                .filter(
+                    Namespace.id.in_(
+                        int(namespace_id)
+                        for namespace_id in granted_namespace_ids
+                        if namespace_id.isdigit()
+                    ),
+                    Namespace.is_active.is_(True),
+                )
+                .all()
+            }
+        return _UserPluginAccessContext(
+            namespace_ids={str(row.id) for row in user_namespaces},
+            namespace_names=[row.name for row in user_namespaces],
+            namespace_names_by_id=namespace_names_by_id,
         )
 
     def get_plugin_access(
@@ -2259,7 +2398,9 @@ class PluginMarketplaceService:
             )
         db.commit()
 
-    def _find_installed(self, db, *, user_id, plugin_id):
+    def _load_installed_kinds_by_plugin_id(
+        self, db: Session, *, user_id: int
+    ) -> dict[int, Kind]:
         rows = (
             db.query(Kind)
             .filter(
@@ -2269,19 +2410,52 @@ class PluginMarketplaceService:
             )
             .all()
         )
-        matches: list[Kind] = []
+        by_plugin_id: dict[int, list[Kind]] = {}
         for row in rows:
             spec = row.json.get("spec", {}) if isinstance(row.json, dict) else {}
-            if spec.get("pluginId") == plugin_id:
-                matches.append(row)
-                continue
-            source = spec.get("source") or {}
-            if source.get("catalogItemId") == str(plugin_id):
-                matches.append(row)
-        if not matches:
-            return None
-        active = [row for row in matches if row.is_active]
-        return active[0] if active else matches[0]
+            plugin_id = spec.get("pluginId")
+            if not isinstance(plugin_id, int):
+                source = spec.get("source") or {}
+                catalog_item_id = source.get("catalogItemId")
+                if isinstance(catalog_item_id, str) and catalog_item_id.isdigit():
+                    plugin_id = int(catalog_item_id)
+                else:
+                    continue
+            by_plugin_id.setdefault(plugin_id, []).append(row)
+        selected: dict[int, Kind] = {}
+        for plugin_id, matches in by_plugin_id.items():
+            active = [row for row in matches if row.is_active]
+            selected[plugin_id] = active[0] if active else matches[0]
+        return selected
+
+    def _load_grants_by_plugin_ids(
+        self, db: Session, plugin_ids: list[int]
+    ) -> dict[int, list[ResourceMember]]:
+        if not plugin_ids:
+            return {}
+        rows = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(
+                    (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+                ),
+                ResourceMember.resource_id.in_(plugin_ids),
+                ResourceMember.status.in_(
+                    (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
+                ),
+            )
+            .order_by(ResourceMember.entity_type, ResourceMember.entity_display_name)
+            .all()
+        )
+        grouped: dict[int, list[ResourceMember]] = {}
+        for row in rows:
+            grouped.setdefault(row.resource_id, []).append(row)
+        return grouped
+
+    def _find_installed(self, db, *, user_id, plugin_id):
+        return self._load_installed_kinds_by_plugin_id(db, user_id=user_id).get(
+            plugin_id
+        )
 
     def _published_plugin_by_key(self, db: Session, plugin_key: str) -> Plugin | None:
         normalized = plugin_key.strip()

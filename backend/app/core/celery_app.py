@@ -43,7 +43,9 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.robot_queue_tasks",
         "app.tasks.plugin_marketplace_tasks",
+        "app.tasks.video_tasks",
     ],
 )
 
@@ -80,6 +82,10 @@ celery_app.conf.update(
         "check-due-subscriptions": {
             "task": "app.tasks.subscription_tasks.check_due_subscriptions",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-robot-queue": {
+            "task": "app.tasks.robot_queue_tasks.scan_robot_queue",
+            "schedule": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
         },
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",

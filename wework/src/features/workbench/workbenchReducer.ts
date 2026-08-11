@@ -23,6 +23,8 @@ import {
   getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
+  updateRuntimeWorkTask,
+  updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
@@ -101,6 +103,7 @@ export type WorkbenchAction =
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_removed'; projectId: number }
+  | { type: 'user_updated'; user: User }
   | {
       type: 'project_cleared'
       standaloneDeviceId?: string | null
@@ -129,6 +132,17 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
+    }
+  | {
+      type: 'runtime_task_execution_updated'
+      address: RuntimeTaskAddress
+      running: boolean
+      status: string
+    }
+  | {
+      type: 'runtime_task_snapshot_updated'
+      address: RuntimeTaskAddress
+      task: RuntimeTaskSummary
     }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
@@ -166,35 +180,6 @@ function updateRuntimeWorkDeviceStatus(
       deviceStatus: status,
       available: status !== 'offline',
     }
-  }
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
-function updateRuntimeWorkTaskTitle(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress,
-  title: string
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    if (workspace.deviceId !== address.deviceId && workspace.remoteHostId !== address.deviceId) {
-      return workspace
-    }
-
-    const tasks = workspace.tasks.map(task =>
-      task.taskId === address.taskId ? { ...task, title } : task
-    )
-    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
-    return { ...workspace, tasks }
   }
 
   return {
@@ -1143,6 +1128,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: state.currentProject?.id === action.projectId ? null : state.currentProject,
         projects: state.projects.filter(project => project.id !== action.projectId),
       }
+    case 'user_updated':
+      return {
+        ...state,
+        user: action.user,
+      }
     case 'project_cleared':
       return {
         ...state,
@@ -1208,6 +1198,20 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
+      }
+    case 'runtime_task_execution_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          running: action.running,
+          status: action.status,
+          optimistic: true,
+        }),
+      }
+    case 'runtime_task_snapshot_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
       }
     case 'runtime_tasks_archived':
       return {

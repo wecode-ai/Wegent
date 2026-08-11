@@ -468,8 +468,16 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
+- The compact turn-navigation rail reflects every conversation turn intersecting
+  the viewport. A turn includes its user messages and assistant responses, so
+  assistant-only viewport content still activates the corresponding marker and
+  multiple markers may be active when content from multiple turns is visible.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- Runtime stream lifecycle events update only the affected task's in-memory
+  status. They must not refresh the whole sidebar work list. A generated task
+  title is authoritative over older list requests already in flight until the
+  local executor confirms the same title.
 - When opening, closing, or resizing a side panel reflows conversation content,
   preserve the reader's visible message or content anchor. Continue following
   the bottom only when the reader was already at the bottom before the reflow.
@@ -595,6 +603,8 @@ a preferred shape.
 Dialogs use:
 
 - a centered elevated surface with `20px` radius;
+- semantic theme surfaces such as `bg-background` or `bg-popover`; never
+  hardcode a light-only background for a theme-aware dialog;
 - `0.5px` semantic ring, light `lg` shadow, and subtle translucent blur;
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;

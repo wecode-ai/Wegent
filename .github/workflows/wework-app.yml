@@ -176,12 +176,10 @@ jobs:
           previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
 
           if [ -n "$previous_tag" ]; then
-            log_range="${previous_tag}..${RELEASE_SHA}"
-          else
-            log_range="$RELEASE_SHA"
+            export PREVIOUS_TAG="$previous_tag"
           fi
 
-          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+          node wework/scripts/generate-release-notes.mjs > "$generated_notes"
 
           if [ ! -s "$generated_notes" ]; then
             echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
@@ -254,6 +252,9 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
@@ -267,17 +268,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-
+            ${{ runner.os }}-wework-app-cargo-sources-v2-
 
       - name: Build local executor sidecar
         working-directory: executor
@@ -521,6 +520,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
@@ -534,17 +536,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-
+            ${{ runner.os }}-wework-app-cargo-sources-v2-
 
       - name: Build local executor sidecar
         shell: pwsh

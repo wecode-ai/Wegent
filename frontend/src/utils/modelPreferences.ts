@@ -38,20 +38,65 @@ export interface ModelPreference {
   modelType?: string
   forceOverride: boolean
   updatedAt: number
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
+}
+
+/**
+ * What a remembered model was chosen for.
+ *
+ * A separate axis from `ModelCategoryType`, which says what kind of model this is
+ * (llm, embedding, tts...). This says what the choice is *for*. Both end up as a
+ * key suffix, and both are needed: a wiki model is an llm, so the category alone
+ * cannot tell it apart from the conversation's llm.
+ *
+ * Absent means the conversation's model, which is where this store began and which
+ * keeps the key it has always had. The others are separate because they are separate
+ * decisions: a summary is short text and a cheap model does it, while generating a
+ * wiki hands a model an entire repository. Sharing one slot meant each new choice
+ * quietly replaced the last, so neither could survive a visit to the other.
+ *
+ * Must not contain an underscore -- the cleanup routine tells a session key from a
+ * global one by looking for exactly that.
+ */
+export type ModelPreferenceScope = 'summary' | 'wiki'
+
+/**
+ * Build the suffix both axes contribute to a key.
+ *
+ * `llm` adds nothing, so keys written before categories existed still resolve.
+ * Order is fixed (category then scope) because these are keys already on disk:
+ * swapping them would silently orphan every stored preference.
+ */
+function keySuffix(
+  modelCategoryType?: import('@/apis/models').ModelCategoryType,
+  scope?: ModelPreferenceScope
+): string {
+  const category = modelCategoryType && modelCategoryType !== 'llm' ? `:${modelCategoryType}` : ''
+  return `${category}${scope ? `:${scope}` : ''}`
 }
 
 /**
  * Get the storage key for global dimension (team-level preference)
  */
-function getGlobalKey(teamId: number): string {
-  return `${GLOBAL_MODEL_PREF_PREFIX}${teamId}`
+function getGlobalKey(
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType,
+  scope?: ModelPreferenceScope
+): string {
+  return `${GLOBAL_MODEL_PREF_PREFIX}${teamId}${keySuffix(modelCategoryType, scope)}`
 }
 
 /**
  * Get the storage key for session dimension (task-level preference)
  */
-function getSessionKey(taskId: number, teamId: number): string {
-  return `${SESSION_MODEL_PREF_PREFIX}${taskId}_${teamId}`
+function getSessionKey(
+  taskId: number,
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
+): string {
+  // No scope here: a scoped choice belongs to a knowledge base, not to a task, so
+  // there is no session dimension for it to have.
+  return `${SESSION_MODEL_PREF_PREFIX}${taskId}_${teamId}${keySuffix(modelCategoryType)}`
 }
 
 /**
@@ -65,12 +110,16 @@ function parsePreference(json: string | null): ModelPreference | null {
     if (typeof parsed.modelName !== 'string' || typeof parsed.updatedAt !== 'number') {
       return null
     }
-    return {
+    const preference: ModelPreference = {
       modelName: parsed.modelName,
       modelType: parsed.modelType,
       forceOverride: Boolean(parsed.forceOverride),
       updatedAt: parsed.updatedAt,
     }
+    if (typeof parsed.modelCategoryType === 'string') {
+      preference.modelCategoryType = parsed.modelCategoryType
+    }
+    return preference
   } catch {
     return null
   }
@@ -80,14 +129,19 @@ function parsePreference(json: string | null): ModelPreference | null {
  * Save global model preference (team-level)
  * Used when user selects a model in a new chat session
  */
-export function saveGlobalModelPreference(teamId: number, preference: ModelPreference): void {
+export function saveGlobalModelPreference(
+  teamId: number,
+  preference: ModelPreference,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType,
+  scope?: ModelPreferenceScope
+): void {
   if (!teamId || isNaN(teamId)) {
     console.warn('[modelPreferences] Invalid team ID, not saving:', teamId)
     return
   }
 
   try {
-    const key = getGlobalKey(teamId)
+    const key = getGlobalKey(teamId, modelCategoryType ?? preference.modelCategoryType, scope)
     localStorage.setItem(key, JSON.stringify(preference))
     // NOTE: Removed legacy key updates (LEGACY_MODEL_ID_KEY, LEGACY_MODEL_TYPE_KEY)
     // because they are global and cause cross-team model preference pollution.
@@ -105,7 +159,8 @@ export function saveGlobalModelPreference(teamId: number, preference: ModelPrefe
 export function saveSessionModelPreference(
   taskId: number,
   teamId: number,
-  preference: ModelPreference
+  preference: ModelPreference,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
 ): void {
   if (!taskId || isNaN(taskId) || !teamId || isNaN(teamId)) {
     console.warn('[modelPreferences] Invalid task/team ID, not saving:', { taskId, teamId })
@@ -114,11 +169,15 @@ export function saveSessionModelPreference(
 
   try {
     // Save to session dimension
-    const sessionKey = getSessionKey(taskId, teamId)
+    const sessionKey = getSessionKey(
+      taskId,
+      teamId,
+      modelCategoryType ?? preference.modelCategoryType
+    )
     localStorage.setItem(sessionKey, JSON.stringify(preference))
 
     // Also update global dimension
-    saveGlobalModelPreference(teamId, preference)
+    saveGlobalModelPreference(teamId, preference, modelCategoryType ?? preference.modelCategoryType)
   } catch (error) {
     console.warn('[modelPreferences] Failed to save session preference:', error)
   }
@@ -132,7 +191,11 @@ export function saveSessionModelPreference(
  * NOTE: Legacy storage fallback has been removed because it caused cross-team
  * model preference pollution. Each team now has its own isolated preference.
  */
-export function getModelPreference(teamId: number, taskId?: number | null): ModelPreference | null {
+export function getModelPreference(
+  teamId: number,
+  taskId?: number | null,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
+): ModelPreference | null {
   if (!teamId || isNaN(teamId)) {
     return null
   }
@@ -140,7 +203,7 @@ export function getModelPreference(teamId: number, taskId?: number | null): Mode
   try {
     // Priority 1: Session dimension (if taskId provided)
     if (taskId && !isNaN(taskId)) {
-      const sessionKey = getSessionKey(taskId, teamId)
+      const sessionKey = getSessionKey(taskId, teamId, modelCategoryType)
       const sessionPref = parsePreference(localStorage.getItem(sessionKey))
       if (sessionPref) {
         // Check if session preference is not expired
@@ -153,7 +216,7 @@ export function getModelPreference(teamId: number, taskId?: number | null): Mode
     }
 
     // Priority 2: Global dimension
-    const globalKey = getGlobalKey(teamId)
+    const globalKey = getGlobalKey(teamId, modelCategoryType)
     const globalPref = parsePreference(localStorage.getItem(globalKey))
     if (globalPref) {
       return globalPref
@@ -172,13 +235,17 @@ export function getModelPreference(teamId: number, taskId?: number | null): Mode
  * Get session model preference only (no fallback to global)
  * Used when viewing existing tasks to avoid overwriting task's model with global preference
  */
-export function getSessionModelPreference(taskId: number, teamId: number): ModelPreference | null {
+export function getSessionModelPreference(
+  taskId: number,
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
+): ModelPreference | null {
   if (!taskId || isNaN(taskId) || !teamId || isNaN(teamId)) {
     return null
   }
 
   try {
-    const sessionKey = getSessionKey(taskId, teamId)
+    const sessionKey = getSessionKey(taskId, teamId, modelCategoryType)
     const sessionPref = parsePreference(localStorage.getItem(sessionKey))
     if (sessionPref) {
       // Check if session preference is not expired
@@ -199,13 +266,17 @@ export function getSessionModelPreference(taskId: number, teamId: number): Model
  * Get global model preference only (no session lookup)
  * Used for new chat sessions
  */
-export function getGlobalModelPreference(teamId: number): ModelPreference | null {
+export function getGlobalModelPreference(
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType,
+  scope?: ModelPreferenceScope
+): ModelPreference | null {
   if (!teamId || isNaN(teamId)) {
     return null
   }
 
   try {
-    const globalKey = getGlobalKey(teamId)
+    const globalKey = getGlobalKey(teamId, modelCategoryType, scope)
     const globalPref = parsePreference(localStorage.getItem(globalKey))
     if (globalPref) {
       return globalPref
@@ -224,13 +295,17 @@ export function getGlobalModelPreference(teamId: number): ModelPreference | null
 /**
  * Clear session model preference for a specific task
  */
-export function clearSessionModelPreference(taskId: number, teamId: number): void {
+export function clearSessionModelPreference(
+  taskId: number,
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType
+): void {
   if (!taskId || isNaN(taskId) || !teamId || isNaN(teamId)) {
     return
   }
 
   try {
-    const sessionKey = getSessionKey(taskId, teamId)
+    const sessionKey = getSessionKey(taskId, teamId, modelCategoryType)
     localStorage.removeItem(sessionKey)
   } catch (error) {
     console.warn('[modelPreferences] Failed to clear session preference:', error)
@@ -240,13 +315,17 @@ export function clearSessionModelPreference(taskId: number, teamId: number): voi
 /**
  * Clear global model preference for a specific team
  */
-export function clearGlobalModelPreference(teamId: number): void {
+export function clearGlobalModelPreference(
+  teamId: number,
+  modelCategoryType?: import('@/apis/models').ModelCategoryType,
+  scope?: ModelPreferenceScope
+): void {
   if (!teamId || isNaN(teamId)) {
     return
   }
 
   try {
-    const globalKey = getGlobalKey(teamId)
+    const globalKey = getGlobalKey(teamId, modelCategoryType, scope)
     localStorage.removeItem(globalKey)
   } catch (error) {
     console.warn('[modelPreferences] Failed to clear global preference:', error)

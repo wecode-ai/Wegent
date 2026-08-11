@@ -16,6 +16,10 @@ import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
+import type {
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
@@ -38,6 +42,8 @@ import type {
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
+import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -118,6 +124,11 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  projectChatClient?: ProjectChatClient
+  localProjectChatClient?: ProjectChatClient
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
+  localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {

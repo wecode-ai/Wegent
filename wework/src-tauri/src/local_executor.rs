@@ -125,6 +125,14 @@ pub struct LocalPluginCopyImportResult {
 struct LocalPluginCopyRegistry {
     #[serde(default)]
     copies: Vec<LocalPluginCopyRecord>,
+    // Kept for one-time migration from builds that stored cloud links with copy provenance.
+    #[serde(default)]
+    cloud_links: Vec<LocalPluginCloudLink>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LocalPluginCloudLinkRegistry {
     #[serde(default)]
     cloud_links: Vec<LocalPluginCloudLink>,
 }
@@ -138,12 +146,12 @@ struct LocalPluginCopyRecord {
     source_plugin_name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LocalPluginCloudLink {
+pub struct LocalPluginCloudLink {
     local_plugin_name: String,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 }
 
 pub struct LocalExecutorState {
@@ -547,6 +555,27 @@ pub struct BundledPluginMarketplace {
     plugin_count: usize,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonalMarketplacePluginSummary {
+    name: String,
+    version: Option<String>,
+    display_name: Option<String>,
+    description: Option<String>,
+    logo: Option<String>,
+    category: Option<String>,
+    plugin_path: String,
+    installed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonalMarketplaceListResult {
+    marketplace_id: String,
+    marketplace_path: String,
+    plugins: Vec<PersonalMarketplacePluginSummary>,
+}
+
 struct LocalExecutorLogTail {
     path: String,
     content: String,
@@ -633,6 +662,33 @@ pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
         &home,
         LOCAL_EXECUTOR_NAMESPACE,
     ))
+}
+
+pub(crate) fn managed_codex_home_paths() -> Result<Vec<PathBuf>, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let storage_root = home.join(WEWORK_HOME_DIR);
+    let legacy_codex_home = storage_root.join("codex");
+    let current_codex_home =
+        default_local_executor_home_path(&home, LOCAL_EXECUTOR_NAMESPACE).join("codex");
+    let mut paths = vec![legacy_codex_home];
+    if !paths.contains(&current_codex_home) {
+        paths.push(current_codex_home);
+    }
+    if let Ok(namespaces) = fs::read_dir(storage_root.join("apps")) {
+        for namespace in namespaces.filter_map(Result::ok) {
+            let Ok(metadata) = fs::symlink_metadata(namespace.path()) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let codex_home = namespace.path().join("codex");
+            if !paths.contains(&codex_home) {
+                paths.push(codex_home);
+            }
+        }
+    }
+    Ok(paths)
 }
 
 fn default_local_executor_home_path(home: &Path, namespace: Option<&str>) -> PathBuf {
@@ -3235,6 +3291,106 @@ fn copy_registry_path(marketplace_root: &Path) -> PathBuf {
     marketplace_root.join(".wegent/plugin-copy-sources.json")
 }
 
+fn plugin_cloud_link_registry_path(marketplace_root: &Path) -> PathBuf {
+    let bundled_marketplaces = marketplace_root.parent();
+    let capabilities = bundled_marketplaces.and_then(Path::parent);
+    if bundled_marketplaces
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("bundled-marketplaces")
+        && capabilities
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("capabilities")
+    {
+        let marketplace_name = marketplace_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(WEWORK_PERSONAL_MARKETPLACE_ID);
+        return capabilities
+            .unwrap_or(marketplace_root)
+            .join("plugin-state")
+            .join(format!("{marketplace_name}-cloud-links.json"));
+    }
+    marketplace_root.join(".wegent/plugin-cloud-links.json")
+}
+
+fn read_cloud_link_registry(path: &Path) -> Result<LocalPluginCloudLinkRegistry, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("Failed to read plugin cloud link registry: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Plugin cloud link registry is invalid: {error}"))
+}
+
+fn load_plugin_cloud_links(marketplace_root: &Path) -> Vec<LocalPluginCloudLink> {
+    let registry_path = plugin_cloud_link_registry_path(marketplace_root);
+    if registry_path.is_file() {
+        return match read_cloud_link_registry(&registry_path) {
+            Ok(registry) => registry.cloud_links,
+            Err(error) => {
+                log::warn!(
+                    "Ignoring invalid plugin cloud link registry {}: {error}",
+                    registry_path.display()
+                );
+                Vec::new()
+            }
+        };
+    }
+
+    let legacy_path = copy_registry_path(marketplace_root);
+    let legacy_registry = match fs::read(&legacy_path) {
+        Ok(bytes) => match serde_json::from_slice::<LocalPluginCopyRegistry>(&bytes) {
+            Ok(registry) => registry,
+            Err(error) => {
+                log::warn!(
+                    "Ignoring invalid legacy plugin copy registry {} while migrating cloud links: {error}",
+                    legacy_path.display()
+                );
+                return Vec::new();
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            log::warn!(
+                "Failed to read legacy plugin copy registry {} while migrating cloud links: {error}",
+                legacy_path.display()
+            );
+            return Vec::new();
+        }
+    };
+    if legacy_registry.cloud_links.is_empty() {
+        return Vec::new();
+    }
+    let links = legacy_registry.cloud_links;
+    let registry = LocalPluginCloudLinkRegistry {
+        cloud_links: links.clone(),
+    };
+    match serde_json::to_vec_pretty(&registry) {
+        Ok(bytes) => {
+            if let Err(error) = write_atomic_file(&registry_path, &bytes) {
+                log::warn!(
+                    "Failed to migrate plugin cloud links to {}: {error}",
+                    registry_path.display()
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!("Failed to serialize migrated plugin cloud links: {error}");
+        }
+    }
+    links
+}
+
+fn write_plugin_cloud_links(
+    marketplace_root: &Path,
+    cloud_links: Vec<LocalPluginCloudLink>,
+) -> Result<(), String> {
+    let registry = LocalPluginCloudLinkRegistry { cloud_links };
+    let bytes = serde_json::to_vec_pretty(&registry)
+        .map_err(|error| format!("Failed to serialize plugin registry: {error}"))?;
+    write_atomic_file(&plugin_cloud_link_registry_path(marketplace_root), &bytes)
+}
+
 fn acquire_plugin_mutation_lock(marketplace_root: &Path) -> Result<fs::File, String> {
     let lock_directory = marketplace_root.join(".wegent");
     fs::create_dir_all(&lock_directory).map_err(|error| {
@@ -3319,9 +3475,10 @@ fn import_plugin_copy_package(
             marketplace_path.display()
         )
     })?;
-    let marketplace_root = marketplace_path
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     fs::create_dir_all(&plugins_root)
@@ -3439,9 +3596,10 @@ pub async fn local_executor_import_plugin_copy(
 }
 
 fn rollback_plugin_copy(marketplace_path: &Path, plugin_name: &str) -> Result<(), String> {
-    let marketplace_root = marketplace_path
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     let plugin_path = plugins_root.join(plugin_name);
@@ -3494,31 +3652,20 @@ fn link_local_plugin_release(
     marketplace_path: &Path,
     local_plugin_name: &str,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 ) -> Result<(), String> {
-    if local_plugin_name.trim().is_empty()
-        || local_plugin_name.contains('/')
-        || local_plugin_name.contains('\\')
-    {
-        return Err("Local plugin name is invalid".to_string());
-    }
-    let marketplace_root = marketplace_path
+    let local_plugin_name = validate_plugin_name(local_plugin_name)?;
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugin_root = marketplace_root.join("plugins").join(local_plugin_name);
     if !plugin_root.join(".codex-plugin/plugin.json").is_file() {
         return Err("Local plugin manifest is unavailable".to_string());
     }
-    let registry_path = copy_registry_path(&marketplace_root);
-    let mut registry = if registry_path.is_file() {
-        serde_json::from_slice::<LocalPluginCopyRegistry>(
-            &fs::read(&registry_path)
-                .map_err(|error| format!("Failed to read plugin registry: {error}"))?,
-        )
-        .map_err(|error| format!("Plugin registry is invalid: {error}"))?
-    } else {
-        LocalPluginCopyRegistry::default()
+    let mut registry = LocalPluginCloudLinkRegistry {
+        cloud_links: load_plugin_cloud_links(&marketplace_root),
     };
     registry
         .cloud_links
@@ -3528,9 +3675,32 @@ fn link_local_plugin_release(
         cloud_plugin_id,
         cloud_release_id,
     });
-    let bytes = serde_json::to_vec_pretty(&registry)
-        .map_err(|error| format!("Failed to serialize plugin registry: {error}"))?;
-    write_atomic_file(&registry_path, &bytes)
+    write_plugin_cloud_links(&marketplace_root, registry.cloud_links)
+}
+
+fn unlink_local_plugin_release(
+    marketplace_path: &Path,
+    local_plugin_name: &str,
+) -> Result<(), String> {
+    let local_plugin_name = validate_plugin_name(local_plugin_name)?;
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let mut cloud_links = load_plugin_cloud_links(&marketplace_root);
+    cloud_links.retain(|link| link.local_plugin_name != local_plugin_name);
+    write_plugin_cloud_links(&marketplace_root, cloud_links)
+}
+
+fn read_local_plugin_cloud_links(
+    marketplace_path: &Path,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    Ok(load_plugin_cloud_links(&marketplace_root))
 }
 
 #[tauri::command]
@@ -3538,7 +3708,7 @@ pub async fn local_executor_link_plugin_release(
     marketplace_path: String,
     local_plugin_name: String,
     cloud_plugin_id: i64,
-    cloud_release_id: i64,
+    cloud_release_id: Option<i64>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         link_local_plugin_release(
@@ -3550,6 +3720,299 @@ pub async fn local_executor_link_plugin_release(
     })
     .await
     .map_err(|error| format!("Failed to join plugin release linking task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_unlink_plugin_release(
+    marketplace_path: String,
+    local_plugin_name: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        unlink_local_plugin_release(Path::new(&marketplace_path), &local_plugin_name)
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin release unlinking task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_read_plugin_cloud_links(
+    marketplace_path: String,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_local_plugin_cloud_links(Path::new(&marketplace_path))
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin cloud link read task: {error}"))?
+}
+
+fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn personal_plugin_summary_from_root(
+    name: &str,
+    plugin_root: &Path,
+    installed: bool,
+) -> PersonalMarketplacePluginSummary {
+    let plugin_path = plugin_root.display().to_string();
+    let manifest_path = [
+        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".claude-plugin/plugin.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
+    let mut summary = PersonalMarketplacePluginSummary {
+        name: name.to_string(),
+        version: None,
+        display_name: None,
+        description: None,
+        logo: None,
+        category: None,
+        plugin_path,
+        installed,
+    };
+    if let Some(manifest_path) = manifest_path {
+        if let Ok(content) = fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
+                summary.version = optional_trimmed_string(manifest.get("version"));
+                summary.description = optional_trimmed_string(manifest.get("description")).or_else(
+                    || {
+                        optional_trimmed_string(
+                            manifest
+                                .get("interface")
+                                .and_then(|interface| interface.get("shortDescription")),
+                        )
+                    },
+                );
+                summary.display_name = optional_trimmed_string(
+                    manifest
+                        .get("interface")
+                        .and_then(|interface| interface.get("displayName")),
+                );
+                summary.logo = optional_trimmed_string(
+                    manifest
+                        .get("interface")
+                        .and_then(|interface| interface.get("logo")),
+                );
+                summary.category = optional_trimmed_string(
+                    manifest
+                        .get("interface")
+                        .and_then(|interface| interface.get("category")),
+                );
+            }
+        }
+    }
+    summary
+}
+
+fn enrich_personal_plugin_summary(
+    existing: &mut PersonalMarketplacePluginSummary,
+    candidate: PersonalMarketplacePluginSummary,
+) {
+    if existing.display_name.is_none() {
+        existing.display_name = candidate.display_name;
+    }
+    if existing.description.is_none() {
+        existing.description = candidate.description;
+    }
+    if existing.version.is_none() {
+        existing.version = candidate.version;
+    }
+    if existing.logo.is_none() {
+        existing.logo = candidate.logo;
+    }
+    if existing.category.is_none() {
+        existing.category = candidate.category;
+    }
+    if candidate.installed {
+        existing.installed = true;
+        // Prefer the concrete installed tree when marketplace.json only had a stub.
+        if existing.plugin_path.is_empty()
+            || !Path::new(&existing.plugin_path)
+                .join(".codex-plugin/plugin.json")
+                .is_file()
+        {
+            existing.plugin_path = candidate.plugin_path;
+        }
+    }
+}
+
+fn latest_cached_personal_plugin_root(plugin_dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    let entries = fs::read_dir(plugin_dir).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let has_manifest = path.join(".codex-plugin/plugin.json").is_file()
+            || path.join(".claude-plugin/plugin.json").is_file();
+        if !has_manifest {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        match &best {
+            Some((best_modified, _)) if modified <= *best_modified => {}
+            _ => best = Some((modified, path)),
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn list_personal_marketplace_plugins(
+    marketplace_path: &Path,
+) -> Result<PersonalMarketplaceListResult, String> {
+    let root = marketplace_root_from_path(marketplace_path);
+    let marketplace_path_display = root.display().to_string();
+    let mut by_name: std::collections::BTreeMap<String, PersonalMarketplacePluginSummary> =
+        std::collections::BTreeMap::new();
+
+    let manifest_path = root.join(".agents/plugins/marketplace.json");
+    if manifest_path.is_file() {
+        // Invalid marketplace.json must not abort directory/cache scans — those
+        // still return installable personal plugins for first paint.
+        match marketplace_plugin_names(&manifest_path) {
+            Ok(names) => {
+                for name in names {
+                    let plugin_root = root.join("plugins").join(&name);
+                    by_name.insert(
+                        name.clone(),
+                        personal_plugin_summary_from_root(&name, &plugin_root, false),
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Wework] personal marketplace.json skipped at {}: {error}",
+                    manifest_path.display()
+                );
+            }
+        }
+    }
+
+    if let Ok(entries) = fs::read_dir(root.join("plugins")) {
+        for entry in entries.filter_map(Result::ok) {
+            let plugin_root = entry.path();
+            if !plugin_root.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let has_manifest = plugin_root.join(".codex-plugin/plugin.json").is_file()
+                || plugin_root.join(".claude-plugin/plugin.json").is_file();
+            if !has_manifest {
+                continue;
+            }
+            let summary = personal_plugin_summary_from_root(&name, &plugin_root, true);
+            match by_name.get_mut(&name) {
+                Some(existing) => enrich_personal_plugin_summary(existing, summary),
+                None => {
+                    by_name.insert(name, summary);
+                }
+            }
+        }
+    }
+
+    // Codex materializes installed personal plugins under CODEX_HOME/plugins/cache/
+    // even when the source marketplace.json stays empty.
+    for codex_home in personal_plugin_cache_codex_homes() {
+        let cache_root = codex_home
+            .join("plugins")
+            .join("cache")
+            .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+        if let Ok(entries) = fs::read_dir(&cache_root) {
+            for entry in entries.filter_map(Result::ok) {
+                let plugin_dir = entry.path();
+                if !plugin_dir.is_dir() {
+                    continue;
+                }
+                let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                if name.starts_with('.') {
+                    continue;
+                }
+                let Some(plugin_root) = latest_cached_personal_plugin_root(&plugin_dir) else {
+                    continue;
+                };
+                let summary = personal_plugin_summary_from_root(&name, &plugin_root, true);
+                match by_name.get_mut(&name) {
+                    Some(existing) => enrich_personal_plugin_summary(existing, summary),
+                    None => {
+                        by_name.insert(name, summary);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(PersonalMarketplaceListResult {
+        marketplace_id: WEWORK_PERSONAL_MARKETPLACE_ID.to_string(),
+        marketplace_path: marketplace_path_display,
+        plugins: by_name.into_values().collect(),
+    })
+}
+
+fn default_personal_marketplace_path() -> Result<PathBuf, String> {
+    Ok(local_executor_runtime_home_path()?
+        .join("capabilities")
+        .join("bundled-marketplaces")
+        .join(WEWORK_PERSONAL_MARKETPLACE_ID))
+}
+
+fn personal_plugin_cache_codex_homes() -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    if let Ok(executor_home) = local_executor_home_path() {
+        if let Ok(codex_home) = wework_codex_home_path(&executor_home.display().to_string()) {
+            homes.push(codex_home);
+        }
+    }
+    if let Ok(managed) = managed_codex_home_paths() {
+        for path in managed {
+            if !homes.iter().any(|existing| existing == &path) {
+                homes.push(path);
+            }
+        }
+    }
+    homes
+}
+
+fn resolve_personal_marketplace_path(marketplace_path: &str) -> Result<PathBuf, String> {
+    let trimmed = marketplace_path.trim();
+    if !trimmed.is_empty() {
+        return Ok(PathBuf::from(trimmed));
+    }
+    default_personal_marketplace_path()
+}
+
+/// Lists personal marketplace plugins from disk without calling Codex plugin/list.
+#[tauri::command]
+pub async fn local_executor_list_personal_marketplace_plugins(
+    marketplace_path: String,
+) -> Result<PersonalMarketplaceListResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = resolve_personal_marketplace_path(&marketplace_path)?;
+        let listed = list_personal_marketplace_plugins(&path)?;
+        log::info!(
+            "Listed personal marketplace plugins from disk: path={}, count={}",
+            listed.marketplace_path,
+            listed.plugins.len()
+        );
+        Ok(listed)
+    })
+    .await
+    .map_err(|error| format!("Failed to join personal marketplace list task: {error}"))?
 }
 
 #[tauri::command]
@@ -3760,6 +4223,116 @@ mod tests {
     }
 
     #[test]
+    fn lists_personal_marketplace_plugins_from_disk_without_codex() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
+        let fake_home = import_test_root("list-personal-marketplace-user-home");
+        let executor_home = fake_home.join(".wework");
+        let codex_home = executor_home.join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &executor_home);
+        std::env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
+
+        let root = import_test_root("list-personal-marketplace");
+        let marketplace_manifest = root.join(".agents/plugins/marketplace.json");
+        let notes_manifest = root.join("plugins/notes/.codex-plugin/plugin.json");
+        let tasks_manifest = root.join("plugins/tasks/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(notes_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(tasks_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"name":"wework-personal","plugins":[{"name":"tasks"},{"name":"notes"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            notes_manifest,
+            r#"{"name":"notes","version":"1.2.0","interface":{"displayName":"Notes","shortDescription":"Take notes","category":"Productivity","logo":"./logo.png"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            tasks_manifest,
+            r#"{"name":"tasks","version":"0.1.0","description":"Track tasks"}"#,
+        )
+        .unwrap();
+
+        let listed = list_personal_marketplace_plugins(&root).unwrap();
+        assert_eq!(listed.marketplace_id, "wework-personal");
+        assert_eq!(listed.plugins.len(), 2);
+        assert_eq!(listed.plugins[0].name, "notes");
+        assert_eq!(listed.plugins[0].display_name.as_deref(), Some("Notes"));
+        assert_eq!(listed.plugins[0].version.as_deref(), Some("1.2.0"));
+        assert!(listed.plugins[0].installed);
+        assert_eq!(listed.plugins[1].name, "tasks");
+        assert_eq!(listed.plugins[1].description.as_deref(), Some("Track tasks"));
+
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
+    fn lists_personal_plugins_from_codex_cache_when_marketplace_json_is_empty() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
+        let fake_home = import_test_root("list-personal-cache-user-home");
+        let executor_home = fake_home.join(".wework");
+        fs::create_dir_all(executor_home.join("codex")).unwrap();
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &executor_home);
+        std::env::remove_var(WEGENT_CODEX_HOME_ENV);
+
+        let marketplace_root = import_test_root("list-personal-cache-marketplace");
+        let marketplace_manifest = marketplace_root.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"name":"wework-personal","interface":{"displayName":"WeWork Personal Marketplace"},"plugins":[]}"#,
+        )
+        .unwrap();
+
+        let cached_plugin = executor_home
+            .join("codex/plugins/cache/wework-personal/dev-tools/0.1.0/.codex-plugin/plugin.json");
+        fs::create_dir_all(cached_plugin.parent().unwrap()).unwrap();
+        fs::write(
+            &cached_plugin,
+            r#"{"name":"dev-tools","version":"0.1.0","interface":{"displayName":"Dev Tools","shortDescription":"Tools"}}"#,
+        )
+        .unwrap();
+
+        let listed = list_personal_marketplace_plugins(&marketplace_root).unwrap();
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "dev-tools");
+        assert_eq!(listed.plugins[0].display_name.as_deref(), Some("Dev Tools"));
+        assert!(listed.plugins[0].installed);
+
+        let listed_default =
+            list_personal_marketplace_plugins(&resolve_personal_marketplace_path("").unwrap())
+                .unwrap();
+        assert!(
+            listed_default
+                .plugins
+                .iter()
+                .any(|plugin| plugin.name == "dev-tools"),
+            "empty marketplacePath should still resolve cache via default home"
+        );
+
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
+        let _ = fs::remove_dir_all(executor_home);
+        let _ = fs::remove_dir_all(marketplace_root);
+        let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
     fn packages_a_personal_codex_plugin_without_manual_zip_selection() {
         let root = import_test_root("package-plugin");
         let plugin_root = root.join("plugins/gitlab");
@@ -3965,13 +4538,90 @@ mod tests {
         .unwrap();
         assert_eq!(registry.copies.len(), 1);
         assert_eq!(registry.copies[0].source_plugin_id, 41);
-        link_local_plugin_release(&root, &imported.plugin_name, 71, 82).unwrap();
-        let linked: LocalPluginCopyRegistry = serde_json::from_slice(
-            &fs::read(root.join(".wegent/plugin-copy-sources.json")).unwrap(),
-        )
-        .unwrap();
+        link_local_plugin_release(&root, &imported.plugin_name, 71, Some(82)).unwrap();
+        let linked = read_cloud_link_registry(&plugin_cloud_link_registry_path(&root)).unwrap();
         assert_eq!(linked.cloud_links.len(), 1);
         assert_eq!(linked.cloud_links[0].cloud_plugin_id, 71);
+        let cloud_links = read_local_plugin_cloud_links(&root).unwrap();
+        assert_eq!(cloud_links.len(), 1);
+        assert_eq!(cloud_links[0].local_plugin_name, "source-plugin-copy");
+        assert_eq!(cloud_links[0].cloud_release_id, Some(82));
+        unlink_local_plugin_release(&root, &imported.plugin_name).unwrap();
+        unlink_local_plugin_release(&root, &imported.plugin_name).unwrap();
+        assert!(read_local_plugin_cloud_links(&root).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_cloud_links_survive_marketplace_recreation_and_ignore_corrupt_state() {
+        let root = import_test_root("plugin-cloud-links");
+        let marketplace = root.join("capabilities/bundled-marketplaces/wework-personal");
+        let plugin_manifest = marketplace.join("plugins/dev-tools/.codex-plugin/plugin.json");
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+
+        link_local_plugin_release(&marketplace, "dev-tools", 71, None).unwrap();
+        let registry_path = plugin_cloud_link_registry_path(&marketplace);
+        assert_eq!(
+            registry_path,
+            root.join("capabilities/plugin-state/wework-personal-cloud-links.json")
+        );
+
+        fs::remove_dir_all(&marketplace).unwrap();
+        let marketplace_manifest = marketplace.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"name":"wework-personal","plugins":[]}"#,
+        )
+        .unwrap();
+        let links = read_local_plugin_cloud_links(&marketplace_manifest).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].cloud_plugin_id, 71);
+        assert_eq!(links[0].cloud_release_id, None);
+
+        fs::write(&registry_path, b"{invalid").unwrap();
+        assert!(read_local_plugin_cloud_links(&marketplace_manifest)
+            .unwrap()
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrates_plugin_cloud_links_from_copy_registry() {
+        let root = import_test_root("legacy-plugin-cloud-links");
+        let plugin_manifest = root.join("plugins/dev-tools/.codex-plugin/plugin.json");
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let legacy_registry = LocalPluginCopyRegistry {
+            copies: Vec::new(),
+            cloud_links: vec![LocalPluginCloudLink {
+                local_plugin_name: "dev-tools".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(82),
+            }],
+        };
+        let legacy_path = copy_registry_path(&root);
+        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy_path,
+            serde_json::to_vec_pretty(&legacy_registry).unwrap(),
+        )
+        .unwrap();
+
+        let links = read_local_plugin_cloud_links(&root).unwrap();
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].cloud_plugin_id, 71);
+        assert!(plugin_cloud_link_registry_path(&root).is_file());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -4018,7 +4668,7 @@ mod tests {
                     &root,
                     &plugin_name,
                     100 + index as i64,
-                    200 + index as i64,
+                    Some(200 + index as i64),
                 )
                 .unwrap();
             }));
@@ -4027,12 +4677,14 @@ mod tests {
             link.join().unwrap();
         }
 
-        let registry: LocalPluginCopyRegistry = serde_json::from_slice(
+        let copy_registry: LocalPluginCopyRegistry = serde_json::from_slice(
             &fs::read(root.join(".wegent/plugin-copy-sources.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(registry.copies.len(), 4);
-        assert_eq!(registry.cloud_links.len(), 4);
+        let link_registry =
+            read_cloud_link_registry(&plugin_cloud_link_registry_path(&root)).unwrap();
+        assert_eq!(copy_registry.copies.len(), 4);
+        assert_eq!(link_registry.cloud_links.len(), 4);
         assert_eq!(
             fs::read_dir(root.join("plugins"))
                 .unwrap()

@@ -6,6 +6,9 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
+const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
+const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
@@ -322,6 +325,10 @@ function requestContainsPhaseFlipPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(PHASE_FLIP_PROMPT)
 }
 
+function requestContainsLegacyConversationPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(LEGACY_CONVERSATION_PROMPT)
+}
+
 function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
 }
@@ -432,6 +439,7 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
 async function completedToolDuration(control, timeoutMs) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+  await control.command('waitFor', finalToggle, { timeoutMs })
   if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
     await control.command('click', finalToggle)
   }
@@ -570,6 +578,7 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
+  let releasePhaseFlipCompletion
   let releaseResponse
   let releaseStart
   let releaseToolCompletion
@@ -581,6 +590,9 @@ export function createDesktopScenario({
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
+  })
+  const phaseFlipCompletionRelease = new Promise(resolve => {
+    releasePhaseFlipCompletion = resolve
   })
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
@@ -796,9 +808,21 @@ export function createDesktopScenario({
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         const events = phaseFlipEvents(responseId)
         await writeSseEvents(response, events.slice(0, 4))
-        await new Promise(resolve => setTimeout(resolve, 1_000))
+        await phaseFlipCompletionRelease
         await writeSseEvents(response, events.slice(4))
         response.end()
+        return true
+      }
+
+      if (requestContainsLegacyConversationPrompt(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(LEGACY_CONVERSATION_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
         return true
       }
 
@@ -845,17 +869,60 @@ export function createDesktopScenario({
         active = false
         return
       }
+      const knownLegacyTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
+      await control.command('fill', COMPOSER_SELECTOR, { value: LEGACY_CONVERSATION_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: LEGACY_CONVERSATION_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      const legacyTaskRowTestId = await waitForNewTaskRow(
+        control,
+        knownLegacyTaskRows,
+        LEGACY_CONVERSATION_PROMPT,
+        uiTimeoutMs
+      )
+      for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+      await control.command('clickWhenEnabled', `[data-testid="${legacyTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: LEGACY_CONVERSATION_COMPLETION,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('fill', COMPOSER_SELECTOR, { value: PHASE_FLIP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: PHASE_FLIP_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('reconcileLegacyRuntimeAssistantSnapshot', 'body', {
+        value: JSON.stringify({
+          address: {
+            deviceId: 'local-device',
+            taskId: legacyTaskRowTestId.replace('runtime-local-task-row-', ''),
+          },
+          content: PHASE_FLIP_TEXT,
+          itemId: LEGACY_TRANSCRIPT_ITEM_ID,
+        }),
+      })
+      const streamingPhaseFlipSnapshot = JSON.parse(
+        await control.command('snapshot', SCROLLER_SELECTOR)
+      )
       assert.equal(
-        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
-        0,
+        streamingPhaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
+        1,
         'Provisional assistant text was rendered as final content before the turn completed'
       )
+      releasePhaseFlipCompletion()
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
@@ -863,11 +930,10 @@ export function createDesktopScenario({
       )
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: PHASE_FLIP_TEXT,
+        stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
-      const phaseFlipSnapshot = JSON.parse(
-        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-      )
+      const phaseFlipSnapshot = JSON.parse(await control.command('snapshot', SCROLLER_SELECTOR))
       assert.equal(
         phaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
         1,
@@ -878,7 +944,11 @@ export function createDesktopScenario({
         0,
         'The promoted final content remained duplicated in the process section'
       )
-      await capture(control, 'streaming-text-00-process-promoted-to-final-once.png')
+      await capture(control, 'streaming-text-00-legacy-follow-up-promoted-once.png')
+      if (process.env.WEWORK_E2E_LEGACY_STREAM_ONLY === 'true') {
+        active = false
+        return
+      }
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

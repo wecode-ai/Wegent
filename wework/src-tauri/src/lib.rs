@@ -1062,7 +1062,8 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
-    preferences.context_compaction_threshold = preferences.context_compaction_threshold.clamp(1, 100);
+    preferences.context_compaction_threshold =
+        preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -4874,6 +4875,7 @@ pub fn run() {
             #[cfg(desktop)]
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_close_many,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
@@ -4882,10 +4884,12 @@ pub fn run() {
             embedded_browser::embedded_browser_go_forward,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_pending_open_requests,
             embedded_browser::embedded_browser_pause_download,
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_active_tab,
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
@@ -4910,8 +4914,11 @@ pub fn run() {
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
             local_executor::local_executor_link_plugin_release,
+            local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
+            local_executor::local_executor_read_plugin_cloud_links,
+            local_executor::local_executor_list_personal_marketplace_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

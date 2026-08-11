@@ -62,6 +62,13 @@ const items: CloudMyWorkItem[] = [
   }),
   makeItem({ id: 'WEG-4', title: '已完成的任务', status: 'completed', due_at: dueAt(-1) }),
   makeItem({ id: 'WEG-5', title: '无截止的任务', status: 'pending' }),
+  makeItem({
+    id: 'WEG-6',
+    title: '待我批准的任务',
+    status: 'pending',
+    execution_state: 'pending_approval',
+    can_approve: true,
+  }),
 ]
 
 function renderView(onSelectItem = vi.fn()) {
@@ -92,6 +99,30 @@ describe('CloudMyWorkView', () => {
     expect(onSelectItem).toHaveBeenCalledWith(items[0])
   })
 
+  it('shows pending-approval runs the current user must approve in the approval group', () => {
+    renderView()
+    const groups = screen.getByTestId('my-work-groups')
+    expect(within(groups).getByText('待我批准')).toBeInTheDocument()
+    expect(screen.getByTestId('my-work-group-approval-WEG-6')).toBeInTheDocument()
+    // The approval item is not duplicated under "需要我处理".
+    expect(screen.queryByTestId('my-work-group-action-WEG-6')).not.toBeInTheDocument()
+  })
+
+  it('approves a pending run from the approval group without opening the task', async () => {
+    const onSelectItem = vi.fn()
+    const onApproveItem = vi.fn(async () => undefined)
+    render(
+      <CloudMyWorkView items={items} onSelectItem={onSelectItem} onApproveItem={onApproveItem} />
+    )
+
+    expect(screen.getByTestId('my-work-approve-WEG-6')).toBeInTheDocument()
+    expect(screen.queryByTestId('my-work-approve-WEG-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('my-work-approve-WEG-6'))
+    expect(onApproveItem).toHaveBeenCalledWith(items[5])
+    expect(onSelectItem).not.toHaveBeenCalled()
+  })
+
   it('switches to the list view sorted by due date', async () => {
     const onSelectItem = renderView()
     await userEvent.click(screen.getByTestId('my-work-view-tab-list'))
@@ -105,6 +136,7 @@ describe('CloudMyWorkView', () => {
       'my-work-list-row-WEG-2',
       'my-work-list-row-WEG-3',
       'my-work-list-row-WEG-5',
+      'my-work-list-row-WEG-6',
     ])
     await userEvent.click(screen.getByTestId('my-work-list-row-WEG-2'))
     expect(onSelectItem).toHaveBeenCalledWith(items[1])

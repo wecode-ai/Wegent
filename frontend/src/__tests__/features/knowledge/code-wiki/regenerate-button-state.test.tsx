@@ -12,7 +12,7 @@
  * would leave the reader waiting for a worker that is already gone.
  */
 
-import { regenerateControl } from '@/features/knowledge/code-wiki/CodeWikiReader'
+import { emptyStateText, regenerateControl } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import type { CodeWikiRunStatus } from '@/types/code-wiki'
 
 const t = (key: string) => key
@@ -66,5 +66,53 @@ describe('regenerate control state', () => {
     const control = regenerateControl(status({ status: 'completed' }), true, t)
 
     expect(control.disabled).toBe(true)
+  })
+
+  it('offers to generate, not regenerate, when nothing was ever published', () => {
+    // The state a failed first run leaves behind, where this button is the way out.
+    const control = regenerateControl(status({ status: 'failed' }), false, t)
+
+    expect(control.label).toBe('codeWiki.reader.generateFirst')
+  })
+
+  it('offers to regenerate once there is a published version', () => {
+    const control = regenerateControl(
+      status({ status: 'completed', last_published_at: '2026-08-01T00:00:00Z' }),
+      false,
+      t
+    )
+
+    expect(control.label).toBe('codeWiki.reader.regenerate')
+  })
+})
+
+describe('what an empty reader says', () => {
+  it('says it is working rather than asking for a run that is already going', () => {
+    // Generation starts by itself at creation, so this is the first thing a creator
+    // sees. Telling them to generate one asks for what is already happening.
+    const empty = emptyStateText(status({ status: 'running' }), t)
+
+    expect(empty.title).toBe('codeWiki.reader.emptyGenerating')
+    expect(empty.hint).toBe('codeWiki.reader.emptyGeneratingHint')
+  })
+
+  it('says the last run did not finish when it failed', () => {
+    const empty = emptyStateText(status({ status: 'failed' }), t)
+
+    expect(empty.title).toBe('codeWiki.reader.emptyFailed')
+  })
+
+  it('treats a stalled run as a failure rather than as work in progress', () => {
+    // Its worker is gone, so "being generated" would leave the reader waiting for
+    // something that will never finish.
+    const empty = emptyStateText(status({ status: 'running', is_stale: true }), t)
+
+    expect(empty.title).toBe('codeWiki.reader.emptyFailed')
+  })
+
+  it('falls back to the plain empty text when nothing has been attempted', () => {
+    const empty = emptyStateText(status({ status: 'never' }), t)
+
+    expect(empty.title).toBe('codeWiki.reader.empty')
   })
 })

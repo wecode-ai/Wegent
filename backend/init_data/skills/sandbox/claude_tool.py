@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import shlex
 import time
 from typing import Optional
 
@@ -19,6 +20,24 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _build_claude_command(
+    prompt: str,
+    allowed_tools: Optional[str],
+    append_system_prompt: Optional[str],
+) -> str:
+    """Build a shell-safe Claude CLI command."""
+    command_parts = ["claude", "-p", prompt]
+
+    if allowed_tools:
+        command_parts.extend(["--allowedTools", allowed_tools])
+
+    if append_system_prompt:
+        command_parts.extend(["--append-system-prompt", append_system_prompt])
+
+    command_parts.extend(["--output-format", "stream-json", "--verbose"])
+    return shlex.join(command_parts)
 
 
 class SandboxClaudeInput(BaseModel):
@@ -147,27 +166,17 @@ Example:
             f"working_dir={working_dir}, timeout={effective_timeout}s"
         )
 
-        # Build Claude command
-        command_parts = ["claude", "-p", f'"{prompt}"']
+        command = _build_claude_command(
+            prompt=prompt,
+            allowed_tools=allowed_tools,
+            append_system_prompt=append_system_prompt,
+        )
 
-        if allowed_tools:
-            command_parts.append("--allowedTools")
-            command_parts.append(f'"{allowed_tools}"')
-
-        if append_system_prompt:
-            # Escape quotes and newlines in system prompt
-            escaped_prompt = append_system_prompt.replace('"', '\\"').replace(
-                "\n", "\\n"
-            )
-            command_parts.append("--append-system-prompt")
-            command_parts.append(f'"{escaped_prompt}"')
-
-        command_parts.append("--output-format stream-json")
-        command_parts.append("--verbose")
-
-        command = " ".join(command_parts)
-
-        logger.info(f"[SandboxClaudeTool] Full command: {command}")
+        logger.info(
+            "[SandboxClaudeTool] Claude command prepared: "
+            f"allowed_tools_set={bool(allowed_tools)}, "
+            f"append_system_prompt_set={bool(append_system_prompt)}"
+        )
 
         # Emit status update via WebSocket if available
         if self.ws_emitter:

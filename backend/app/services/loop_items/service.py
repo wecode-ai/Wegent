@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,11 +26,13 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
+    ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
     loop_node_non_nullable_attributes,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -41,12 +44,23 @@ from app.schemas.delivery import (
     LoopItemTaskBind,
     LoopItemUpdate,
 )
+from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     require_cloud_project_role,
 )
 from app.services.delivery.storage import delivery_storage
+from app.services.loop_item_executions.service import (
+    loop_item_execution_service,
+)
+from app.services.loop_item_executions.wake import wake_robot_creator
+from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
+
+TASK_AI_STATE_KEY = "ai_state"
+ASSIGNMENT_HISTORY_KEY = "assignment_history"
+
+logger = logging.getLogger(__name__)
 
 
 class LoopItemService:
@@ -115,6 +129,15 @@ class LoopItemService:
         access = access or require_cloud_project_role(
             db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
         )
+        reconciled_from_message = self._reconcile_task_ai_state_from_message(db, item)
+        reconciled_from_lease = (
+            False
+            if reconciled_from_message
+            else self._reconcile_expired_task_ai_state(db, item)
+        )
+        if reconciled_from_message or reconciled_from_lease:
+            db.commit()
+            db.refresh(item)
         can_view_detail, can_edit = self._item_permissions(access, item, user_id)
         values = {
             **item.__dict__,
@@ -124,9 +147,218 @@ class LoopItemService:
         if item.assignee_user_id:
             assignee = db.get(User, item.assignee_user_id)
             values["assignee_name"] = assignee.user_name if assignee else None
+        if item.assignee_agent_id:
+            agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+            values["assignee_agent_name"] = agent.name if agent else None
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        ai_state = metadata.get(TASK_AI_STATE_KEY)
+        values["ai_state"] = ai_state if isinstance(ai_state, dict) else None
+        assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+        values["assignment_history"] = (
+            assignment_history if isinstance(assignment_history, list) else []
+        )
+        # Surface the newest run even after it ends, so a terminal failure is
+        # visible to the UI instead of silently disappearing from the task.
+        execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
+        values["execution_id"] = execution.id if execution else None
+        values["execution_state"] = execution.status if execution else None
+        values["queued_at"] = execution.queued_at if execution else None
+        values["execution_note"] = (
+            execution.execution_note or None if execution else None
+        )
+        values["execution_error"] = (
+            execution.error_message or None if execution else None
+        )
+        values["can_approve"] = self._can_approve_run(
+            db, item=item, execution=execution, user_id=user_id
+        )
+        values["approval"] = self._approval_view(execution)
+        if isinstance(ai_state, dict):
+            logger.info(
+                "[LoopItem] Response includes task AI state: "
+                "project_id=%s task_id=%s task_status=%s ai_status=%s "
+                "message_id=%s runtime_device_id=%s runtime_task_id=%s "
+                "lease_expires_at=%s",
+                item.cloud_project_id,
+                item.id,
+                item.status,
+                ai_state.get("status"),
+                ai_state.get("project_chat_message_id"),
+                ai_state.get("runtime_device_id"),
+                ai_state.get("runtime_task_id"),
+                ai_state.get("lease_expires_at"),
+            )
         if not can_view_detail:
             values["description"] = ""
         return values
+
+    def _reconcile_task_ai_state_from_message(
+        self, db: Session, item: LoopItem
+    ) -> bool:
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        ai_state = metadata.get(TASK_AI_STATE_KEY)
+        if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
+            return False
+        message_id = ai_state.get("project_chat_message_id")
+        if not isinstance(message_id, str) or not message_id:
+            logger.info(
+                "[LoopItem] Running task AI state has no project chat message id: "
+                "project_id=%s task_id=%s runtime_device_id=%s runtime_task_id=%s",
+                item.cloud_project_id,
+                item.id,
+                ai_state.get("runtime_device_id"),
+                ai_state.get("runtime_task_id"),
+            )
+            return False
+
+        message = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == message_id,
+                ProjectChatMessage.task_id == item.id,
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .first()
+        )
+        if message is None or message.status not in {"completed", "failed"}:
+            logger.info(
+                "[LoopItem] Task AI message is not terminal during response reconcile: "
+                "project_id=%s task_id=%s message_id=%s message_found=%s "
+                "message_status=%s runtime_device_id=%s runtime_task_id=%s",
+                item.cloud_project_id,
+                item.id,
+                message_id,
+                message is not None,
+                message.status if message is not None else None,
+                ai_state.get("runtime_device_id"),
+                ai_state.get("runtime_task_id"),
+            )
+            return False
+
+        now = self._now()
+        next_state = {
+            **ai_state,
+            "status": message.status,
+            "heartbeat_at": None,
+            "lease_expires_at": None,
+            "completed_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        if message.status == "failed" and message.content:
+            next_state["last_error"] = message.content[:10_000]
+        if message.status == "failed" and ai_state.get("auto_retry") is True:
+            next_state["auto_retry_count"] = (
+                int(ai_state.get("auto_retry_count") or 0) + 1
+            )
+        item.metadata_json = {**metadata, TASK_AI_STATE_KEY: next_state}
+        if message.status == "completed" and item.status not in {
+            "in_review",
+            "completed",
+        }:
+            item.status = "in_review"
+            item.completed_at = self._loop_unset_datetime(db)
+        item.version += 1
+        logger.warning(
+            "[LoopItem] Reconciled task AI state from terminal project chat message: "
+            "project_id=%s task_id=%s task_status=%s ai_status=%s "
+            "message_id=%s message_status=%s runtime_device_id=%s runtime_task_id=%s",
+            item.cloud_project_id,
+            item.id,
+            item.status,
+            next_state.get("status"),
+            message.message_id,
+            message.status,
+            ai_state.get("runtime_device_id"),
+            ai_state.get("runtime_task_id"),
+        )
+        return True
+
+    def _reconcile_expired_task_ai_state(self, db: Session, item: LoopItem) -> bool:
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        ai_state = metadata.get(TASK_AI_STATE_KEY)
+        if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
+            return False
+        raw_expires_at = ai_state.get("lease_expires_at")
+        if not isinstance(raw_expires_at, str):
+            return False
+        expires_at = self._parse_ai_state_datetime(raw_expires_at)
+        if expires_at is None or expires_at >= self._now():
+            return False
+
+        now = self._now()
+        next_state = {
+            **ai_state,
+            "status": "interrupted",
+            "last_error": "AI execution lease expired before a terminal result was recorded.",
+            "completed_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        if ai_state.get("auto_retry") is True:
+            next_state["auto_retry_count"] = (
+                int(ai_state.get("auto_retry_count") or 0) + 1
+            )
+        # The executor terminal event never arrived (for example an older
+        # executor that does not relay runtime events, or a dropped backend
+        # connection). The chat message is still streaming, which keeps the
+        # activity rail stuck on "running"; terminate it so the UI reflects
+        # the interruption instead of an endless running state.
+        message_id = ai_state.get("project_chat_message_id")
+        if isinstance(message_id, str) and message_id:
+            message = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.message_id == message_id,
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
+            if message is not None and message.status == "streaming":
+                message.status = "failed"
+                if not message.content:
+                    message.content = (
+                        "AI 执行结果未同步（执行会话租约已过期）。"
+                        "如果任务实际已完成，请重新触发一次执行以刷新状态。"
+                    )
+                message.metadata_json = {
+                    **dict(message.metadata_json or {}),
+                    "run_status": "failed",
+                    "lease_expired": True,
+                }
+                message.updated_at = self._now()
+        item.metadata_json = {
+            **metadata,
+            TASK_AI_STATE_KEY: next_state,
+        }
+        item.version += 1
+        logger.warning(
+            "[LoopItem] Reconciled expired task AI lease: "
+            "project_id=%s task_id=%s runtime_device_id=%s runtime_task_id=%s "
+            "message_id=%s lease_expires_at=%s",
+            item.cloud_project_id,
+            item.id,
+            ai_state.get("runtime_device_id"),
+            ai_state.get("runtime_task_id"),
+            ai_state.get("project_chat_message_id"),
+            raw_expires_at,
+        )
+        return True
+
+    @staticmethod
+    def _loop_unset_datetime(db: Session) -> object:
+        values = adapt_loop_node_values_for_dialect(
+            {"completed_at": None}, db.get_bind().dialect.name
+        )
+        return values["completed_at"]
+
+    @staticmethod
+    def _parse_ai_state_datetime(value: str) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
 
     def _get_item_row(
         self, db: Session, item_id: str, *, include_deleted: bool = False
@@ -272,8 +504,45 @@ class LoopItemService:
         project.next_item_number += 1
         payload = values.model_dump()
         tags = payload.pop("tags")
-        if payload.get("assignee_user_id") is None:
+        agent_id = payload.get("assignee_agent_id")
+        payload["assignee_agent_id"] = agent_id or ""
+        task_metadata: dict = {}
+        if agent_id:
+            agent = db.get(ProjectChatAgent, agent_id)
+            if (
+                agent is None
+                or agent.cloud_project_id != cloud_project_id
+                or agent.status != "active"
+            ):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "AI assignee is not active in this project",
+                )
+            payload["assignee_user_id"] = None
+            self._write_assignment_change(
+                task_metadata,
+                user_id,
+                "agent",
+                agent.id,
+                agent.title or agent.name,
+            )
+        elif payload.get("assignee_user_id") is None:
             payload["assignee_user_id"] = user_id
+            self._write_assignment_change(
+                task_metadata,
+                user_id,
+                "user",
+                str(user_id),
+                None,
+            )
+        elif payload.get("assignee_user_id"):
+            self._write_assignment_change(
+                task_metadata,
+                user_id,
+                "user",
+                str(payload["assignee_user_id"]),
+                None,
+            )
         configured_statuses = self._project_status_ids(project)
         requested_status = payload.get("status")
         if requested_status is None:
@@ -287,6 +556,7 @@ class LoopItemService:
             cloud_project_id=project.id,
             sequence_number=sequence,
             created_by_user_id=user_id,
+            metadata_json=task_metadata or None,
             **payload,
         )
         if tags:
@@ -294,23 +564,67 @@ class LoopItemService:
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
+        if agent_id:
+            agent = db.get(ProjectChatAgent, agent_id)
+            if agent is not None:
+                config = bot_config(agent)
+                loop_item_execution_service.create_for_assignment(
+                    db,
+                    loop_item_id=item.id,
+                    cloud_project_id=item.cloud_project_id,
+                    agent=agent,
+                    assigner_user_id=user_id,
+                    environment=str(config.get("execution_environment") or "local"),
+                    execution_device_id=(
+                        config.get("execution_device_id")
+                        if isinstance(config.get("execution_device_id"), str)
+                        else None
+                    ),
+                    priority=item.priority,
+                )
         db.commit()
         db.refresh(item)
         return item
 
-    def list(self, db: Session, cloud_project_id: int, user_id: int) -> list[LoopItem]:
+    def list(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        user_id: int,
+        *,
+        assignee_type: str | None = None,
+        assignee_id: str | None = None,
+        execution_state: str | None = None,
+    ) -> list[LoopItem]:
         self._require_internal_task_project(
             db, cloud_project_id, user_id, allow_public_visitor=True
         )
-        return (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
-            .all()
+        query = db.query(LoopItem).filter(
+            LoopItem.cloud_project_id == cloud_project_id,
+            loop_datetime_is_unset(LoopItem.deleted_at),
         )
+        if assignee_type == "user" and assignee_id:
+            try:
+                assignee_user_id = int(assignee_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "User assignee id must be numeric",
+                ) from exc
+            query = query.filter(LoopItem.assignee_user_id == assignee_user_id)
+        elif assignee_type == "agent" and assignee_id:
+            query = query.filter(LoopItem.assignee_agent_id == assignee_id)
+        if execution_state:
+            from app.models.loop_item_execution import LoopItemExecution
+
+            query = query.filter(
+                LoopItem.id.in_(
+                    select(LoopItemExecution.loop_item_id).where(
+                        LoopItemExecution.status == execution_state
+                    )
+                )
+            )
+        return query.order_by(LoopItem.sort_order, LoopItem.updated_at.desc()).all()
 
     def reorder(
         self,
@@ -541,6 +855,23 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
+        if "assignee_agent_id" in values.model_fields_set:
+            agent_id = values.assignee_agent_id
+            updates["assignee_agent_id"] = agent_id or ""
+            if agent_id:
+                agent = db.get(ProjectChatAgent, agent_id)
+                if (
+                    agent is None
+                    or agent.cloud_project_id != item.cloud_project_id
+                    or agent.status != "active"
+                ):
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "AI assignee is not active in this project",
+                    )
+                updates["assignee_user_id"] = None
+        elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
+            updates["assignee_agent_id"] = ""
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
         if "tags" in values.model_fields_set:
@@ -549,6 +880,56 @@ class LoopItemService:
             metadata = dict(item.metadata_json or {})
             metadata["tags"] = updates.pop("tags") or []
             updates["metadata_json"] = metadata
+        assignee_changed = (
+            "assignee_agent_id" in values.model_fields_set
+            or "assignee_user_id" in values.model_fields_set
+        )
+        if assignee_changed:
+            # Legacy assignment path: record the chain and derive the queue
+            # state on the task itself so every queue view stays a projection
+            # of assigned-but-not-completed tasks instead of a stored entity.
+            metadata = dict(item.metadata_json or {})
+            if isinstance(updates.get("metadata_json"), dict):
+                metadata = dict(updates["metadata_json"])
+            target_type = "agent" if updates.get("assignee_agent_id") else "user"
+            target_id = updates.get("assignee_agent_id") or (
+                str(updates["assignee_user_id"])
+                if updates.get("assignee_user_id")
+                else None
+            )
+            if target_id is None:
+                self._write_assignment_change(metadata, user_id, None, None, None)
+            elif target_type == "agent":
+                agent = db.get(ProjectChatAgent, target_id)
+                self._write_assignment_change(
+                    metadata,
+                    user_id,
+                    "agent",
+                    target_id,
+                    agent.title or agent.name if agent is not None else None,
+                )
+            else:
+                self._write_assignment_change(
+                    metadata,
+                    user_id,
+                    "user",
+                    target_id,
+                    None,
+                )
+            updates["metadata_json"] = metadata
+            self._sync_execution_for_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                target_type=target_type,
+                target_id=target_id,
+                agent=(
+                    db.get(ProjectChatAgent, target_id)
+                    if target_type == "agent"
+                    else None
+                ),
+                priority=item.priority,
+            )
         next_status = updates.get("status")
         if "status" in values.model_fields_set and next_status is not None:
             project = db.get(CloudProject, item.cloud_project_id)
@@ -580,6 +961,211 @@ class LoopItemService:
         db.commit()
         db.refresh(item)
         return item
+
+    def assign(
+        self,
+        db: Session,
+        *,
+        project_id: int,
+        item_id: str,
+        user_id: int,
+        values: LoopItemAssign,
+    ) -> LoopItem:
+        """Assign a task to a project member or to a project robot.
+
+        The task itself records who assigned it to whom (the chain) and the
+        derived execution state. There is no separate queue storage: a task
+        assigned to someone and not completed is simply part of that target's
+        queue.
+        """
+
+        self._require_internal_task_project(
+            db, project_id, user_id, BaseRole.Maintainer
+        )
+        item = self.get(db, item_id, user_id)
+        if item.cloud_project_id != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        metadata = dict(item.metadata_json or {})
+        if values.assignee_type == "agent":
+            agent = db.get(ProjectChatAgent, values.assignee_id)
+            if (
+                agent is None
+                or agent.cloud_project_id != str(project_id)
+                or agent.status != "active"
+            ):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Robot is not active in this project",
+                )
+            access = require_cloud_project_role(
+                db, project_id, user_id, BaseRole.Reporter
+            )
+            if not self._agent_visible_to_user(agent, user_id, access.role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    "Robot is not visible to you",
+                )
+            assignee_updates = {
+                "assignee_agent_id": agent.id,
+                "assignee_user_id": None,
+            }
+            self._write_assignment_change(
+                metadata,
+                user_id,
+                "agent",
+                agent.id,
+                agent.title or agent.name,
+            )
+            cancelled_runs = self._sync_execution_for_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                target_type="agent",
+                target_id=agent.id,
+                agent=agent,
+                priority=item.priority,
+            )
+        elif values.assignee_type == "user":
+            try:
+                target_user_id = int(values.assignee_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "User assignee id must be numeric",
+                ) from exc
+            member_ids = self._project_member_ids(db, project_id)
+            if target_user_id not in member_ids:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Assignee is not a member of this project",
+                )
+            assignee_updates = {
+                "assignee_user_id": target_user_id,
+                "assignee_agent_id": "",
+            }
+            target = db.get(User, target_user_id)
+            self._write_assignment_change(
+                metadata,
+                user_id,
+                "user",
+                str(target_user_id),
+                target.user_name if target else None,
+            )
+            cancelled_runs = self._sync_execution_for_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                target_type="user",
+                target_id=str(target_user_id),
+                agent=None,
+                priority=item.priority,
+            )
+        else:  # pragma: no cover - pydantic constrains assignee_type
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
+            )
+        updated = self._versioned_metadata_update(
+            db, item, values.version, metadata, **assignee_updates
+        )
+        if cancelled_runs:
+            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+            emit_runtime_cancels(cancelled_runs)
+        if values.assignee_type == "agent":
+            agent = db.get(ProjectChatAgent, values.assignee_id)
+            if agent is not None and agent.created_by_user_id:
+                wake_robot_creator(
+                    user_id=agent.created_by_user_id,
+                    project_id=str(project_id),
+                    agent_id=agent.id,
+                )
+        return updated
+
+    def approve_run(
+        self,
+        db: Session,
+        *,
+        project_id: int,
+        item_id: str,
+        user_id: int,
+        values: LoopItemApproval,
+    ) -> LoopItem:
+        """Approve a pending robot run. Only the robot creator can approve."""
+
+        item = self.get(db, item_id, user_id)
+        self._require_bot_creator_scope(db, project_id, item, user_id)
+        execution = loop_item_execution_service.active_for_item(db, item_id=item.id)
+        if execution is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Task is not assigned to a robot",
+            )
+        if item.version != values.version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        loop_item_execution_service.approve(
+            db, execution_id=execution.id, user_id=user_id
+        )
+        metadata = dict(item.metadata_json or {})
+        # The versioned update commits both the run approval and the item
+        # change in one transaction; on a version race it rolls the approval
+        # back instead of half-applying it.
+        updated = self._versioned_metadata_update(db, item, values.version, metadata)
+        agent = (
+            db.get(ProjectChatAgent, item.assignee_agent_id)
+            if item.assignee_agent_id
+            else None
+        )
+        if agent is not None and agent.created_by_user_id:
+            wake_robot_creator(
+                user_id=agent.created_by_user_id,
+                project_id=str(project_id),
+                agent_id=agent.id,
+            )
+        return updated
+
+    def reject_run(
+        self,
+        db: Session,
+        *,
+        project_id: int,
+        item_id: str,
+        user_id: int,
+        values: LoopItemApproval,
+    ) -> LoopItem:
+        """Reject a pending robot run. Only the robot creator can reject."""
+
+        item = self.get(db, item_id, user_id)
+        self._require_bot_creator_scope(db, project_id, item, user_id)
+        execution = loop_item_execution_service.active_for_item(db, item_id=item.id)
+        if execution is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Task is not assigned to a robot",
+            )
+        if item.version != values.version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        loop_item_execution_service.reject(
+            db,
+            execution_id=execution.id,
+            user_id=user_id,
+            reason=values.reason,
+        )
+        metadata = dict(item.metadata_json or {})
+        # Same transaction rule as approve_run: the versioned update owns the
+        # commit so a stale-version request cannot half-apply the rejection.
+        updated = self._versioned_metadata_update(db, item, values.version, metadata)
+        agent = (
+            db.get(ProjectChatAgent, item.assignee_agent_id)
+            if item.assignee_agent_id
+            else None
+        )
+        if agent is not None and agent.created_by_user_id:
+            wake_robot_creator(
+                user_id=agent.created_by_user_id,
+                project_id=str(project_id),
+                agent_id=agent.id,
+            )
+        return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Soft delete a TODO subtree; rows are kept for the recycle bin."""
@@ -945,28 +1531,336 @@ class LoopItemService:
             .filter(LoopItemCollaborator.user_id == user_id)
             .all()
         }
+        my_agent_ids = {
+            agent_id
+            for (agent_id,) in db.query(ProjectChatAgent.id)
+            .filter(
+                ProjectChatAgent.created_by_user_id == user_id,
+                ProjectChatAgent.status == "active",
+                loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+            )
+            .all()
+            if agent_id
+        }
+        my_work_membership = or_(
+            LoopItem.created_by_user_id == user_id,
+            LoopItem.assignee_user_id == user_id,
+            LoopItem.id.in_(active_task_items),
+            LoopItem.id.in_(collaborator_items),
+        )
+        if my_agent_ids:
+            my_work_membership = or_(
+                my_work_membership, LoopItem.assignee_agent_id.in_(my_agent_ids)
+            )
+        my_work_filters = [
+            LoopItem.cloud_project_id.in_(project_by_id),
+            loop_datetime_is_unset(LoopItem.deleted_at),
+            my_work_membership,
+        ]
         items = (
             db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                loop_datetime_is_unset(LoopItem.deleted_at),
-                (LoopItem.created_by_user_id == user_id)
-                | (LoopItem.assignee_user_id == user_id)
-                | LoopItem.id.in_(active_task_items)
-                | LoopItem.id.in_(collaborator_items),
-            )
+            .filter(*my_work_filters)
             .order_by(LoopItem.updated_at.desc())
             .all()
         )
-        return [
+        result: list[dict[str, object]] = []
+        item_ids = [item.id for item in items]
+        executions_by_item: dict[str, object] = {}
+        if item_ids:
+            from app.models.loop_item_execution import LoopItemExecution
+
+            execution_rows = (
+                db.query(LoopItemExecution)
+                .filter(
+                    LoopItemExecution.loop_item_id.in_(item_ids),
+                    LoopItemExecution.status.in_(
+                        {
+                            "pending_approval",
+                            "queued",
+                            "running",
+                        }
+                    ),
+                )
+                .order_by(LoopItemExecution.id.desc())
+                .all()
+            )
+            for execution in execution_rows:
+                executions_by_item.setdefault(execution.loop_item_id, execution)
+        external_index_rows: list[LoopItem] = []
+        for item in items:
+            metadata = (
+                item.metadata_json if isinstance(item.metadata_json, dict) else {}
+            )
+            if (
+                metadata.get("external_index") is True
+                or metadata.get("external_shadow") is True
+            ):
+                external_index_rows.append(item)
+                continue
+            assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+            execution = executions_by_item.get(item.id)
+            result.append(
+                {
+                    **item.__dict__,
+                    "project_key": project_by_id[item.cloud_project_id].project_key,
+                    "project_name": project_by_id[item.cloud_project_id].name,
+                    "has_active_task": item.id in active_task_items,
+                    "assignment_history": (
+                        assignment_history
+                        if isinstance(assignment_history, list)
+                        else []
+                    ),
+                    "execution_id": getattr(execution, "id", None),
+                    "execution_state": getattr(execution, "status", None),
+                    "queued_at": getattr(execution, "queued_at", None),
+                    "execution_note": (
+                        getattr(execution, "execution_note", "") or None
+                    ),
+                    "can_approve": self._can_approve_run(
+                        db, item=item, execution=execution, user_id=user_id
+                    ),
+                    "approval": self._approval_view(execution),
+                }
+            )
+        # External provider index rows are local pointers only; their display
+        # data comes from the live provider issue (one GET per assigned task).
+        if external_index_rows:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            for item in external_index_rows:
+                try:
+                    view = external_loop_item_provider.get(db, item.id, user_id)
+                except Exception:
+                    logger.warning(
+                        "[MyWork] Skip external index row id=%s",
+                        item.id,
+                        exc_info=True,
+                    )
+                    continue
+                project = project_by_id.get(str(item.cloud_project_id))
+                if project is None:
+                    continue
+                metadata = (
+                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
+                )
+                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+                result.append(
+                    {
+                        **view,
+                        "project_key": project.project_key,
+                        "project_name": project.name,
+                        "has_active_task": item.id in active_task_items,
+                        "assignment_history": (
+                            assignment_history
+                            if isinstance(assignment_history, list)
+                            else []
+                        ),
+                    }
+                )
+        return result
+
+    @staticmethod
+    def _can_approve_run(
+        db: Session, *, item: LoopItem, execution: Any, user_id: int
+    ) -> bool:
+        """Whether the current user is the assigned robot's creator and this
+        run is waiting for their manual approval."""
+
+        if (
+            execution is None
+            or getattr(execution, "status", None) != "pending_approval"
+        ):
+            return False
+        if not item.assignee_agent_id:
+            return False
+        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        return agent is not None and agent.created_by_user_id == user_id
+
+    @staticmethod
+    def _agent_visible_to_user(
+        agent: ProjectChatAgent, user_id: int, role: BaseRole
+    ) -> bool:
+        """Robots are project assets that follow their creator's environment."""
+
+        return ProjectChatService._agent_visible_to_user(agent, user_id, role)
+
+    def _project_member_ids(self, db: Session, project_id: int) -> set[int]:
+        project = db.get(CloudProject, project_id)
+        member_ids: set[int] = set()
+        if project is not None and project.created_by_user_id:
+            member_ids.add(project.created_by_user_id)
+        rows = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+                ResourceMember.resource_id == project_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        for row in rows:
+            try:
+                member_ids.add(int(row.entity_id))
+            except (TypeError, ValueError):
+                continue
+        return member_ids
+
+    def _require_bot_creator_scope(
+        self, db: Session, project_id: int, item: LoopItem, user_id: int
+    ) -> None:
+        if item.cloud_project_id != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        if not item.assignee_agent_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Task is not assigned to a robot"
+            )
+        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        if agent is None or agent.created_by_user_id != user_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only the robot creator can approve or reject this run",
+            )
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+
+    @staticmethod
+    def _write_assignment_change(
+        metadata: dict,
+        user_id: int,
+        to_type: str | None,
+        to_id: str | None,
+        to_name: str | None,
+    ) -> None:
+        """Record who assigned to whom. Run state lives in the execution table."""
+
+        history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+        history = history if isinstance(history, list) else []
+        action = "assign" if not history else "reassign"
+        if to_id is None:
+            action = "unassign"
+        now = LoopItemService._now()
+        history.append(
             {
-                **item.__dict__,
-                "project_key": project_by_id[item.cloud_project_id].project_key,
-                "project_name": project_by_id[item.cloud_project_id].name,
-                "has_active_task": item.id in active_task_items,
+                "by_user_id": user_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "to_name": to_name,
+                "action": action,
+                "at": now.isoformat(),
             }
-            for item in items
-        ]
+        )
+        metadata[ASSIGNMENT_HISTORY_KEY] = history
+
+    def _sync_execution_for_assignment(
+        self,
+        db: Session,
+        *,
+        item: LoopItem,
+        user_id: int,
+        target_type: str,
+        target_id: str | None,
+        agent: ProjectChatAgent | None,
+        priority: str | None,
+    ) -> list:
+        """Create/cancel execution records when the assignee changes.
+
+        Reassigning to a robot cancels any active run and starts a fresh run;
+        assigning to a person (or unassigning) cancels robot runs. Returns the
+        runs that were cancelled and already handed to a device so callers can
+        ask the executor to stop them after the change commits.
+        """
+
+        from app.models.loop_item_execution import LoopItemExecution
+
+        cancelled_runs = []
+        active = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == item.id,
+                LoopItemExecution.status.in_(
+                    {"pending_approval", "queued", "claimed", "running"}
+                ),
+            )
+            .all()
+        )
+        for execution in active:
+            execution.status = "cancelled"
+            execution.completed_at = self._now()
+            execution.execution_note = (
+                execution.execution_note or "Assignee changed before the run finished"
+            )
+            if execution.runtime_device_id and execution.runtime_task_id:
+                cancelled_runs.append(execution)
+        if target_type == "agent" and agent is not None:
+            config = bot_config(agent)
+            loop_item_execution_service.create_for_assignment(
+                db,
+                loop_item_id=item.id,
+                cloud_project_id=item.cloud_project_id,
+                agent=agent,
+                assigner_user_id=user_id,
+                environment=str(config.get("execution_environment") or "local"),
+                execution_device_id=(
+                    config.get("execution_device_id")
+                    if isinstance(config.get("execution_device_id"), str)
+                    else None
+                ),
+                priority=priority,
+            )
+        return cancelled_runs
+
+    @staticmethod
+    def _approval_view(execution: object) -> dict | None:
+        """Project the execution approval fields into the task response shape."""
+
+        status = getattr(execution, "approval_status", None)
+        if not status:
+            return None
+        view: dict[str, object] = {"status": status}
+        if status == "pending":
+            view["requested_at"] = (
+                getattr(execution, "queued_at", None).isoformat()
+                if getattr(execution, "queued_at", None)
+                else None
+            )
+        if status == "approved":
+            view["approved_by_user_id"] = getattr(
+                execution, "approved_by_user_id", None
+            )
+            view["approved_at"] = (
+                getattr(execution, "approved_at", None).isoformat()
+                if getattr(execution, "approved_at", None)
+                else None
+            )
+        if status == "rejected":
+            view["rejected_reason"] = getattr(execution, "rejected_reason", None)
+        return view
+
+    @staticmethod
+    def _versioned_metadata_update(
+        db: Session,
+        item: LoopItem,
+        version: int,
+        metadata: dict,
+        **updates: object,
+    ) -> LoopItem:
+        updates = {**updates, "metadata_json": metadata}
+        updates = adapt_loop_node_values_for_dialect(
+            updates, db.get_bind().dialect.name
+        )
+        updated = (
+            db.query(LoopItem)
+            .filter(LoopItem.id == item.id, LoopItem.version == version)
+            .update({**updates, "version": LoopItem.version + 1})
+        )
+        if updated != 1:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        db.commit()
+        db.refresh(item)
+        return item
 
     @staticmethod
     def _now() -> datetime:

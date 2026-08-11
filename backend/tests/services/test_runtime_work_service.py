@@ -1228,6 +1228,91 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_status", "expected_http_status"),
+    [
+        ("conflicted", 409),
+        ("artifact_missing", 410),
+    ],
+)
+async def test_runtime_file_changes_revert_preserves_device_failure_status(
+    test_db,
+    test_user,
+    monkeypatch,
+    device_status,
+    expected_http_status,
+):
+    from app.schemas.runtime_work import (
+        RuntimeFileChangesRevertRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    execute = AsyncMock(
+        return_value={
+            "stdout": {
+                "success": False,
+                "status": device_status,
+                "error": "device revert failed",
+            }
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "execute_configured_device_command",
+        execute,
+    )
+    request = RuntimeFileChangesRevertRequest(
+        address=RuntimeTaskAddress(deviceId="device-1", taskId="codex-1"),
+        fileChanges={
+            "version": 1,
+            "status": "active",
+            "artifact_id": "turn-file-changes/codex/turn-1",
+            "device_id": "device-1",
+            "workspace_path": "/repo/Wegent",
+            "file_count": 1,
+            "additions": 1,
+            "deletions": 0,
+            "files": [
+                {
+                    "path": "README.md",
+                    "change_type": "modified",
+                    "additions": 1,
+                    "deletions": 0,
+                    "binary": False,
+                }
+            ],
+            "reverted_at": None,
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.revert_runtime_file_changes(
+            db=test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+
+    assert exc_info.value.status_code == expected_http_status
+    assert exc_info.value.detail["file_changes"]["status"] == device_status
+    execute.assert_awaited_once_with(
+        db=test_db,
+        user_id=test_user.id,
+        device_id="device-1",
+        command_key="turn_file_changes_revert",
+        path="/repo/Wegent",
+        args=["turn-file-changes/codex/turn-1"],
+        timeout_seconds=30,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_transcript_dispatches_full_content_payload(
     test_db,
     test_user,
@@ -1697,6 +1782,11 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         }
     )
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_safe_build_runtime_send_execution_request",
+        lambda **kwargs: None,
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
@@ -1905,6 +1995,11 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     )
     rpc = AsyncMock(return_value={"success": True, "accepted": True})
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_safe_build_runtime_send_execution_request",
+        lambda **kwargs: None,
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,

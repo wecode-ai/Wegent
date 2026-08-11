@@ -116,13 +116,17 @@ function renderSidebar(
   )
   if (appUpdate) {
     const value: AppUpdateContextValue = {
+      updateChannel: 'stable',
       availableUpdate: null,
+      installedReleaseNotes: null,
       status: 'idle',
       downloadProgress: null,
       message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
+      dismissInstalledReleaseNotes: vi.fn(),
+      setUpdateChannel: vi.fn().mockResolvedValue(undefined),
       ...appUpdate,
     }
     tree = <AppUpdateContext.Provider value={value}>{tree}</AppUpdateContext.Provider>
@@ -680,6 +684,60 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sidebar-app-update-action')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-10')
+  })
+
+  test('shows installed release notes above the account row and opens details on demand', async () => {
+    renderSidebar({}, undefined, {
+      installedReleaseNotes: {
+        version: '0.2.0',
+        body: '## Changes\n\n- Added the new changelog card.\n\n[Learn more](https://example.com)',
+      },
+    })
+
+    const card = screen.getByTestId('sidebar-release-notes-card')
+    const account = screen.getByTestId('settings-button')
+    const openButton = screen.getByTestId('sidebar-release-notes-open')
+    expect(card.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(card).toHaveTextContent('Wework 已更新至 v0.2.0')
+    expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(openButton)
+
+    expect(screen.getByTestId('app-release-notes-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('app-release-notes-content')).toHaveTextContent(
+      'Added the new changelog card.'
+    )
+    const closeButton = screen.getByTestId('app-release-notes-dialog-close')
+    const releaseNotesLink = screen.getByRole('link', { name: 'Learn more' })
+    await waitFor(() => expect(closeButton).toHaveFocus())
+
+    await userEvent.tab()
+    expect(releaseNotesLink).toHaveFocus()
+    await userEvent.tab()
+    expect(closeButton).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(releaseNotesLink).toHaveFocus()
+
+    await userEvent.click(closeButton)
+
+    expect(screen.queryByTestId('app-release-notes-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-release-notes-card')).toBeInTheDocument()
+    expect(openButton).toHaveFocus()
+  })
+
+  test('dismisses the installed release notes card only from its close action', async () => {
+    const dismissInstalledReleaseNotes = vi.fn()
+    renderSidebar({}, undefined, {
+      installedReleaseNotes: {
+        version: '0.2.0',
+        body: '## Changes',
+      },
+      dismissInstalledReleaseNotes,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-release-notes-dismiss'))
+
+    expect(dismissInstalledReleaseNotes).toHaveBeenCalledTimes(1)
   })
 
   test('shows download progress in the account-row update icon', () => {
@@ -1346,16 +1404,32 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
+    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
+
+    expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
+    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })
 
   test('matches Codex sidebar text emphasis levels', () => {
-    renderSidebar({}, { status: 'disconnected', isConnected: false })
+    renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 
     const newTaskButton = screen.getByTestId('new-chat-button')
     const searchButton = screen.getByTestId('runtime-search-button')
+    const collapseSidebarButton = screen.getByTestId('collapse-sidebar-button')
     const pluginsButton = screen.getByTestId('plugins-button')
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const newTaskIcon = newTaskButton.querySelector('svg')
@@ -1366,6 +1440,10 @@ describe('DesktopSidebar', () => {
     for (const button of [newTaskButton, pluginsButton, cloudButton]) {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
+    expect(collapseSidebarButton).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-primary))]',
+      'hover:text-[rgb(var(--color-sidebar-text-primary))]'
+    )
     expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
     expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
@@ -1697,14 +1775,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
-  test('shows Automations only while experimental features are enabled', () => {
+  test('shows Automations when experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
     expect(screen.getByTestId('automation-button')).toBeInTheDocument()
@@ -4511,5 +4583,43 @@ describe('DesktopSidebar', () => {
 
     expect(screen.queryByTestId('project-item-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-standalone-task')).toBeInTheDocument()
+  })
+
+  test('does not render a standalone project row when the path is already represented on another device', () => {
+    const workspacePath = '/Users/alice/repo'
+
+    renderSidebar({
+      projects: [],
+      devices: [localDevice({ device_id: 'device-1', name: 'Local Mac' })],
+      standaloneDeviceId: 'device-1',
+      standaloneWorkspacePath: workspacePath,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'cloud-project', name: 'Repo' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 10,
+                projectId: 7,
+                deviceId: 'device-cloud',
+                deviceName: 'Cloud Device',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath,
+                workspaceKind: 'workspace',
+                mapped: true,
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(screen.getAllByTestId('project-item-button')).toHaveLength(1)
+    expect(screen.getByTestId('project-item-button')).toHaveTextContent('Repo')
   })
 })

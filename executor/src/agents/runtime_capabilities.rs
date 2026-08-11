@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
@@ -656,7 +656,10 @@ async fn download_attachments(
     let client = reqwest::Client::new();
     let mut success = Vec::new();
     let mut failed = Vec::new();
+    let mut used_filenames = HashMap::new();
     for attachment in attachments {
+        let filename =
+            unique_attachment_filename(&attachment.original_filename, &mut used_filenames);
         log_executor_event(
             "attachment download item started",
             &[
@@ -675,6 +678,7 @@ async fn download_attachments(
             &client,
             attachment,
             attachments_dir,
+            &filename,
             api_base_url,
             auth_token,
         )
@@ -720,6 +724,7 @@ async fn download_attachment(
     client: &reqwest::Client,
     attachment: &AttachmentRecord,
     attachments_dir: &Path,
+    filename: &str,
     api_base_url: &str,
     auth_token: &str,
 ) -> Result<PathBuf, String> {
@@ -749,9 +754,28 @@ async fn download_attachment(
         .bytes()
         .await
         .map_err(|error| format!("Read error: {error}"))?;
-    let path = attachments_dir.join(sanitize_filename(&attachment.original_filename));
+    let path = attachments_dir.join(filename);
     fs::write(&path, bytes).map_err(|error| format!("IO error: {error}"))?;
     Ok(path)
+}
+
+fn unique_attachment_filename(filename: &str, used: &mut HashMap<String, usize>) -> String {
+    let base = sanitize_filename(filename);
+    let count = used.entry(base.clone()).or_insert(0);
+    *count += 1;
+    if *count == 1 {
+        return base;
+    }
+    let path = Path::new(&base);
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| base.clone());
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{stem}-{count}{extension}")
 }
 
 fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
@@ -2093,6 +2117,29 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn attachment_filenames_are_disambiguated_on_collision() {
+        let mut used = HashMap::new();
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image-2.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image-3.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("notes.txt", &mut used),
+            "notes.txt"
+        );
+        assert_eq!(unique_attachment_filename("draft", &mut used), "draft");
+        assert_eq!(unique_attachment_filename("draft", &mut used), "draft-2");
+    }
 
     #[test]
     fn coordinate_subagent_uses_its_resolved_model() {

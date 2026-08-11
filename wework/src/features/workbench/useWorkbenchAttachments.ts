@@ -69,8 +69,10 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
     async (files: File | File[]) => {
       const fileList = Array.isArray(files) ? files : [files]
 
-      for (const file of fileList) {
-        const fileId = file.name
+      for (const [index, file] of fileList.entries()) {
+        // file.name alone collides when the same file name is selected twice;
+        // include size/lastModified and the in-batch index for a stable key.
+        const fileId = `${file.name}:${file.size}:${file.lastModified}:${index}`
 
         if (!isValidFileSize(file.size)) {
           updateScopeState(current => {

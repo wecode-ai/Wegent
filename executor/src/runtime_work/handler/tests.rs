@@ -11,6 +11,217 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
     handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
 }
 
+#[test]
+fn applies_backend_connection_from_the_shared_snapshot() {
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".to_owned(),
+            socket_url: "wss://socket.example.com".to_owned(),
+            auth_token: "wg-token".to_owned(),
+            runtime_auth_token: "runtime-wg-token".to_owned(),
+        })));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+
+    let mut request = ExecutionRequest {
+        task_id: "task-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.backend_url.as_deref(),
+        Some("https://backend.example.com")
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("wg-token"));
+    assert_eq!(
+        request.runtime_auth_token.as_deref(),
+        Some("runtime-wg-token")
+    );
+}
+
+#[test]
+fn keeps_payload_backend_credentials_over_the_snapshot() {
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".to_owned(),
+            socket_url: String::new(),
+            auth_token: "wg-token".to_owned(),
+            runtime_auth_token: String::new(),
+        })));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+
+    let mut request = ExecutionRequest {
+        backend_url: Some("https://payload.example.com".to_owned()),
+        auth_token: Some("payload-token".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.backend_url.as_deref(),
+        Some("https://payload.example.com")
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("payload-token"));
+}
+
+#[test]
+fn skips_backend_connection_without_a_configured_connection() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let mut request = ExecutionRequest::default();
+    handler.apply_backend_connection(&mut request);
+
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+}
+
+#[test]
+fn codex_cached_transcripts_never_expose_offset_pagination() {
+    let pagination = transcript_pagination(
+        "codex",
+        Some(25),
+        Some("offset:25".to_owned()),
+        Some("offset:50".to_owned()),
+    );
+
+    assert!(matches!(
+        pagination,
+        TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None
+        }
+    ));
+}
+
+#[test]
+fn active_codex_items_replace_stale_paginated_items() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/started",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "change-1",
+                    "type": "fileChange",
+                    "status": "inProgress",
+                    "changes": []
+                }
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "change-1",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "changes": [{"path": "/tmp/result.txt", "diff": "created\n"}]
+                }
+            }
+        }),
+    );
+    let mut thread = json!({
+        "turns": [{
+            "id": "turn-1",
+            "itemsView": "full",
+            "status": "inProgress",
+            "items": [{
+                "id": "change-1",
+                "type": "fileChange",
+                "status": "inProgress",
+                "changes": []
+            }]
+        }]
+    });
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        thread["turns"][0]["items"][0]["status"],
+        Value::String("completed".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["changes"][0]["path"],
+        Value::String("/tmp/result.txt".to_owned())
+    );
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["type"], "file_changes");
+}
+
+#[test]
+fn late_codex_items_do_not_recreate_cleared_active_transcript() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.clear_active_codex_transcript("task-1");
+
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "message-1",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Late answer"
+                }
+            }
+        }),
+    );
+
+    assert!(!handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .contains_key("task-1"));
+}
+
+#[test]
+fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-live",
+                "item": {
+                    "id": "message-live",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Still working"
+                }
+            }
+        }),
+    );
+    let mut thread = json!({"turns": []});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["id"], "turn-live");
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    assert_eq!(thread["turns"][0]["items"][0]["id"], "message-live");
+}
+
 #[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
     for (case, persisted_running, active_in_memory) in
@@ -103,6 +314,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
             },
+            response_item_id: Some("assistant-1".to_owned()),
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
         }),
@@ -261,6 +473,65 @@ fn linked_failed_codex_turn_does_not_create_cached_transcript() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(cached_messages(&task).is_empty());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn retry_supersedes_the_previous_transcript_turn() {
+    let index_path = temp_runtime_work_index_path("retry-supersedes-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    handler.record_superseded_runtime_transcript_turn("task-1", "failed-turn");
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    let mut messages = vec![
+        json!({
+            "id": "failed-user",
+            "role": "user",
+            "turnId": "failed-turn",
+            "content": "Retry me",
+        }),
+        json!({
+            "id": "failed-assistant",
+            "role": "assistant",
+            "turnId": "failed-turn",
+            "status": "failed",
+            "content": "",
+        }),
+        json!({
+            "id": "retry-user",
+            "role": "user",
+            "turnId": "retry-turn",
+            "content": "Retry me",
+        }),
+        json!({
+            "id": "retry-assistant",
+            "role": "assistant",
+            "turnId": "retry-turn",
+            "status": "done",
+            "content": "Completed",
+        }),
+    ];
+
+    remove_superseded_transcript_turns(&mut messages, &task.runtime_handle);
+
+    assert_eq!(messages.len(), 2);
+    assert!(messages
+        .iter()
+        .all(|message| message["turnId"] == "retry-turn"));
+    assert_eq!(
+        task.runtime_handle["supersededTranscriptTurnIds"],
+        json!(["failed-turn"])
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -485,18 +756,20 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
 
 #[test]
 fn completed_responses_use_the_active_codex_turn_id() {
-    for (case, outcome) in [
+    for (case, outcome, response_item_id) in [
         (
             "completed",
             ExecutionOutcome::Completed {
                 content: "Done".to_owned(),
             },
+            Some("assistant-item-1".to_owned()),
         ),
         (
             "waiting",
             ExecutionOutcome::WaitingForUserInput {
                 stop_reason: "Need input".to_owned(),
             },
+            None,
         ),
     ] {
         let (event_tx, mut event_rx) = broadcast::channel(1);
@@ -528,6 +801,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
             Ok(crate::agents::CodexAppServerTurn {
                 thread_id: format!("thread-{case}"),
                 outcome,
+                response_item_id: response_item_id.clone(),
                 goal_status: None,
                 goal_status_observed: false,
             }),
@@ -539,6 +813,11 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(
+            event["payload"]["data"]["itemId"],
+            response_item_id.map(Value::String).unwrap_or(Value::Null),
+            "{case}"
+        );
 
         let _ = fs::remove_file(index_path);
     }
@@ -642,14 +921,21 @@ fn cached_user_message_does_not_fallback_to_prompt() {
 }
 
 #[test]
-fn user_message_presentation_stores_only_reference_descriptors() {
+fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
+        "createdAt": 42,
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
     }))
     .expect("rich references should produce presentation metadata");
 
     assert_eq!(presentation["clientUserMessageId"], "runtime-local-pane-1");
+    assert_eq!(
+        presentation["content"],
+        "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
+    );
+    assert_eq!(presentation["createdAt"], 42_000);
+    assert_eq!(presentation["ensureVisible"], true);
     assert_eq!(
         presentation["references"],
         json!([
@@ -663,7 +949,6 @@ fn user_message_presentation_stores_only_reference_descriptors() {
             }
         ])
     );
-    assert!(presentation.get("content").is_none());
 }
 
 #[test]
@@ -672,6 +957,86 @@ fn user_message_presentation_requires_a_stable_client_user_message_id() {
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md)"
     }))
     .is_none());
+}
+
+#[test]
+fn user_message_presentation_preserves_plain_visible_content() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "message": "合并到main"
+    }))
+    .expect("plain user content should remain available when Codex filters internal context");
+
+    assert_eq!(presentation["content"], "合并到main");
+    assert_eq!(presentation["ensureVisible"], true);
+    assert_eq!(presentation["references"], json!([]));
+}
+
+#[test]
+fn legacy_thread_preview_restores_filtered_initial_user_message() {
+    let thread = json!({
+        "id": "thread-1",
+        "historyMode": "legacy",
+        "preview": "Initial task request",
+        "createdAt": 100,
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 110,
+            "items": []
+        }]
+    });
+    let mut messages = vec![json!({
+        "id": "assistant-1",
+        "turnId": "turn-1",
+        "role": "assistant",
+        "content": "Working",
+        "createdAt": 120
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, false);
+
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "Initial task request");
+    assert_eq!(messages[0]["turnId"], "turn-1");
+    assert_eq!(messages[1]["role"], "assistant");
+}
+
+#[test]
+fn legacy_thread_preview_waits_until_the_oldest_page() {
+    let thread = json!({
+        "historyMode": "legacy",
+        "preview": "Initial task request"
+    });
+    let mut messages = vec![json!({
+        "id": "assistant-1",
+        "role": "assistant",
+        "content": "Working"
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, true);
+
+    assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn legacy_thread_preview_does_not_duplicate_provider_user_message() {
+    let thread = json!({
+        "historyMode": "legacy",
+        "preview": "Initial task request",
+        "turns": [{
+            "id": "turn-1"
+        }]
+    });
+    let mut messages = vec![json!({
+        "id": "provider-user",
+        "turnId": "turn-1",
+        "role": "user",
+        "content": "Initial task request with attachment metadata"
+    })];
+
+    attach_legacy_thread_preview(&mut messages, &thread, false);
+
+    assert_eq!(messages.len(), 1);
 }
 
 #[test]
@@ -744,6 +1109,7 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_i
 fn transcript_restores_a_missing_supervisor_generated_user_message() {
     let mut provider_messages = vec![json!({
         "id": "assistant-1",
+        "turnId": "turn-1",
         "role": "assistant",
         "content": "Corrected",
         "createdAt": 200
@@ -764,7 +1130,135 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
 
     assert_eq!(provider_messages[0]["role"], "user");
     assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
     assert_eq!(provider_messages[1]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(turns[0]["items"][0]["message"]["content"], "Use Japanese");
+}
+
+#[test]
+fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "turnId": "turn-1",
+        "role": "assistant",
+        "content": "Done",
+        "createdAt": 1_780_000_000_000_i64
+    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "First instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+        json!({
+            "clientUserMessageId": "client-user-2",
+            "content": "Second instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+    ];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "First instruction");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
+    assert_eq!(provider_messages[1]["role"], "user");
+    assert_eq!(provider_messages[1]["content"], "Second instruction");
+    assert_eq!(provider_messages[2]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][0]["message"]["content"],
+        "First instruction"
+    );
+    assert_eq!(turns[0]["items"][1]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][1]["message"]["content"],
+        "Second instruction"
+    );
+}
+
+#[test]
+fn paginated_transcript_does_not_restore_a_presentation_from_a_newer_page() {
+    let page_messages = vec![json!({
+        "id": "assistant-old",
+        "turnId": "turn-old",
+        "role": "assistant",
+        "content": "Old response",
+        "createdAt": 100
+    })];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-new",
+        "content": "New instruction",
+        "createdAt": 300,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        false,
+        true,
+    );
+
+    assert_eq!(provider_messages, page_messages);
+}
+
+#[test]
+fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page() {
+    let page_messages = vec![
+        json!({
+            "id": "assistant-first",
+            "turnId": "turn-first",
+            "role": "assistant",
+            "content": "First response",
+            "createdAt": 100
+        }),
+        json!({
+            "id": "assistant-last",
+            "turnId": "turn-last",
+            "role": "assistant",
+            "content": "Last response",
+            "createdAt": 300
+        }),
+    ];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-middle",
+        "content": "Middle instruction",
+        "createdAt": 200,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        true,
+        true,
+    );
+
+    assert_eq!(provider_messages.len(), 3);
+    assert_eq!(provider_messages[1]["content"], "Middle instruction");
+    assert_eq!(provider_messages[1]["turnId"], "turn-last");
 }
 
 #[test]
@@ -839,12 +1333,15 @@ fn transcript_presentation_matches_a_complete_reference_token() {
 
 #[test]
 fn transcript_navigation_uses_client_user_message_id_for_live_message_matching() {
-    let navigation = transcript_turn_navigation(&[json!({
-        "id": "provider-user",
-        "clientUserMessageId": "runtime-local-pane-1",
-        "role": "user",
-        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
-    })]);
+    let navigation = transcript_turn_navigation(
+        &[json!({
+            "id": "provider-user",
+            "clientUserMessageId": "runtime-local-pane-1",
+            "role": "user",
+            "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+        })],
+        false,
+    );
 
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
@@ -1119,6 +1616,30 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn transcript_rejects_conflicting_cursors_before_task_lookup() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "missing-task",
+                "refresh": true,
+                "beforeCursor": "before-opaque",
+                "afterCursor": "after-opaque"
+            }
+        }))
+        .await;
+
+    let error = result.expect_err("conflicting cursors should be rejected");
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(
+        error.message,
+        "Codex transcript pagination accepts only one cursor at a time"
+    );
+}
+
 #[test]
 fn first_message_search_result_returns_bounded_snippet() {
     let link = RuntimeTaskLink::new_pending(
@@ -1378,11 +1899,11 @@ fn runtime_model_switch_marker_is_only_added_when_the_selection_changes() {
 }
 
 #[test]
-fn task_list_running_state_comes_from_executor_memory() {
+fn task_list_running_state_uses_local_execution_or_provider_turn() {
     let index_path = temp_runtime_work_index_path("authoritative-running-state");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    let thread = json!({
+    let provider_running_thread = json!({
         "id": "thread-1",
         "cwd": "/tmp/project",
         "status": {"type": "active"},
@@ -1396,26 +1917,47 @@ fn task_list_running_state_comes_from_executor_memory() {
         ..RuntimeTaskLink::default()
     });
 
-    let idle_link = handler
-        .link_from_thread(&thread)
+    let provider_running_link = handler
+        .link_from_thread(&provider_running_thread)
         .expect("active Codex thread should produce a task link");
 
+    assert!(provider_running_link.running);
+    assert_eq!(provider_running_link.goal_status.as_deref(), Some("active"));
+    assert_eq!(provider_running_link.status, "running");
+    assert_eq!(provider_running_link.thread_status, "active");
+    assert_eq!(
+        provider_running_link.turn_status.as_deref(),
+        Some("inProgress")
+    );
+
+    let thread_status_only = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "status": {"type": "active"},
+        "turns": [{"status": "completed"}]
+    });
+    let idle_link = handler
+        .link_from_thread(&thread_status_only)
+        .expect("idle Codex thread should produce a task link");
+
     assert!(!idle_link.running);
-    assert_eq!(idle_link.goal_status.as_deref(), Some("active"));
     assert_eq!(idle_link.status, "active");
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
     start_test_execution(&handler, "task-1");
 
-    let running_link = handler
-        .link_from_thread(&thread)
+    let local_running_link = handler
+        .link_from_thread(&thread_status_only)
         .expect("executor-owned task should produce a task link");
 
-    assert!(running_link.running);
-    assert_eq!(running_link.status, "running");
-    assert_eq!(running_link.thread_status, "active");
-    assert_eq!(running_link.turn_status.as_deref(), Some("inProgress"));
+    assert!(local_running_link.running);
+    assert_eq!(local_running_link.status, "running");
+    assert_eq!(local_running_link.thread_status, "active");
+    assert_eq!(
+        local_running_link.turn_status.as_deref(),
+        Some("inProgress")
+    );
 
     let _ = fs::remove_file(index_path);
 }

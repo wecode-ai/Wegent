@@ -70,6 +70,17 @@ Codex can group child tools under a `type: "namespace"` tool when it sends an Op
 
 The mapping is request-scoped protocol context. It is not persisted in model configuration and does not guess a namespace from the returned tool name. Tools with the same child name in different namespaces therefore continue to route to the correct executor.
 
+### On-Demand App Tool Expansion
+
+Wework must not inject the complete schemas of every App and browser child tool into the first model request of a new conversation. The Codex launch configuration enables Remote Apps and `tool_search`; the model searches for a required namespace first, and only tools returned by that search are added to later model requests:
+
+- Responses models with native Codex `tool_search` and namespace-tool support use the native protocol without redundant executor conversion.
+- For models using OpenAI Chat Completions, Anthropic Messages, or another protocol without namespace tools, the executor expands only namespaces matched by the current `tool_search` result. Tools from unmatched Apps must not enter the request.
+- The executor converts the active tool list, historical tool calls, tool results, and explicit `tool_choice` together, then restores the original namespace identity before returning events to Codex.
+- An ordinary message carries only the compact `tool_search` entry point. Adding Apps or browser tools must not make the initial request grow linearly with all tool schemas.
+
+Protocol-conversion E2E coverage must include Responses, Chat Completions, and Anthropic Messages. It verifies that the initial request contains no expanded namespace, only searched tools appear afterward, tool calls and results round-trip, and the initial serialized tool payload stays under a fixed size limit.
+
 ## Security Benefits
 
 - The Wework desktop client and local executor never receive the real provider `api_key`.

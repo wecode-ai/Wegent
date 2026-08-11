@@ -262,6 +262,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        // Hidden-but-continuable runs (task comments) must keep the Wework-side
+        // link out of the sidebar while still creating a durable Codex thread
+        // (a rollout) so a follow-up can resume the same session after restart.
+        let continuable = bool_field(&payload, "continuable").unwrap_or(false);
         if let (Some(project_key), Some(project_name)) = (
             request.runtime_project_key.as_deref(),
             request.runtime_project_name.as_deref(),
@@ -276,10 +280,32 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
             }
         }
+        let payload_has_workspace_path = payload_workspace_path.is_some();
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
-            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+            .ok_or_else(|| {
+                log_executor_event(
+                    "runtime task create missing workspace path",
+                    &[
+                        ("task_id", local_task_id.clone()),
+                        (
+                            "payload_has_workspace_path",
+                            payload_has_workspace_path.to_string(),
+                        ),
+                        ("request_cwd", request.cwd().unwrap_or_default().to_owned()),
+                        (
+                            "standalone_chat_workspace",
+                            is_standalone_chat_workspace(&request).to_string(),
+                        ),
+                        (
+                            "request_extra_keys",
+                            format!("{:?}", request.extra.keys().collect::<Vec<_>>()),
+                        ),
+                    ],
+                );
+                AppIpcError::new("bad_request", "workspacePath is required")
+            })?;
         if request.project_workspace_path.is_none() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -290,7 +316,11 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
-        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        link.ephemeral =
+            request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
+        if continuable {
+            request.ephemeral = false;
+        }
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
@@ -408,7 +438,48 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    pub(super) fn record_superseded_runtime_transcript_turn(
+        &self,
+        local_task_id: &str,
+        turn_id: &str,
+    ) {
+        self.store.update_task(local_task_id, |link| {
+            let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
+                link.runtime_handle = json!({
+                    "supersededTranscriptTurnIds": [turn_id],
+                });
+                return;
+            };
+            let turn_ids = runtime_handle
+                .entry("supersededTranscriptTurnIds")
+                .or_insert_with(|| json!([]));
+            let Some(turn_ids) = turn_ids.as_array_mut() else {
+                *turn_ids = json!([turn_id]);
+                return;
+            };
+            if !turn_ids
+                .iter()
+                .any(|existing| existing.as_str() == Some(turn_id))
+            {
+                turn_ids.push(Value::String(turn_id.to_owned()));
+            }
+        });
+    }
+
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&local_task_id);
+        let _guard = gate.lock().await;
+        self.send_message_with_active_turn_check(payload, true)
+            .await
+    }
+
+    async fn send_message_with_active_turn_check(
+        &self,
+        payload: Value,
+        verify_no_active_turn: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -419,10 +490,7 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
-        if existing_link
-            .as_ref()
-            .is_some_and(|link| self.is_active_local_task(&link.local_task_id))
-        {
+        if self.is_active_local_task(&local_task_id) {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -494,6 +562,21 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         };
+        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
+        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
+        if verify_no_active_turn && !ephemeral {
+            let thread = self
+                .read_codex_recent_turns(&thread_id)
+                .await
+                .map_err(|error| AppIpcError::new("codex_error", error))?;
+            if codex_thread_has_in_progress_turn(&thread) {
+                return Ok(json!({
+                    "success": false,
+                    "error": "runtime task is already running",
+                    "code": "bad_request",
+                }));
+            }
+        }
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -519,9 +602,10 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        if let Some(turn_id) = retry_source_turn_id(&payload) {
+            self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
+        }
         self.schedule_worktree_prune();
-        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
-        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
@@ -549,6 +633,12 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&local_task_id);
+        let _guard = gate.lock().await;
+        let check_provider_turn = !bool_field(&payload, "ephemeral").unwrap_or(false)
+            && !self
+                .local_task_link(&local_task_id)
+                .is_some_and(|link| link.ephemeral);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
@@ -560,7 +650,80 @@ impl RuntimeWorkRpcHandler {
                 "code": "interrupt_timeout",
             }));
         }
-        self.send_message(payload).await
+        if check_provider_turn {
+            let thread_id = runtime_session_id_from_payload(&payload).or_else(|| {
+                self.local_task_link(&local_task_id)
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            });
+            if let Some(thread_id) = thread_id {
+                if !self.interrupt_provider_active_turn(&thread_id).await {
+                    return Ok(json!({
+                        "success": false,
+                        "accepted": false,
+                        "taskId": local_task_id,
+                        "runtime": "codex",
+                        "error": "runtime turn did not stop within timeout",
+                        "code": "interrupt_timeout",
+                    }));
+                }
+            }
+        }
+        self.send_message_with_active_turn_check(payload, false)
+            .await
+    }
+
+    async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
+        let thread = match self.read_codex_recent_turns(thread_id).await {
+            Ok(thread) => thread,
+            Err(error) => {
+                log_executor_event(
+                    "runtime work provider turn read failed before interrupt",
+                    &[("thread_id", thread_id.to_owned()), ("error", error)],
+                );
+                return false;
+            }
+        };
+        let Some(turn_id) = codex_thread_in_progress_turn_id(&thread) else {
+            return !codex_thread_has_in_progress_turn(&thread);
+        };
+        if let Err(error) = self
+            .codex_app_server
+            .request(
+                "turn/interrupt",
+                json!({
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                }),
+            )
+            .await
+        {
+            log_executor_event(
+                "runtime work provider turn interrupt failed",
+                &[
+                    ("thread_id", thread_id.to_owned()),
+                    ("turn_id", turn_id),
+                    ("error", error),
+                ],
+            );
+            return false;
+        }
+        for _ in 0..PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS {
+            match self.read_codex_recent_turns(thread_id).await {
+                Ok(thread) if !codex_thread_has_in_progress_turn(&thread) => return true,
+                Ok(_) => {
+                    sleep(Duration::from_millis(PROVIDER_TURN_INTERRUPT_WAIT_MS)).await;
+                }
+                Err(error) => {
+                    log_executor_event(
+                        "runtime work provider turn read failed after interrupt",
+                        &[("thread_id", thread_id.to_owned()), ("error", error)],
+                    );
+                    return false;
+                }
+            }
+        }
+        false
     }
 
     pub(super) async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1112,6 +1275,12 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+fn retry_source_turn_id(payload: &Value) -> Option<String> {
+    string_field(payload, "retrySourceTurnId")
+        .or_else(|| string_field(payload, "retry_source_turn_id"))
+        .filter(|turn_id| !turn_id.trim().is_empty())
 }
 
 #[cfg(test)]

@@ -268,7 +268,14 @@ class KnowledgeService:
         )
 
         if existing_by_name:
-            raise ValueError(f"Knowledge base with name '{data.name}' already exists")
+            # Named for the check that fired. The two below say the same sentence
+            # otherwise, so an "already exists" gave no way to tell which of them
+            # matched -- or, when neither had, that the message came from somewhere
+            # else entirely.
+            raise ValueError(
+                f"Knowledge base with name '{data.name}' already exists "
+                f"(kind {kb_name})"
+            )
 
         # Also check by display name in spec to prevent duplicates
         existing_by_display = (
@@ -286,7 +293,8 @@ class KnowledgeService:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == data.name:
                 raise ValueError(
-                    f"Knowledge base with name '{data.name}' already exists"
+                    f"Knowledge base with name '{data.name}' already exists "
+                    f"(knowledge base {kb.id})"
                 )
 
         # Build CRD structure
@@ -316,6 +324,10 @@ class KnowledgeService:
         # Add summaryModelRef if provided
         if data.summary_model_ref:
             spec_kwargs["summaryModelRef"] = data.summary_model_ref
+
+        # Add executionModelRef if provided
+        if data.execution_model_ref:
+            spec_kwargs["executionModelRef"] = data.execution_model_ref
 
         # Add guidedQuestions if provided
         if data.guided_questions:
@@ -890,6 +902,10 @@ class KnowledgeService:
         # Use model_fields_set to detect if the field was explicitly passed
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
+
+        # Update execution_model_ref if explicitly provided (including null to clear)
+        if "execution_model_ref" in data.model_fields_set:
+            spec["executionModelRef"] = data.execution_model_ref
 
         # Update guided_questions if explicitly provided (including null to clear)
         if "guided_questions" in data.model_fields_set:

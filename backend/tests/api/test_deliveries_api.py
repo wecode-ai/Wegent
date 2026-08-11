@@ -143,6 +143,54 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_external_loop_items_forward_assignee_filters(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="GHBOARD",
+        name="GitHub board",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+
+    captured: dict[str, object] = {}
+
+    def fake_list(
+        _db: Session,
+        _project_id: int,
+        _user_id: int,
+        **kwargs: object,
+    ) -> list[dict[str, object]]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(external_loop_item_provider, "list", fake_list)
+    response = test_client.get(
+        f"/api/v1/cloud-projects/{project.id}/loop-items"
+        f"?assignee_type=user&assignee_id={test_user.id}",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 200
+    assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
+
+
 def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     test_client: TestClient,
     test_token: str,

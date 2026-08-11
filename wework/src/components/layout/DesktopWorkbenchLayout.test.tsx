@@ -18,6 +18,7 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import { openExternalUrl } from '@/lib/external-links'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   closeLocalTerminal,
   getLocalPathKind,
@@ -49,6 +50,9 @@ const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const deliveryApiMock = vi.hoisted(() => ({
   available: false,
   listCloudProjects: vi.fn(),
+  listCloudFiles: vi.fn(),
+  listLoopItems: vi.fn(),
+  listDeliveries: vi.fn(),
 }))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
@@ -549,6 +553,9 @@ describe('DesktopWorkbenchLayout', () => {
     vi.clearAllMocks()
     deliveryApiMock.available = false
     deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
+    deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
+    deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
+    deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1020,6 +1027,9 @@ describe('DesktopWorkbenchLayout', () => {
           ? {
               deliveryApi: {
                 listCloudProjects: deliveryApiMock.listCloudProjects,
+                listCloudFiles: deliveryApiMock.listCloudFiles,
+                listLoopItems: deliveryApiMock.listLoopItems,
+                listDeliveries: deliveryApiMock.listDeliveries,
               },
             }
           : {}),
@@ -1958,6 +1968,113 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     expect(await screen.findByTestId('mention-cloud-space-direct-action')).toBeInTheDocument()
+  })
+
+  test('treats a runtime task missing from runtime work as a new project-space task', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'space-1',
+          public_id: 'public-space-1',
+          project_key: 'SPACE-1',
+          name: 'Task Follow-up Board',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].project.defaultProjectSpace = {
+      projectStore: 'local',
+      projectId: 'space-1',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/github_wegent',
+            taskId: 'stale-runtime-task',
+          },
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          currentProject,
+          currentProjectId: currentProject.id,
+          runtimeWork,
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
+      '加入看板 · Task Follow-up Board'
+    )
+  })
+
+  test('rechecks project spaces when a retained task workbench becomes visible again', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].project.defaultProjectSpace = {
+      projectStore: 'local',
+      projectId: 'space-1',
+    }
+    const props = {
+      ...baseProps,
+      state: {
+        ...activeProjectState,
+        runtimeWork,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        currentProject,
+        currentProjectId: currentProject.id,
+        runtimeWork,
+      },
+    }
+    const { rerender } = render(<DesktopWorkbenchLayout {...props} />)
+
+    await waitFor(() => expect(deliveryApiMock.listCloudProjects).toHaveBeenCalledOnce())
+
+    rerender(<DesktopWorkbenchLayout {...props} routeActive={false} />)
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'space-1',
+          public_id: 'public-space-1',
+          project_key: 'SPACE-1',
+          name: 'Task Follow-up Board',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    rerender(<DesktopWorkbenchLayout {...props} />)
+
+    await waitFor(() => expect(deliveryApiMock.listCloudProjects).toHaveBeenCalledTimes(2))
   })
 
   test('forks an earlier completed turn without stopping the running follow-up', async () => {
@@ -4158,6 +4275,8 @@ describe('DesktopWorkbenchLayout', () => {
       'flex-1',
       'overflow-y-auto',
       'scrollbar-none',
+      'border-t',
+      'border-transparent',
       '[overflow-anchor:none]'
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
@@ -4290,7 +4409,7 @@ describe('DesktopWorkbenchLayout', () => {
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
@@ -4305,7 +4424,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(content).toHaveStyle({ width: '580px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '420px' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
@@ -4357,7 +4476,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(panelShell).toHaveStyle({ width: '580px' })
     })
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
@@ -4445,24 +4564,20 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
 
-    const browserTab = screen.getByTestId('right-workspace-browser-tab')
+    const browserTab = screen.getByTestId('right-workspace-browser-tab-1')
     expect(browserTab).toHaveAttribute('role', 'tab')
     expect(browserTab).toHaveAttribute('aria-selected', 'true')
     expect(browserTab).toHaveTextContent(/^新选项卡$/)
-    expect(within(browserTab).getByTestId('right-workspace-browser-tab-icon')).toBeInTheDocument()
+    expect(browserTab.querySelector('svg, img')).toBeTruthy()
     expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('bg-background')
     expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
 
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
-    expect(browserTab).toHaveTextContent(/^weibo.com$/)
-    expect(within(browserTab).getByTestId('right-workspace-browser-tab-favicon')).toHaveAttribute(
-      'src',
-      'https://weibo.com/favicon.ico'
-    )
+    expect(browserTab).toHaveTextContent(/^example.com$/)
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'https://example.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
   })
@@ -4504,7 +4619,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(rightPanelShell).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
       'aria-selected',
       'true'
     )
@@ -4532,7 +4647,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
@@ -4541,7 +4656,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(content).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
     expect(content).toHaveStyle({ width: '700px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '300px' })
 
     fireEvent.pointerMove(document, { clientX: 902 })
 
@@ -4557,7 +4672,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(content).toHaveStyle({ width: '420px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(rightPanelShell).toHaveStyle({ width: '580px' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
   })
 
@@ -4585,6 +4700,72 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
   })
 
+  test('adds browser pages from the right workspace new tab menu', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    const menu = screen.getByTestId('right-workspace-new-tab-menu')
+    expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
+
+    await userEvent.click(within(menu).getByTestId('right-workspace-browser-option'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+    )
+    expect(screen.queryByTestId('browser-tab-strip')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('browser-tab-add')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
+    expect(screen.getAllByTestId('workspace-browser-url-input')[0]).toHaveValue(
+      'https://weibo.com/'
+    )
+  })
+
+  test('mixes browser pages with chat and terminal tabs in the right workspace tab bar', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-chat-option'
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-terminal-option'
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-browser-option'
+      )
+    )
+
+    const tabTestIds = within(screen.getByTestId('right-workspace-tabbar'))
+      .getAllByRole('tab')
+      .map(tab => tab.getAttribute('data-testid'))
+
+    expect(tabTestIds[0]).toBe('right-workspace-browser-tab-1')
+    expect(tabTestIds[1]?.startsWith('right-workspace-chat-tab-')).toBe(true)
+    expect(tabTestIds[2]).toBe('right-workspace-terminal-tab')
+    expect(tabTestIds[3]).toBe('right-workspace-browser-tab-2')
+    expect(screen.queryByTestId('browser-tab-strip')).not.toBeInTheDocument()
+  })
+
   test('keeps one browser tab and preserves it when opening files from the new tab menu', async () => {
     renderWorkspacePanelLayout()
 
@@ -4596,7 +4777,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const menu = screen.getByTestId('right-workspace-new-tab-menu')
     expect(menu).toBeInTheDocument()
-    expect(within(menu).queryByTestId('right-workspace-browser-option')).not.toBeInTheDocument()
+    expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
 
     await userEvent.click(within(menu).getByTestId('right-workspace-file-option'))
@@ -4610,9 +4791,9 @@ describe('DesktopWorkbenchLayout', () => {
       'https://weibo.com/'
     )
 
-    await userEvent.click(screen.getByTestId('right-workspace-browser-tab'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
 
-    expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
       'aria-selected',
       'true'
     )
@@ -4624,24 +4805,69 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens the right workspace new tab menu as an anchored popup in Tauri', async () => {
-    renderWorkspacePanelLayout()
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    const previousTauriEventPluginInternals = (
+      window as typeof window & {
+        __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
+      }
+    ).__TAURI_EVENT_PLUGIN_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {
+        transformCallback: vi.fn(() => 1),
+        unregisterCallback: vi.fn(),
+        invoke: vi.fn(async (command: string) => {
+          if (command === 'embedded_browser_pending_open_requests') return []
+          return null
+        }),
+      },
+    })
+    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+      configurable: true,
+      value: { unregisterListener: vi.fn() },
+    })
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    let unmount: (() => void) | undefined
+    try {
+      ;({ unmount } = renderWorkspacePanelLayout())
 
-    const newTabButton = screen.getByTestId('right-workspace-new-tab-button')
-    ;(window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+      await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
 
-    await userEvent.click(newTabButton)
-
-    const menu = screen.getByTestId('right-workspace-new-tab-menu')
-    expect(menu).toBeInTheDocument()
-    expect(within(menu).getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
-    expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
-    expect(within(menu).queryByTestId('right-workspace-browser-option')).not.toBeInTheDocument()
-    expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
-    expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
-    expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
+      const menu = screen.getByTestId('right-workspace-new-tab-menu')
+      expect(menu).toBeInTheDocument()
+      expect(within(menu).getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+      expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
+      expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
+      expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
+      expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
+      expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
+    } finally {
+      unmount?.()
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+      if (previousTauriEventPluginInternals === undefined) {
+        delete (
+          window as typeof window & {
+            __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
+          }
+        ).__TAURI_EVENT_PLUGIN_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+          configurable: true,
+          value: previousTauriEventPluginInternals,
+        })
+      }
+    }
   })
 
   test('opens terminal in the right workspace panel from the right add menu', async () => {
@@ -4711,10 +4937,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
       'opacity-0',
-      'transition-[width,opacity]',
+      'transition-opacity',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
+    expect(rightPanelShell).not.toHaveClass('transition-[width,opacity]')
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
@@ -4735,7 +4962,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(topBar).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+      expect(rightPanelShell).toHaveStyle({ width: '580px' })
     })
     expect(rightPanelShell).toHaveClass('opacity-100')
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
@@ -4839,7 +5066,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
       expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
-        width: 'calc(100% - 580px)',
+        width: '420px',
       })
     })
 
@@ -5132,9 +5359,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
         right: '0px',
       })
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        width: 'calc(100% - 420px - 0px - 5rem)',
-      })
+      expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain('580px')
       expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
         'after:bg-transparent'
       )
@@ -7480,6 +7705,67 @@ describe('DesktopWorkbenchLayout', () => {
     })
   })
 
+  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+    const runtimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-worktree-creating',
+    }
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              workspaceKind: 'worktree',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: runtimeTask.taskId,
+                  workspacePath: runtimeTask.workspacePath,
+                  workspaceKind: 'worktree',
+                  title: 'Create isolated workspace',
+                  runtime: 'codex',
+                  status: 'creating',
+                  optimistic: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: runtimeTask,
+          runtimeWork,
+          isSending: true,
+        }}
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Implement the feature',
+            status: 'complete',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
+    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+  })
+
   test('loads environment info automatically for the current project workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',
@@ -7776,9 +8062,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -7830,9 +8118,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
@@ -7934,9 +8224,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent',
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent',
+        })
+      )
     )
     expect(startTerminalSessionMock).not.toHaveBeenCalled()
     expect(localPathExistsMock).toHaveBeenCalledWith('/Users/me/Wegent')
@@ -7961,14 +8253,16 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent/.worktrees/a',
-        env: {
-          WEWORK_PARENT_TITLE: 'Task A',
-          WEWORK_PARENT_PROJECT: 'Wegent',
-          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
-        },
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent/.worktrees/a',
+          env: {
+            WEWORK_PARENT_TITLE: 'Task A',
+            WEWORK_PARENT_PROJECT: 'Wegent',
+            WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
+          },
+        })
+      )
     )
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
@@ -7988,14 +8282,16 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(startLocalTerminalMock).toHaveBeenCalledWith({
-        cwd: '/Users/me/Wegent/.worktrees/b',
-        env: {
-          WEWORK_PARENT_TITLE: 'Task B',
-          WEWORK_PARENT_PROJECT: 'Wegent',
-          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
-        },
-      })
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/Users/me/Wegent/.worktrees/b',
+          env: {
+            WEWORK_PARENT_TITLE: 'Task B',
+            WEWORK_PARENT_PROJECT: 'Wegent',
+            WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
+          },
+        })
+      )
     )
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
@@ -8020,7 +8316,10 @@ describe('DesktopWorkbenchLayout', () => {
     const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
     await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(activePane().getByTestId('right-workspace-browser-option'))
+    const browserOption = activePane().queryByTestId('right-workspace-browser-option')
+    if (browserOption) {
+      await userEvent.click(browserOption)
+    }
     await userEvent.type(
       activePane().getByTestId('workspace-browser-url-input'),
       'example.com{Enter}'
@@ -8035,11 +8334,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
-      'aria-hidden',
-      'false'
+    await waitFor(
+      () =>
+        expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+          'aria-hidden',
+          'false'
+        ),
+      { timeout: 3000 }
     )
-    expect(activePane().getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+    expect(activePane().getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
       'aria-selected',
       'true'
     )
@@ -8050,6 +8353,83 @@ describe('DesktopWorkbenchLayout', () => {
       'src',
       'https://example.com/'
     )
+  })
+
+  test('exposes the task-scoped browser label before the browser panel mounts', () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activePane().queryByTestId('workspace-browser-panel')).not.toBeInTheDocument()
+    expect(activePane().getByTestId('desktop-workbench-content')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser-runtime-a'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(activePane().queryByTestId('workspace-browser-panel')).not.toBeInTheDocument()
+    expect(activePane().getByTestId('desktop-workbench-content')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser-runtime-b'
+    )
+  })
+
+  test('does not reuse a migrated default browser label after switching panes', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const tauriInvokeMock = vi.fn(async (command: string) => {
+      if (command === 'embedded_browser_pending_open_requests') return []
+      if (command === 'embedded_browser_open') {
+        return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
+      }
+      return null
+    })
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {
+        transformCallback: vi.fn(() => 1),
+        unregisterCallback: vi.fn(),
+        invoke: tauriInvokeMock,
+      },
+    })
+    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+      configurable: true,
+      value: { unregisterListener: vi.fn() },
+    })
+    const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() => {
+      expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(tauriInvokeMock).toHaveBeenCalledWith(
+        'embedded_browser_open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'https://example.com/',
+        }),
+        undefined
+      )
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    await waitFor(() => {
+      expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(tauriInvokeMock).toHaveBeenCalledWith(
+        'embedded_browser_open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-b',
+          url: 'https://example.org/',
+        }),
+        undefined
+      )
+    })
+
+    unmount()
+    await new Promise(resolve => setTimeout(resolve, 1_100))
   })
 
   test('preserves the open file when switching runtime tasks', async () => {

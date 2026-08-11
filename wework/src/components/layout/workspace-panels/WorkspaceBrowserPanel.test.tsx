@@ -41,10 +41,12 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   openEmbeddedBrowser: vi.fn(),
   pauseEmbeddedBrowserDownload: vi.fn(),
   readEmbeddedBrowserPageState: vi.fn(),
+  relabelEmbeddedBrowser: vi.fn(),
   reloadEmbeddedBrowser: vi.fn(),
   resumeEmbeddedBrowserDownload: vi.fn(),
   resolveEmbeddedBrowserAgentApproval: vi.fn(),
   setEmbeddedBrowserAgentControlPaused: vi.fn(),
+  setEmbeddedBrowserActiveTab: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -137,6 +139,26 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('clears cache and storage from the browser actions submenu and reports completion', async () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
+
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('浏览数据已清除')
+    })
+  })
+
   test('reports a failed browser data clear', async () => {
     embeddedBrowserMocks.clearEmbeddedBrowserData.mockRejectedValueOnce(new Error('failed'))
     render(<WorkspaceBrowserPanel active />)
@@ -146,7 +168,10 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
 
     await waitFor(() => {
-      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cache'])
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
     })
     await waitFor(() => {
       expect(screen.getByTestId('transient-notice')).toHaveTextContent('清除失败，请重试')
@@ -157,6 +182,10 @@ describe('WorkspaceBrowserPanel', () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'workspace-browser'
+    )
     const input = screen.getByTestId('workspace-browser-url-input')
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)
@@ -1165,7 +1194,14 @@ describe('WorkspaceBrowserPanel', () => {
     render(
       <WorkspaceBrowserPanel
         active
-        openRequest={{ id: 1, label: 'workspace-browser', url: 'https://example.test/' }}
+        openRequest={{
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+        }}
       />
     )
 
@@ -1184,6 +1220,198 @@ describe('WorkspaceBrowserPanel', () => {
       )
     })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
+  })
+
+  test('opens hidden immediately when the active browser host is not measurable yet', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValueOnce({
+        bottom: 0,
+        height: 0,
+        left: 0,
+        right: 0,
+        top: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      .mockReturnValue({
+        bottom: 420,
+        height: 300,
+        left: 500,
+        right: 900,
+        top: 120,
+        width: 400,
+        x: 500,
+        y: 120,
+        toJSON: () => ({}),
+      })
+    render(
+      <WorkspaceBrowserPanel
+        active
+        openRequest={{
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+        }}
+      />
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'https://example.test/',
+        {
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+        },
+        'workspace-browser',
+        false,
+        false
+      )
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('opens an external request in a hidden browser while the panel is inactive', async () => {
+    mockBrowserHostRect()
+    const openRequest = {
+      id: 'test-2',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+    const view = render(<WorkspaceBrowserPanel active={false} openRequest={openRequest} />)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'https://example.test/',
+        {
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+        },
+        'workspace-browser',
+        false,
+        true
+      )
+    })
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
+
+    view.rerender(<WorkspaceBrowserPanel active openRequest={openRequest} />)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('keeps an in-flight external open alive when panel activity changes', async () => {
+    mockBrowserHostRect()
+    let resolveOpen:
+      | ((value: { nativeLabel: string; title: null; url: string }) => void)
+      | undefined
+    embeddedBrowserMocks.openEmbeddedBrowser.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveOpen = resolve
+        })
+    )
+    const openRequest = {
+      id: 'test-3',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+    const view = render(<WorkspaceBrowserPanel active openRequest={openRequest} />)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(<WorkspaceBrowserPanel active={false} openRequest={openRequest} />)
+    view.rerender(<WorkspaceBrowserPanel active openRequest={openRequest} />)
+
+    await act(async () => {
+      resolveOpen?.({
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'https://example.test/',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
+    })
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
+  test('does not close a reused logical label when an uninitialized panel unmounts', () => {
+    const view = render(
+      <WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />
+    )
+
+    view.unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
+  test('does not close an owned native browser when the panel unmounts', async () => {
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
+    await screen.findByTestId('workspace-browser-native-view')
+
+    view.unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
+  test('ignores a stale close event for a replacement native browser', async () => {
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
+    await screen.findByTestId('workspace-browser-native-view')
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser-runtime-1',
+        nativeLabel: 'embedded-browser-native-stale',
+      })
+    })
+
+    expect(screen.getByTestId('workspace-browser-native-view')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
   })
 
   test('does not overwrite the address draft while page-state polling continues', async () => {
@@ -1590,7 +1818,14 @@ describe('WorkspaceBrowserPanel', () => {
     rerender(
       <WorkspaceBrowserPanel
         active
-        openRequest={{ id: 1, label: 'workspace-browser', url: extensionUrl }}
+        openRequest={{
+          id: 'test-2',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          label: 'workspace-browser',
+          url: extensionUrl,
+        }}
         onAddCodeComment={onAddCodeComment}
       />
     )

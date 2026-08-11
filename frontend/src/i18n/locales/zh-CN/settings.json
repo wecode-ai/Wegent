@@ -232,6 +232,8 @@
         "executor_description": "决定智能体处理任务时使用的运行环境。"
       },
       "bind_mode": {
+        "more_modes": "更多模式",
+        "collapse_more_modes": "收起更多模式",
         "chat": {
           "title": "对话",
           "description": "用于普通问答、资料讨论和持续对话。"
@@ -243,6 +245,14 @@
         "task": {
           "title": "设备",
           "description": "用于需要本地设备或执行环境参与的任务。"
+        },
+        "video": {
+          "title": "视频",
+          "description": "用于视频生成和视频素材创作任务。"
+        },
+        "image": {
+          "title": "图片",
+          "description": "用于图片生成和图片素材创作任务。"
         }
       },
       "executor": {

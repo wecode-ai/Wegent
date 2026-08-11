@@ -246,7 +246,16 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params })
+  return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params }).catch((cause: unknown) => {
+    console.error('[local-ipc] request failed', {
+      method,
+      paramsKeys: Object.keys(params ?? {}),
+      error: String(cause),
+      message: (cause as { message?: unknown } | null)?.message ?? null,
+      stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+    })
+    throw cause
+  })
 }
 
 export function subscribeLocalExecutorEvents(

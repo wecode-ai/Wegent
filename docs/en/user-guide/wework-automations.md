@@ -5,7 +5,8 @@ sidebar_position: 8
 # Wework automations
 
 Wework automations start Codex Runtime tasks on a fixed schedule, at a recurring
-interval, or at a specific time. Open **Automations** from the Wework sidebar.
+interval, or at a specific time. Open **Automations** from the Wework sidebar;
+the entry is available without enabling experimental features.
 
 ## Local mode
 
@@ -14,7 +15,8 @@ are scheduled by the local Executor.
 
 - Users select a project instead of entering a filesystem working directory.
   Automations created from the current project or task inherit that project;
-  selecting **None** uses the selected device's default directory.
+  selecting **None** gives each new task an independent workspace instead of
+  grouping it under the current project.
 - Creating, editing, disabling, and running automations works without a Wegent connection.
 - Recurring runs missed while Wework is closed are recorded as skipped instead of being replayed.
 - A missed one-time run executes once after Wework starts again.
@@ -41,6 +43,12 @@ and executed by the current device's local Executor.
 - **Existing task** selects a pinned, continuable local task and appends every
   later run to that task. Regular history and a task that is merely open are
   not selected automatically; pin the task in the sidebar first.
+
+## Viewing details
+
+When **Automations** opens, Wework displays the first task after the initial
+load. After you close the detail pane with its top-right close button, the pane
+stays closed. Select a task in the list to open its details again.
 
 Automations run unattended by default. If Codex requests user input, Wework does
 not guess an answer and marks the run as **Needs attention**.

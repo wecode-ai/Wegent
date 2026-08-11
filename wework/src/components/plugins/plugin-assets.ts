@@ -1,18 +1,14 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import type { ResolvedAppearanceMode } from '@/features/appearance/types'
 
-const PLUGIN_ICON_FALLBACKS: Record<string, string> = {
-  github: '/plugin-icons/github.svg',
-  gitlab: '/plugin-icons/gitlab.svg',
-  'weibo-api': '/plugin-icons/weibo.svg',
-  weibo: '/plugin-icons/weibo.svg',
-  review: '/plugin-icons/wework.svg',
-  'code-review': '/plugin-icons/wework.svg',
-  'product-design': '/plugin-icons/openai.svg',
-  analytics: '/plugin-icons/data-analytics.svg',
-  'data-analytics': '/plugin-icons/data-analytics.svg',
-  'plugin-creator': '/plugin-icons/openai.svg',
-  ding: '/plugin-icons/wework.svg',
-  'release-check': '/plugin-icons/wework.svg',
+/** Neutral default when a plugin package does not ship a logo. */
+const NEUTRAL_PLUGIN_ICON = '/plugin-icons/wework.svg'
+
+export type ResolvedPluginLogo = {
+  url: string
+  source: 'provided' | 'fallback'
+  /** Dark theme soft pad when the package has no logoDark and a light logo is shown. */
+  contrastPad: boolean
 }
 
 function isLocalAssetPath(value: string): boolean {
@@ -51,31 +47,28 @@ function isRenderablePluginLogoUrl(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value)
 }
 
-function fallbackPluginIconUrl(pluginKey?: string | null): string {
-  const normalized = (pluginKey || '').trim().toLowerCase()
-  if (!normalized) return '/plugin-icons/wework.svg'
-
-  if (PLUGIN_ICON_FALLBACKS[normalized]) {
-    return PLUGIN_ICON_FALLBACKS[normalized]
+function firstRenderableLogo(candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    const resolved = resolvePluginAssetUrl(candidate)
+    if (resolved && isRenderablePluginLogoUrl(resolved)) {
+      return resolved
+    }
   }
+  return ''
+}
 
-  if (normalized.includes('github')) return '/plugin-icons/github.svg'
-  if (normalized.includes('gitlab')) return '/plugin-icons/gitlab.svg'
-  if (normalized.includes('weibo')) return '/plugin-icons/weibo.svg'
-  if (normalized.includes('analytics') || normalized.includes('data')) {
-    return '/plugin-icons/data-analytics.svg'
-  }
-  if (normalized.includes('openai') || normalized.includes('design')) {
-    return '/plugin-icons/openai.svg'
-  }
-
-  return '/plugin-icons/wework.svg'
+/** Read the resolved theme from the document root when a React appearance hook is unavailable. */
+export function currentPluginLogoAppearanceMode(): ResolvedAppearanceMode {
+  if (typeof document === 'undefined') return 'light'
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
 }
 
 export function resolvePluginLogoUrl(options: {
   pluginKey?: string | null
   logo?: string | null
+  logoDark?: string | null
   composerIcon?: string | null
+  appearanceMode?: ResolvedAppearanceMode
 }): string {
   return resolvePluginLogo(options).url
 }
@@ -83,20 +76,26 @@ export function resolvePluginLogoUrl(options: {
 export function resolvePluginLogo(options: {
   pluginKey?: string | null
   logo?: string | null
+  logoDark?: string | null
   composerIcon?: string | null
-}): {
-  url: string
-  source: 'provided' | 'fallback'
-} {
-  const resolved = resolvePluginAssetUrl(options.logo || options.composerIcon)
-  if (resolved && isRenderablePluginLogoUrl(resolved)) {
-    return {
-      url: resolved,
-      source: 'provided',
+  appearanceMode?: ResolvedAppearanceMode
+}): ResolvedPluginLogo {
+  const appearanceMode = options.appearanceMode ?? 'light'
+  const darkLogo = firstRenderableLogo([options.logoDark])
+  const lightLogo = firstRenderableLogo([options.logo, options.composerIcon])
+
+  if (appearanceMode === 'dark') {
+    if (darkLogo) {
+      return { url: darkLogo, source: 'provided', contrastPad: false }
     }
+    if (lightLogo) {
+      return { url: lightLogo, source: 'provided', contrastPad: true }
+    }
+    return { url: NEUTRAL_PLUGIN_ICON, source: 'fallback', contrastPad: false }
   }
-  return {
-    url: fallbackPluginIconUrl(options.pluginKey),
-    source: 'fallback',
+
+  if (lightLogo) {
+    return { url: lightLogo, source: 'provided', contrastPad: false }
   }
+  return { url: NEUTRAL_PLUGIN_ICON, source: 'fallback', contrastPad: false }
 }

@@ -370,11 +370,15 @@ Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍
 
 图片转换可能生成仅供模型读取的临时 `*.model-input.*` 文件，但该路径不能作为 Wework 消息附件的持久化地址。executor 从 Codex transcript 恢复用户消息时，优先使用文件提及上下文或本地 runtime handle 中保留的原始附件路径；临时模型输入仅用于推理阶段。这样临时文件清理后，历史消息、任务切换和重开任务仍能显示原始图片预览。
 
+Codex transcript 分页必须保持严格的页边界。本地 runtime handle 中用于补齐附件、引用或 supervisor 输入的用户消息 presentation，只有在 client message ID 已命中当前页，或其 turn ID / 创建时间属于当前页范围时，才能合入该页；不能因为 `ensureVisible` 就把新页消息重复注入旧页。Wework 在请求更早页或补齐中间缺口前记录当前 `scrollHeight` 和距底部距离，临时关闭浏览器原生滚动锚定，并在分页内容完成布局后恢复同一距底部位置。这样旧消息 prepend、虚拟列表重测量和底部 sticky composer 共享一个确定的滚动事务，不会产生消息重复或输入框随内容漂移。
+
 Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管理隔离的 Codex Home、认证链接和配置归一化，`interaction` 路由用户输入与 MCP 交互响应，`run_state` 将 app-server 事件归约为轮次结果，`diagnostics` 负责日志裁剪与敏感输出摘要，`tests` 保存模块级回归测试。`codex.rs` 保留对外 API、共享 app-server 生命周期和轮次编排。新增行为应进入对应职责模块，避免把配置、协议状态和诊断逻辑重新耦合到编排层。
 
 Codex agent message 的实时文本必须按显式 phase 分类：只有 `final` 或 `final_answer` 才能进入最终回答，`analysis`、`commentary` 以及缺失 phase 的文本都先进入 processing。缺失 phase 的文本可能出现在工具调用前后，不能因为默认值而触发 Wework 的 final-processing 折叠；轮次结束时，executor 使用明确的 final 文本，若模型始终没有发送 phase，则使用最后一段未标 phase 的文本作为终态回答。转录恢复沿用同一规则，并根据后续是否存在工具或其他过程项判断未标文本属于 processing 还是 final。
 
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
+
+项目空间的 `wework_space` MCP 由 Rust executor 的 `space-mcp-server` 子命令提供，只注入携带项目空间上下文的 Codex 执行：请求绑定 `cloudProjectId`，或消息包含 `cloud://projects` 引用（例如工作台输入框的云空间引用选择）。Claude Code 等编码 agent 不注入项目空间 MCP，Wegent 编码任务因此不会暴露项目空间工具。
 
 Wework 的 Codex 自定义指令配置只持久化用户输入；内置浏览器路由规则不写入该字段。executor 在每次创建、继续或 fork Codex 线程前，将用户自定义指令、任务级系统指令和内置浏览器规则组合为该线程的 `developerInstructions` 请求参数。配置归一化会移除历史版本遗留的全部浏览器规则，避免设置页显示重复内容，同时新线程仍始终获得浏览器工具的使用约束。
 
@@ -383,6 +387,8 @@ Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `tur
 Codex 失败轮次不保证在线程 transcript 中生成 assistant item。executor 因此会在轮次失败时，将带稳定消息 ID、错误类型和原始错误文本的 failed assistant message 写入本地 runtime handle；读取失败任务时，如果 Codex transcript 缺少该消息，再按稳定 ID 合并本地记录。Wework 重开或切回任务后仍能恢复错误卡片及重试入口，同时避免重复展示 Codex 已经持久化的失败消息。
 
 Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。Anthropic Messages 的总输入用量必须包含 `input_tokens`、`cache_read_input_tokens` 和 `cache_creation_input_tokens`；缓存读取量同时映射为 Responses 的 cached token 明细，确保 Codex 的上下文余量和自动压缩判断使用完整输入量。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。未配置时，Codex 上下文窗口默认为 256K（262144 tokens），代理输出限制默认为 96000 tokens。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
+
+Codex model catalog 中的 `supports_search_tool` 表示模型可以参与 App 延迟发现流程，不等同于上游接口原生支持 `tool_search` 或 namespace tool。Wework 对官方和自定义模型启用该 catalog 能力，使 Codex 在首轮请求中仅提供轻量 `tool_search`，而不是注入全部 Remote App Schema；搜索命中后才加载对应 App namespace。executor 在协议边界单独维护 `native_tool_search` 和 `native_namespace_tools`：支持原生工具搜索的 GPT 5.4+ Responses 云模型会直接透传。模型配置可以通过 `native_tool_search` 或 `nativeToolSearch` 以及 `native_namespace_tools` 或 `nativeNamespaceTools` 覆盖推断结果；显式配置 `false` 会关闭对应的自动推断。其他 Responses、Chat Completions 和 Anthropic Messages 上游会把 `tool_search` 与 namespace tool 转为普通 function 调用，并在返回 Codex 前恢复原始语义。第三方 Responses 兼容桥接在转换 tool-search 调用和输出 item 时，会移除其类型专属的 `id`，仅使用 `call_id` 关联调用与结果；原生 Responses 直通会保留原始 item 字段。因此 DeepSeek、Kimi 等第三方模型无需原生实现 Codex 专用工具，也能按需使用 App，同时普通消息不会承担完整 App 工具目录的上下文成本。
 
 文本模型可引用一个声明图片输入能力的视觉 sidecar。对于本地模型，该引用来自 Wework 本机模型配置；对于云端 Model CRD，该引用由 Wegent Web 写入 `modelConfig.visionSidecarModel`，Wework 只解析 Backend 聚合模型中携带的模型身份和协议，不编辑云端配置。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述。配置 sidecar 的主模型统一使用仅内部可见、声明图片输入能力的 `wework-vision-sidecar` catalog 条目，因此该机制不依赖特定模型或提供商，且原始图片不会发送给文本主模型。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。
 

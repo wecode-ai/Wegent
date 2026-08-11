@@ -282,7 +282,7 @@ resolve_dev_codex_target() {
   esac
 
   local rust_host
-  rust_host="$(rustc -vV | awk '$1 == "host:" { print $2; exit }')"
+  rust_host="$(rustc -vV | awk '$1 == "host:" { print $2 }')"
   case "$rust_host" in
     aarch64-apple-darwin)
       echo "aarch64-apple-darwin"

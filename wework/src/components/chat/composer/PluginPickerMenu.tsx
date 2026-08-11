@@ -7,9 +7,11 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
 import {
   getComposerApps,
   publishComposerApps,
@@ -41,12 +43,52 @@ function paintComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   return enabledComposerApps(items.length > 0 ? items : getComposerApps())
 }
 
+function ComposerPluginPreviewIcons({
+  apps,
+  appearanceMode,
+}: {
+  apps: LocalDeviceApp[]
+  appearanceMode: 'light' | 'dark'
+}) {
+  return (
+    <span
+      className="flex -space-x-1"
+      data-testid="composer-plugin-preview-icons"
+      aria-hidden="true"
+    >
+      {apps.slice(0, 3).map(app => {
+        const logo = resolvePluginLogo({
+          pluginKey: composerAppPluginKey(app),
+          logo: app.logoUrl,
+          logoDark: app.logoUrlDark,
+          appearanceMode,
+        })
+        return (
+          <span
+            key={app.id}
+            data-testid={`composer-plugin-preview-icon-${app.id}`}
+            className={[
+              'plugin-icon-slot h-6 w-6 rounded-full border-border/30',
+              logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-4 w-4" />}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 export function PluginPickerMenu({
   disabled = false,
   iconOnly = false,
   onListLocalApps,
 }: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -161,68 +203,52 @@ export function PluginPickerMenu({
 
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        data-testid="composer-plugin-picker-button"
-        disabled={disabled}
-        aria-expanded={open}
-        aria-label={t('workbench.composer_plugins', '插件')}
-        className={[
-          'flex items-center text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
-          iconOnly
-            ? 'h-7 w-7 justify-center rounded-lg px-0'
-            : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
-        ].join(' ')}
-        onClick={() => {
-          if (disabled) return
-          if (!open) {
-            // Ask slash to re-publish first — `/` may already have apps in React
-            // state while this menu's store was emptied by HMR or a failed refresh.
-            requestComposerAppsSync()
-            if (!applySharedApps()) {
-              if (onListLocalApps) {
-                setLoading(true)
-                setReloadToken(token => token + 1)
+      <Tooltip
+        label={t('workbench.composer_plugins', '插件')}
+        align="start"
+        testId="composer-plugin-picker-tooltip"
+      >
+        <button
+          type="button"
+          data-testid="composer-plugin-picker-button"
+          disabled={disabled}
+          aria-expanded={open}
+          aria-label={t('workbench.composer_plugins', '插件')}
+          className={[
+            'flex items-center text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
+            iconOnly
+              ? 'h-7 w-7 justify-center rounded-lg px-0'
+              : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
+          ].join(' ')}
+          onClick={() => {
+            if (disabled) return
+            if (!open) {
+              // Ask slash to re-publish first — `/` may already have apps in React
+              // state while this menu's store was emptied by HMR or a failed refresh.
+              requestComposerAppsSync()
+              if (!applySharedApps()) {
+                if (onListLocalApps) {
+                  setLoading(true)
+                  setReloadToken(token => token + 1)
+                }
               }
             }
-          }
-          setOpen(!open)
-        }}
-      >
-        {iconOnly ? (
-          <Puzzle className="h-4 w-4" />
-        ) : (
-          <>
-            <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
-            <span
-              className="flex -space-x-1"
-              data-testid="composer-plugin-preview-icons"
-              aria-hidden="true"
-            >
-              {apps.slice(0, 3).map(app => {
-                const logo = resolvePluginLogoUrl({
-                  pluginKey: composerAppPluginKey(app),
-                  logo: app.logoUrl,
-                })
-                return (
-                  <span
-                    key={app.id}
-                    data-testid={`composer-plugin-preview-icon-${app.id}`}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
-                  >
-                    {logo ? (
-                      <img src={logo} alt="" className="h-full w-full object-contain" />
-                    ) : (
-                      <Boxes className="h-4 w-4" />
-                    )}
-                  </span>
-                )
-              })}
-            </span>
-            {apps.length > 3 && <span className="text-xs text-text-muted">+{apps.length - 3}</span>}
-          </>
-        )}
-      </button>
+            setOpen(!open)
+          }}
+        >
+          {iconOnly ? (
+            <Puzzle className="h-4 w-4" />
+          ) : (
+            <>
+              <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
+              <ComposerPluginPreviewIcons apps={apps} appearanceMode={appearanceMode} />
+              {apps.length > 3 && (
+                <span className="text-xs text-text-muted">+{apps.length - 3}</span>
+              )}
+            </>
+          )}
+        </button>
+      </Tooltip>
 
       {open && (
         <div
@@ -251,9 +277,11 @@ export function PluginPickerMenu({
               </div>
             ) : visibleApps.length > 0 ? (
               visibleApps.slice(0, 8).map(app => {
-                const logo = resolvePluginLogoUrl({
+                const logo = resolvePluginLogo({
                   pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
+                  logoDark: app.logoUrlDark,
+                  appearanceMode,
                 })
                 return (
                   <button
@@ -264,7 +292,10 @@ export function PluginPickerMenu({
                     title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
-                      registerComposerMentionIcon(reference, logo)
+                      registerComposerMentionIcon(reference, {
+                        url: logo.url,
+                        contrastPad: logo.contrastPad,
+                      })
                       insertPluginReference(reference)
                       showPluginTrialGuide(displayAppName(app), app.trialTemplates)
                       const recent = JSON.parse(
@@ -277,9 +308,16 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background">
-                      {logo ? (
-                        <img src={logo} alt="" className="h-full w-full object-cover" />
+                    <span
+                      className={[
+                        'plugin-icon-slot h-[22px] w-[22px] rounded-md border-border/30',
+                        logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {logo.url ? (
+                        <img src={logo.url} alt="" />
                       ) : (
                         <Boxes className="h-3.5 w-3.5 text-text-muted" />
                       )}

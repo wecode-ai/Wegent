@@ -23,6 +23,7 @@ PAYLOAD = {
     "namespace": "default",
     "source_type": "github",
     "source_url": "https://github.com/wecode-ai/Wegent.git",
+    "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
 }
 
 
@@ -792,6 +793,39 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
     assert spec["summaryModelRef"]["name"] == "gpt"
 
 
+def test_a_code_wiki_keeps_the_model_it_was_told_to_generate_with(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """Which model reads the repository is required of the caller, so it has to
+    survive the trip into the spec -- the run reads it from there and from nowhere
+    else. It did not: KnowledgeBaseSpec never declared the field, and pydantic
+    drops what it does not declare, so every wiki silently ran on its team's model
+    however carefully the model was chosen.
+    """
+    from app.models.kind import Kind
+
+    with patch(
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
+        return_value={"has_access": True},
+    ):
+        response = test_client.post(
+            CREATE_URL,
+            json={
+                **PAYLOAD,
+                "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 201, response.text
+    spec = test_db.get(Kind, response.json()["id"]).json["spec"]
+    assert spec["executionModelRef"]["name"] == "claude-opus-5"
+    assert spec["executionModelRef"]["type"] == "public"
+
+
 def test_a_code_wiki_records_the_language_its_pages_are_written_in(
     test_client: TestClient,
     auth_headers: dict[str, str],
@@ -1365,6 +1399,32 @@ def test_a_code_wiki_and_its_registry_row_are_created_together(
     # URL is normalised is settled elsewhere, and restating it here would make this
     # test fail for a reason that has nothing to do with what it is asserting.
     assert rows[0].source_url == source.source_url
+
+
+def test_the_registry_row_leaves_no_column_null_that_production_forbids(
+    test_db: Session, test_user: User, kind_services_use_test_db
+):
+    """The row this writes has to satisfy `wiki_tables.sql`, not just the ORM.
+
+    `source_id` is declared NOT NULL with an empty default there, and every
+    deployment is built from it -- but the schema these tests run against is created
+    from the model, where it was nullable. Omitting the column sends an explicit NULL,
+    which overrides the default, so the insert passed here and failed on the first
+    real database with "Column 'source_id' cannot be null".
+
+    Asserted as "not None" rather than by inspecting the schema: what production
+    refuses is the value, and pinning the value is what stops it coming back.
+    """
+    from app.models.wiki import WikiProject
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    result = knowledge_orchestrator.create_code_wiki(
+        db=test_db, user=test_user, name="repo wiki", source=_source()
+    )
+
+    (row,) = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
+    for column in ("source_id", "source_domain", "description", "ext", "project_name"):
+        assert getattr(row, column) is not None, column
 
 
 def test_a_failed_registration_leaves_no_knowledge_base_behind(

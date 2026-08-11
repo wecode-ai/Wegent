@@ -69,6 +69,44 @@ SERVICE_TIER_ALIASES = {
 }
 
 
+def _apply_image_generation_params(
+    model_config: Dict[str, Any], generate_params: Any
+) -> None:
+    """Apply request-scoped image options to the execution model config."""
+    selected_size = getattr(generate_params, "size", None)
+    if not selected_size:
+        return
+    image_config = dict(model_config.get("imageConfig") or {})
+    image_config["size"] = selected_size
+    model_config["imageConfig"] = image_config
+
+
+def _generation_params_for_log(generate_params: Any) -> Dict[str, Any]:
+    """Return generation parameters in a loggable form."""
+    if hasattr(generate_params, "model_dump"):
+        return generate_params.model_dump(exclude_none=True)
+    if isinstance(generate_params, dict):
+        return dict(generate_params)
+    return {
+        key: value
+        for key in (
+            "resolution",
+            "ratio",
+            "duration",
+            "generation_mode_id",
+            "size",
+        )
+        if (value := getattr(generate_params, key, None)) is not None
+    }
+
+
+def _generation_config_for_log(config: Any) -> Dict[str, Any]:
+    """Exclude verbose capability metadata from generation config logs."""
+    if not isinstance(config, dict):
+        return {}
+    return {key: value for key, value in config.items() if key != "capabilities"}
+
+
 def _request_shell_type(request: "ExecutionRequest") -> str:
     """Extract the primary shell type from an execution request."""
     if request.bot and isinstance(request.bot[0], dict):
@@ -78,6 +116,10 @@ def _request_shell_type(request: "ExecutionRequest") -> str:
 
 def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
     """Return whether parsed attachment content should be injected into prompt."""
+    if str(request.model_config.get("modelType") or "").lower() == "video":
+        # VideoAgent resolves the original uploaded media from the user subtask.
+        # Inlining the same images into the prompt makes them count twice.
+        return False
     return _request_shell_type(request) not in EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS
 
 
@@ -273,6 +315,40 @@ def _build_codex_runtime_model_config(
                     resolved_config["temperature"] = full_config["temperature"]
                 if full_config.get("think_config"):
                     resolved_config["think_config"] = dict(full_config["think_config"])
+                # Upstream wire format mirrors the App's
+                # getCloudModelUpstreamApiFormat inference: claude-family
+                # models go through the Anthropic Messages protocol instead of
+                # OpenAI Responses, otherwise the gateway rejects the request.
+                upstream_format = (
+                    full_config.get("upstream_api_format")
+                    or full_config.get("upstreamApiFormat")
+                    or full_config.get("api_format")
+                    or full_config.get("apiFormat")
+                )
+                if not upstream_format:
+                    model_type = str(full_config.get("model") or "").lower()
+                    protocol = str(full_config.get("protocol") or "").lower()
+                    if model_type in {"claude", "anthropic"} or protocol in {
+                        "claude",
+                        "anthropic-messages",
+                    }:
+                        upstream_format = "anthropic-messages"
+                    elif model_type == "openai" or protocol in {
+                        "openai",
+                        "chat/completions",
+                    }:
+                        upstream_format = "openai-chat-completions"
+                if upstream_format:
+                    resolved_config["upstream_api_format"] = upstream_format
+                    if upstream_format == "anthropic-messages":
+                        # The executor appends /responses by default, which the
+                        # Anthropic Messages protocol does not accept. Pass the
+                        # explicit endpoint so the proxy uses the right path.
+                        base_url = str(resolved_config.get("base_url") or "").rstrip(
+                            "/"
+                        )
+                        if base_url:
+                            resolved_config["responses_url"] = f"{base_url}/v1/messages"
         except Exception:
             pass
 
@@ -291,6 +367,68 @@ def _build_codex_runtime_model_config(
     if catalog_model_id:
         resolved_config["codex_catalog_model_id"] = catalog_model_id
     return resolved_config
+
+
+def _build_cloud_gateway_model_config(
+    db: "Session",
+    *,
+    model_name: str,
+    creator: Any,
+    upstream_api_format: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build the backend LLM gateway config for a public/group cloud model.
+
+    Mirrors the App's cloud-model send: the executor forwards to the backend
+    `llm-responses-proxy` with the user's token and model identity headers; the
+    backend resolves the Model CRD and attaches real provider credentials, so
+    executor devices never see the raw API key and requests share the gateway's
+    quota management instead of being rate-limited per device.
+
+    Returns None for models that should keep their direct config (user-owned
+    models that may be local, or models without a public/group Model CRD).
+    """
+
+    from app.core.config import settings
+    from app.core.security import create_access_token
+    from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+    kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
+    if kind is None or not kind.json:
+        return None
+    namespace = str(kind.namespace or "default")
+    if kind.user_id == 0:
+        model_type = "public"
+        resource_user_id = 0
+    elif namespace != "default":
+        model_type = "group"
+        resource_user_id = int(kind.user_id or 0)
+    else:
+        # User-owned models may be local; keep the direct config path.
+        return None
+    backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
+    if not backend_base:
+        return None
+    token = create_access_token(
+        {"sub": creator.user_name, "user_id": creator.id},
+        expires_delta=30,
+    )
+    return {
+        "model": "openai",
+        "model_id": model_name,
+        "api_format": "responses",
+        "protocol": "openai-responses",
+        "upstream_api_format": upstream_api_format or "openai-responses",
+        "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
+        "api_key": token,
+        "default_headers": {
+            "X-Wegent-Model-Type": model_type,
+            "X-Wegent-Model-Namespace": namespace,
+            "X-Wegent-Model-User-Id": str(resource_user_id),
+            "X-Wegent-Upstream-Header-wecode-executor": "codex",
+            "X-Wegent-Upstream-Header-wecode-source": "wegent-agent",
+        },
+        "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
+    }
 
 
 def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
@@ -722,8 +860,7 @@ async def build_execution_request(
                 elif isinstance(interactive_form_answer, dict):
                     request.interactive_form_answer = dict(interactive_form_answer)
 
-        # Merge user-selected generate_params into videoConfig for video models
-        # Validates params against model capabilities to reject invalid values
+        # Merge user-selected generation parameters into the selected model config.
         if payload is not None:
             generate_params = getattr(payload, "generate_params", None)
             if generate_params and request.model_config.get("modelType") == "video":
@@ -732,7 +869,8 @@ async def build_execution_request(
 
                 if generate_params.resolution:
                     allowed_resolutions = [
-                        r.get("label") for r in (capabilities.get("resolutions") or [])
+                        r.get("value") or r.get("label")
+                        for r in (capabilities.get("resolutions") or [])
                     ]
                     if (
                         allowed_resolutions
@@ -769,6 +907,31 @@ async def build_execution_request(
                     video_config["duration"] = generate_params.duration
 
                 request.model_config["videoConfig"] = video_config
+                if generate_params.generation_mode_id:
+                    modes = capabilities.get("generation_modes") or []
+                    allowed_mode_ids = [mode.get("id") for mode in modes]
+                    if (
+                        allowed_mode_ids
+                        and generate_params.generation_mode_id not in allowed_mode_ids
+                    ):
+                        raise ValueError(
+                            "Unsupported video generation mode "
+                            f"'{generate_params.generation_mode_id}'"
+                        )
+                    request.model_config["generation_mode_id"] = (
+                        generate_params.generation_mode_id
+                    )
+            elif generate_params and request.model_config.get("modelType") == "image":
+                _apply_image_generation_params(request.model_config, generate_params)
+            if generate_params:
+                logger.info(
+                    "[build_execution_request] Generation params applied: "
+                    "model_type=%s, selected=%s, image_config=%s, video_config=%s",
+                    request.model_config.get("modelType"),
+                    _generation_params_for_log(generate_params),
+                    _generation_config_for_log(request.model_config.get("imageConfig")),
+                    _generation_config_for_log(request.model_config.get("videoConfig")),
+                )
 
         # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
         # Note: This is different from request.subtask_id which is the assistant subtask.
@@ -830,7 +993,7 @@ async def build_execution_request(
             )
             if (
                 preload_selected_kb_skill
-                and device_id
+                and (device_id or _request_shell_type(request) == "ClaudeCode")
                 and request.knowledge_base_ids
                 and request.is_user_selected_kb
                 and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])

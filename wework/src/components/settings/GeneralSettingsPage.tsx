@@ -34,7 +34,6 @@ import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import type { UnifiedModel } from '@/types/api'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -51,6 +50,7 @@ interface SwitchRowProps {
 
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
+const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
 
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
@@ -264,24 +264,28 @@ export function GeneralSettingsPage() {
 
   const saveFriendlyTaskTitles = async (
     enabled: boolean,
-    modelName = preferences.friendlyTaskTitleModel?.modelName ?? '',
-    modelType = preferences.friendlyTaskTitleModel?.modelType ?? null
+    modelKey = FRIENDLY_TITLE_TASK_MODEL_VALUE
   ) => {
+    const useTaskModel = modelKey === FRIENDLY_TITLE_TASK_MODEL_VALUE
+    const [modelType, ...nameParts] = modelKey.split(':')
+    const modelName = nameParts.join(':')
     const selectedModel = workbench?.projectChat.models.find(
       model => `${model.type}:${model.name}` === `${modelType ?? ''}:${modelName}`
     )
     const execution = selectedModel ? selectedModelExecutionFields(selectedModel, {}) : null
     const patch: AppPreferencesPatch = {
-      friendlyTaskTitlesEnabled: enabled && Boolean(selectedModel),
-      friendlyTaskTitleModel: selectedModel
-        ? {
-            modelName: selectedModel.name,
-            modelType: selectedModel.type,
-            executionModelId: execution?.modelId ?? '',
-            executionModelType: execution?.modelType ?? null,
-            options: execution?.modelOptions,
-          }
-        : null,
+      friendlyTaskTitlesEnabled: enabled && (useTaskModel || Boolean(selectedModel)),
+      friendlyTaskTitleModel: useTaskModel
+        ? null
+        : selectedModel
+          ? {
+              modelName: selectedModel.name,
+              modelType: selectedModel.type,
+              executionModelId: execution?.modelId ?? '',
+              executionModelType: execution?.modelType ?? null,
+              options: execution?.modelOptions,
+            }
+          : null,
     }
     const previousPreferences = preferences
     setSaving(true)
@@ -299,8 +303,10 @@ export function GeneralSettingsPage() {
   }
 
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
-  const friendlyTitleModelKey = `${friendlyTitleModel?.modelType ?? ''}:${friendlyTitleModel?.modelName ?? ''}`
   const friendlyTitleModels = workbench?.projectChat.models ?? []
+  const friendlyTitleModelKey = friendlyTitleModel
+    ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
+    : FRIENDLY_TITLE_TASK_MODEL_VALUE
 
   return (
     <SettingsPage data-testid="general-settings-page">
@@ -422,15 +428,7 @@ export function GeneralSettingsPage() {
                   (!friendlyTitleModel?.modelName && !workbench?.projectChat.selectedModel)
                 }
                 onCheckedChange={checked => {
-                  void saveFriendlyTaskTitles(
-                    checked,
-                    friendlyTitleModel?.modelName ??
-                      workbench?.projectChat.selectedModel?.name ??
-                      '',
-                    friendlyTitleModel?.modelType ??
-                      workbench?.projectChat.selectedModel?.type ??
-                      null
-                  )
+                  void saveFriendlyTaskTitles(checked, friendlyTitleModelKey)
                 }}
                 aria-label={t('workbench.friendly_task_titles_title', '使用友好标题')}
               />
@@ -455,19 +453,30 @@ export function GeneralSettingsPage() {
                   value={friendlyTitleModelKey}
                   disabled={loading || saving}
                   onChange={event => {
-                    const [modelType, ...nameParts] = event.target.value.split(':')
-                    const modelName = nameParts.join(':')
                     void saveFriendlyTaskTitles(
-                      preferences.friendlyTaskTitlesEnabled && Boolean(modelName),
-                      modelName,
-                      modelName ? (modelType as UnifiedModel['type']) : null
+                      preferences.friendlyTaskTitlesEnabled,
+                      event.target.value
                     )
                   }}
                   className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[220px]"
                 >
-                  <option value="">
-                    {t('workbench.friendly_task_titles_model_empty', '请选择模型')}
+                  <option value={FRIENDLY_TITLE_TASK_MODEL_VALUE}>
+                    {t('workbench.friendly_task_titles_model_task', '与任务相同')}
                   </option>
+                  {friendlyTitleModel &&
+                    !friendlyTitleModels.some(
+                      model =>
+                        model.name === friendlyTitleModel.modelName &&
+                        model.type === friendlyTitleModel.modelType
+                    ) && (
+                      <option value={friendlyTitleModelKey}>
+                        {t(
+                          'workbench.friendly_task_titles_model_unavailable',
+                          `${friendlyTitleModel.modelName}（不可用）`,
+                          { modelName: friendlyTitleModel.modelName }
+                        )}
+                      </option>
+                    )}
                   {friendlyTitleModels.map(model => (
                     <option
                       key={`${model.type}:${model.name}`}

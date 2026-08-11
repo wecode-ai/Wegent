@@ -42,6 +42,9 @@ import {
   EmbeddingConfig,
   RerankConfig,
   VideoGenerationConfig,
+  VideoCapabilities,
+  AspectRatioOption,
+  ResolutionOption,
   AvailableModel,
   UnifiedModel,
   VisionSidecarModelRef,
@@ -95,8 +98,8 @@ export interface ModelFormData {
   rerankTopN?: number
   rerankReturnDocuments?: boolean
   // Video-specific configs
-  videoResolution?: '480p' | '720p' | '1080p'
-  videoRatio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  videoResolution?: string
+  videoRatio?: string
   videoDuration?: number
   videoGenerateAudio?: boolean
   videoDraft?: boolean
@@ -245,7 +248,7 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'custom', label: 'Custom API' },
   ],
   image: [
-    { value: 'openai', label: 'OpenAI DALL-E', hint: 'DALL-E 3' },
+    { value: 'gpt-image', label: 'OpenAI GPT Image', hint: 'gpt-image-2' },
     { value: 'doubao', label: 'Doubao', hint: '豆包图像生成' },
     { value: 'stability', label: 'Stability AI', hint: 'Stable Diffusion' },
     { value: 'midjourney', label: 'Midjourney', hint: 'Midjourney API' },
@@ -290,6 +293,14 @@ const GEMINI_DEEP_RESEARCH_MODEL_OPTIONS = [
     value: 'deep-research-pro-preview-12-2025',
     label: 'deep-research-pro-preview-12-2025 (Recommended)',
   },
+  { value: 'custom', label: 'Custom...' },
+]
+
+const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+const GPT_IMAGE_DEFAULT_MODEL = 'gpt-image-2'
+
+const GPT_IMAGE_MODEL_OPTIONS = [
+  { value: GPT_IMAGE_DEFAULT_MODEL, label: 'gpt-image-2 (Recommended)' },
   { value: 'custom', label: 'Custom...' },
 ]
 
@@ -405,6 +416,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [videoSeed, setVideoSeed] = useState<number>(-1)
   const [videoCameraFixed, setVideoCameraFixed] = useState<boolean>(false)
   const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
+  const [videoDefaultResolution, setVideoDefaultResolution] = useState('720p')
+  const [videoDefaultRatio, setVideoDefaultRatio] = useState('16:9')
+  const [videoDefaultDuration, setVideoDefaultDuration] = useState(5)
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
 
@@ -419,10 +433,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [loadingVisionModels, setLoadingVisionModels] = useState(false)
 
   // Video capabilities state
-  const [capRatios, setCapRatios] = useState<string[]>([])
-  const [capResolutions, setCapResolutions] = useState<string[]>([])
+  const [capRatios, setCapRatios] = useState<AspectRatioOption[]>([])
+  const [capResolutions, setCapResolutions] = useState<ResolutionOption[]>([])
   const [capDurations, setCapDurations] = useState<number[]>([])
   const [customDuration, setCustomDuration] = useState<string>('')
+  const [advancedCapabilities, setAdvancedCapabilities] = useState('')
+  const [advancedCapabilitiesError, setAdvancedCapabilitiesError] = useState('')
 
   // Fetch models state
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -455,7 +471,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         const protocol = effectiveInitialData.protocol
         // Map model type to provider type
         // For video models, use protocol directly as provider type (seedance, runway, pika, etc.)
-        if (categoryType === 'video' && protocol) {
+        if ((categoryType === 'video' || categoryType === 'image') && protocol) {
           setProviderType(protocol)
         } else if (protocol === 'openai-responses') {
           // Check protocol first for openai-responses and gemini-deep-research
@@ -520,16 +536,29 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setVideoSeed(effectiveInitialData.videoConfig.seed ?? -1)
           setVideoCameraFixed(effectiveInitialData.videoConfig.camera_fixed ?? false)
           setVideoWatermark(effectiveInitialData.videoConfig.watermark ?? false)
+          setVideoDefaultResolution(effectiveInitialData.videoConfig.resolution ?? '720p')
+          setVideoDefaultRatio(effectiveInitialData.videoConfig.ratio ?? '16:9')
+          setVideoDefaultDuration(effectiveInitialData.videoConfig.duration ?? 5)
           // Load capabilities
           const caps = effectiveInitialData.videoConfig.capabilities
           if (caps) {
-            setCapRatios(caps.aspect_ratios?.map(r => r.value) ?? [])
-            setCapResolutions(caps.resolutions?.map(r => r.label) ?? [])
+            setCapRatios(caps.aspect_ratios ?? [])
+            setCapResolutions(caps.resolutions ?? [])
             setCapDurations(caps.durations_sec ?? [])
+            const {
+              aspect_ratios: _aspectRatios,
+              resolutions: _resolutions,
+              durations_sec: _durations,
+              ...advanced
+            } = caps
+            setAdvancedCapabilities(
+              Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : ''
+            )
           } else {
             setCapRatios([])
             setCapResolutions([])
             setCapDurations([])
+            setAdvancedCapabilities('')
           }
         }
         // Load image-specific configs
@@ -586,6 +615,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoSeed(-1)
         setVideoCameraFixed(false)
         setVideoWatermark(false)
+        setVideoDefaultResolution('720p')
+        setVideoDefaultRatio('16:9')
+        setVideoDefaultDuration(5)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
         // Reset multimodal capabilities
@@ -600,6 +632,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setCapResolutions([])
         setCapDurations([])
         setCustomDuration('')
+        setAdvancedCapabilities('')
+        setAdvancedCapabilitiesError('')
         // Reset LLM-specific configs
         setContextWindow(undefined)
         setMaxOutputTokens(undefined)
@@ -654,21 +688,23 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // For video models, use provider-specific options
   const baseModelOptions = React.useMemo(
     () =>
-      modelCategoryType === 'embedding' ||
-      modelCategoryType === 'rerank' ||
-      modelCategoryType === 'image'
+      modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
         ? [{ value: 'custom', label: 'Custom...' }]
-        : modelCategoryType === 'video'
-          ? providerType === 'seedance'
-            ? SEEDANCE_MODEL_OPTIONS
+        : modelCategoryType === 'image'
+          ? providerType === 'gpt-image'
+            ? GPT_IMAGE_MODEL_OPTIONS
             : [{ value: 'custom', label: 'Custom...' }]
-          : providerType === 'openai' || providerType === 'openai-responses'
-            ? OPENAI_MODEL_OPTIONS
-            : providerType === 'gemini'
-              ? GEMINI_MODEL_OPTIONS
-              : providerType === 'gemini-deep-research'
-                ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-                : ANTHROPIC_MODEL_OPTIONS,
+          : modelCategoryType === 'video'
+            ? providerType === 'seedance'
+              ? SEEDANCE_MODEL_OPTIONS
+              : [{ value: 'custom', label: 'Custom...' }]
+            : providerType === 'openai' || providerType === 'openai-responses'
+              ? OPENAI_MODEL_OPTIONS
+              : providerType === 'gemini'
+                ? GEMINI_MODEL_OPTIONS
+                : providerType === 'gemini-deep-research'
+                  ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+                  : ANTHROPIC_MODEL_OPTIONS,
     [modelCategoryType, providerType]
   )
 
@@ -718,13 +754,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
     // For embedding/rerank/image, automatically set to custom mode
     // For video, reset model selection
-    if (value === 'embedding' || value === 'rerank' || value === 'image') {
+    if (value === 'embedding' || value === 'rerank') {
       setModelId('custom')
       setCustomModelId('')
-      // Reset image-specific configs to defaults when switching to image
-      if (value === 'image') {
-        setImageConfig(getDefaultImageConfig())
-      }
+    } else if (value === 'image') {
+      setModelId(GPT_IMAGE_DEFAULT_MODEL)
+      setCustomModelId('')
+      setBaseUrl(OPENAI_BASE_URL)
+      setImageConfig(getDefaultImageConfig())
     } else if (value === 'video') {
       setModelId('')
       setCustomModelId('')
@@ -772,7 +809,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     // Only set default base URL for LLM models
     if (modelCategoryType === 'llm') {
       if (value === 'openai' || value === 'openai-responses') {
-        setBaseUrl('https://api.openai.com/v1')
+        setBaseUrl(OPENAI_BASE_URL)
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com')
       } else if (value === 'gemini-deep-research') {
@@ -790,8 +827,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       }
     } else if (modelCategoryType === 'image') {
       // Set default base URL for image providers
-      if (value === 'openai') {
-        setBaseUrl('https://api.openai.com/v1')
+      if (value === 'gpt-image') {
+        setBaseUrl(OPENAI_BASE_URL)
+        setModelId(GPT_IMAGE_DEFAULT_MODEL)
+        setImageConfig(getDefaultImageConfig())
       } else if (value === 'doubao') {
         setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
       } else {
@@ -828,7 +867,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           | 'anthropic'
           | 'gemini'
           | 'gemini-deep-research'
-          | 'openai-responses',
+          | 'openai-responses'
+          | 'gpt-image',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
@@ -1143,16 +1183,39 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      let parsedAdvancedCapabilities: VideoCapabilities = {}
+      if (modelCategoryType === 'video' && advancedCapabilities.trim()) {
+        try {
+          const parsed: unknown = JSON.parse(advancedCapabilities)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Capabilities must be an object')
+          }
+          parsedAdvancedCapabilities = parsed as VideoCapabilities
+          setAdvancedCapabilitiesError('')
+        } catch {
+          setAdvancedCapabilitiesError(t('common:models.video_advanced_capabilities_invalid'))
+          toast({
+            variant: 'destructive',
+            title: t('common:models.video_advanced_capabilities_invalid'),
+          })
+          return
+        }
+      }
+
       // Build video capabilities if any are configured
       const hasCapabilities =
-        capRatios.length > 0 || capResolutions.length > 0 || capDurations.length > 0
+        capRatios.length > 0 ||
+        capResolutions.length > 0 ||
+        capDurations.length > 0 ||
+        Object.keys(parsedAdvancedCapabilities).length > 0
       const capabilities = hasCapabilities
         ? {
+            ...parsedAdvancedCapabilities,
             ...(capRatios.length > 0 && {
-              aspect_ratios: capRatios.map(v => ({ label: v, value: v })),
+              aspect_ratios: capRatios,
             }),
             ...(capResolutions.length > 0 && {
-              resolutions: capResolutions.map(v => ({ label: v })),
+              resolutions: capResolutions,
             }),
             ...(capDurations.length > 0 && { durations_sec: capDurations }),
           }
@@ -1161,17 +1224,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const videoConfig: VideoGenerationConfig | undefined =
         modelCategoryType === 'video'
           ? {
-              // Derive defaults from capabilities (first item = default)
-              resolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
-              ratio: (capRatios[0] || '16:9') as
-                | '16:9'
-                | '4:3'
-                | '1:1'
-                | '3:4'
-                | '9:16'
-                | '21:9'
-                | 'adaptive',
-              duration: capDurations[0] || 5,
+              resolution: capResolutions.some(
+                option => (option.value ?? option.label) === videoDefaultResolution
+              )
+                ? videoDefaultResolution
+                : (capResolutions[0]?.value ?? capResolutions[0]?.label ?? '720p'),
+              ratio: capRatios.some(option => option.value === videoDefaultRatio)
+                ? videoDefaultRatio
+                : (capRatios[0]?.value ?? '16:9'),
+              duration: capDurations.includes(videoDefaultDuration)
+                ? videoDefaultDuration
+                : capDurations[0] || 5,
               generate_audio: videoGenerateAudio,
               draft: videoDraft,
               seed: videoSeed,
@@ -1315,16 +1378,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         rerankTopN,
         rerankReturnDocuments,
         // Video-specific configs (derive defaults from capabilities)
-        videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
-        videoRatio: (capRatios[0] || '16:9') as
-          | '16:9'
-          | '4:3'
-          | '1:1'
-          | '3:4'
-          | '9:16'
-          | '21:9'
-          | 'adaptive',
-        videoDuration: capDurations[0] || 5,
+        videoResolution: videoConfig?.resolution,
+        videoRatio: videoConfig?.ratio,
+        videoDuration: videoConfig?.duration,
         videoGenerateAudio,
         videoDraft,
         videoSeed,
@@ -1375,14 +1431,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }
 
   const apiKeyPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses'
+    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
       ? 'sk-...'
       : providerType === 'gemini' || providerType === 'gemini-deep-research'
         ? 'AIza...'
         : 'sk-ant-...'
   const baseUrlPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses'
-      ? 'https://api.openai.com/v1'
+    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
+      ? OPENAI_BASE_URL
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
         : providerType === 'gemini-deep-research'
@@ -1590,7 +1646,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       value={modelIdSearch}
                       onChange={e => setModelIdSearch(e.target.value)}
                       className="h-8"
-                      autoFocus
                     />
                   </div>
                   <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>
@@ -2085,12 +2140,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                         type="button"
                         onClick={() =>
                           setCapRatios(prev =>
-                            prev.includes(ratio) ? prev.filter(r => r !== ratio) : [...prev, ratio]
+                            prev.some(option => option.value === ratio)
+                              ? prev.filter(option => option.value !== ratio)
+                              : [...prev, { label: ratio, value: ratio }]
                           )
                         }
                         className={cn(
                           'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capRatios.includes(ratio)
+                          capRatios.some(option => option.value === ratio)
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
@@ -2113,12 +2170,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                         type="button"
                         onClick={() =>
                           setCapResolutions(prev =>
-                            prev.includes(res) ? prev.filter(r => r !== res) : [...prev, res]
+                            prev.some(option => (option.value ?? option.label) === res)
+                              ? prev.filter(option => (option.value ?? option.label) !== res)
+                              : [...prev, { label: res, value: res }]
                           )
                         }
                         className={cn(
                           'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capResolutions.includes(res)
+                          capResolutions.some(option => (option.value ?? option.label) === res)
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
@@ -2127,6 +2186,31 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="space-y-2 mt-4">
+                  <Label htmlFor="video-advanced-capabilities" className="text-sm font-medium">
+                    {t('common:models.video_advanced_capabilities')}
+                  </Label>
+                  <Textarea
+                    id="video-advanced-capabilities"
+                    data-testid="video-advanced-capabilities"
+                    value={advancedCapabilities}
+                    onChange={event => {
+                      setAdvancedCapabilities(event.target.value)
+                      setAdvancedCapabilitiesError('')
+                    }}
+                    placeholder='{"supports_image_input":true,"supports_video_input":true,"generation_modes":[...]}'
+                    className={`min-h-[180px] bg-base font-mono text-xs ${
+                      advancedCapabilitiesError ? 'border-error' : ''
+                    }`}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.video_advanced_capabilities_hint')}
+                  </p>
+                  {advancedCapabilitiesError && (
+                    <p className="text-xs text-error">{advancedCapabilitiesError}</p>
+                  )}
                 </div>
 
                 {/* Supported durations */}
