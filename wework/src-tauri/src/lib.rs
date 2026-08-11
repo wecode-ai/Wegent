@@ -16,6 +16,7 @@ mod process_environment;
 #[cfg(desktop)]
 mod storage_maintenance;
 mod system_drag;
+mod system_lock;
 mod system_sleep;
 mod todo_store;
 mod workbench_background;
@@ -3115,7 +3116,10 @@ fn emit_main_window_focus_changed<R: tauri::Runtime>(window: &tauri::Window<R>, 
     if window.label() != MAIN_WINDOW_LABEL {
         return;
     }
-    if let Err(error) = window.app_handle().emit(MAIN_WINDOW_FOCUS_CHANGED_EVENT, focused) {
+    if let Err(error) = window
+        .app_handle()
+        .emit(MAIN_WINDOW_FOCUS_CHANGED_EVENT, focused)
+    {
         log::warn!("Failed to emit main window focus changed event: {error}");
     }
 }
@@ -4907,6 +4911,7 @@ pub fn run() {
         .manage(local_terminal::LocalTerminalState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
+        .manage(system_lock::SystemLockState::default())
         .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
@@ -4968,6 +4973,8 @@ pub fn run() {
             }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
+            #[cfg(desktop)]
+            system_lock::setup(app.handle().clone());
             #[cfg(desktop)]
             appshots::setup(app.handle());
             #[cfg(desktop)]
@@ -5120,6 +5127,8 @@ pub fn run() {
             system_drag::dismiss_system_drag_panel,
             system_drag::log_system_drag_debug,
             system_drag::take_pending_system_drag_drops,
+            #[cfg(desktop)]
+            system_lock::get_system_session_locked,
             local_terminal::get_local_terminal_snapshot,
             local_terminal::list_local_harnesses,
             local_terminal::list_local_harness_sessions,

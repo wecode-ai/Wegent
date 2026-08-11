@@ -10,27 +10,34 @@ let currentFocused = true
 let initialized = false
 let unlistenPromise: Promise<UnlistenFn> | null = null
 
+function publishFocused(focused: boolean) {
+  if (focused === currentFocused) return
+  currentFocused = focused
+  for (const listener of listeners) {
+    listener(focused)
+  }
+}
+
 function ensureListenerInstalled() {
   if (initialized || !isTauriRuntime()) {
     return
   }
-  let label: string
+  let currentWindow: ReturnType<typeof getCurrentWindow>
   try {
-    label = getCurrentWindow().label
+    currentWindow = getCurrentWindow()
   } catch {
     return
   }
-  if (label !== 'main') {
+  if (currentWindow.label !== 'main') {
     return
   }
   initialized = true
+  void currentWindow
+    .isFocused()
+    .then(publishFocused)
+    .catch(error => console.error('[Wework] Failed to read main window focus', error))
   unlistenPromise = listen<boolean>(WEWORK_MAIN_WINDOW_FOCUS_CHANGED_EVENT, event => {
-    const focused = event.payload
-    if (focused === currentFocused) return
-    currentFocused = focused
-    for (const listener of listeners) {
-      listener(focused)
-    }
+    publishFocused(event.payload)
   }).catch(error => {
     initialized = false
     console.error('[Wework] Failed to install window focus listener', error)

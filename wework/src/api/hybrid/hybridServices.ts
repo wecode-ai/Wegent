@@ -34,6 +34,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -766,6 +767,9 @@ export function createHybridWorkbenchServices(
     },
     updateGlobalImNotification(data: RuntimeGlobalIMNotificationUpdateRequest) {
       return cloudServices.runtimeWorkApi!.updateGlobalImNotification(data)
+    },
+    updateImNotificationPresence(data: RuntimeIMNotificationPresenceUpdateRequest) {
+      return cloudServices.runtimeWorkApi!.updateImNotificationPresence(data)
     },
     subscribeRuntimeTaskNotifications(data: RuntimeTaskIMNotificationSubscriptionRequest) {
       return cloudServices.runtimeWorkApi!.subscribeRuntimeTaskNotifications(data)

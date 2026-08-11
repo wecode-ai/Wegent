@@ -40,6 +40,9 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
+import { createHttpClient } from '@/api/http'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { useAwayImNotificationPresence } from '@/features/workbench/awayImNotificationPresence'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
@@ -450,7 +453,11 @@ function AppShell() {
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
-  const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
+  const currentWindowLabel = isTauri ? getCurrentWindow().label : null
+  const isMainWindow = currentWindowLabel === 'main'
+  const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const cloudApiBaseUrl = cloudConnection.apiBaseUrl
+  const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
@@ -474,6 +481,20 @@ function AppShell() {
   )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const updateImNotificationPresence = useMemo(() => {
+    if (!cloudApiBaseUrl || !cloudToken) return undefined
+    return createRuntimeWorkApi(
+      createHttpClient({
+        baseUrl: cloudApiBaseUrl,
+        getToken: () => cloudToken,
+        redirectOnUnauthorized: false,
+      })
+    ).updateImNotificationPresence
+  }, [cloudApiBaseUrl, cloudToken])
+  useAwayImNotificationPresence({
+    enabled: isMainWindow && hasTauriIpc() && cloudConnection.isConnected,
+    updatePresence: updateImNotificationPresence,
+  })
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])

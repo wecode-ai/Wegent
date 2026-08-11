@@ -963,6 +963,16 @@ export interface RuntimeGlobalIMNotificationUpdateRequest {
   sessionKey?: string | null
 }
 
+export interface RuntimeIMNotificationPresenceUpdateRequest {
+  clientId: string
+  away: boolean
+}
+
+export interface RuntimeIMNotificationPresenceResponse {
+  away: boolean
+  ttlSeconds: number
+}
+
 export interface RuntimeTaskIMNotificationSubscriptionRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]

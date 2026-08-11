@@ -738,7 +738,7 @@
     "continue_im_failed": "继续到私聊失败",
     "away_im_reminder_title": "离开电脑提醒",
     "away_im_reminder_on": "离开电脑提醒已开启",
-    "away_im_reminder_description": "所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。",
+    "away_im_reminder_description": "锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。",
     "away_im_reminder_target": "投递到",
     "away_im_reminder_no_target": "未选择 IM 会话",
     "away_im_reminder_enable": "开启离开电脑提醒",
