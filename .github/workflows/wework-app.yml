@@ -173,7 +173,7 @@ jobs:
           fi
           release_notes="$(mktemp)"
           generated_notes="$(mktemp)"
-          previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
+          previous_tag="$(node wework/scripts/resolve-previous-release-tag.mjs)"
 
           if [ -n "$previous_tag" ]; then
             export PREVIOUS_TAG="$previous_tag"

@@ -10,9 +10,11 @@ import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const CHECKPOINT_SCENARIO_MODULES = {
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
+  'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
 }
+const SCENARIO_ONLY_CHECKPOINTS = new Set(['local-harness'])
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const cliArgs = process.argv.slice(2)
@@ -151,6 +153,11 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module
   } else {
     delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE
+  }
+  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) {
+    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY = 'true'
+  } else {
+    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY
   }
   return nextEnv
 }

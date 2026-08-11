@@ -73,7 +73,8 @@ Options:
   --version <version>       Release version, for example 0.1.12. Required.
   --channel <stable|beta>   Update channel. Default: stable.
   --beta                    Shorthand for --channel beta.
-  --notes <text>            Release notes. Default: "Wework <version>".
+  --notes <text>            Release notes. Defaults to changes since the
+                            previous Wework release.
   --endpoint <url>          S3 API endpoint. Defaults to ATTACHMENT_S3_ENDPOINT.
   --bucket <name>           S3 bucket. Defaults to ATTACHMENT_S3_BUCKET.
   --prefix <path>           Object prefix. Defaults by target architecture.
@@ -420,7 +421,16 @@ UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET"
 if [ -n "$UPDATE_MANIFEST_S3_PREFIX" ]; then
   UPDATE_MANIFEST_BASE_URL="$UPDATE_MANIFEST_BASE_URL/$UPDATE_MANIFEST_S3_PREFIX"
 fi
-RELEASE_NOTES="${RELEASE_NOTES:-Wework $VERSION}"
+if [ -z "$RELEASE_NOTES" ]; then
+  RELEASE_NOTES="$(
+    cd "$PROJECT_DIR"
+    GH_REPO='' \
+    RELEASE_SHA="$(git rev-parse HEAD)" \
+    RELEASE_VERSION="$VERSION" \
+    RELEASE_NOTES_FORMAT=markdown \
+      node "$SCRIPT_DIR/generate-release-notes.mjs"
+  )"
+fi
 
 configure_release_credentials
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"

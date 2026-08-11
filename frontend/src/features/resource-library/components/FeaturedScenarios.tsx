@@ -9,7 +9,10 @@ import { useRouter } from 'next/navigation'
 import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { userApis } from '@/apis/user'
-import { buildTeamTargetHref } from '@/features/tasks/components/selector/team-selector-utils'
+import {
+  buildTeamTargetHref,
+  getBindModesTargetPage,
+} from '@/features/tasks/components/selector/team-selector-utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { QuickLaunchFunction } from '@/types/api'
@@ -44,7 +47,11 @@ function getAgentHref(agent: QuickLaunchFunction, presetId?: string) {
   } else if (agent.input_presets.length > 0) {
     params.set('showPresets', '1')
   }
-  const targetPage = agent.recommended_mode === 'code' ? 'code' : 'chat'
+  const targetPage = agent.bind_mode?.length
+    ? getBindModesTargetPage(agent.bind_mode, 'all')
+    : agent.recommended_mode === 'code'
+      ? 'code'
+      : 'chat'
   return buildTeamTargetHref(targetPage, params)
 }
 

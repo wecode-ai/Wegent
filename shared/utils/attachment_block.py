@@ -20,6 +20,19 @@ lives in chat_shell (where ``tiktoken`` is available); per-runtime usage hints
 from __future__ import annotations
 
 
+def sanitize_attachment_filename(
+    filename: str | None, *, fallback: str = "document"
+) -> str:
+    """Return a single safe path component for an attachment filename."""
+    candidate = (filename or fallback).replace("\\", "/").rsplit("/", 1)[-1]
+    candidate = "".join(
+        character
+        for character in candidate
+        if ord(character) >= 32 and ord(character) != 127
+    )
+    return candidate if candidate not in {"", ".", ".."} else fallback
+
+
 def format_file_size(size_bytes: int) -> str:
     """Format a byte count into a human-readable string (B / KB / MB)."""
     if size_bytes >= 1024 * 1024:
@@ -41,12 +54,12 @@ def build_sandbox_path(
 ) -> str | None:
     """Build the sandbox file path where the Executor downloads an attachment.
 
-    Returns ``None`` when *task_id* or *subtask_id* is missing. Control
-    characters in *filename* are stripped to keep the path single-line.
+    Returns ``None`` when *task_id* or *subtask_id* is missing. Path components
+    and control characters in *filename* are stripped.
     """
     if task_id is None or subtask_id is None:
         return None
-    safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+    safe_filename = sanitize_attachment_filename(filename)
     return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
 
@@ -122,9 +135,9 @@ def build_attachment_header(
     label = "Image Attachment" if is_image else "Attachment"
     formatted_size = format_file_size(file_size or 0)
     url = build_attachment_download_url(attachment_id)
-    # Strip control chars so a crafted filename can't break the single-line
-    # header or inject extra prompt content (mirrors build_sandbox_path).
-    safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+    # Sanitize so a crafted filename cannot inject prompt content or advertise
+    # a path outside the attachment directory (mirrors build_sandbox_path).
+    safe_filename = sanitize_attachment_filename(filename)
     parts = [
         f"[{label}: {safe_filename} | ID: {attachment_id} | "
         f"Type: {mime_type or 'unknown'} | Size: {formatted_size} | URL: {url}"

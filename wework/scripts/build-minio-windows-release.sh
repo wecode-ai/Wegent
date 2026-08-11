@@ -74,7 +74,8 @@ Options:
   --version <version>       Release version, for example 0.1.17. Required.
   --channel <stable|beta>   Update channel. Default: stable.
   --beta                    Shorthand for --channel beta.
-  --notes <text>            Release notes. Default: "Wework <version>".
+  --notes <text>            Release notes. Defaults to changes since the
+                            previous Wework release.
   --endpoint <url>          S3 API endpoint. Defaults to ATTACHMENT_S3_ENDPOINT.
   --bucket <name>           S3 bucket. Defaults to ATTACHMENT_S3_BUCKET.
   --prefix <path>           Object prefix. Default: wework/windows.
@@ -410,7 +411,16 @@ UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET"
 if [ -n "$S3_PREFIX" ]; then
   UPDATE_BASE_URL="$UPDATE_BASE_URL/$S3_PREFIX"
 fi
-RELEASE_NOTES="${RELEASE_NOTES:-Wework $VERSION}"
+if [ -z "$RELEASE_NOTES" ]; then
+  RELEASE_NOTES="$(
+    cd "$PROJECT_DIR"
+    GH_REPO='' \
+    RELEASE_SHA="$(git rev-parse HEAD)" \
+    RELEASE_VERSION="$VERSION" \
+    RELEASE_NOTES_FORMAT=markdown \
+      node "$SCRIPT_DIR/generate-release-notes.mjs"
+  )"
+fi
 
 require_command cargo "Install Rust and cargo first."
 require_command cargo-xwin "Install it with: cargo install cargo-xwin"

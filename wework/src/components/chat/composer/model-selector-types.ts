@@ -6,7 +6,7 @@ export interface ModelSelectorProps {
   selectedModelOptions: ModelOptions
   nextTurn?: boolean
   disabled: boolean
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void

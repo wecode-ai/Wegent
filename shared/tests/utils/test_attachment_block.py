@@ -9,8 +9,15 @@ from shared.utils.attachment_block import (
     build_sandbox_path,
     build_truncation_note,
     format_file_size,
+    sanitize_attachment_filename,
     truncate_for_injection,
 )
+
+
+def test_sanitize_attachment_filename_removes_path_traversal() -> None:
+    assert sanitize_attachment_filename("../../etc/passwd") == "passwd"
+    assert sanitize_attachment_filename(r"C:\\temp\\report.csv") == "report.csv"
+    assert sanitize_attachment_filename("..") == "document"
 
 
 def test_truncate_for_injection_short_text_unchanged():

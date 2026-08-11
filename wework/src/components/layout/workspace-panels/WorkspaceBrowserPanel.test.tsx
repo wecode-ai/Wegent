@@ -31,6 +31,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   evalEmbeddedBrowserJson: vi.fn(),
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
+  isEmbeddedBrowserLabelTransferred: vi.fn(),
   listenEmbeddedBrowserAgentState: vi.fn(),
   listenEmbeddedBrowserCloseRequests: vi.fn(),
   listenEmbeddedBrowserDownloads: vi.fn(),
@@ -91,6 +92,7 @@ describe('WorkspaceBrowserPanel', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
+    embeddedBrowserMocks.isEmbeddedBrowserLabelTransferred.mockReturnValue(false)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
@@ -217,6 +219,28 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('stops stale bounds updates after the browser label transfers to another pane', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalled()
+    })
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    embeddedBrowserMocks.isEmbeddedBrowserLabelTransferred.mockReturnValue(true)
+
+    fireEvent(window, new Event('resize'))
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 120))
+    })
+
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalled()
   })
 
   test('opens local filesystem paths from the address bar as file URLs', async () => {
