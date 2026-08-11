@@ -1467,6 +1467,76 @@ function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string):
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
 }
 
+/** UI catalog rows for user-added markets use `${marketplace}:${codexPluginId}`. */
+function denamespacedCatalogPluginId(pluginId: string, marketplaceName: string): string {
+  const trimmedId = pluginId.trim()
+  const trimmedMarketplace = marketplaceName.trim()
+  if (!trimmedId || !trimmedMarketplace) return ''
+  const prefix = `${trimmedMarketplace}:`
+  if (!trimmedId.startsWith(prefix)) return ''
+  return trimmedId.slice(prefix.length).trim()
+}
+
+function isRetriablePluginUninstallCandidateError(message: string): boolean {
+  return (
+    /not found|not installed|unknown plugin|unexpected plugin id/i.test(message) ||
+    // After unrestricted plugin/list syncs openai-curated-remote, Codex may try to
+    // resolve the remote catalog while probing a bad/namespaced uninstall id.
+    /chatgpt authentication required for remote plugin catalog/i.test(message) ||
+    /resolve remote plugin before uninstall/i.test(message)
+  )
+}
+
+/**
+ * Build uninstall id probes for Codex plugin/uninstall.
+ * Prefer Codex-native ids (`name@marketplace`, denamespaced plugin id). The UI
+ * namespaced catalog id (`marketplace:pluginId`) is last for local markets — it
+ * is not a valid Codex uninstall id and can force remote-catalog auth.
+ */
+function buildPluginUninstallCandidateIds(input: {
+  requestedId: string
+  pluginName: string
+  marketplaceName: string
+  remotePluginId: string
+  marketplaceItemId: string
+  installedId: string
+}): string[] {
+  const qualified = input.marketplaceName ? `${input.pluginName}@${input.marketplaceName}` : ''
+  const denamespacedRequested = denamespacedCatalogPluginId(
+    input.requestedId,
+    input.marketplaceName
+  )
+  const denamespacedItem = denamespacedCatalogPluginId(
+    input.marketplaceItemId,
+    input.marketplaceName
+  )
+  const remoteOpenAi = isOpenAiOfficialMarketplaceId(input.marketplaceName)
+  const ordered = remoteOpenAi
+    ? [
+        // Remote OpenAI installs often require the connector-style remotePluginId.
+        input.remotePluginId,
+        qualified,
+        denamespacedRequested,
+        denamespacedItem,
+        input.requestedId,
+        input.pluginName,
+        input.marketplaceItemId,
+        input.installedId,
+      ]
+    : [
+        qualified,
+        denamespacedRequested,
+        denamespacedItem,
+        input.installedId,
+        input.pluginName,
+        // Local markets should not lead with remotePluginId / namespaced catalog ids.
+        input.remotePluginId,
+        input.requestedId,
+        input.marketplaceItemId,
+      ]
+  return Array.from(new Set(ordered.filter(value => Boolean(value && String(value).trim()))))
+}
+
 function marketplaceItemInstallIdentity(item: PluginMarketplaceItem): string {
   const marketplaceId =
     typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
@@ -2280,34 +2350,35 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           marketplaceItem.remotePluginId.trim()) ||
         ''
       const installedId = installed ? installedPluginId(installed) : null
-      const pluginIds = Array.from(
-        new Set(
-          [
-            requestedId,
-            remotePluginId,
-            pluginName,
-            marketplaceName ? `${pluginName}@${marketplaceName}` : '',
-            marketplaceItem ? String(marketplaceItem.id) : '',
+      const pluginIds = [
+        ...buildPluginUninstallCandidateIds({
+          requestedId,
+          pluginName: String(pluginName),
+          marketplaceName,
+          remotePluginId,
+          marketplaceItemId: marketplaceItem ? String(marketplaceItem.id) : '',
+          installedId:
             typeof installedId === 'string' || typeof installedId === 'number'
               ? String(installedId)
               : '',
-            ...(isPersonalMarketplaceId(marketplaceName)
-              ? [
-                  `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
-                  `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
-                ]
-              : []),
-          ].filter(value => Boolean(value && String(value).trim()))
-        )
-      )
+        }),
+        ...(isPersonalMarketplaceId(marketplaceName)
+          ? [
+              `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
+              `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
+            ]
+          : []),
+      ].filter((value, index, all) => value && all.indexOf(value) === index)
       let uninstallAccepted = false
+      let lastUninstallError: unknown = null
       for (const pluginId of pluginIds) {
         try {
           await codexAppServerRequest('plugin/uninstall', { pluginId })
           uninstallAccepted = true
         } catch (error) {
+          lastUninstallError = error
           if (
-            /not found|not installed|unknown plugin|unexpected plugin id/i.test(
+            isRetriablePluginUninstallCandidateError(
               getErrorMessage(error, 'Plugin uninstall failed')
             )
           ) {
@@ -2321,6 +2392,14 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             { cause: error }
           )
         }
+      }
+      if (!uninstallAccepted) {
+        throw lastUninstallError instanceof Error
+          ? lastUninstallError
+          : new Error(
+              getErrorMessage(lastUninstallError, 'Plugin uninstall failed') ||
+                `Failed to uninstall plugin; tried ids: ${pluginIds.join(', ')}`
+            )
       }
       clearLocalCodexPluginsReadStateCache()
       if (isPersonalMarketplaceId(marketplaceName)) {

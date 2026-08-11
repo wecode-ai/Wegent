@@ -884,6 +884,83 @@ describe('local codex plugin readState cache', () => {
     expect(after.installedPlugins).toEqual([])
   })
 
+  test('uninstalls local marketplace plugins without requiring remote catalog auth', async () => {
+    const uninstallAttempts: string[] = []
+    let installed = true
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+          params?: Record<string, unknown>
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          const plugin = {
+            id: 'desktop-e2e-plugin@desktop-e2e-marketplace',
+            name: 'desktop-e2e-plugin',
+            installed,
+            enabled: installed,
+            source: { source: 'local', path: './plugins/desktop-e2e-plugin' },
+            interface: { displayName: 'Desktop E2E Plugin', category: 'Developer Tools' },
+          }
+          return {
+            marketplaces: [
+              {
+                name: 'desktop-e2e-marketplace',
+                path: '/tmp/desktop-e2e-marketplace',
+                interface: { displayName: 'Desktop E2E Marketplace' },
+                plugins:
+                  params.method === 'plugin/installed' ? (installed ? [plugin] : []) : [plugin],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/uninstall') {
+          const pluginId = String(params.params?.pluginId ?? '')
+          uninstallAttempts.push(pluginId)
+          // Namespaced UI catalog ids must not be required; Codex treats them as a
+          // remote resolve and demands ChatGPT auth once openai-curated-remote is synced.
+          if (pluginId === 'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace') {
+            throw new Error(
+              'resolve remote plugin before uninstall: chatgpt authentication required for remote plugin catalog'
+            )
+          }
+          if (pluginId === 'desktop-e2e-plugin@desktop-e2e-marketplace') {
+            installed = false
+            return {}
+          }
+          throw new Error(`not found: ${pluginId}`)
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const before = await api.readState({ mergeAllMarketplaces: true })
+    expect(before.marketplaceItems[0]).toEqual(
+      expect.objectContaining({
+        id: 'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace',
+        installed: true,
+      })
+    )
+
+    await api.uninstallInstalledPlugin(
+      'desktop-e2e-marketplace:desktop-e2e-plugin@desktop-e2e-marketplace'
+    )
+    expect(uninstallAttempts).toContain('desktop-e2e-plugin@desktop-e2e-marketplace')
+    expect(uninstallAttempts[0]).toBe('desktop-e2e-plugin@desktop-e2e-marketplace')
+
+    const after = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    expect(after.marketplaceItems).toEqual([
+      expect.objectContaining({ name: 'desktop-e2e-plugin', installed: false }),
+    ])
+    expect(after.installedPlugins).toEqual([])
+  })
+
   test('maps remote OpenAI catalog logoUrl fields onto renderable logo assets', async () => {
     mocks.requestLocalExecutor.mockImplementation(
       async (
