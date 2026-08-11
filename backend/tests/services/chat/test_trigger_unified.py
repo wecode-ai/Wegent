@@ -692,7 +692,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
         mock_builder.resolve_request_preload_skills.return_value = resolved_request
-        mock_builder.get_bot_for_subtask.return_value = MagicMock()
+        mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
             db,
@@ -800,7 +800,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
         mock_builder.resolve_request_preload_skills.return_value = resolved_request
-        mock_builder.get_bot_for_subtask.return_value = MagicMock()
+        mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
             db,

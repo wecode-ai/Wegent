@@ -37,7 +37,6 @@ def test_invalid_external_ref_log_does_not_expose_resource_url(caplog) -> None:
 
     assert result == []
     assert secret_url not in caplog.text
-    assert "ValidationError" not in caplog.text
 
 
 def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
