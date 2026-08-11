@@ -688,6 +688,22 @@ def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
     return quick_access_config.get("teams", [])
 
 
+def _get_team_recommended_mode(team_data: dict) -> str:
+    spec = team_data.get("spec", {})
+    bind_mode = spec.get("bind_mode")
+    if isinstance(bind_mode, list):
+        has_chat = "chat" in bind_mode
+        has_code = "code" in bind_mode
+        if has_chat and has_code:
+            return "both"
+        if has_code:
+            return "code"
+        return "chat"
+
+    recommended_mode = team_data.get("recommended_mode") or spec.get("recommended_mode")
+    return recommended_mode if recommended_mode in {"chat", "code", "both"} else "both"
+
+
 def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
     team_data = kind_service.get_team_by_id(team_id)
     if not team_data:
@@ -704,7 +720,8 @@ def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
         title=title,
         description=spec.get("description"),
         icon=spec.get("icon"),
-        recommended_mode=spec.get("recommended_mode", "both"),
+        bind_mode=spec.get("bind_mode") or [],
+        recommended_mode=_get_team_recommended_mode(team_data),
         agent_type=team_data.get("agent_type"),
         quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
         input_presets=input_presets_from_phrases(spec.get("quick_phrases")),
@@ -743,7 +760,8 @@ def _build_system_function(
     return QuickLaunchFunctionResponse(
         **function_data,
         name=metadata.get("name", f"team-{config.team_id}"),
-        recommended_mode=team_data.get("recommended_mode") or "both",
+        bind_mode=spec.get("bind_mode") or [],
+        recommended_mode=_get_team_recommended_mode(team_data),
     )
 
 
