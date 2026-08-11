@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.security import create_access_token
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseType
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
@@ -168,21 +169,35 @@ def _run_url(knowledge_base_id: int) -> str:
     return f"/api/knowledge-bases/{knowledge_base_id}/code-wiki/generations"
 
 
-@pytest.fixture
-def caller_can_write():
-    """Grant repository write access for tests that are about something else."""
-    with patch(
-        "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
-        return_value={"has_access": True, "access_level": 30},
-    ):
-        yield
+def _headers_for(user: User) -> dict[str, str]:
+    token = create_access_token(data={"sub": user.user_name})
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _add_kb_member(
+    test_db: Session, knowledge_base_id: int, user: User, role: ResourceRole
+) -> None:
+    test_db.add(
+        ResourceMember(
+            resource_type="KnowledgeBase",
+            resource_id=knowledge_base_id,
+            entity_type="user",
+            entity_id=str(user.id),
+            role=role.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=1,
+            share_link_id=0,
+            reviewed_by_user_id=1,
+            copied_resource_id=0,
+        )
+    )
+    test_db.commit()
 
 
 def test_a_run_can_be_triggered_without_waiting_for_a_schedule(
     test_client: TestClient,
     auth_headers: dict[str, str],
     kind_services_use_test_db,
-    caller_can_write,
 ):
     kb_id = _create_wiki(test_client, auth_headers)
 
@@ -208,7 +223,6 @@ def test_a_run_that_was_not_needed_is_a_success_not_a_failure(
     test_client: TestClient,
     auth_headers: dict[str, str],
     kind_services_use_test_db,
-    caller_can_write,
 ):
     """ "Nothing changed" is the answer the caller asked for, not an error."""
     kb_id = _create_wiki(test_client, auth_headers)
@@ -233,7 +247,6 @@ def test_a_second_run_while_one_is_live_is_a_conflict(
     test_client: TestClient,
     auth_headers: dict[str, str],
     kind_services_use_test_db,
-    caller_can_write,
 ):
     from app.services.knowledge.code_wiki.generation import GenerationInFlight
 
@@ -458,45 +471,103 @@ def test_another_user_may_build_their_own_wiki_of_the_same_repository(
 # --- who may trigger a run --------------------------------------------------
 
 
-def test_regenerating_requires_write_access_to_the_repository(
+def test_a_kb_maintainer_can_regenerate_without_repository_write_access(
     test_client: TestClient,
     auth_headers: dict[str, str],
+    test_db: Session,
+    test_user: User,
     kind_services_use_test_db,
 ):
-    """A run rewrites every page, so reading the wiki is not enough. Without this a
-    wiki shared with a reader lets them spend a generation on somebody else's
-    knowledge base."""
-    kb_id = _create_wiki(test_client, auth_headers)
+    """Regeneration uses the same KB ACL as other knowledge-base mutations."""
+    from app.core.security import get_password_hash
+
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    maintainer = User(
+        user_name="wiki-maintainer",
+        password_hash=get_password_hash("irrelevant"),
+        email="wiki-maintainer@example.com",
+        is_active=True,
+    )
+    test_db.add(maintainer)
+    test_db.commit()
+    _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
+
+    with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
+        start.return_value = SimpleNamespace(
+            started=True,
+            mode="full",
+            reason="first run",
+            generation=SimpleNamespace(id=7),
+            task_id=42,
+        )
+        response = test_client.post(
+            _run_url(kb_id), json={}, headers=_headers_for(maintainer)
+        )
+
+    assert response.status_code == 202, response.text
+    assert start.call_args.kwargs["user"].id == maintainer.id
+    assert test_user.id != maintainer.id
+
+
+def test_a_kb_reporter_cannot_regenerate(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    from app.core.security import get_password_hash
+
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    reporter = User(
+        user_name="wiki-reporter",
+        password_hash=get_password_hash("irrelevant"),
+        email="wiki-reporter@example.com",
+        is_active=True,
+    )
+    test_db.add(reporter)
+    test_db.commit()
+    _add_kb_member(test_db, kb_id, reporter, ResourceRole.Reporter)
+
+    response = test_client.post(
+        _run_url(kb_id), json={}, headers=_headers_for(reporter)
+    )
+
+    assert response.status_code == 403
+
+
+def test_a_kb_maintainer_can_restore_without_becoming_the_projection_owner(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """The route authorizes the manager but leaves ownership to the runner."""
+    from app.core.security import get_password_hash
+
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    maintainer = User(
+        user_name="wiki-restore-maintainer",
+        password_hash=get_password_hash("irrelevant"),
+        email="wiki-restore-maintainer@example.com",
+        is_active=True,
+    )
+    test_db.add(maintainer)
+    test_db.commit()
+    _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
 
     with patch(
-        "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
-        side_effect=SourceAccessDenied("read access but not write access"),
-    ):
-        response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
+        "app.api.endpoints.knowledge_code_wiki.republish_generation",
+        return_value=SimpleNamespace(published=True),
+    ) as republish:
+        response = test_client.post(
+            f"{_run_url(kb_id)}/71/publish", headers=_headers_for(maintainer)
+        )
 
-    assert response.status_code == 403
-    assert "write access" in response.json()["detail"]
-
-
-def test_a_reader_of_the_repository_cannot_regenerate(
-    test_client: TestClient,
-    auth_headers: dict[str, str],
-    kind_services_use_test_db,
-):
-    """The threshold, not just the presence of a gate: read access reports an access
-    level below Developer, and that has to be refused rather than rounded up."""
-    from app.services.knowledge.code_wiki import source as source_module
-
-    kb_id = _create_wiki(test_client, auth_headers)
-
-    with patch.object(
-        source_module,
-        "assert_user_can_read_source",
-        return_value={"has_access": True, "access_level": 10},
-    ):
-        response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
-
-    assert response.status_code == 403
+    assert response.status_code == 200, response.text
+    assert "user" not in republish.call_args.kwargs
 
 
 def test_creating_a_wiki_starts_its_first_run(
@@ -1260,13 +1331,7 @@ def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
 
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
 
-    with (
-        patch(
-            "app.api.endpoints.knowledge_code_wiki.assert_user_can_write_source",
-            return_value=None,
-        ),
-        patch("app.api.endpoints.knowledge_code_wiki.start_run") as start,
-    ):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
         start.return_value = SimpleNamespace(
             started=False, mode="skip", reason="unchanged", generation=None, task_id=0
         )

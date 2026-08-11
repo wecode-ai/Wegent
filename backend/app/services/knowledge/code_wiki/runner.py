@@ -356,7 +356,11 @@ def _resolve_execution_context(
     """
     from app.services.adapters.team_kinds import team_kinds_service
 
-    task_user = db.get(User, knowledge_base.user_id) or user
+    task_user = db.get(User, knowledge_base.user_id)
+    if task_user is None:
+        raise CodeWikiRunError(
+            f"Code wiki {knowledge_base.id} has no owner to execute its generation"
+        )
     team_name = wiki_settings.CODE_WIKI_TEAM_NAME
     if not team_name:
         raise CodeWikiRunError(
@@ -504,7 +508,7 @@ def _fail_without_a_task(
 
 
 def republish_generation(
-    db: Session, *, knowledge_base: Kind, generation_id: int, user: User
+    db: Session, *, knowledge_base: Kind, generation_id: int
 ) -> PublishResult:
     """Make an earlier version the one readers see again.
 
@@ -536,13 +540,19 @@ def republish_generation(
     if published_generation_id(knowledge_base) == generation.id:
         raise CodeWikiRunError(f"Version {generation_id} is already published")
 
+    owner = db.get(User, knowledge_base.user_id)
+    if owner is None:
+        raise CodeWikiRunError(
+            f"Code wiki {knowledge_base.id} has no owner to publish its version"
+        )
+
     result = publish_generation(
         db,
         knowledge_base=knowledge_base,
         generation=generation,
-        user_id=user.id,
+        user_id=owner.id,
         effects=build_projection_side_effects(
-            db, knowledge_base=knowledge_base, user=user
+            db, knowledge_base=knowledge_base, user=owner
         ),
     )
     logger.info(

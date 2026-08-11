@@ -594,14 +594,19 @@ def test_a_caller_reading_their_own_generation_is_allowed(test_db, test_user):
     _assert_caller_owns_generation(test_db, test_user, generation.id)
 
 
-def test_the_fixed_operator_token_is_not_scoped_to_one_generation(test_db):
-    """`None` means the internal token was used, which is an operator rather than a
-    person. Applying an ownership check to it would compare against no account."""
+def test_an_unscoped_writer_identity_is_refused(test_db):
+    """The writer has no trusted anonymous or fixed-token caller path."""
+    import pytest
+    from fastapi import HTTPException
+
     from app.api.endpoints.wiki import _assert_caller_owns_generation
 
     generation = _generation(test_db, user_id=4242)
 
-    _assert_caller_owns_generation(test_db, None, generation.id)
+    with pytest.raises(HTTPException) as refused:
+        _assert_caller_owns_generation(test_db, None, generation.id)
+
+    assert refused.value.status_code == 403
 
 
 def test_a_generation_that_does_not_exist_reads_as_absent(test_db, test_user):

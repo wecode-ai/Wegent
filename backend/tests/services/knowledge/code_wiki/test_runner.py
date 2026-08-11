@@ -1001,9 +1001,7 @@ def test_an_earlier_version_can_be_published_again(
     finish_run(test_db, generation=thin, succeeded=True)
     assert published_generation_id(knowledge_base) == thin.id
 
-    republish_generation(
-        test_db, knowledge_base=knowledge_base, generation_id=good.id, user=test_user
-    )
+    republish_generation(test_db, knowledge_base=knowledge_base, generation_id=good.id)
 
     assert published_generation_id(knowledge_base) == good.id
 
@@ -1032,7 +1030,6 @@ def test_a_version_from_another_wiki_is_refused(
             test_db,
             knowledge_base=knowledge_base,
             generation_id=stranger.id,
-            user=test_user,
         )
 
 
@@ -1051,5 +1048,4 @@ def test_a_version_that_never_finished_is_refused(
             test_db,
             knowledge_base=knowledge_base,
             generation_id=started.generation.id,
-            user=test_user,
         )

@@ -735,3 +735,45 @@ def test_a_refused_publish_is_not_recorded_as_a_successful_run(
     assert state.failure_code == FailureCode.PUBLISH_REFUSED
     # The gate's own words survive.
     assert "produced nothing usable" in state.error_message
+
+
+def test_a_successful_retry_clears_publish_refusal_metadata(
+    test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
+):
+    """A repaired run must not remain visible as the last failed run."""
+    from app.services.knowledge.code_wiki.generation import FailureCode, failure_code
+
+    _publish_a_first_wiki(test_db, knowledge_base, test_user, effects, pages=3)
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=NEXT_HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    finish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=started.generation,
+        user=test_user,
+        effects=effects.build(),
+        succeeded=True,
+        now=NOW,
+    )
+    assert failure_code(started.generation) == FailureCode.PUBLISH_REFUSED
+
+    _write_page(test_db, started.generation, "index", "repaired")
+    result = finish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=started.generation,
+        user=test_user,
+        effects=effects.build(),
+        succeeded=True,
+        now=NOW,
+    )
+
+    assert result is not None and result.published
+    assert failure_code(started.generation) == ""
+    assert "errorMessage" not in started.generation.ext

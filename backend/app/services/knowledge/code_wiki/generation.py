@@ -108,6 +108,14 @@ def record_failure_reason(
     generation.ext = ext
 
 
+def clear_failure_reason(generation: WikiGeneration) -> None:
+    """Remove stale failure metadata after a later successful completion."""
+    ext = dict(generation.ext or {})
+    ext.pop(FAILURE_REASON_EXT_KEY, None)
+    ext.pop(FAILURE_CODE_EXT_KEY, None)
+    generation.ext = ext
+
+
 def failure_reason(generation: WikiGeneration) -> str:
     """Why a run failed, or an empty string when it did not say."""
     return str((generation.ext or {}).get(FAILURE_REASON_EXT_KEY, "") or "")
@@ -316,6 +324,7 @@ def finish_generation(
         )
         return None
 
+    clear_failure_reason(generation)
     generation.status = WikiGenerationStatus.COMPLETED
     generation.completed_at = finished
     db.flush()
