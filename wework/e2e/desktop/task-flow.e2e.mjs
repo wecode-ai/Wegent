@@ -447,6 +447,7 @@ const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const AUTOMATION_ONLY = process.argv.includes('--automation-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
+const WORKTREE_STATUS_ONLY = process.argv.includes('--worktree-status-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
@@ -545,6 +546,7 @@ function getActiveOnlyModes() {
     ['--plugins-only', PLUGINS_ONLY],
     ['--automation-only', AUTOMATION_ONLY],
     ['--memory-only', MEMORY_ONLY],
+    ['--worktree-status-only', WORKTREE_STATUS_ONLY],
     ['--tool-block-order-only', TOOL_BLOCK_ORDER_ONLY],
     ['--queue-navigation-only', QUEUE_NAVIGATION_ONLY],
     ['--guidance-background-only', GUIDANCE_BACKGROUND_ONLY],
@@ -2875,6 +2877,88 @@ async function createCheckpointTaskFixture(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   return waitForNewTaskRow(control, knownTaskRows, 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK')
+}
+
+async function verifyWorktreeCreationStatus({ composerSelector, control, workspacePath }) {
+  const projectMenusBeforeCreate = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('project-menu-')
+    )
+  )
+  await createSingleRootLocalProject(control, workspacePath, 'worktree-status')
+  const projectSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.some(
+        testId => testId.startsWith('project-menu-') && !projectMenusBeforeCreate.has(testId)
+      ),
+    'The worktree status fixture project was not shown in the sidebar'
+  )
+  const projectMenuTestId = projectSnapshot.testIds.find(
+    testId => testId.startsWith('project-menu-') && !projectMenusBeforeCreate.has(testId)
+  )
+  assert.ok(projectMenuTestId, 'The worktree status fixture project identity was not found')
+  const projectId = projectMenuTestId.slice('project-menu-'.length)
+
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await captureVerificationScreenshot(control, 'worktree-status-01-project-ready.png')
+
+  await control.command('click', '[data-testid="execution-mode-button"]')
+  await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
+  await control.command('waitFor', '[data-testid="execution-mode-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="execution-mode-button"]'),
+    /新工作树|New worktree/,
+    'The composer did not switch to worktree execution mode'
+  )
+  await captureVerificationScreenshot(control, 'worktree-status-02-mode-selected.png')
+
+  control.setScenario('checkpoint_task')
+  const scenarioRequest = control.awaitScenarioRequest('checkpoint_task')
+  await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+  await control.command('waitFor', '[data-testid="worktree-creation-status"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="worktree-creation-status"]'),
+    /正在创建工作树|Creating worktree/,
+    'The worktree creation status page did not explain the active operation'
+  )
+  const creatingSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    creatingSnapshot.testIds.includes('desktop-floating-composer-card'),
+    false,
+    'The composer remained interactive while the worktree was being created'
+  )
+  await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
+
+  await withTimeout(
+    scenarioRequest,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The worktree task did not reach the model service after creation'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'worktree-status-04-task-started.png')
+
+  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(projectMenuTestId),
+    'The worktree status fixture project remained after cleanup'
+  )
 }
 
 async function verifyPriorityFilter({ composerSelector, control }) {
@@ -13463,6 +13547,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
@@ -14709,6 +14794,17 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (WORKTREE_STATUS_ONLY) {
+      phase = 'worktree-creation-status'
+      await verifyWorktreeCreationStatus({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        workspacePath,
+      })
+      console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (RUNS_PLUGIN_E2E) {
       let officialPluginFixture = null
       const ensureOfficialPluginFixture = async () => {
@@ -14883,6 +14979,13 @@ last_updated = "2026-07-30T00:00:00Z"`
         false,
         'Cancelling folder selection did not restore the workbench'
       )
+
+      phase = 'worktree-creation-status'
+      await verifyWorktreeCreationStatus({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        workspacePath,
+      })
     }
 
     phase = 'secondary-project-create'
