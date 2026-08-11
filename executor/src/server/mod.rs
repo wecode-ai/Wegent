@@ -121,6 +121,7 @@ where
             local_model_proxy::harness_messages_route(),
         )
         .route("/v1/attachments/sync", post(sync_attachments))
+        .route("/v1/skills/sync", post(sync_skills))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
         .route(
@@ -172,6 +173,25 @@ async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<
     Ok(Json(
         runtime_capabilities::sync_attachments_for_request(request).await,
     ))
+}
+
+async fn sync_skills(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    let required_count = request
+        .extra
+        .get("required_skills")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    fields.push(("required_skill_count", required_count.to_string()));
+    log_executor_event("sandbox skill sync request received", &fields);
+    runtime_capabilities::sync_skills_for_request(request)
+        .await
+        .map(Json)
+        .map_err(|detail| HttpError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            detail,
+        })
 }
 
 pub fn create_docker_router_from_env() -> Result<Router, String> {
