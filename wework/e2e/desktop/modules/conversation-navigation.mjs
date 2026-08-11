@@ -31,6 +31,8 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   IMAGE_ARTIFACT_BASE64,
+  MULTIMODAL_VISION_COMPLETION_TEXT,
+  MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   QUEUED_FOLLOW_UP,
   QUEUE_CLEAR_INITIAL,
@@ -970,6 +972,47 @@ async function verifyVisionSidecar({ composerSelector, control, modelCase, proje
   assert.equal(mainRequests.length, 2, 'Both image turns did not reach the primary model')
 }
 
+async function verifyMultimodalVision({
+  composerSelector,
+  control,
+  modelCase,
+  projectRowSelector,
+}) {
+  control.setScenario('multimodal_vision')
+  control.multimodalVisionRequests = []
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
+  await control.command('dropFile', composerSelector, {
+    filename: 'multimodal-vision.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-multimodal-vision-01-request-ready.png')
+  await sendPrompt(control, composerSelector, MULTIMODAL_VISION_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MULTIMODAL_VISION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-multimodal-vision-02-response.png')
+
+  assert.equal(
+    control.multimodalVisionRequests.length,
+    1,
+    'The image turn did not reach the multimodal primary model exactly once'
+  )
+}
+
 async function startPausedQueueCase({ composerSelector, control, initialPrompt, queuedPrompts }) {
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1216,6 +1259,7 @@ export {
   reopenCurrentTurnNavigationTask,
   verifyStandaloneViewImageTask,
   verifyVisionSidecar,
+  verifyMultimodalVision,
   startPausedQueueCase,
   pauseQueuedConversation,
   assertLatestScenarioRequestContains,

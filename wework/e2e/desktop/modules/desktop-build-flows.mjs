@@ -8,6 +8,7 @@ import {
 import {
   sendPrompt,
   sendPromptWithButton,
+  verifyMultimodalVision,
   verifyVisionSidecar,
 } from './conversation-navigation.mjs'
 
@@ -33,6 +34,7 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_DEVICE_ID,
   CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
+  CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_ONLY,
@@ -436,16 +438,6 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
-  await verifyVisionSidecar({
-    composerSelector,
-    control,
-    modelCase: CLOUD_VISION_SIDECAR_CASE,
-    projectRowSelector: newConversationSelector.replace(
-      ' [data-testid="project-new-conversation-button"]',
-      ''
-    ),
-  })
-
   const currentProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -470,7 +462,13 @@ async function verifyConnectedModelsOnLocalExecution({
   )
 }
 
-async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath) {
+async function verifyCloudProjectFlow(
+  control,
+  cloudEnvironment,
+  restartDesktopApp,
+  workspacePath,
+  { visionOnly = false } = {}
+) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -600,6 +598,23 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+
+  if (visionOnly) {
+    await verifyVisionSidecar({
+      composerSelector,
+      control,
+      modelCase: CLOUD_VISION_SIDECAR_CASE,
+      projectRowSelector: '[data-testid^="project-row-"]',
+    })
+    await verifyMultimodalVision({
+      composerSelector,
+      control,
+      modelCase: CLOUD_MULTIMODAL_VISION_CASE,
+      projectRowSelector: '[data-testid^="project-row-"]',
+    })
+    return
+  }
+
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
@@ -711,6 +726,19 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     'The cloud follow-up task did not settle before project removal'
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
+
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: CLOUD_VISION_SIDECAR_CASE,
+    projectRowSelector: '[data-testid^="project-row-"]',
+  })
+  await verifyMultimodalVision({
+    composerSelector,
+    control,
+    modelCase: CLOUD_MULTIMODAL_VISION_CASE,
+    projectRowSelector: '[data-testid^="project-row-"]',
+  })
 
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 

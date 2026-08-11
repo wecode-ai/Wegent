@@ -770,6 +770,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
+            status: 'ready',
             subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
@@ -783,6 +784,55 @@ describe('createLocalAppServices', () => {
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('keeps backend attachment metadata in direct runtime execution requests', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'task-cloud-attachment',
+      workspacePath: '/workspace/project',
+      runtime: 'codex',
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'cloud-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'task-cloud-attachment',
+      runtime: 'codex',
+      message: 'inspect the image',
+      attachments: [
+        {
+          id: 42,
+          filename: 'cloud-image.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-08-11T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.attachments).toEqual([
+      {
+        id: 42,
+        filename: 'cloud-image.png',
+        original_filename: 'cloud-image.png',
+        file_size: 1200,
+        mime_type: 'image/png',
+        status: 'ready',
+        subtask_id: expect.any(String),
+        file_extension: '.png',
+      },
+    ])
   })
 
   test('rejects local runtime task creation without a workspace path', async () => {
@@ -1140,6 +1190,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
+              status: 'ready',
               subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',

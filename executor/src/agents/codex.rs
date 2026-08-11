@@ -1261,7 +1261,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
+    let prepared = prepare_codex_execution_request(request).await;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1484,7 +1484,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
+    let prepared = prepare_codex_execution_request(request).await;
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -3361,7 +3361,10 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
     overrides
 }
 
-fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCodexExecutionRequest {
+async fn prepare_codex_execution_request(
+    request: ExecutionRequest,
+) -> PreparedCodexExecutionRequest {
+    let mut request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
         return PreparedCodexExecutionRequest {
