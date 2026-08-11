@@ -11,17 +11,28 @@ from typing import Any, Sequence
 
 from llama_index.core.schema import BaseNode
 
-# Match a chapter-style heading carrying a time range. Tolerates the formats
-# Gemini actually emits in practice:
-#   - [HH:MM:SS - HH:MM:SS]   (prompt- mandated, square brackets, 3 segments)
-#   - (MM:SS - MM:SS)         (short videos: Gemini drops the hour + parens)
-#   - [MM:SS - MM:SS] / (HH:MM:SS - HH:MM:SS)   (any bracket/segment mix)
-# The hour part is optional per timestamp; brackets are [] or ().
+# Match a chapter-style heading carrying a time range. Gemini varies both the
+# timestamp precision and bracket placement, so each endpoint independently
+# tolerates ASCII/full-width square or round brackets. Validation below still
+# rejects malformed clock values and reversed/empty ranges.
 _TIME = r"(?:\d{1,2}:)?\d{1,2}:\d{2}"
 _RANGE_SEPARATOR = r"[-–—~至]"
+_OPEN_BRACKETS = r"[\[\(【（]*"
+_CLOSE_BRACKETS = r"[\]\)】）]*"
 VIDEO_SEGMENT_PATTERN = re.compile(
-    r"\[\s*(" + _TIME + r")\s*" + _RANGE_SEPARATOR + r"\s*(" + _TIME + r")\s*\]"
-    r"|\(\s*(" + _TIME + r")\s*" + _RANGE_SEPARATOR + r"\s*(" + _TIME + r")\s*\)"
+    _OPEN_BRACKETS
+    + r"\s*("
+    + _TIME
+    + r")\s*"
+    + _CLOSE_BRACKETS
+    + r"\s*"
+    + _RANGE_SEPARATOR
+    + r"\s*"
+    + _OPEN_BRACKETS
+    + r"\s*("
+    + _TIME
+    + r")\s*"
+    + _CLOSE_BRACKETS
 )
 VIDEO_SEGMENT_SUMMARY_PATTERN = re.compile(
     r"^>\s*\*\*本段摘要\*\*[：:]\s*(.+?)\s*$", re.MULTILINE
@@ -66,15 +77,7 @@ def extract_video_segment_metadata(text: str) -> dict[str, Any] | None:
             break
     if match is None:
         return None
-    # Two alternations in the pattern: groups 1-2 for [], 3-4 for ().
-    start_raw, end_raw = (
-        (match.group(1), match.group(2))
-        if match.group(1)
-        else (
-            match.group(3),
-            match.group(4),
-        )
-    )
+    start_raw, end_raw = match.group(1), match.group(2)
     start_sec = _to_seconds(start_raw)
     end_sec = _to_seconds(end_raw)
     if start_sec is None or end_sec is None or end_sec <= start_sec:

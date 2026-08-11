@@ -68,7 +68,18 @@ export function checkVideoTimestampPrompt(prompt: string): VideoTimestampPromptC
   const hasExplicitFormat =
     /hh\s*:\s*mm\s*:\s*ss.{0,10}hh\s*:\s*mm\s*:\s*ss/i.test(prompt) ||
     /\[?\d{1,2}:\d{2}:\d{2}\s*[-–—~至]\s*\d{1,2}:\d{2}:\d{2}\]?/.test(prompt)
-  const hasChapterStructure = /#{1,6}.{0,80}hh\s*:\s*mm\s*:\s*ss/i.test(prompt)
+  const hasChapterStructure = prompt
+    .split(/\r?\n/)
+    .filter(line => /#{1,6}\s+/.test(line))
+    .some(line => {
+      const hasConcreteOrTemplateStart =
+        /(hh\s*:\s*mm\s*:\s*ss|\d{1,2}:\d{2}:\d{2}|开始时间|起始时间|start\s*time)/i.test(line)
+      const hasConcreteOrTemplateEnd =
+        /(hh\s*:\s*mm\s*:\s*ss|\d{1,2}:\d{2}:\d{2}|结束时间|最终结束时间|end\s*time)/i.test(
+          line.replace(/.*?[-–—~至]/, '')
+        )
+      return hasConcreteOrTemplateStart && hasConcreteOrTemplateEnd
+    })
   const hasSummaryStructure = /(本段摘要|segment summary)/i.test(prompt)
 
   if (

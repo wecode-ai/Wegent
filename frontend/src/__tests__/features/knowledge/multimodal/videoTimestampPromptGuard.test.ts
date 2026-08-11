@@ -21,6 +21,25 @@ describe('videoTimestampPromptGuard', () => {
     ).toBe('compliant')
   })
 
+  it('accepts a detailed chapter template with concrete and placeholder times', () => {
+    const prompt = `你是一个多模态视频分析与 RAG 档案挖掘专家。请完整观看视频，将其划分为连续的语义章节，并输出结构化 Markdown 档案。
+
+【核心执行规则】
+1. 必须从 00:00:00 分析至最后一秒，最后一个章节的结束时间等于视频实际总时长。
+2. 时间轴零缝隙：章节时间必须无缝连接，格式统一为 [HH:MM:SS - HH:MM:SS]。
+3. 直接输出 Markdown 正文。
+
+## 详细时间轴与章节解析
+
+### 章节 1：[标题] ([00:00:00] - [结束时间])
+> **本段摘要**：[概括核心事件]
+
+### 章节 2：[标题] ([开始时间] - [结束时间])
+> **本段摘要**：[概括核心事件]`
+
+    expect(checkVideoTimestampPrompt(prompt).status).toBe('compliant')
+  })
+
   it('treats timestamp keywords without a complete contract as ambiguous', () => {
     expect(checkVideoTimestampPrompt('请输出视频摘要，并尽量提供时间戳。').status).toBe('ambiguous')
   })

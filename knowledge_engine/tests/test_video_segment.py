@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 from llama_index.core.schema import TextNode
 
 from knowledge_engine.ingestion.video_segment import (
@@ -48,6 +49,39 @@ def test_extract_video_segment_metadata_accepts_unicode_range_separator() -> Non
 
     assert metadata["video_start_sec"] == 15
     assert metadata["video_end_sec"] == 37
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "### 酒店枪口下的生死救赎 ([00:31:42] - [00:38:08])",
+        "### 酒店枪口下的生死救赎 [00:31:42] - [00:38:08]",
+        "### 酒店枪口下的生死救赎 (00:31:42) — (00:38:08)",
+        "### 酒店枪口下的生死救赎 【00:31:42 至 00:38:08】",
+        "### 酒店枪口下的生死救赎 （【00:31:42】~【00:38:08】）",
+        "### 酒店枪口下的生死救赎 00:31:42 - 00:38:08",
+    ],
+)
+def test_extract_video_segment_metadata_accepts_bracket_variants(heading: str) -> None:
+    metadata = extract_video_segment_metadata(f"{heading}\n章节内容")
+
+    assert metadata == {
+        "video_segment_id": "segment_1902_2288",
+        "video_start_sec": 1902,
+        "video_end_sec": 2288,
+    }
+
+
+def test_extract_video_segment_copy_removes_endpoint_brackets() -> None:
+    copy = extract_video_segment_copy(
+        "### 章节 6：酒店枪口下的生死救赎 ([00:31:42] - [00:38:08])\n"
+        "> **本段摘要**：查理阻止弗兰克自尽。"
+    )
+
+    assert copy == {
+        "video_segment_title": "酒店枪口下的生死救赎",
+        "video_segment_description": "查理阻止弗兰克自尽。",
+    }
 
 
 def test_extract_video_segment_metadata_ignores_body_timestamp() -> None:
