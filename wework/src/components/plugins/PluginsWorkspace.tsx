@@ -1128,8 +1128,6 @@ export function PluginsWorkspace({
   )
   const installedPluginsRef = useRef(installedPlugins)
   installedPluginsRef.current = installedPlugins
-  const pluginMarketplaceItemsRef = useRef(pluginMarketplaceState.items)
-  pluginMarketplaceItemsRef.current = pluginMarketplaceState.items
   const marketplacesRef = useRef(marketplaces)
   marketplacesRef.current = marketplaces
   const selectedMarketplaceKeyRef = useRef(selectedMarketplaceKey)
@@ -2705,20 +2703,27 @@ export function PluginsWorkspace({
         }
       }
 
-      const cachedMarketplaceItems =
-        getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []
+      // Only reuse durable/in-flight data for the current cache key. React refs can
+      // still hold the previous account for one frame after a key switch.
+      const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+      const cachedMarketplaceItems = cachedSnapshot?.marketplaceItems ?? []
       const cachedCloudItems = cachedMarketplaceItems.filter(item => !isLocalMarketplaceItem(item))
+      const cachedInstalledRaw = (cachedSnapshot?.installedPlugins ?? []).map(plugin => plugin.raw)
       const localRows = mergeDiskPersonalIntoLocalRows(
         localStateForMerge?.marketplaceItems ??
           cachedMarketplaceItems.filter(isLocalMarketplaceItem),
         diskPersonalItemsForMerge
       )
-      const previousInstalledRaw = installedPluginsRef.current.map(plugin => plugin.raw)
-      // Local-first paint must not blank cloud installs already on the strip. Until
-      // listInstalledPlugins returns, keep prior cloud-managed rows (spec.pluginId).
+      const previousInstalledRaw = hasCachedCatalog
+        ? cachedInstalledRaw.length > 0
+          ? cachedInstalledRaw
+          : installedPluginsRef.current.map(plugin => plugin.raw)
+        : (localStateForMerge?.installedPlugins ?? [])
+      // Local-first paint must not blank cloud installs for THIS account. Never keep
+      // prior-account strip rows when the current key has no warm snapshot.
       const cloudInstalled =
         cloudInstalledForMerge ??
-        (cloudMarketplaceAvailable
+        (cloudMarketplaceAvailable && hasCachedCatalog
           ? previousInstalledRaw.filter(plugin => typeof plugin.spec.pluginId === 'number')
           : [])
       const nextInstalledRaw = mergeInstalledPlugins(
@@ -2726,12 +2731,9 @@ export function PluginsWorkspace({
         localStateForMerge?.installedPlugins ?? previousInstalledRaw,
         localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
       ).map(toInstalledPluginItem)
-      // Progressive local peeks must not wipe warm/cached Wework/enterprise rows.
-      const previousCloudItems = pluginMarketplaceItemsRef.current.filter(
-        item => !isLocalMarketplaceItem(item)
-      )
-      const cloudItems =
-        cloudItemsForMerge ?? (cachedCloudItems.length > 0 ? cachedCloudItems : previousCloudItems)
+      // Prefer in-flight cloud rows, then this key's durable cache — never stale
+      // previous-account React state after a cache miss / account switch.
+      const cloudItems = cloudItemsForMerge ?? cachedCloudItems
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: mergeMarketplaceCatalog(
           cloudItems,
@@ -2751,11 +2753,7 @@ export function PluginsWorkspace({
           sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
         )
       }
-      if (
-        mergedItems.length === 0 &&
-        !hasCachedCatalog &&
-        pluginMarketplaceItemsRef.current.length === 0
-      ) {
+      if (mergedItems.length === 0 && !hasCachedCatalog) {
         if (localStateForMerge || cloudInstalledForMerge) {
           setIsMarketplaceRefreshing(options.keepRefreshing)
         }
