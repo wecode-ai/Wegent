@@ -166,6 +166,123 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('registers harness models through the executor Messages proxy', async () => {
+    const config = saveLocalModelConfig({
+      id: 'harness-model',
+      displayName: 'Harness Model',
+      modelId: 'upstream-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      apiKey: 'provider-secret',
+      catalogReady: false,
+    })
+    saveLocalProxyUrl('socks5://127.0.0.1:7890')
+    const request = vi.fn().mockImplementation(async method => {
+      if (method === 'runtime.harness_proxy.register') {
+        return {
+          token: 'proxy-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', {
+      key: 'local',
+      label: 'Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${config.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Harness Model',
+        modelId: 'upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:opencode:/),
+        upstream: {
+          base_url: 'https://models.example.com/v1',
+          request_url: 'https://models.example.com/v1/chat/completions',
+          api_format: 'openai-chat-completions',
+          convert_custom_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
+          api_key: 'provider-secret',
+          default_headers: [],
+          proxy_url: 'socks5://127.0.0.1:7890',
+          model_id: 'upstream-model',
+          routing_model_id: null,
+          max_output_tokens: null,
+        },
+      })
+    )
+    expect(launch).toMatchObject({
+      modelId: 'wework-messages/wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('provider-secret')
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('socks5://')
+
+    const secondConfig = saveLocalModelConfig({
+      id: 'second-harness-model',
+      displayName: 'Second Harness Model',
+      modelId: 'second-upstream-model',
+      baseUrl: 'https://second-model.example.com/v1',
+      apiFormat: 'anthropic-messages',
+      requestPath: '/messages',
+      apiKey: 'second-provider-secret',
+      catalogReady: false,
+    })
+    const secondLaunch = await services.localHarnessModelApi?.resolveLaunch('claude_code', {
+      key: 'second-local',
+      label: 'Second Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${secondConfig.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Second Harness Model',
+        modelId: 'second-upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:claude_code:/),
+        upstream: expect.objectContaining({
+          request_url: 'https://second-model.example.com/v1/messages',
+          api_format: 'anthropic-messages',
+          api_key: 'second-provider-secret',
+          model_id: 'second-upstream-model',
+        }),
+      })
+    )
+    expect(secondLaunch).toMatchObject({
+      modelId: 'wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(secondLaunch?.env).not.toEqual(
+      expect.objectContaining({ ANTHROPIC_API_KEY: 'second-provider-secret' })
+    )
+  })
+
   test('does not expose a custom model until its catalog restart is applied', async () => {
     saveLocalModelConfig({
       id: 'pending-model',

@@ -331,9 +331,7 @@ export const taskApis = {
     return apiClient.delete(`/tasks/${id}`)
   },
 
-  bulkDeleteTasks: async (
-    taskIds: number[]
-  ): Promise<{ message: string; count: number }> => {
+  bulkDeleteTasks: async (taskIds: number[]): Promise<{ message: string; count: number }> => {
     return apiClient.delete('/tasks/bulk', { task_ids: taskIds })
   },
 

@@ -179,6 +179,8 @@ export interface ChatInputProps {
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
   toolbarLeadingContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
+  modelSelectorOverride?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -562,6 +564,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     showWorkspaceMenu,
     inputLeadingContext,
     toolbarLeadingContext,
+    projectWorkBarTrailingContext,
+    modelSelectorOverride,
     onCompactContext,
     goal,
     goalContinuing = false,
@@ -881,6 +885,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             }
           }
           showProjectWorkBar={showProjectWorkBar}
+          projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+          modelSelectorOverride={modelSelectorOverride}
           onListLocalSkills={controls.listLocalSkills}
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}

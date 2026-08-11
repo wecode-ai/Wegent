@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './../../../src/i18n'
 import { MobileSettingsPage } from './MobileSettingsPage'
 import { AppearanceProvider } from '@/features/appearance'
@@ -10,8 +10,17 @@ vi.mock('@/features/model-settings/localCodexSettings', () => ({
   getLocalCodexPersonality: vi.fn().mockResolvedValue('pragmatic'),
   saveLocalCodexPersonality: vi.fn().mockImplementation(value => Promise.resolve(value)),
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 describe('MobileSettingsPage', () => {
+  beforeEach(() => {
+    experimentalFeatures.enabled = true
+  })
+
   test('renders mobile settings actions with plugins navigation', async () => {
     const onBack = vi.fn()
     const onOpenPlugins = vi.fn()
@@ -36,6 +45,9 @@ describe('MobileSettingsPage', () => {
       '已归档任务'
     )
     expect(screen.getByTestId('mobile-settings-plugins-config-button')).toHaveTextContent('插件')
+    expect(screen.getByTestId('mobile-settings-harnesses-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
 
     await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
@@ -53,6 +65,18 @@ describe('MobileSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides harness settings while experimental features are off', () => {
+    experimentalFeatures.enabled = false
+
+    render(
+      <AppearanceProvider>
+        <MobileSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>
+    )
+
+    expect(screen.queryByTestId('mobile-settings-harnesses-button')).not.toBeInTheDocument()
   })
 
   test('opens appearance settings on mobile', async () => {

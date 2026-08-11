@@ -32,6 +32,7 @@ interface ComposerToolbarProps {
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
@@ -76,6 +77,7 @@ export function ComposerToolbar({
   onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
+  modelSelectorOverride,
   onFileSelect,
   planModeActive = false,
   onSetPlanMode,
@@ -174,25 +176,26 @@ export function ComposerToolbar({
           disabled={disabled}
           onCompactContext={onCompactContext}
         />
-        {isModelSelectionReady ? (
-          <ModelSelector
-            models={models}
-            selectedModel={selectedModel}
-            selectedModelOptions={selectedModelOptions}
-            nextTurn={isStreaming && modelChangePending}
-            openSignal={modelSelectorOpenSignal}
-            onOpenChange={onModelSelectorOpenChange}
-            disabled={disabled}
-            onSelectModel={onSelectModel}
-            onSelectModelAndOptions={onSelectModelAndOptions}
-            onSelectModelOption={onSelectModelOption}
-            onBlockedModelSelect={onBlockedModelSelect}
-            buttonClassName="opacity-90 hover:opacity-100"
-            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
-          />
-        ) : (
-          <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
-        )}
+        {modelSelectorOverride ??
+          (isModelSelectionReady ? (
+            <ModelSelector
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              nextTurn={isStreaming && modelChangePending}
+              openSignal={modelSelectorOpenSignal}
+              onOpenChange={onModelSelectorOpenChange}
+              disabled={disabled}
+              onSelectModel={onSelectModel}
+              onSelectModelAndOptions={onSelectModelAndOptions}
+              onSelectModelOption={onSelectModelOption}
+              onBlockedModelSelect={onBlockedModelSelect}
+              buttonClassName="opacity-90 hover:opacity-100"
+              maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+            />
+          ) : (
+            <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+          ))}
         {showWorkspaceMenu && projectWorkMenuContext ? (
           <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}

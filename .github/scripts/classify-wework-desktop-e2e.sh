@@ -15,6 +15,7 @@ core_segments=(
   conversation-state
   workspace-attachments
   rendering-extensions
+  local-harness
   embedded-browser
 )
 plugin_segments=(
@@ -172,6 +173,19 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
       select_target "core:embedded-browser"
+      return
+      ;;
+
+    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    wework/src-tauri/src/local_terminal* | \
+      wework/src/lib/local-harness* | \
+      wework/src/lib/local-terminal* | \
+      wework/src/components/layout/CentralHarnessTerminal* | \
+      wework/src/components/layout/WorkbenchHarnessSelector* | \
+      wework/src/components/layout/localHarnessWorkbench* | \
+      wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:local-harness"
       return
       ;;
 

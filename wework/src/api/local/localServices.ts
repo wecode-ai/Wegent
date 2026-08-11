@@ -1,4 +1,9 @@
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  harnessLaunchThroughMessagesProxy,
+  type HarnessProxyRegistration,
+  type LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import i18n from '@/i18n'
 import type {
@@ -138,6 +143,7 @@ import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
+import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
@@ -148,6 +154,7 @@ import {
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
   CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -916,14 +923,15 @@ function localRuntimeModelConfig(
   modelName?: string,
   modelType?: string | null,
   modelOptions?: Record<string, string>,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway?: CloudModelGateway,
+  requireCodexCatalog = true
 ): Record<string, unknown> {
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
-    if (!localModel.catalogReady) {
+    if (requireCodexCatalog && !localModel.catalogReady) {
       throw new Error('Local model requires a Codex restart')
     }
     const requestUrl = buildLocalModelRequestUrl(
@@ -1050,6 +1058,58 @@ function localRuntimeModelConfig(
         configured: true,
       },
     },
+  }
+}
+
+function recordString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function recordNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function harnessProxyUpstream(
+  runtime: string,
+  option: LocalHarnessModelOption,
+  cloudModelGateway?: CloudModelGateway
+): Record<string, unknown> {
+  const execution = selectedModelExecutionFields(option.model, option.options)
+  const config = localRuntimeModelConfig(
+    runtime,
+    execution.modelId,
+    execution.modelType,
+    execution.modelOptions,
+    cloudModelGateway,
+    false
+  )
+  const baseUrl = recordString(config.base_url)
+  const apiFormat = recordString(config.upstream_api_format)
+  const apiKey = recordString(config.api_key)
+  if (!baseUrl || !apiFormat || !apiKey) {
+    throw new Error('Harness model proxy configuration is incomplete')
+  }
+  const headers =
+    config.default_headers &&
+    typeof config.default_headers === 'object' &&
+    !Array.isArray(config.default_headers)
+      ? Object.entries(config.default_headers as Record<string, unknown>).flatMap(
+          ([name, value]) => (typeof value === 'string' ? [[name, value]] : [])
+        )
+      : []
+  return {
+    base_url: baseUrl,
+    request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
+    api_format: apiFormat,
+    convert_custom_tools: config.tool_profile === 'function',
+    native_tool_search: false,
+    native_namespace_tools: false,
+    api_key: apiKey,
+    default_headers: headers,
+    proxy_url: getLocalProxyUrl() || null,
+    model_id: recordString(config.model_id),
+    routing_model_id: null,
+    max_output_tokens: recordNumber(config.max_output_tokens),
   }
 }
 
@@ -3066,6 +3126,23 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     externalIssueApi,
     localProjectChatAgentApi,
     localLoopItemExecutionApi,
+    localHarnessModelApi: {
+      async resolveLaunch(harnessId: LocalHarnessId, option: LocalHarnessModelOption | null) {
+        if (!option) return null
+        await ensureStatus()
+        const registration = await request<HarnessProxyRegistration>(
+          'runtime.harness_proxy.register',
+          {
+            scope: `harness:${harnessId}:${crypto.randomUUID()}`,
+            upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
+          }
+        )
+        return harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+      },
+      async unregisterProxy(token: string) {
+        await request('runtime.harness_proxy.unregister', { token })
+      },
+    },
     localProjectChatClient,
     aitableApi,
     dwsApi,

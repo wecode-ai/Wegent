@@ -1,3 +1,4 @@
+mod agent_plugins;
 mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
@@ -622,6 +623,8 @@ struct AppPreferences {
     friendly_task_title_model: Option<serde_json::Value>,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
+    #[serde(default = "default_local_harness_preferences")]
+    local_harnesses: Vec<LocalHarnessPreference>,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -635,6 +638,89 @@ struct QuickPhrase {
     attachment_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     created_at: Option<u64>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalHarnessPreference {
+    id: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    executable_path: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default = "default_harness_permission_mode")]
+    permission_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_key: Option<String>,
+}
+
+fn default_harness_permission_mode() -> String {
+    "default".to_string()
+}
+
+fn default_local_harness_preferences() -> Vec<LocalHarnessPreference> {
+    ["opencode", "claude_code", "kimi_code"]
+        .into_iter()
+        .map(|id| LocalHarnessPreference {
+            id: id.to_string(),
+            enabled: true,
+            executable_path: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            permission_mode: default_harness_permission_mode(),
+            model_key: None,
+        })
+        .collect()
+}
+
+fn normalize_local_harness_preferences(
+    preferences: Vec<LocalHarnessPreference>,
+) -> Vec<LocalHarnessPreference> {
+    default_local_harness_preferences()
+        .into_iter()
+        .map(|default_preference| {
+            let Some(mut preference) = preferences
+                .iter()
+                .find(|preference| preference.id == default_preference.id)
+                .cloned()
+            else {
+                return default_preference;
+            };
+            preference.executable_path = preference.executable_path.and_then(normalized_non_empty);
+            preference.model_key = preference.model_key.and_then(normalized_non_empty);
+            preference
+                .args
+                .retain(|arg| !arg.is_empty() && !arg.contains('\0'));
+            preference.env = preference
+                .env
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let key = key.trim();
+                    if key.is_empty()
+                        || key.contains('=')
+                        || key.contains('\0')
+                        || value.contains('\0')
+                    {
+                        return None;
+                    }
+                    Some((key.to_string(), value))
+                })
+                .collect();
+            if preference.id != "claude_code"
+                || !matches!(
+                    preference.permission_mode.as_str(),
+                    "default" | "plan" | "bypass"
+                )
+            {
+                preference.permission_mode = default_harness_permission_mode();
+            }
+            preference
+        })
+        .collect()
 }
 
 fn default_quick_phrases() -> Vec<QuickPhrase> {
@@ -727,6 +813,7 @@ impl Default for AppPreferences {
             friendly_task_titles_enabled: false,
             friendly_task_title_model: None,
             quick_phrases: default_quick_phrases(),
+            local_harnesses: default_local_harness_preferences(),
         }
     }
 }
@@ -785,6 +872,7 @@ struct AppPreferencesPatch {
     #[serde(default)]
     friendly_task_title_model: PatchField<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
+    local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
 
 #[cfg(desktop)]
@@ -1080,6 +1168,7 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     preferences.popout_window_shortcut = preferences
         .popout_window_shortcut
         .and_then(normalized_non_empty);
+    preferences.local_harnesses = normalize_local_harness_preferences(preferences.local_harnesses);
     preferences
         .quick_phrases
         .retain(|phrase| !is_expired_quick_phrase_stash(phrase));
@@ -1411,6 +1500,9 @@ fn update_app_preferences(
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
+    if let Some(value) = patch.local_harnesses {
+        preferences.local_harnesses = normalize_local_harness_preferences(value);
+    }
     write_app_preferences_impl(&app, &preferences)?;
     let telemetry_is_enabled = preferences.telemetry_consent_asked && preferences.telemetry_enabled;
     if telemetry_was_enabled != telemetry_is_enabled {
@@ -1452,6 +1544,7 @@ struct AppPreferences {
     friendly_task_titles_enabled: bool,
     friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Vec<QuickPhrase>,
+    local_harnesses: Vec<LocalHarnessPreference>,
 }
 
 #[cfg(not(desktop))]
@@ -1485,6 +1578,7 @@ struct AppPreferencesPatch {
     friendly_task_titles_enabled: Option<bool>,
     friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
+    local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
 
 #[cfg(not(desktop))]
@@ -1518,6 +1612,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         friendly_task_titles_enabled: false,
         friendly_task_title_model: None,
         quick_phrases: default_quick_phrases(),
+        local_harnesses: default_local_harness_preferences(),
     })
 }
 
@@ -1575,6 +1670,11 @@ fn update_app_preferences(
         friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
         friendly_task_title_model: patch.friendly_task_title_model,
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
+        local_harnesses: normalize_local_harness_preferences(
+            patch
+                .local_harnesses
+                .unwrap_or_else(default_local_harness_preferences),
+        ),
     })
 }
 
@@ -4152,8 +4252,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalized_browser_link_target,
-        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        local_workspace_opener_app_name, normalize_local_harness_preferences,
+        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
+        wework_cli_launcher_content, LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4257,6 +4358,51 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[test]
+    fn normalizes_local_harness_preferences_and_restores_missing_harnesses() {
+        let preferences = normalize_local_harness_preferences(vec![LocalHarnessPreference {
+            id: "claude_code".to_string(),
+            enabled: false,
+            executable_path: Some("  /opt/claude  ".to_string()),
+            args: vec![
+                "--verbose".to_string(),
+                String::new(),
+                "bad\0arg".to_string(),
+            ],
+            env: [
+                (" REGION ".to_string(), "us-west-2".to_string()),
+                ("BAD=KEY".to_string(), "ignored".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            permission_mode: "plan".to_string(),
+            model_key: Some("  wework:user:default:42:glm  ".to_string()),
+        }]);
+
+        assert_eq!(preferences.len(), 3);
+        assert_eq!(preferences[0].id, "opencode");
+        assert!(preferences[0].enabled);
+        assert_eq!(preferences[1].id, "claude_code");
+        assert!(!preferences[1].enabled);
+        assert_eq!(
+            preferences[1].executable_path.as_deref(),
+            Some("/opt/claude")
+        );
+        assert_eq!(preferences[1].args, vec!["--verbose"]);
+        assert_eq!(
+            preferences[1].env.get("REGION").map(String::as_str),
+            Some("us-west-2")
+        );
+        assert_eq!(preferences[1].permission_mode, "plan");
+        assert_eq!(
+            preferences[1].model_key.as_deref(),
+            Some("wework:user:default:42:glm")
+        );
+        assert_eq!(preferences[2].id, "kimi_code");
+        assert!(preferences[2].enabled);
+        assert_eq!(preferences[2].permission_mode, "default");
     }
 
     #[cfg(desktop)]
@@ -4974,8 +5120,14 @@ pub fn run() {
             system_drag::dismiss_system_drag_panel,
             system_drag::log_system_drag_debug,
             system_drag::take_pending_system_drag_drops,
+            local_terminal::get_local_terminal_snapshot,
+            local_terminal::list_local_harnesses,
+            local_terminal::list_local_harness_sessions,
+            local_terminal::resolve_local_harness_plugin_roots,
             local_terminal::resize_local_terminal,
+            local_terminal::start_local_harness,
             local_terminal::start_local_terminal,
+            local_terminal::update_local_harness_session_title,
             local_terminal::write_local_terminal,
             #[cfg(desktop)]
             popout_window::dismiss_popout_window,

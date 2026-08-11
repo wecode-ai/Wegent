@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { ModelSelectionConfig } from '@/types/api'
+import {
+  defaultLocalHarnessPreferences,
+  normalizeLocalHarnessPreferences,
+  type LocalHarnessPreference,
+} from '@/lib/local-harness'
 
 export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
@@ -41,6 +46,7 @@ export interface AppPreferences {
   friendlyTaskTitlesEnabled: boolean
   friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
   quickPhrases: QuickPhrase[]
+  localHarnesses: LocalHarnessPreference[]
 }
 
 export interface FriendlyTaskTitleModelConfig {
@@ -110,6 +116,7 @@ export interface AppPreferencesPatch {
   friendlyTaskTitlesEnabled?: boolean
   friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
   quickPhrases?: QuickPhrase[]
+  localHarnesses?: LocalHarnessPreference[]
 }
 
 export const defaultQuickPhrases: QuickPhrase[] = [
@@ -161,6 +168,7 @@ export const defaultAppPreferences: AppPreferences = {
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
   quickPhrases: defaultQuickPhrases,
+  localHarnesses: defaultLocalHarnessPreferences,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
@@ -301,6 +309,7 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .flatMap(item => normalizeQuickPhrase(item))
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
+    localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
   }
 }
 

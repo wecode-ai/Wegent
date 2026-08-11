@@ -116,6 +116,10 @@ where
             local_model_proxy::TOKEN_ROUTE,
             local_model_proxy::token_route(),
         )
+        .route(
+            local_model_proxy::HARNESS_MESSAGES_ROUTE,
+            local_model_proxy::harness_messages_route(),
+        )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
