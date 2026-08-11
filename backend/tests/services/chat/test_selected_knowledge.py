@@ -20,7 +20,7 @@ from app.services.chat.selected_knowledge import (
     build_selected_knowledge_refs,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
-from shared.models import ExecutionRequest
+from shared.models import ExecutionRequest, KnowledgeBaseScope
 
 
 class _Query:
@@ -208,12 +208,20 @@ def test_selected_dingtalk_docs_and_ai_table_keyword_skill_can_coexist() -> None
     assert "dingtalk-wikispace" not in request.preload_skills
 
 
-def test_apply_selected_knowledge_context_preserves_internal_folder_and_document_scope() -> (
-    None
-):
-    request = ExecutionRequest(knowledge_base_ids=[12, "invalid"])
+def test_chat_preserves_persisted_folder_and_document_scope() -> None:
+    request = ExecutionRequest(
+        knowledge_base_ids=[12, "invalid"],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=True,
+                document_ids=[9],
+            )
+        ],
+    )
     task = SimpleNamespace(
         json={
+            "metadata": {"labels": {"taskType": "chat"}},
             "spec": {
                 "knowledgeBaseScopes": [
                     {
@@ -225,7 +233,7 @@ def test_apply_selected_knowledge_context_preserves_internal_folder_and_document
                         "explicitDocumentIds": [9],
                     }
                 ]
-            }
+            },
         }
     )
 
@@ -244,6 +252,66 @@ def test_apply_selected_knowledge_context_preserves_internal_folder_and_document
         "接口约定",
     ]
     assert "folder and its descendants" in request.selected_knowledge_prompt
+
+
+def test_workbench_prefers_request_scope_over_whole_task_binding() -> None:
+    request = ExecutionRequest(
+        knowledge_base_ids=[12],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=True,
+                document_ids=[9],
+            )
+        ],
+    )
+    task = SimpleNamespace(
+        json={
+            "metadata": {"labels": {"taskType": "knowledge"}},
+            "spec": {
+                "knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}],
+            },
+        }
+    )
+
+    refs = build_selected_knowledge_refs(_KnowledgeMetadataDB(), request, task)
+
+    assert len(refs) == 1
+    assert [resource.scope_type for resource in refs[0].resources] == ["document"]
+    assert [resource.resource_id for resource in refs[0].resources] == ["9"]
+    assert [resource.resource_name for resource in refs[0].resources] == ["接口约定"]
+
+
+def test_workbench_request_whole_scope_replaces_persisted_scope() -> None:
+    request = ExecutionRequest(
+        knowledge_base_ids=[12],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=False,
+            )
+        ],
+    )
+    task = SimpleNamespace(
+        json={
+            "metadata": {"labels": {"taskType": "knowledge"}},
+            "spec": {
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 12,
+                        "name": "产品知识",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [9],
+                    }
+                ]
+            },
+        }
+    )
+
+    refs = build_selected_knowledge_refs(_KnowledgeMetadataDB(), request, task)
+
+    assert len(refs) == 1
+    assert refs[0].resources == ()
 
 
 @pytest.mark.parametrize("shell_type", ["Agno", "Dify", "Codex"])

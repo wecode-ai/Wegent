@@ -329,14 +329,19 @@ def _build_wegent_refs(
         for ref in spec.get("knowledgeBaseScopes") or []
         if isinstance(ref, dict) and ref.get("id") is not None
     }
+    prefer_request_scope = _is_knowledge_workbench_task(task_json)
 
     result: list[SelectedKnowledgeRef] = []
     for kb_id in sorted(selected_ids):
         scope = scope_refs.get(kb_id) or {}
         kb_name = str(scope.get("name") or kb_refs.get(kb_id, {}).get("name") or kb_id)
-        folder_ids = _int_values(scope.get("folderIds"))
-        document_ids = _int_values(scope.get("explicitDocumentIds"))
-        if not bool(scope.get("scopeRestricted")) or not (folder_ids or document_ids):
+        scope_restricted, folder_ids, document_ids = _resolve_wegent_scope(
+            request,
+            kb_id,
+            scope,
+            prefer_request_scope=prefer_request_scope,
+        )
+        if not scope_restricted or not (folder_ids or document_ids):
             result.append(
                 SelectedKnowledgeRef(
                     provider="wegent",
@@ -391,6 +396,38 @@ def _build_wegent_refs(
             )
         )
     return result
+
+
+def _resolve_wegent_scope(
+    request: "ExecutionRequest",
+    kb_id: int,
+    persisted_scope: dict[str, Any],
+    *,
+    prefer_request_scope: bool,
+) -> tuple[bool, list[int], list[int]]:
+    if prefer_request_scope:
+        for request_scope in request.knowledge_base_scopes or []:
+            if request_scope.knowledge_base_id != kb_id:
+                continue
+            return (
+                request_scope.scope_restricted,
+                [],
+                _int_values(request_scope.document_ids),
+            )
+
+    return (
+        bool(persisted_scope.get("scopeRestricted")),
+        _int_values(persisted_scope.get("folderIds")),
+        _int_values(persisted_scope.get("explicitDocumentIds")),
+    )
+
+
+def _is_knowledge_workbench_task(task_json: dict[str, Any]) -> bool:
+    metadata = task_json.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    labels = metadata.get("labels")
+    return isinstance(labels, dict) and labels.get("taskType") == "knowledge"
 
 
 def _build_external_refs(request: "ExecutionRequest") -> list[SelectedKnowledgeRef]:
