@@ -866,6 +866,16 @@ async function verifyMarketplacePluginLifecycle({
     control,
     'marketplace-plugins-06-composer-after-uninstall.png'
   )
+  // Leave chat with a closed picker so the official-plugin install segment does
+  // not inherit an open composer menu from this assertion.
+  if (composerAfterUninstall.testIds.includes('composer-plugin-picker')) {
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
+      'Closing the composer plugin picker after uninstall verification failed'
+    )
+  }
 }
 
 async function verifySkillMentionRendering({ control, fixture }) {
