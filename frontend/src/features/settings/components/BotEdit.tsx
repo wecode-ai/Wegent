@@ -51,7 +51,7 @@ import {
   getAllowedModelsFromConfig,
   AllowedModelRef,
 } from '@/features/settings/services/bots'
-import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
+import { modelApis, UnifiedModel, ModelTypeEnum, type ModelCategoryType } from '@/apis/models'
 import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
@@ -117,6 +117,8 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Model category allowed by the owning team's bind mode */
+  modelCategoryType?: ModelCategoryType
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -134,6 +136,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    modelCategoryType = 'llm',
   },
   ref
 ) => {
@@ -435,17 +438,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
         if (scope === 'public') {
           // For public scope, use public resource API
-          modelData = await publicResourceApis.getPublicModels(shellType, 'llm')
+          modelData = await publicResourceApis.getPublicModels(shellType, modelCategoryType)
         } else {
           // Use the new unified models API which includes type information
           // Pass scope and groupName to filter models based on current context
-          // Filter by 'llm' category type - only LLM models can be used for bots
           const response = await modelApis.getUnifiedModels(
             shellType,
             false,
             scope,
             groupName,
-            'llm'
+            modelCategoryType
           )
           modelData = response.data
         }
@@ -499,7 +501,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     }
 
     fetchModels()
-  }, [agentName, shells, toast, t, baseBot, scope, groupName])
+  }, [agentName, shells, toast, t, baseBot, scope, groupName, modelCategoryType])
 
   // Reset base form when switching editing object
   useEffect(() => {

@@ -112,6 +112,63 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('reconciles a provisional live turn with the canonical transcript turn', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-from-start-response',
+        clientUserMessageId: 'client-user-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Prompt'),
+          },
+          {
+            id: 'live-process',
+            type: 'block',
+            block: {
+              id: 'live-process',
+              subtaskId: 'turn-from-start-response',
+              type: 'text',
+              content: 'Working',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-from-transcript',
+        clientUserMessageId: 'client-user-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-1', 'Prompt'),
+              subtaskId: 'turn-from-transcript',
+              turnId: 'turn-from-transcript',
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'turn-from-transcript',
+      clientUserMessageId: 'client-user-1',
+      status: 'streaming',
+    })
+    expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'live-process'])
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [

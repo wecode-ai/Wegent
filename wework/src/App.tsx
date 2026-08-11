@@ -21,7 +21,6 @@ import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
-import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { AutomationsPage } from '@/pages/AutomationsPage'
 import { CloudWorkPage } from '@/pages/CloudWorkPage'
@@ -90,7 +89,7 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
-import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
+import { LocalManagementSection } from '@wecode/features/local-executor/LocalManagementSection'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -158,7 +157,8 @@ function telemetryFeatureForPath(path: string) {
   if (path === '/cloud-work') return 'cloud_work' as const
   if (path === '/sites') return 'sites' as const
   if (path === '/automations') return 'automations' as const
-  if (path === '/apps' || path.startsWith('/app/')) return 'apps' as const
+  if (path === '/local-management') return 'settings' as const
+  if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
   if (path.startsWith('/project-space')) return 'project_space' as const
   if (path === '/') return 'workbench' as const
@@ -193,7 +193,7 @@ function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations') return <AutomationsPage />
-  if (path === '/apps') return <AppsPage />
+  if (path === '/local-management') return <LocalManagementSection />
   return null
 }
 
@@ -452,7 +452,6 @@ function AppShell() {
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const tauriViewportSize = useTauriViewportSize(isTauri)
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
   const titlebarOverlaysContent = false
@@ -472,7 +471,6 @@ function AppShell() {
         sites: t('workbench.workspace_tab_sites', '站点与小程序'),
         automations: t('workbench.automation', '已安排'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
-        apps: t('workbench.workspace_tab_apps', '应用'),
       },
     }),
     [t]
@@ -669,7 +667,6 @@ function AppShell() {
     >
       <div
         data-testid="app-shell"
-        data-tauri-viewport-height={tauriViewportSize?.height}
         className={cn(
           isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
@@ -679,14 +676,6 @@ function AppShell() {
               : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
-        style={
-          tauriViewportSize
-            ? {
-                width: `${tauriViewportSize.width}px`,
-                height: `${tauriViewportSize.height}px`,
-              }
-            : undefined
-        }
       >
         {showChromeTitlebar && (
           <ChromeTitlebar

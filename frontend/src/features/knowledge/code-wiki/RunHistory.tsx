@@ -8,6 +8,16 @@ import { useCallback, useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatRelativeTime } from '@/utils/dateTime'
@@ -85,8 +95,18 @@ function RunRow({
   const when = formatRelativeTime(run.started_at, t)
   const reason = failureText(run.failure_code, run.error_message, t)
   const [working, setWorking] = useState(false)
+  // Restoring replaces every page readers currently see. Asked for twice because
+  // the pages it overwrites keep their document ids only for as long as they exist
+  // -- links held elsewhere to the current pages do not survive being replaced.
+  const [confirming, setConfirming] = useState(false)
+  // A reason is external text -- git's output, the agent's own message, a stack --
+  // and arrives at whatever length it happens to be. Clamped so one failed run
+  // cannot push the rest of the history out of a 320px popover, expandable because
+  // this panel is where someone goes precisely to read the whole thing.
+  const [reasonExpanded, setReasonExpanded] = useState(false)
 
   const republish = async () => {
+    setConfirming(false)
     setWorking(true)
     try {
       await codeWikiApi.republish(knowledgeBaseId, run.generation_id)
@@ -148,7 +168,7 @@ function RunRow({
         {canRepublish(run) && (
           <button
             type="button"
-            onClick={republish}
+            onClick={() => setConfirming(true)}
             disabled={working}
             title={t('codeWiki.history.republishHint')}
             data-testid={`code-wiki-republish-${run.generation_id}`}
@@ -161,13 +181,45 @@ function RunRow({
             {t('codeWiki.history.republish')}
           </button>
         )}
+        <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          <AlertDialogContent data-testid="code-wiki-republish-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('codeWiki.history.republishConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('codeWiki.history.republishConfirmBody')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={republish}
+                data-testid={`code-wiki-republish-confirm-${run.generation_id}`}
+              >
+                {t('codeWiki.history.republish')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {reason && (
-          <p
-            className="mt-0.5 break-words text-[11px] text-amber-500"
+          // A button because it does something. It was a <p> with a click handler,
+          // which reads the same but cannot be focused, so the only way to open a
+          // clamped reason was a mouse. Styled back down to look like the text it is.
+          <button
+            type="button"
+            aria-expanded={reasonExpanded}
+            className={`mt-0.5 block w-full cursor-pointer whitespace-pre-wrap break-words text-left text-[11px] text-amber-500 ${
+              reasonExpanded ? '' : 'line-clamp-3'
+            }`}
+            onClick={event => {
+              // Stops the click from reaching the row behind it.
+              event.stopPropagation()
+              setReasonExpanded(current => !current)
+            }}
+            title={reasonExpanded ? undefined : reason}
             data-testid="code-wiki-run-error"
           >
             {reason}
-          </p>
+          </button>
         )}
       </div>
     </li>

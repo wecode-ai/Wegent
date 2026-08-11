@@ -571,7 +571,9 @@ describe('InstalledResources', () => {
 
   it.each([
     { bindModes: ['chat', 'code'], expectedHref: '/chat?teamId=128' },
-    { bindModes: ['code'], expectedHref: '/chat?agent=code&teamId=128' },
+    { bindModes: ['code'], expectedHref: '/chat?teamId=128&agent=code' },
+    { bindModes: ['image'], expectedHref: '/chat?teamId=128&mode=image' },
+    { bindModes: ['video'], expectedHref: '/chat?teamId=128&mode=video' },
   ])('opens an installed agent in the expected mode', async ({ bindModes, expectedHref }) => {
     mockedListMyInstalls.mockResolvedValue({
       items: [
@@ -593,7 +595,9 @@ describe('InstalledResources', () => {
       within(primaryActions).getByTestId('installed-resource-actions-agent-21')
     ).toHaveAccessibleName('更多操作')
     expect(useButton).toHaveClass('h-11', 'w-full', 'md:h-8')
-    expect(useButton).toHaveTextContent(bindModes.length === 1 ? '去编码' : '去对话')
+    expect(useButton).toHaveTextContent(
+      bindModes.length === 1 && bindModes.includes('code') ? '去编码' : '去对话'
+    )
     expect(useButton.querySelector('svg')).toBeInTheDocument()
     expect(screen.queryByTestId('resource-listing-footer-92')).not.toBeInTheDocument()
     fireEvent.click(useButton)

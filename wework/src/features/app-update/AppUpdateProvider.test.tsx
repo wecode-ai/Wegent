@@ -11,10 +11,17 @@ import {
 } from './app-update-context'
 import { AppUpdateProvider } from './AppUpdateProvider'
 import { checkForWeworkUpdate, installPendingWeworkUpdate } from '@/lib/app-updater'
+import { APP_UPDATE_PENDING_RELEASE_NOTES_KEY } from './app-release-notes'
+
+const appVersionMock = vi.hoisted(() => ({ value: '0.1.0' }))
 
 vi.mock('@/lib/app-updater', () => ({
   checkForWeworkUpdate: vi.fn(),
   installPendingWeworkUpdate: vi.fn(),
+}))
+
+vi.mock('@/hooks/useAppVersion', () => ({
+  useAppVersion: () => appVersionMock.value,
 }))
 
 function enableTauri() {
@@ -34,6 +41,7 @@ describe('AppUpdateProvider', () => {
     vi.setSystemTime(new Date('2026-06-16T00:00:00Z'))
     localStorage.clear()
     enableTauri()
+    appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
   })
 
@@ -227,11 +235,107 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
   })
 
+  test('persists release notes before installing an available update', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+    vi.mocked(installPendingWeworkUpdate).mockResolvedValue()
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(JSON.parse(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY) ?? '{}')).toEqual({
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+  })
+
+  test('restores release notes after the installed version starts', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    appVersionMock.value = '0.2.0'
+    localStorage.setItem(
+      APP_UPDATE_PENDING_RELEASE_NOTES_KEY,
+      JSON.stringify({
+        version: '0.2.0',
+        body: '## Changes\n\n- Added release notes.',
+      })
+    )
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.installedReleaseNotes).toEqual({
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+
+    act(() => {
+      appUpdate?.dismissInstalledReleaseNotes()
+    })
+
+    expect(appUpdate?.installedReleaseNotes).toBeNull()
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+  })
+
+  test('discards release notes that do not match the running version', async () => {
+    appVersionMock.value = '0.1.0'
+    localStorage.setItem(
+      APP_UPDATE_PENDING_RELEASE_NOTES_KEY,
+      JSON.stringify({
+        version: '0.2.0',
+        body: '## Changes',
+      })
+    )
+
+    render(
+      <AppUpdateProvider>
+        <div />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+  })
+
   test('refreshes a failed update so installation can be retried without restarting', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     const update = {
       currentVersion: '0.0.18',
       version: '0.0.19',
+      body: '## Changes\n\n- Fixed update retries.',
     }
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(update)
     vi.mocked(installPendingWeworkUpdate)
@@ -259,6 +363,7 @@ describe('AppUpdateProvider', () => {
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
     expect(appUpdate?.status).toBe('available')
     expect(appUpdate?.error).toBe('The signature verification failed')
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
 
     await act(async () => {
       await appUpdate?.installUpdate()
@@ -294,5 +399,6 @@ describe('AppUpdateProvider', () => {
 
     expect(appUpdate?.availableUpdate).toBeNull()
     expect(appUpdate?.status).toBe('upToDate')
+    expect(appUpdate?.installedReleaseNotes?.body).toContain('changelog announcement')
   })
 })

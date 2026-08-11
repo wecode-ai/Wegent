@@ -7,6 +7,7 @@ import type { TaskType } from '@/types/api'
 import {
   getDefaultSimpleBindMode,
   getCustomShells,
+  getModelCategoryTypeForBindMode,
   getSimpleBindModeOptions,
   getSimpleExecutorOptions,
   normalizeExecutorForBindMode,
@@ -78,6 +79,13 @@ describe('simple team edit utils', () => {
       'video',
       'image',
     ])
+  })
+
+  it('maps single generation bind modes to their model categories', () => {
+    expect(getModelCategoryTypeForBindMode(['image'])).toBe('image')
+    expect(getModelCategoryTypeForBindMode(['video'])).toBe('video')
+    expect(getModelCategoryTypeForBindMode(['chat'])).toBe('llm')
+    expect(getModelCategoryTypeForBindMode(['image', 'video'])).toBe('llm')
   })
 
   it('exposes simple, complex, and custom executor presets', () => {

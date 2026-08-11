@@ -9,6 +9,7 @@ import {
   readLastProjectId,
   removeRuntimeTasks,
   truncateRuntimeTaskTitle,
+  updateRuntimeWorkTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import type { RuntimeWorkListResponse } from '@/types/api'
@@ -154,6 +155,43 @@ describe('workbenchRuntimeHelpers', () => {
         },
       ]).totalTasks
     ).toBe(0)
+  })
+
+  test('updates a runtime task title through its remote host identity', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          remoteHostId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          available: true,
+          tasks: [
+            {
+              taskId: 'runtime-a',
+              workspacePath: '/workspace/project-alpha',
+              title: '解决冲突',
+              runtime: 'codex',
+            },
+            {
+              taskId: 'runtime-b',
+              workspacePath: '/workspace/project-alpha',
+              title: '未修改',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+
+    const updated = updateRuntimeWorkTaskTitle(
+      runtimeWork,
+      { deviceId: 'device-1', taskId: 'runtime-a' },
+      '解决分支冲突'
+    )
+
+    expect(updated?.chats[0]?.tasks.map(task => task.title)).toEqual(['解决分支冲突', '未修改'])
   })
 
   test('stores the last project per user and ignores invalid values', () => {

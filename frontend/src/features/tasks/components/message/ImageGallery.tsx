@@ -8,23 +8,24 @@
  * A component for displaying generated images in a grid layout.
  * Features:
  * - Grid display of images
- * - Hover actions (download, expand)
- * - Lightbox preview with click
+ * - Hover actions (download and use as reference)
+ * - Lightbox preview with keyboard navigation
  * - Touch-friendly for mobile (44px minimum touch targets)
  */
 
 'use client'
 
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Image from 'next/image'
-import { Download, X, ChevronLeft, ChevronRight, ImagePlus, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, ImagePlus, Loader2, X } from 'lucide-react'
+
 import { downloadAttachment } from '@/apis/attachments'
 import { useShareToken } from '@/contexts/ShareTokenContext'
+import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 
 export interface ImageItem {
   url: string
@@ -40,13 +41,13 @@ export interface ImageGalleryProps {
   onUseAsReference?: (item: ImageItem) => void
 }
 
-interface GalleryThumbnailProps {
+interface GalleryImageProps {
   image: ImageItem
   index: number
-  onLoad: (index: number, image: HTMLImageElement) => void
+  onLoad: (image: HTMLImageElement) => void
 }
 
-function GalleryThumbnail({ image, index, onLoad }: GalleryThumbnailProps) {
+function GalleryImage({ image, index, onLoad }: GalleryImageProps) {
   const { t } = useTranslation('chat')
   const { shareToken } = useShareToken()
   const hasAttachment = typeof image.attachmentId === 'number'
@@ -73,10 +74,33 @@ function GalleryThumbnail({ image, index, onLoad }: GalleryThumbnailProps) {
       sizes="220px"
       className="object-cover transition-transform duration-200 group-hover:scale-105"
       unoptimized
-      ref={element => {
-        if (element?.complete) onLoad(index, element)
-      }}
-      onLoad={event => onLoad(index, event.currentTarget)}
+      onLoad={event => onLoad(event.currentTarget)}
+    />
+  )
+}
+
+function LightboxImage({ image, index }: { image: ImageItem; index: number }) {
+  const { t } = useTranslation('chat')
+  const { shareToken } = useShareToken()
+  const hasAttachment = typeof image.attachmentId === 'number'
+  const { blobUrl, isLoading } = useAttachmentImage(
+    image.attachmentId ?? 0,
+    hasAttachment,
+    shareToken
+  )
+  const displayUrl = hasAttachment ? blobUrl : image.url
+
+  if (!displayUrl) {
+    return isLoading ? <Loader2 className="h-8 w-8 animate-spin text-white" /> : null
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={displayUrl}
+      alt={`${t('image.generated_image', 'Generated image')} ${index + 1}`}
+      className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+      onClick={event => event.stopPropagation()}
     />
   )
 }
@@ -93,14 +117,6 @@ export function ImageGallery({
   const [naturalSizes, setNaturalSizes] = useState<Record<number, string>>({})
   const lightboxRef = useRef<HTMLDivElement>(null)
   const thumbnailRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const selectedImage = selectedIndex === null ? null : images[selectedIndex]
-  const selectedHasAttachment = typeof selectedImage?.attachmentId === 'number'
-  const { blobUrl: selectedBlobUrl, isLoading: isSelectedImageLoading } = useAttachmentImage(
-    selectedImage?.attachmentId ?? 0,
-    selectedHasAttachment,
-    shareToken
-  )
-  const selectedDisplayUrl = selectedHasAttachment ? selectedBlobUrl : selectedImage?.url
 
   const recordNaturalSize = useCallback((index: number, image: HTMLImageElement) => {
     const { naturalWidth, naturalHeight } = image
@@ -112,10 +128,9 @@ export function ImageGallery({
     )
   }, [])
 
-  // Handle image download
   const handleDownload = useCallback(
-    async (image: ImageItem, index: number, e?: React.MouseEvent) => {
-      e?.stopPropagation()
+    async (image: ImageItem, index: number, event?: React.MouseEvent) => {
+      event?.stopPropagation()
 
       try {
         if (typeof image.attachmentId === 'number') {
@@ -144,10 +159,9 @@ export function ImageGallery({
     [shareToken]
   )
 
-  // Navigate to previous image in lightbox
   const handlePrevious = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
+    (event: React.MouseEvent) => {
+      event.stopPropagation()
       if (selectedIndex !== null && selectedIndex > 0) {
         setSelectedIndex(selectedIndex - 1)
       }
@@ -155,15 +169,14 @@ export function ImageGallery({
     [selectedIndex]
   )
 
-  // Navigate to next image in lightbox
   const handleNext = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
+    (event: React.MouseEvent) => {
+      event.stopPropagation()
       if (selectedIndex !== null && selectedIndex < images.length - 1) {
         setSelectedIndex(selectedIndex + 1)
       }
     },
-    [selectedIndex, images.length]
+    [images.length, selectedIndex]
   )
 
   useEffect(() => {
@@ -174,37 +187,31 @@ export function ImageGallery({
     document.body.style.overflow = 'hidden'
     lightboxRef.current?.focus()
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (selectedIndex === null) return
-
-      if (e.key === 'Tab' && lightboxRef.current) {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Tab' && lightboxRef.current) {
         const focusable = Array.from(
           lightboxRef.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
         )
         if (focusable.length > 0) {
           const first = focusable[0]
           const last = focusable[focusable.length - 1]
-          if (e.shiftKey && document.activeElement === first) {
-            e.preventDefault()
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault()
             last.focus()
-          } else if (!e.shiftKey && document.activeElement === last) {
-            e.preventDefault()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
             first.focus()
           }
         }
         return
       }
 
-      switch (e.key) {
+      switch (event.key) {
         case 'ArrowLeft':
-          if (selectedIndex > 0) {
-            setSelectedIndex(selectedIndex - 1)
-          }
+          if (selectedIndex > 0) setSelectedIndex(selectedIndex - 1)
           break
         case 'ArrowRight':
-          if (selectedIndex < images.length - 1) {
-            setSelectedIndex(selectedIndex + 1)
-          }
+          if (selectedIndex < images.length - 1) setSelectedIndex(selectedIndex + 1)
           break
         case 'Escape':
           setSelectedIndex(null)
@@ -218,7 +225,7 @@ export function ImageGallery({
       document.body.style.overflow = previousOverflow
       trigger?.focus()
     }
-  }, [selectedIndex, images.length])
+  }, [images.length, selectedIndex])
 
   if (!images || images.length === 0) {
     return null
@@ -226,7 +233,6 @@ export function ImageGallery({
 
   return (
     <>
-      {/* Image Grid */}
       <div className={cn('flex flex-wrap gap-2', className)}>
         {images.map((image, index) => {
           const declaredSize = image.size || imageSize
@@ -254,20 +260,22 @@ export function ImageGallery({
                 aria-label={`${t('image.lightbox', 'Image preview')} ${index + 1}`}
                 data-testid={`generated-image-open-${index}`}
               >
-                <GalleryThumbnail image={image} index={index} onLoad={recordNaturalSize} />
+                <GalleryImage
+                  image={image}
+                  index={index}
+                  onLoad={loadedImage => recordNaturalSize(index, loadedImage)}
+                />
               </button>
 
-              {/* Actions */}
-              <div className="absolute top-2 right-2 flex items-center overflow-hidden rounded-lg bg-black/55 backdrop-blur-md shadow-sm opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
-                {/* Use as reference button (shown only when callback provided) */}
+              <div className="absolute top-2 right-2 flex items-center overflow-hidden rounded-lg bg-black/55 opacity-100 shadow-sm backdrop-blur-md transition-opacity duration-200 sm:opacity-0 sm:group-hover:opacity-100">
                 {onUseAsReference && typeof image.attachmentId === 'number' && (
                   <button
                     type="button"
-                    onClick={e => {
-                      e.stopPropagation()
+                    onClick={event => {
+                      event.stopPropagation()
                       onUseAsReference(image)
                     }}
-                    className="h-11 w-11 sm:h-8 sm:w-8 flex items-center justify-center border-r border-white/20 hover:bg-white/15 transition-colors"
+                    className="flex h-11 w-11 items-center justify-center border-r border-white/20 transition-colors hover:bg-white/15 sm:h-8 sm:w-8"
                     title={t('image.use_as_reference', 'Use as reference')}
                     data-testid={`generated-image-reference-${index}`}
                   >
@@ -277,8 +285,8 @@ export function ImageGallery({
 
                 <button
                   type="button"
-                  onClick={e => handleDownload(image, index, e)}
-                  className="h-11 w-11 sm:h-8 sm:w-8 flex items-center justify-center hover:bg-white/15 transition-colors"
+                  onClick={event => handleDownload(image, index, event)}
+                  className="flex h-11 w-11 items-center justify-center transition-colors hover:bg-white/15 sm:h-8 sm:w-8"
                   title={t('image.download', 'Download image')}
                   data-testid={`generated-image-download-${index}`}
                 >
@@ -286,9 +294,8 @@ export function ImageGallery({
                 </button>
               </div>
 
-              {/* Image size badge (if available) */}
               {image.size && (
-                <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/60 text-white text-xs">
+                <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-xs text-white">
                   {image.size}
                 </div>
               )}
@@ -297,14 +304,12 @@ export function ImageGallery({
         })}
       </div>
 
-      {/* Lightbox Modal */}
       {selectedIndex !== null &&
-        selectedImage &&
         typeof document !== 'undefined' &&
         createPortal(
           <div
             ref={lightboxRef}
-            className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
             onClick={() => setSelectedIndex(null)}
             role="dialog"
             aria-modal="true"
@@ -312,10 +317,9 @@ export function ImageGallery({
             tabIndex={-1}
             data-testid="generated-image-lightbox"
           >
-            {/* Close button - 44px touch target */}
             <button
               type="button"
-              className="absolute top-4 right-4 h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors z-10"
+              className="absolute top-4 right-4 z-10 flex h-11 w-11 min-w-[44px] items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30"
               onClick={() => setSelectedIndex(null)}
               title={t('common:actions.close', 'Close')}
               data-testid="generated-image-lightbox-close"
@@ -323,22 +327,20 @@ export function ImageGallery({
               <X className="h-6 w-6 text-white" />
             </button>
 
-            {/* Download button in lightbox - 44px touch target */}
             <button
               type="button"
-              className="absolute top-4 right-20 h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors z-10"
-              onClick={e => handleDownload(selectedImage, selectedIndex, e)}
+              className="absolute top-4 right-20 z-10 flex h-11 w-11 min-w-[44px] items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30"
+              onClick={event => handleDownload(images[selectedIndex], selectedIndex, event)}
               title={t('image.download', 'Download image')}
               data-testid="generated-image-lightbox-download"
             >
               <Download className="h-6 w-6 text-white" />
             </button>
 
-            {/* Previous button - 44px touch target */}
             {selectedIndex > 0 && (
               <button
                 type="button"
-                className="absolute left-4 top-1/2 -translate-y-1/2 h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors z-10"
+                className="absolute top-1/2 left-4 z-10 flex h-11 w-11 min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30"
                 onClick={handlePrevious}
                 title={t('common:common.previous', 'Previous')}
                 data-testid="generated-image-lightbox-previous"
@@ -347,11 +349,10 @@ export function ImageGallery({
               </button>
             )}
 
-            {/* Next button - 44px touch target */}
             {selectedIndex < images.length - 1 && (
               <button
                 type="button"
-                className="absolute right-4 top-1/2 -translate-y-1/2 h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors z-10"
+                className="absolute top-1/2 right-4 z-10 flex h-11 w-11 min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30"
                 onClick={handleNext}
                 title={t('common:common.next', 'Next')}
                 data-testid="generated-image-lightbox-next"
@@ -360,22 +361,10 @@ export function ImageGallery({
               </button>
             )}
 
-            {/* Main image in lightbox - using regular img for full-size preview */}
-            {selectedDisplayUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={selectedDisplayUrl}
-                alt={`${t('image.generated_image', 'Generated image')} ${selectedIndex + 1}`}
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                onClick={e => e.stopPropagation()}
-              />
-            ) : isSelectedImageLoading ? (
-              <Loader2 className="h-8 w-8 animate-spin text-white" />
-            ) : null}
+            <LightboxImage image={images[selectedIndex]} index={selectedIndex} />
 
-            {/* Image counter */}
             {images.length > 1 && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/60 text-white text-sm">
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-2 text-sm text-white">
                 {selectedIndex + 1} / {images.length}
               </div>
             )}

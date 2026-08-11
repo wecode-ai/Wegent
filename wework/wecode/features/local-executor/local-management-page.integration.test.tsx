@@ -159,7 +159,12 @@ vi.mock('@tauri-apps/api/window', () => ({
     toggleMaximize: vi.fn(),
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
+    innerSize: vi.fn().mockResolvedValue({
+      toLogical: () => ({ width: 1280, height: 720 }),
+    }),
+    scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
+    onScaleChanged: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
 
@@ -202,6 +207,20 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
+vi.mock('@/features/workbench/useWorkbench', () => ({
+  useWorkbench: () => ({
+    state: {
+      devices: [
+        {
+          device_id: 'macbook-pro',
+          status: 'online',
+          device_type: 'local',
+        },
+      ],
+    },
+  }),
+}))
+
 vi.mock('@/features/appshots/AppshotBridge', () => ({
   AppshotBridge: () => null,
 }))
@@ -225,7 +244,7 @@ vi.mock('@wecode/features/local-executor/LocalExecutorStartupIndicator', () => (
         type="button"
         data-testid="local-startup-open-management-button"
         onClick={() => {
-          window.history.pushState({}, '', '/apps?section=local-management')
+          window.history.pushState({}, '', '/local-management')
           window.dispatchEvent(new PopStateEvent('popstate'))
         }}
       >
@@ -243,8 +262,6 @@ function enableTauri() {
 }
 
 async function openLocalManagement() {
-  expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
-  await userEvent.click(screen.getByTestId('apps-nav-local-management'))
   return screen.findByTestId('local-management-page')
 }
 
@@ -327,7 +344,7 @@ describe('local executor management page', () => {
   })
 
   test('shows the basic local management controls', async () => {
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -354,7 +371,7 @@ describe('local executor management page', () => {
   })
 
   test('unlocks local management advanced settings after five title clicks', async () => {
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -379,7 +396,7 @@ describe('local executor management page', () => {
   test('resets the title click sequence after three seconds', async () => {
     let currentTime = 1_000
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentTime)
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -405,7 +422,7 @@ describe('local executor management page', () => {
 
   test('restores persisted advanced settings without showing the unlock toast', async () => {
     localStorage.setItem('wework.localManagement.advancedSettingsEnabled', 'true')
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -423,7 +440,7 @@ describe('local executor management page', () => {
 
   test('switches the primary executor action to restart when running', async () => {
     tauriState.executorRunning = true
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -439,7 +456,7 @@ describe('local executor management page', () => {
 
   test('shows the active executor action animation while a command is running', async () => {
     tauriState.actionPending = true
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -463,7 +480,7 @@ describe('local executor management page', () => {
   })
 
   test('streams executor command output in the quick actions terminal', async () => {
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -479,7 +496,7 @@ describe('local executor management page', () => {
 
   test('offers automatic WeCode CLI installation when CLI is missing', async () => {
     tauriState.cliAvailable = false
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -494,7 +511,7 @@ describe('local executor management page', () => {
 
   test('reuses cached local executor auth token when starting', async () => {
     tauriState.cachedAuthToken = 'cached-executor-api-key'
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()
@@ -510,7 +527,7 @@ describe('local executor management page', () => {
   })
 
   test('opens local management from the startup indicator', async () => {
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/app/wegent')
 
     render(<App />)
 
@@ -518,13 +535,13 @@ describe('local executor management page', () => {
     expect(indicator).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('local-startup-open-management-button'))
 
-    await waitFor(() => expect(window.location.search).toBe('?section=local-management'))
+    await waitFor(() => expect(window.location.pathname).toBe('/local-management'))
     expect(await screen.findByTestId('local-management-page')).toBeInTheDocument()
   })
 
   test('shows four environment variables without clipping and autosaves edits', async () => {
     localStorage.setItem('wework.localManagement.advancedSettingsEnabled', 'true')
-    window.history.pushState({}, '', '/apps')
+    window.history.pushState({}, '', '/local-management')
 
     render(<App />)
     await openLocalManagement()

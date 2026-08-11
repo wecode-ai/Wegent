@@ -869,13 +869,45 @@ fn convert_responses_input_items(
         _ => return Ok(input.clone()),
     };
 
-    let mut call_id_to_identity: HashMap<String, ToolIdentity> = HashMap::new();
+    let call_id_to_identity = responses_call_identities(items, context);
+
+    let mut converted = Vec::new();
+    let mut pending_tool_image_content = Vec::new();
+    for item in items {
+        let item_type = item.get("type").and_then(Value::as_str);
+        if !is_tool_output_item(item_type) {
+            flush_tool_image_content_to_responses(&mut converted, &mut pending_tool_image_content);
+        }
+        let mut converted_item = convert_responses_input_item(
+            item,
+            context,
+            &call_id_to_identity,
+            convert_custom_tools,
+            bridge_tool_search,
+            bridge_namespace_tools,
+        )?;
+        move_responses_tool_output_images(
+            item,
+            &mut converted_item,
+            &call_id_to_identity,
+            &mut pending_tool_image_content,
+        );
+        converted.push(converted_item);
+    }
+    flush_tool_image_content_to_responses(&mut converted, &mut pending_tool_image_content);
+    Ok(Value::Array(converted))
+}
+
+fn responses_call_identities(
+    items: &[Value],
+    context: &ToolContext,
+) -> HashMap<String, ToolIdentity> {
+    let mut identities = HashMap::new();
     for item in items {
         let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
             continue;
         };
-        let item_type = item.get("type").and_then(Value::as_str);
-        let (namespace, name) = match item_type {
+        let (namespace, name) = match item.get("type").and_then(Value::as_str) {
             Some("tool_search_call") => (None, TOOL_SEARCH_NAME),
             Some("custom_tool_call") | Some("function_call") => (
                 item.get("namespace").and_then(Value::as_str),
@@ -883,26 +915,53 @@ fn convert_responses_input_items(
             ),
             _ => continue,
         };
-        let Some(wire_name) = context.wire_name(namespace, name) else {
+        let Some(identity) = context
+            .wire_name(namespace, name)
+            .and_then(|wire_name| context.identity(wire_name))
+        else {
             continue;
         };
-        if let Some(identity) = context.identity(wire_name) {
-            call_id_to_identity.insert(call_id.to_owned(), identity.clone());
-        }
+        identities.insert(call_id.to_owned(), identity.clone());
     }
+    identities
+}
 
-    let mut converted = Vec::new();
-    for item in items {
-        converted.push(convert_responses_input_item(
-            item,
-            context,
-            &call_id_to_identity,
-            convert_custom_tools,
-            bridge_tool_search,
-            bridge_namespace_tools,
-        )?);
+fn move_responses_tool_output_images(
+    item: &Value,
+    converted_item: &mut Value,
+    call_id_to_identity: &HashMap<String, ToolIdentity>,
+    pending_tool_image_content: &mut Vec<Value>,
+) {
+    if !matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("function_call_output") | Some("custom_tool_call_output")
+    ) {
+        return;
     }
-    Ok(Value::Array(converted))
+    let mut output = item
+        .get("output")
+        .map(split_tool_output)
+        .unwrap_or_default();
+    if output.images.is_empty() {
+        return;
+    }
+    let tool_name = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .and_then(|call_id| call_id_to_identity.get(call_id))
+        .map(|identity| identity.name.as_str());
+    append_tool_image_content(pending_tool_image_content, tool_name, output.images);
+    if output.text.is_empty() {
+        output.text = tool_image_output_notice().to_owned();
+    }
+    converted_item["output"] = Value::String(output.text);
+}
+
+fn is_tool_output_item(item_type: Option<&str>) -> bool {
+    matches!(
+        item_type,
+        Some("function_call_output") | Some("custom_tool_call_output") | Some("tool_search_output")
+    )
 }
 
 fn convert_responses_input_item(
@@ -928,6 +987,7 @@ fn convert_responses_input_item(
             );
             converted["arguments"] = Value::String(json_string(item.get("arguments")));
             if let Some(object) = converted.as_object_mut() {
+                object.remove("id");
                 object.remove("execution");
             }
             Ok(converted)
@@ -967,6 +1027,7 @@ fn convert_responses_input_item(
                 .map_err(|error| error.to_string())?,
             );
             if let Some(object) = converted.as_object_mut() {
+                object.remove("id");
                 object.remove("execution");
                 object.remove("tools");
             }
@@ -1031,9 +1092,16 @@ fn append_input(
     let mut pending_calls = Vec::new();
     let mut pending_reasoning = String::new();
     let mut call_names = BTreeMap::new();
+    let mut pending_tool_image_content = Vec::new();
     let mut last_assistant_index = None;
 
     for item in items {
+        let item_type = item.get("type").and_then(Value::as_str);
+        if !is_tool_output_item(item_type)
+            && flush_tool_image_content_to_chat(messages, &mut pending_tool_image_content)
+        {
+            last_assistant_index = None;
+        }
         match item.get("type").and_then(Value::as_str) {
             Some("reasoning") => {
                 append_text(&mut pending_reasoning, &reasoning_text(item));
@@ -1082,25 +1150,12 @@ fn append_input(
                 {
                     last_assistant_index = Some(index);
                 }
-                let call_id = item
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let output =
-                    if item.get("type").and_then(Value::as_str) == Some("tool_search_output") {
-                        serde_json::to_string(&json!({
-                            "tools": item.get("tools").cloned().unwrap_or_else(|| json!([]))
-                        }))
-                        .unwrap_or_else(|_| "{\"tools\":[]}".to_owned())
-                    } else {
-                        item.get("output").map(tool_output_text).unwrap_or_default()
-                    };
-                let output = if call_names.get(call_id).map(String::as_str) == Some("apply_patch") {
-                    friendly_apply_patch_output(&output)
-                } else {
-                    output
-                };
-                messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
+                append_chat_tool_output(
+                    item,
+                    &call_names,
+                    messages,
+                    &mut pending_tool_image_content,
+                );
             }
             _ => {
                 if let Some(index) =
@@ -1148,12 +1203,52 @@ fn append_input(
     if let Some(index) = flush_calls(messages, &mut pending_calls, &mut pending_reasoning) {
         last_assistant_index = Some(index);
     }
+    if flush_tool_image_content_to_chat(messages, &mut pending_tool_image_content) {
+        last_assistant_index = None;
+    }
     attach_pending_reasoning_to_previous_assistant(
         messages,
         last_assistant_index,
         &mut pending_reasoning,
     );
     Ok(())
+}
+
+fn append_chat_tool_output(
+    item: &Value,
+    call_names: &BTreeMap<String, String>,
+    messages: &mut Vec<Value>,
+    pending_tool_image_content: &mut Vec<Value>,
+) {
+    let call_id = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut output = if item.get("type").and_then(Value::as_str) == Some("tool_search_output") {
+        ToolOutput {
+            text: serde_json::to_string(&json!({
+                "tools": item.get("tools").cloned().unwrap_or_else(|| json!([]))
+            }))
+            .unwrap_or_else(|_| "{\"tools\":[]}".to_owned()),
+            images: Vec::new(),
+        }
+    } else {
+        item.get("output")
+            .map(split_tool_output)
+            .unwrap_or_default()
+    };
+    let tool_name = call_names.get(call_id).map(String::as_str);
+    if tool_name == Some("apply_patch") {
+        output.text = friendly_apply_patch_output(&output.text);
+    }
+    let has_images = !output.images.is_empty();
+    if has_images {
+        append_tool_image_content(pending_tool_image_content, tool_name, output.images);
+    }
+    if has_images && output.text.is_empty() {
+        output.text = tool_image_output_notice().to_owned();
+    }
+    messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output.text}));
 }
 
 pub(super) fn friendly_apply_patch_output(output: &str) -> String {
@@ -1354,15 +1449,94 @@ fn text_value(value: &Value) -> String {
     }
 }
 
-fn tool_output_text(value: &Value) -> String {
+#[derive(Debug, Default)]
+struct ToolOutput {
+    text: String,
+    images: Vec<Value>,
+}
+
+fn split_tool_output(value: &Value) -> ToolOutput {
     let structured_content = value
         .get("structuredContent")
         .or_else(|| value.get("structured_content"))
         .filter(|value| !value.is_null());
-    if let Some(structured_content) = structured_content {
-        return json_string(Some(structured_content));
+    let content = value
+        .as_array()
+        .or_else(|| value.get("content").and_then(Value::as_array));
+    let images = content
+        .into_iter()
+        .flatten()
+        .filter(|part| is_tool_output_image(part))
+        .cloned()
+        .collect::<Vec<_>>();
+    let text = if let Some(structured_content) = structured_content {
+        json_string(Some(structured_content))
+    } else if let Some(content) = content {
+        content
+            .iter()
+            .filter(|part| !is_tool_output_image(part))
+            .map(text_value)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        text_value(value)
+    };
+    ToolOutput { text, images }
+}
+
+fn is_tool_output_image(part: &Value) -> bool {
+    if part.get("type").and_then(Value::as_str) != Some("input_image") {
+        return false;
     }
-    text_value(value)
+    part.get("image_url").is_some_and(|image_url| {
+        image_url
+            .as_str()
+            .or_else(|| image_url.get("url").and_then(Value::as_str))
+            .is_some_and(|url| !url.is_empty())
+    })
+}
+
+fn tool_image_output_notice() -> &'static str {
+    "[Image output attached in the following user message.]"
+}
+
+fn append_tool_image_content(
+    pending_content: &mut Vec<Value>,
+    tool_name: Option<&str>,
+    images: Vec<Value>,
+) {
+    let label = tool_name
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("Image output from tool {name}:"))
+        .unwrap_or_else(|| "Image output from tool:".to_owned());
+    pending_content.push(json!({"type": "input_text", "text": label}));
+    pending_content.extend(images);
+}
+
+fn flush_tool_image_content_to_chat(
+    messages: &mut Vec<Value>,
+    pending_content: &mut Vec<Value>,
+) -> bool {
+    if pending_content.is_empty() {
+        return false;
+    }
+    let content = chat_content(&Value::Array(std::mem::take(pending_content)));
+    messages.push(json!({
+        "role": "user",
+        "content": content
+    }));
+    true
+}
+
+fn flush_tool_image_content_to_responses(input: &mut Vec<Value>, pending_content: &mut Vec<Value>) {
+    if !pending_content.is_empty() {
+        input.push(json!({
+            "type": "message",
+            "role": "user",
+            "content": std::mem::take(pending_content)
+        }));
+    }
 }
 
 fn json_string(value: Option<&Value>) -> String {
@@ -2729,6 +2903,121 @@ mod tests {
     }
 
     #[test]
+    fn moves_tool_output_images_to_a_multimodal_user_message() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {"type": "function_call", "call_id": "image_1", "name": "view_image", "arguments": "{}"},
+                {"type": "function_call", "call_id": "text_1", "name": "exec_command", "arguments": "{}"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "image_1",
+                    "output": [{
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,aGVsbG8="
+                    }]
+                },
+                {"type": "function_call_output", "call_id": "text_1", "output": "done"}
+            ],
+            "tools": [
+                {"type": "function", "name": "view_image", "parameters": {"type": "object"}},
+                {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}
+            ]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "image_1");
+        assert_eq!(
+            messages[1]["content"],
+            "[Image output attached in the following user message.]"
+        );
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "text_1");
+        assert_eq!(messages[2]["content"], "done");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(
+            messages[3]["content"][0]["text"],
+            "Image output from tool view_image:"
+        );
+        assert_eq!(messages[3]["content"][1]["type"], "image_url");
+        assert_eq!(
+            messages[3]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,aGVsbG8="
+        );
+        assert!(!messages[1]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("aGVsbG8=")));
+    }
+
+    #[test]
+    fn converts_user_input_images_to_chat_image_parts() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this image"},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,dXNlci1pbWFnZQ=="
+                    }
+                ]
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(converted["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(converted["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            converted["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,dXNlci1pbWFnZQ=="
+        );
+    }
+
+    #[test]
+    fn preserves_tool_text_and_structured_content_while_extracting_images() {
+        let mixed = split_tool_output(&json!([
+            {"type": "text", "text": "Rendered preview"},
+            {"type": "input_image", "image_url": "data:image/png;base64,bWl4ZWQ="}
+        ]));
+        assert_eq!(mixed.text, "Rendered preview");
+        assert_eq!(mixed.images.len(), 1);
+
+        let structured = split_tool_output(&json!({
+            "content": [
+                {"type": "text", "text": "Human-readable fallback"},
+                {"type": "input_image", "image_url": "data:image/jpeg;base64,cHJldmlldw=="}
+            ],
+            "structuredContent": {
+                "width": 1280,
+                "business_value": {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,bm90LWEtYmxvY2s="
+                }
+            }
+        }));
+        assert_eq!(
+            structured.text,
+            "{\"business_value\":{\"image_url\":\"data:image/png;base64,bm90LWEtYmxvY2s=\",\"type\":\"input_image\"},\"width\":1280}"
+        );
+        assert_eq!(structured.images.len(), 1);
+        assert_eq!(
+            structured.images[0]["image_url"],
+            "data:image/jpeg;base64,cHJldmlldw=="
+        );
+
+        let malformed = split_tool_output(&json!([{"type": "input_image"}]));
+        assert_eq!(malformed.text, "{\"type\":\"input_image\"}");
+        assert!(malformed.images.is_empty());
+    }
+
+    #[test]
     fn keeps_assistant_text_and_tool_calls_in_one_chat_message() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -3803,6 +4092,63 @@ mod tests {
     }
 
     #[test]
+    fn responses_to_responses_moves_tool_images_after_all_tool_results() {
+        let input = json!({
+            "model": "wework-gpt-5.6-sol",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,dXNlci1pbWFnZQ=="
+                    }]
+                },
+                {"type": "function_call", "call_id": "image_1", "name": "view_image", "arguments": "{}"},
+                {"type": "function_call", "call_id": "text_1", "name": "exec_command", "arguments": "{}"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "image_1",
+                    "output": [{
+                        "type": "input_image",
+                        "image_url": "data:image/jpeg;base64,dG9vbC1pbWFnZQ=="
+                    }]
+                },
+                {"type": "function_call_output", "call_id": "text_1", "output": "done"}
+            ],
+            "tools": [
+                {"type": "function", "name": "view_image", "parameters": {"type": "object"}},
+                {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}
+            ]
+        });
+
+        let (converted, _) =
+            responses_to_responses(&input, false, true, true).expect("request should convert");
+        let converted_input = converted["input"].as_array().expect("input");
+
+        assert_eq!(converted_input.len(), 6);
+        assert_eq!(
+            converted_input[0]["content"][0]["image_url"],
+            "data:image/png;base64,dXNlci1pbWFnZQ=="
+        );
+        assert_eq!(converted_input[3]["type"], "function_call_output");
+        assert_eq!(converted_input[3]["output"], tool_image_output_notice());
+        assert_eq!(converted_input[4]["type"], "function_call_output");
+        assert_eq!(converted_input[4]["output"], "done");
+        assert_eq!(converted_input[5]["role"], "user");
+        assert_eq!(converted_input[5]["content"][0]["type"], "input_text");
+        assert_eq!(
+            converted_input[5]["content"][0]["text"],
+            "Image output from tool view_image:"
+        );
+        assert_eq!(converted_input[5]["content"][1]["type"], "input_image");
+        assert_eq!(
+            converted_input[5]["content"][1]["image_url"],
+            "data:image/jpeg;base64,dG9vbC1pbWFnZQ=="
+        );
+    }
+
+    #[test]
     fn responses_to_responses_bridges_tool_search_and_loaded_app_tools() {
         let input = json!({
             "model": "third-party-responses-model",
@@ -3810,12 +4156,14 @@ mod tests {
                 {"role": "user", "content": "Create an issue"},
                 {
                     "type": "tool_search_call",
+                    "id": "tsc_bridge_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "arguments": {"query": "GitHub create issue"}
                 },
                 {
                     "type": "tool_search_output",
+                    "id": "tso_bridge_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
@@ -3865,11 +4213,15 @@ mod tests {
         assert_eq!(converted["tools"][1]["name"], "github__create_issue");
         assert_eq!(converted["input"][1]["type"], "function_call");
         assert_eq!(converted["input"][1]["name"], TOOL_SEARCH_NAME);
+        assert!(converted["input"][1].get("id").is_none());
+        assert_eq!(converted["input"][1]["call_id"], "search_1");
         assert_eq!(
             converted["input"][1]["arguments"],
             "{\"query\":\"GitHub create issue\"}"
         );
         assert_eq!(converted["input"][2]["type"], "function_call_output");
+        assert!(converted["input"][2].get("id").is_none());
+        assert_eq!(converted["input"][2]["call_id"], "search_1");
         assert!(converted["input"][2]["output"]
             .as_str()
             .is_some_and(|value| value.contains("\"tools\"")));
@@ -3910,12 +4262,14 @@ mod tests {
             "input": [
                 {
                     "type": "tool_search_call",
+                    "id": "tsc_native_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "arguments": {"query": "GitHub"}
                 },
                 {
                     "type": "tool_search_output",
+                    "id": "tso_native_1",
                     "call_id": "search_1",
                     "execution": "client",
                     "status": "completed",
