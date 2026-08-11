@@ -8378,7 +8378,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
   })
 
-  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+  test('shows the sent message with status while an optimistic worktree is being created', () => {
     const runtimeTask = {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
@@ -8434,9 +8434,13 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    const creationStatus = screen.getByTestId('worktree-creation-status')
+    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(screen.getByTestId('desktop-chat-scroll-content')).toContainElement(creationStatus)
+    expect(screen.queryByTestId('desktop-chat-scroll-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
-    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+    expect(screen.getByText('Implement the feature')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
   test('loads environment info automatically for the current project workspace', async () => {
