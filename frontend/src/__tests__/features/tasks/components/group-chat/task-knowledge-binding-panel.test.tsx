@@ -76,7 +76,7 @@ const internalKnowledgeBase = {
 }
 
 const externalRef = {
-  provider: 'demo',
+  provider: 'ap',
   mode: 'explicit',
   id: 'lib-1',
   name: '测试1111',
@@ -147,7 +147,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     await screen.findByText('测试1111')
     fireEvent.click(
       screen.getByTestId(
-        'task-knowledge-binding-remove-external:demo:explicit:lib-1:knowledge_base:source'
+        'task-knowledge-binding-remove-external:ap:explicit:lib-1:knowledge_base:source'
       )
     )
 
