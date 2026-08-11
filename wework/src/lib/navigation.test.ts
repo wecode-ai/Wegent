@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from './navigation'
+import { buildRuntimeTaskRoute, parseRuntimeTaskRoute, resolveDesktopAppRoute } from './navigation'
 
 describe('runtime task navigation', () => {
   test('builds runtime task routes without exposing workspace paths', () => {
@@ -21,5 +21,18 @@ describe('runtime task navigation', () => {
         taskId: '12345',
       }
     )
+  })
+})
+
+describe('resolveDesktopAppRoute', () => {
+  test('resolves supported desktop app keys to their routes', () => {
+    expect(resolveDesktopAppRoute('wework')).toBe('/')
+    expect(resolveDesktopAppRoute('todo')).toBe('/todo')
+    expect(resolveDesktopAppRoute('wegent')).toBe('/app/wegent')
+  })
+
+  test('falls back to the workbench for unknown desktop app keys', () => {
+    expect(resolveDesktopAppRoute('apps' as never)).toBe('/')
+    expect(resolveDesktopAppRoute('unknown' as never)).toBe('/')
   })
 })

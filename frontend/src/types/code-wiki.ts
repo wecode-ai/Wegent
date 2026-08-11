@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { KnowledgeBaseCreate } from '@/types/knowledge'
+import type { KnowledgeBaseCreate, SummaryModelRef } from '@/types/knowledge'
 
 /**
  * A code wiki is a knowledge base an agent writes from a source repository.
@@ -59,6 +59,13 @@ export interface CodeWikiCreateRequest extends Omit<
    * conversation to do. The wiki's own run history shows them either way.
    */
   show_generation_task?: boolean
+  /**
+   * Which model the generation agent runs on. Required here though optional on a
+   * plain knowledge base, and the server agrees: only a code wiki generates, and
+   * handing a whole repository to whichever model the team's bot happens to bind
+   * is not a default worth having.
+   */
+  execution_model_ref: SummaryModelRef
 }
 
 export type CodeWikiSourceType = 'github' | 'gitlab' | 'gitea'
