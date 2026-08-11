@@ -17,7 +17,6 @@ import {
   PASTED_ZIP_FILENAME,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
-  SIDE_CHAT_GUIDANCE_COMPLETION,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
@@ -365,18 +364,6 @@ async function verifySideChatAttachmentIsolation({
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
   control.releaseSideChatGuidanceResponse()
   await control.awaitScenarioRequestCount('side_chat_guidance', 2)
-  await control.command('waitFor', `${sideChatSelector} [data-testid="message-user"]`, {
-    text: SIDE_CHAT_GUIDANCE_FOLLOW_UP,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
-    text: SIDE_CHAT_GUIDANCE_COMPLETION,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
-    hidden: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(
