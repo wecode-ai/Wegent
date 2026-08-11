@@ -36,7 +36,7 @@ You now have access to Wegent Knowledge Base management tools.
 - **wegent_kb_list_documents**: List all documents in a knowledge base
   - knowledge_base_id: ID of the knowledge base
   - folder_id: Optional selected folder ID
-  - include_subfolders: Whether to include descendant folders
+  - include_subfolders: Whether to include descendant folders (default: true)
   - limit: Maximum number of documents to return per page
   - offset: Start offset for paginated listing
   - returns: items, total, returned_count, limit, offset, has_more
@@ -81,7 +81,7 @@ You now have access to Wegent Knowledge Base management tools.
 ## Usage Notes
 
 - All operations inherit the current user's permissions
-- A folder in `<selected_knowledge_sources>` always includes all descendant folders. Pass its original ID through `folder_id`/`folder_ids` with `include_subfolders=true` instead of broadening to the whole knowledge base.
+- A folder in `<selected_knowledge_sources>` always includes all descendant folders. Pass its original ID through `folder_id`/`folder_ids`; omitted `include_subfolders` defaults to `true`. Never broaden the request to the whole knowledge base to discover descendants.
 - For a selected document, pass its original ID through `document_ids` instead of broadening to the whole knowledge base.
 - After creating or updating documents, indexing happens asynchronously
 - Documents may show status "pending" until indexing completes

@@ -191,7 +191,6 @@ test.describe('Provider-native Wegent knowledge access', () => {
             arguments: {
               knowledge_base_id: fixture.knowledgeBase.id,
               folder_id: fixture.folders.requirements.id,
-              include_subfolders: true,
             },
           },
         ],
@@ -232,7 +231,6 @@ test.describe('Provider-native Wegent knowledge access', () => {
     expectToolCall(evidence.toolCalls, LIST_DOCUMENTS_TOOL, {
       knowledge_base_id: fixture.knowledgeBase.id,
       folder_id: fixture.folders.requirements.id,
-      include_subfolders: true,
     })
     expectToolOutputContains(
       evidence.toolCalls,
