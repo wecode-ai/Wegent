@@ -158,8 +158,8 @@
       "wikispace": "知识库",
       "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
       "wikispaceEmpty": "暂无知识库内容",
-      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
-      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
+      "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP 和钉钉文档 MCP"
     },
     "groupFilter": {
       "all": "全部分组"

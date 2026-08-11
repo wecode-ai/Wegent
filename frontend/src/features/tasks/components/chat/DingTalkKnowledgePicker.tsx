@@ -181,7 +181,6 @@ function DingTalkSyncToolbar({
             : undefined
         }
         focusable={false}
-        tooltip
         className="cursor-pointer text-xs text-text-muted"
       />
       <LongTextTooltip content={syncLabel}>
@@ -463,7 +462,6 @@ export function DingTalkWikispaceRows({
                   <TruncatedText
                     text={node.name}
                     focusable={false}
-                    tooltip
                     className="text-sm font-medium"
                   />
                   <span className="block text-xs text-text-muted">
@@ -506,7 +504,6 @@ function DingTalkDocumentHeader({
         <TruncatedText
           text={title}
           focusable={false}
-          tooltip
           className="text-sm font-semibold text-text-primary"
         />
         <div className="text-xs text-text-muted">
@@ -652,12 +649,7 @@ function DingTalkDocumentNode({
         >
           <span className="flex min-w-0 items-center gap-2">
             <Icon className="h-4 w-4 shrink-0 text-text-muted" />
-            <TruncatedText
-              text={node.name}
-              focusable={false}
-              tooltip
-              className="text-text-primary"
-            />
+            <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
           </span>
           {selected ? <SelectionIndicator selected={true} /> : null}
         </button>

@@ -144,11 +144,9 @@ class DingTalkWikiSpaceService:
         if not docs_mcp_url:
             raise ValueError("DingTalk Docs MCP URL is not configured or not enabled")
 
-        failed_kb_ids: set[str] = set()
         all_nodes = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
             wikispace_mcp_url=wikispace_mcp_url,
             docs_mcp_url=docs_mcp_url,
-            failed_kb_ids=failed_kb_ids,
         )
         original_count = len(all_nodes)
 
@@ -168,7 +166,6 @@ class DingTalkWikiSpaceService:
             now,
             db,
             source=WIKISPACE_SOURCE,
-            preserve_workspace_ids=failed_kb_ids,
         )
         stats["mcp_nodes_fetched"] = original_count
         sanitized_wikispace_mcp_url = _sanitize_url_for_telemetry(wikispace_mcp_url)
@@ -250,6 +247,12 @@ class DingTalkWikiSpaceService:
                     batch, page_token = DingTalkDocService._parse_list_nodes_result(
                         result
                     )
+                    batch = [
+                        DingTalkDocService._normalize_mcp_node(
+                            node, allow_workspace_id=True
+                        )
+                        for node in batch
+                    ]
                     kb_nodes.extend(batch)
                     if not page_token:
                         break
@@ -349,7 +352,6 @@ class DingTalkWikiSpaceService:
     async def _fetch_all_wikispace_nodes(
         wikispace_mcp_url: str,
         docs_mcp_url: str | None = None,
-        failed_kb_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Two-phase fetch of all documents across all accessible knowledge bases.
 
@@ -365,9 +367,8 @@ class DingTalkWikiSpaceService:
             A single MCP client session is created before the Phase 2 loop and
             reused for all KBs to avoid per-KB session overhead.
 
-            When failed_kb_ids is provided, KBs whose document listing failed
-            are recorded so the caller can protect their previously synced
-            rows from deactivation.
+            The first knowledge-base failure aborts the fetch so the caller
+            cannot write a partial snapshot to the database.
         """
         try:
             from mcp import ClientSession
@@ -405,12 +406,7 @@ class DingTalkWikiSpaceService:
 
                 # List documents for every knowledge base using the same session.
                 for kb_node in kb_nodes:
-                    # The wikispace MCP returns workspaceId as the KB identifier.
-                    kb_id = (
-                        kb_node.get("workspaceId")
-                        or kb_node.get("nodeId")
-                        or kb_node.get("id")
-                    )
+                    kb_id = kb_node.get("nodeId")
                     if not kb_id:
                         logger.warning(
                             "Skipping WikiSpace entry without a workspace identifier"
@@ -438,27 +434,26 @@ class DingTalkWikiSpaceService:
                         kb_id,
                     )
 
+                    # Accumulate per-KB nodes into a temporary list so a
+                    # mid-pagination failure cannot leak incomplete documents.
+                    nodes_for_kb: list[dict[str, Any]] = []
                     try:
-                        # Accumulate per-KB nodes into a temporary list so a
-                        # mid-pagination failure discards the partial snapshot
-                        # instead of leaking incomplete documents into the sync.
-                        nodes_for_kb: list[dict[str, Any]] = []
                         await DingTalkWikiSpaceService._list_nodes_in_wikispace(
                             session=session,
                             workspace_id=kb_id,
                             all_nodes=nodes_for_kb,
                         )
-                        all_nodes.extend(nodes_for_kb)
-                        # Only add the KB root folder AFTER successfully listing contents.
-                        all_nodes.append(kb_as_folder)
-                    except Exception:
-                        if failed_kb_ids is not None:
-                            failed_kb_ids.add(kb_id)
+                    except Exception as exc:
                         logger.error(
-                            "Failed to list nodes in WikiSpace source %s",
+                            "Failed to list nodes in WikiSpace source %s (%s)",
                             kb_id,
+                            type(exc).__name__,
                         )
-                        # Continue with remaining KBs even if one fails.
+                        raise
+
+                    all_nodes.extend(nodes_for_kb)
+                    # Only add the KB root folder AFTER successfully listing contents.
+                    all_nodes.append(kb_as_folder)
 
         unique_nodes = DingTalkWikiSpaceService._dedupe_nodes_by_id(all_nodes)
 
@@ -483,16 +478,7 @@ class DingTalkWikiSpaceService:
         seen: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for node in nodes:
-            # Prefer node-level identifiers: workspaceId identifies the
-            # containing knowledge base, so two documents in one KB sharing
-            # only workspaceId must not collapse into each other. KB root
-            # entries carry no node-level id and still resolve via workspaceId.
-            node_id = (
-                node.get("nodeId")
-                or node.get("id")
-                or node.get("dingtalk_node_id")
-                or node.get("workspaceId")
-            )
+            node_id = node.get("nodeId")
             if not node_id:
                 continue
 

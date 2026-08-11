@@ -1173,12 +1173,7 @@ export function KnowledgeSourcePicker({
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Icon className="h-4 w-4 shrink-0" />
-                <TruncatedText
-                  text={row.label}
-                  focusable={false}
-                  tooltip
-                  className="text-sm font-medium"
-                />
+                <TruncatedText text={row.label} focusable={false} className="text-sm font-medium" />
               </span>
               <Badge variant="secondary" size="sm">
                 {row.count}
@@ -1216,7 +1211,6 @@ export function KnowledgeSourcePicker({
                           <TruncatedText
                             text={group.displayName}
                             focusable={false}
-                            tooltip
                             className="text-sm font-medium"
                           />
                         </span>
@@ -1257,7 +1251,6 @@ export function KnowledgeSourcePicker({
                         <TruncatedText
                           text={getExternalScopeLabel(scope, t)}
                           focusable={false}
-                          tooltip
                           className="text-sm font-medium"
                         />
                       </span>
@@ -1314,7 +1307,6 @@ export function KnowledgeSourcePicker({
                         <TruncatedText
                           text={section.label}
                           focusable={false}
-                          tooltip
                           className="text-sm font-medium"
                         />
                       </span>
@@ -1564,7 +1556,6 @@ function KnowledgeBaseRows({
                 <TruncatedText
                   text={item.name}
                   focusable={false}
-                  tooltip
                   className="text-sm font-medium text-text-primary"
                 />
                 <span className="block text-xs text-text-muted">
@@ -1630,7 +1621,6 @@ function ExternalKnowledgeBaseRows({
                 <TruncatedText
                   text={item.knowledge_base_name}
                   focusable={false}
-                  tooltip
                   className="text-sm font-medium text-text-primary"
                 />
                 <span className="block text-xs text-text-muted">
@@ -1661,7 +1651,6 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
         <TruncatedText
           text={title}
           focusable={false}
-          tooltip
           className="text-sm font-semibold text-text-primary"
         />
         <div className="text-xs text-text-muted">
@@ -1741,7 +1730,6 @@ function InternalDocumentSearchResults({
                   text={node.name}
                   tooltipText={formatKnowledgePath(path, node.name)}
                   focusable={false}
-                  tooltip
                   className="text-text-primary"
                 />
                 <PathLabel path={path} />
@@ -1802,7 +1790,6 @@ function ExternalDocumentSearchResults({
                   text={node.name}
                   tooltipText={formatKnowledgePath(path, node.name)}
                   focusable={false}
-                  tooltip
                   className="text-text-primary"
                 />
                 <PathLabel path={path} />
@@ -1875,12 +1862,7 @@ function InternalDocumentNode({
             />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <TruncatedText
-                text={node.name}
-                focusable={false}
-                tooltip
-                className="text-text-primary"
-              />
+              <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
             </span>
           </button>
           <span className="flex shrink-0 items-center gap-2">
@@ -1941,7 +1923,6 @@ function InternalDocumentNode({
                 text={node.name}
                 tooltipText={formatKnowledgePath(node.path, node.name)}
                 focusable={false}
-                tooltip
                 className="text-text-primary"
               />
               <PathLabel path={node.path} />
@@ -2027,12 +2008,7 @@ function ExternalDocumentNode({
           )}
           <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
           <span className="min-w-0">
-            <TruncatedText
-              text={node.name}
-              focusable={false}
-              tooltip
-              className="text-text-primary"
-            />
+            <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
           </span>
         </span>
         {isFolder ? (

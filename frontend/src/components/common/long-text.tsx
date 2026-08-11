@@ -33,8 +33,6 @@ export function LongTextTooltip({
     'aria-label': children.props['aria-label'] ?? ariaLabel ?? content,
   } as Partial<React.HTMLAttributes<HTMLElement>>)
 
-  if (process.env.NODE_ENV === 'test') return trigger
-
   return (
     <TooltipProvider delayDuration={250}>
       <Tooltip>
@@ -58,34 +56,26 @@ interface TruncatedTextProps extends React.HTMLAttributes<HTMLSpanElement> {
   text: string
   tooltipText?: string
   focusable?: boolean
-  tooltip?: boolean
-  nativeTitle?: boolean
 }
 
 export function TruncatedText({
   text,
   tooltipText,
   focusable = true,
-  tooltip,
-  nativeTitle = false,
   className,
   ...props
 }: TruncatedTextProps) {
   const fullText = tooltipText ?? text
-  const shouldRenderTooltip = nativeTitle ? false : (tooltip ?? focusable)
   const label = (
     <span
       {...props}
       className={cn('block min-w-0 truncate', className)}
-      title={nativeTitle ? fullText : undefined}
       aria-label={fullText}
       tabIndex={focusable ? 0 : undefined}
     >
       {text}
     </span>
   )
-
-  if (!shouldRenderTooltip) return label
 
   return <LongTextTooltip content={fullText}>{label}</LongTextTooltip>
 }

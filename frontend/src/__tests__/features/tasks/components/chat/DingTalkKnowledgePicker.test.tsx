@@ -12,10 +12,11 @@ import {
 } from '@/features/tasks/components/chat/DingTalkKnowledgePicker'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
+const mockT = (key: string, params?: Record<string, string>) =>
+  params?.time ? `${key} ${params.time}` : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, params?: Record<string, string>) =>
-      params?.time ? `${key} ${params.time}` : key,
+    t: mockT,
   }),
 }))
 

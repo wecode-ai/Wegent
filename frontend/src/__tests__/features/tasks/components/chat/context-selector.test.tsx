@@ -19,9 +19,10 @@ const mockGetDingTalkSyncStatus = jest.fn()
 const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
 
+const mockT = (key: string) => key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: mockT,
   }),
 }))
 
@@ -380,7 +381,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-source-group')).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId('knowledge-picker-source-group')).toHaveTextContent('2')
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-group')).toHaveTextContent('2')
+    })
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-group-empty-group')).toBeInTheDocument()
