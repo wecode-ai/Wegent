@@ -1684,6 +1684,7 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
+          aria-current={selected ? 'page' : undefined}
           onClick={handleOpen}
           onContextMenu={event => {
             event.preventDefault()

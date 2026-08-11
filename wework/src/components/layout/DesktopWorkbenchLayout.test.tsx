@@ -3455,6 +3455,90 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
   })
 
+  test('keeps Codex and harness session selection exclusive without reopening the loaded task', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-restored',
+        harness_id: 'opencode',
+        title: 'OpenCode 会话',
+        cwd: '/workspace/project-alpha',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: harnessTestModel.key,
+      },
+    ])
+    const currentRuntimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-loaded',
+    }
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'chat',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-loaded',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Codex 会话',
+                    runtime: 'codex',
+                    createdAt: '2026-08-11T00:00:00.000Z',
+                    updatedAt: '2026-08-11T00:00:00.000Z',
+                    running: false,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+          currentRuntimeTask,
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    const harnessRow = await screen.findByTestId('local-harness-session-row-local-harness-restored')
+    const codexRow = screen.getByTestId('runtime-local-task-row-runtime-loaded')
+    expect(harnessRow).toHaveAttribute('aria-current', 'page')
+    expect(codexRow).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(codexRow)
+
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(
+      screen.getByTestId('local-harness-session-row-local-harness-restored')
+    ).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-restored'))
+
+    expect(screen.getByTestId('local-harness-session-row-local-harness-restored')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).not.toHaveAttribute(
+      'aria-current'
+    )
+  })
+
   test('resumes an inactive persisted harness session with the same Wework session id', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     const listLocalSkills = vi.fn().mockRejectedValue(new Error('must not reload plugins'))

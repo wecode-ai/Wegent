@@ -60,6 +60,19 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
   return fallback
 }
 
+function isSameRuntimeTask(
+  current: RuntimeTaskAddress | null | undefined,
+  next: RuntimeTaskAddress
+): boolean {
+  const currentPath = current?.workspacePath?.trim()
+  const nextPath = next.workspacePath?.trim()
+  return (
+    current?.deviceId === next.deviceId &&
+    current.taskId === next.taskId &&
+    (!currentPath || !nextPath || currentPath === nextPath)
+  )
+}
+
 function boardRouteParam(contentRoute: string, name: string): string | null {
   const searchIndex = contentRoute.indexOf('?')
   if (searchIndex < 0) return null
@@ -199,9 +212,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
+      if (isSameRuntimeTask(state.currentRuntimeTask, address)) return
       await onOpenRuntimeTask(address)
     },
-    [onOpenRuntimeTask]
+    [onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback((session: LocalHarnessWorkbenchSession) => {
     setLocalHarnessSessions(current => [
@@ -713,7 +727,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
-      currentRuntimeTask={state.currentRuntimeTask}
+      currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
