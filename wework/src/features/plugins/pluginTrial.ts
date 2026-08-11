@@ -99,9 +99,9 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
 }
 
 function composerAppForPlugin(plugin: InstalledPlugin): LocalDeviceApp | null {
-  const pluginKey = (plugin.spec.source.pluginKey || plugin.metadata.name || '')
-    .trim()
-    .toLowerCase()
+  const rawPluginKey = plugin.spec.source.pluginKey
+  const rawMetadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : ''
+  const pluginKey = (rawPluginKey || rawMetadataName).trim().toLowerCase()
   const displayName = (plugin.spec.displayName || '').trim().toLowerCase()
   if (!pluginKey && !displayName) return null
   const apps = getComposerApps()

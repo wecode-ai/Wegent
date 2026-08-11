@@ -101,7 +101,7 @@ describe('ComposerToolbar', () => {
       />
     )
 
-    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7')
+    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-8')
 
     rerender(
       <ComposerToolbar
