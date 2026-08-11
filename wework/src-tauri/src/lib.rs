@@ -313,6 +313,8 @@ const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT: &str = "wework-open-local-workspace-
 #[cfg(desktop)]
 const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT: &str = "wework-close-to-tray-hint-requested";
 #[cfg(desktop)]
+const MAIN_WINDOW_FOCUS_CHANGED_EVENT: &str = "wework-main-window-focus-changed";
+#[cfg(desktop)]
 const TRAY_MENU_OPEN_ID: &str = "open";
 #[cfg(desktop)]
 const TRAY_MENU_SETTINGS_ID: &str = "settings";
@@ -3009,6 +3011,16 @@ fn schedule_frontend_resume_probe<R: tauri::Runtime>(app: &tauri::AppHandle<R>) 
 }
 
 #[cfg(desktop)]
+fn emit_main_window_focus_changed<R: tauri::Runtime>(window: &tauri::Window<R>, focused: bool) {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return;
+    }
+    if let Err(error) = window.app_handle().emit(MAIN_WINDOW_FOCUS_CHANGED_EVENT, focused) {
+        log::warn!("Failed to emit main window focus changed event: {error}");
+    }
+}
+
+#[cfg(desktop)]
 fn handle_main_window_focus_for_frontend_recovery<R: tauri::Runtime>(
     window: &tauri::Window<R>,
     focused: bool,
@@ -4755,6 +4767,7 @@ pub fn run() {
             {
                 if let tauri::WindowEvent::Focused(focused) = event {
                     handle_main_window_focus_for_frontend_recovery(window, *focused);
+                    emit_main_window_focus_changed(window, *focused);
                 }
                 if hide_main_window_on_close(window, event) {
                     return;
