@@ -53,6 +53,7 @@ import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import {
   bindModeRequiresClaudeCode,
   getDefaultSimpleBindMode,
+  getModelCategoryTypeForBindMode,
   isClaudeCodeShell,
   normalizeExecutorForBindMode,
   resolveSimpleExecutorFromBot,
@@ -338,6 +339,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleModelName, setSimpleModelName] = useState('')
   const [simpleModelType, setSimpleModelType] = useState<ModelTypeEnum | undefined>(undefined)
   const [simpleModelNamespace, setSimpleModelNamespace] = useState<string | undefined>(undefined)
+  const simpleModelSelectionRef = useRef<{
+    name: string
+    type?: ModelTypeEnum
+    namespace?: string
+  }>({ name: '' })
   const [simplePrompt, setSimplePrompt] = useState('')
   const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
@@ -700,13 +706,34 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (!open || !useSimpleEditor || !selectedSimpleShell) return
 
     let cancelled = false
+    const modelCategoryType = getModelCategoryTypeForBindMode(bindMode)
 
     const fetchModels = async () => {
       setSimpleLoadingModels(true)
       try {
-        const response = await modelApis.getUnifiedModels(undefined, false, scope, groupName)
+        const response = await modelApis.getUnifiedModels(
+          undefined,
+          false,
+          scope,
+          groupName,
+          modelCategoryType
+        )
         if (!cancelled) {
           setSimpleModels(response.data)
+          const selectedModel = simpleModelSelectionRef.current
+          const selectionStillAvailable =
+            !selectedModel.name ||
+            response.data.some(
+              model =>
+                model.name === selectedModel.name &&
+                (!selectedModel.type || model.type === selectedModel.type) &&
+                (!selectedModel.namespace || model.namespace === selectedModel.namespace)
+            )
+          if (!selectionStillAvailable) {
+            setSimpleModelName('')
+            setSimpleModelType(undefined)
+            setSimpleModelNamespace(undefined)
+          }
         }
       } catch {
         if (!cancelled) {
@@ -728,7 +755,24 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return () => {
       cancelled = true
     }
-  }, [groupName, modelLoadingFailedTitle, open, scope, selectedSimpleShell, toast, useSimpleEditor])
+  }, [
+    bindMode,
+    groupName,
+    modelLoadingFailedTitle,
+    open,
+    scope,
+    selectedSimpleShell,
+    toast,
+    useSimpleEditor,
+  ])
+
+  useEffect(() => {
+    simpleModelSelectionRef.current = {
+      name: simpleModelName,
+      type: simpleModelType,
+      namespace: simpleModelNamespace,
+    }
+  }, [simpleModelName, simpleModelNamespace, simpleModelType])
 
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
@@ -1414,6 +1458,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   botEditRef={botEditRef}
                   scope={scope}
                   groupName={groupName}
+                  modelCategoryType={getModelCategoryTypeForBindMode(bindMode)}
                   requireConfirmationMap={requireConfirmationMap}
                   setRequireConfirmationMap={setRequireConfirmationMap}
                   contextPassingMap={contextPassingMap}

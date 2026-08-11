@@ -17,7 +17,6 @@ export interface WorkspaceTabLabels {
     sites: string
     automations: string
     cloud: string
-    apps: string
   }
 }
 
@@ -68,7 +67,6 @@ export function workspaceTabTitle(
   if (pathname === '/sites') return labels.auxiliaryRoutes.sites
   if (pathname === '/automations') return labels.auxiliaryRoutes.automations
   if (pathname === '/cloud-work') return labels.auxiliaryRoutes.cloud
-  if (pathname === '/apps') return labels.auxiliaryRoutes.apps
   return labels.auxiliary
 }
 

@@ -1646,7 +1646,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       value={modelIdSearch}
                       onChange={e => setModelIdSearch(e.target.value)}
                       className="h-8"
-                      autoFocus
                     />
                   </div>
                   <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>

@@ -319,6 +319,13 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let presentation_page_messages = local_link.as_ref().map(|_| {
+            if include_full_content {
+                full_transcript_messages(&thread, &self.device_id)
+            } else {
+                transcript_messages(&thread, &self.device_id)
+            }
+        });
         self.merge_active_codex_transcript(&local_task_id, &mut thread);
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
@@ -334,7 +341,13 @@ impl RuntimeWorkRpcHandler {
         };
         let mut messages = transcript_messages;
         if let Some(link) = local_link.as_ref() {
-            attach_user_message_presentations(&mut messages, user_message_presentations(link));
+            attach_user_message_presentations_for_page(
+                &mut messages,
+                user_message_presentations(link),
+                presentation_page_messages.as_deref().unwrap_or_default(),
+                page_before_cursor.is_some(),
+                page_after_cursor.is_some(),
+            );
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
         attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
