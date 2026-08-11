@@ -112,6 +112,9 @@ factors, and WebView layout commits can arrive out of order, allowing a stale
 inline size to override the current viewport and leave an unfilled region after
 a resize. Native window dimensions are for window creation, restoration, and
 system-level window management, not as a source for the React root layout.
+On Linux, embedded browser child WebViews must live in an absolute host built
+from `GtkOverlay` and `GtkFixed`; adding them directly to the main window's
+`GtkBox` lets them participate in layout and compress the main React WebView.
 
 The system drag panel and Popout Window are separate lightweight overlays and
 are not covered by this rule. Changes to ordinary window backgrounds, title
