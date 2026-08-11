@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.services.system_skill_providers.providers.weibo import (
+from wecode.service.system_skill_providers.weibo import (
     DEFAULT_SKILL_HUB_BASE_URL,
     WeiboSkillMarketError,
     WeiboSkillMarketProvider,
@@ -37,7 +37,7 @@ def reset_fake_client(monkeypatch):
     FakeAsyncClient.responses = []
     FakeAsyncClient.requests = []
     monkeypatch.setattr(
-        "app.services.system_skill_providers.providers.weibo.httpx.AsyncClient",
+        "wecode.service.system_skill_providers.weibo.httpx.AsyncClient",
         FakeAsyncClient,
     )
     for name in (

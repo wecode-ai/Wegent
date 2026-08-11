@@ -30,7 +30,16 @@ export interface MCPServer {
   provider: string
   provider_url?: string
   logo_url?: string
-  tags?: string[]
+  tags?: string[] | null
+  installState?:
+    | 'not_installed'
+    | 'installed'
+    | 'update_available'
+    | 'unavailable'
+    | 'failed'
+    | 'uninstalled'
+  installedMcpId?: number
+  enabled?: boolean
 }
 
 export interface MCPProviderKeysRequest {

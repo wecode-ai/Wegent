@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,7 @@ import {
   Server,
   ChevronDown,
   ChevronUp,
+  Search,
 } from 'lucide-react'
 import { mcpProviderApis, type MCPProvider, type MCPServer } from '@/apis/mcpProviders'
 
@@ -46,6 +47,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
   const [syncing, setSyncing] = useState(false)
   const [addedServers, setAddedServers] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const loadProviders = useCallback(async () => {
     try {
@@ -105,6 +107,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
   useEffect(() => {
     if (selectedProvider) {
       setApiKey('')
+      setSearchQuery('')
       // Only show settings for providers that require token and don't have one
       setShowSettings(selectedProvider.requires_token && !selectedProvider.has_token)
       // Auto sync servers if provider doesn't require token or already has token
@@ -170,6 +173,16 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
 
   const hasServers = servers.length > 0
   const isLoadingServers = syncing && servers.length === 0
+  const filteredServers = useMemo(() => {
+    const keyword = searchQuery.trim().toLocaleLowerCase()
+    if (!keyword) return servers
+
+    return servers.filter(server =>
+      [server.name, server.description, server.provider, ...(server.tags || [])]
+        .filter(Boolean)
+        .some(value => value?.toLocaleLowerCase().includes(keyword))
+    )
+  }, [searchQuery, servers])
 
   return (
     <div className="flex h-full">
@@ -318,6 +331,24 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
               </div>
             )}
 
+            {hasServers && (
+              <div className="border-b bg-muted/5 px-4 py-3">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <Input
+                    value={searchQuery}
+                    onChange={event => setSearchQuery(event.target.value)}
+                    placeholder={t('mcpProviders.search_placeholder')}
+                    className="h-9 pl-9"
+                    data-testid="mcp-provider-search-input"
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Servers list - main content area */}
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
@@ -329,11 +360,13 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
                         {t('mcpProviders.loading_servers')}
                       </p>
                     </div>
-                  ) : !hasServers ? (
+                  ) : !hasServers || filteredServers.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20">
                       <Server className="w-14 h-14 mb-4 text-muted-foreground/30" />
                       <p className="text-sm text-muted-foreground mb-2">
-                        {t('mcpProviders.no_servers_hint')}
+                        {hasServers
+                          ? t('mcpProviders.no_search_results')
+                          : t('mcpProviders.no_servers_hint')}
                       </p>
                       {selectedProvider.requires_token && !selectedProvider.has_token && (
                         <Button
@@ -349,7 +382,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
                     </div>
                   ) : (
                     <div className="grid gap-2">
-                      {servers.map(server => {
+                      {filteredServers.map(server => {
                         const isAdded = addedServers.has(server.id)
                         return (
                           <div

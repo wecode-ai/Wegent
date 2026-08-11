@@ -24,7 +24,7 @@ WEIBO_SKILL_MARKET_TIMEOUT_SECONDS = 10.0
 
 
 class WeiboSkillMarketError(Exception):
-    """Error returned while communicating with the Weibo Skill Hub."""
+    """Error returned while communicating with Weibo SkillHub."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -32,13 +32,13 @@ class WeiboSkillMarketError(Exception):
 
 
 class WeiboSkillMarketProvider(SystemSkillProvider):
-    """System skill provider backed by the Weibo Skill Hub."""
+    """System skill provider backed by Weibo SkillHub."""
 
     def get_config(self) -> SystemSkillProviderConfig:
         return SystemSkillProviderConfig(
             key="weibo",
             name="Weibo Skill Market",
-            description="Skills from Weibo Skill Hub",
+            description="Skills from Weibo SkillHub",
             requires_token=False,
             priority=20,
         )
@@ -111,7 +111,7 @@ class WeiboSkillMarketProvider(SystemSkillProvider):
         ).strip()
         if not token:
             raise WeiboSkillMarketError(
-                "token_required", "Skill Hub token is not configured"
+                "token_required", "SkillHub token is not configured"
             )
         return token
 

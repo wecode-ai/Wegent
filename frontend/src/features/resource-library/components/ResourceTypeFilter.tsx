@@ -8,20 +8,23 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ResourceLibraryTypeFilter } from '@/features/resource-library/types'
 
+type ResourceNavigationType = ResourceLibraryTypeFilter | 'mcp'
+
 interface ResourceTypeFilterProps {
-  value: ResourceLibraryTypeFilter
-  onValueChange: (value: ResourceLibraryTypeFilter) => void
-  filters?: ResourceLibraryTypeFilter[]
+  value: ResourceNavigationType
+  onValueChange: (value: ResourceNavigationType) => void
+  filters?: ResourceNavigationType[]
   marketLabels?: boolean
 }
 
-const RESOURCE_TYPE_FILTERS: ResourceLibraryTypeFilter[] = [
+const RESOURCE_TYPE_FILTERS: ResourceNavigationType[] = [
   'all',
   'agent',
   'skill',
   'model',
   'shell',
   'retriever',
+  'mcp',
 ]
 
 export function ResourceTypeFilter({
@@ -35,7 +38,7 @@ export function ResourceTypeFilter({
   return (
     <Tabs
       value={value}
-      onValueChange={nextValue => onValueChange(nextValue as ResourceLibraryTypeFilter)}
+      onValueChange={nextValue => onValueChange(nextValue as ResourceNavigationType)}
       className="min-w-0 max-w-full"
     >
       <TabsList
@@ -46,7 +49,7 @@ export function ResourceTypeFilter({
         {filters.map(filter => {
           const isActive = value === filter
           const labelKey =
-            marketLabels && (filter === 'agent' || filter === 'skill')
+            marketLabels && (filter === 'agent' || filter === 'skill' || filter === 'mcp')
               ? `market_filters.${filter}`
               : `filters.${filter}`
 

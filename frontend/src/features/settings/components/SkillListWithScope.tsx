@@ -24,7 +24,6 @@ import {
   addSkillToMyDefault,
   removeSkillFromMyDefault,
 } from '@/apis/skills'
-import { checkSkillMarketAvailable, SkillMarketAvailability } from '@/apis/skillMarket'
 import { getGroup } from '@/apis/groups'
 import { Group } from '@/types/group'
 import { canDelete, canEditContent } from '@/types/base-role'
@@ -71,7 +70,6 @@ import {
   Trash2,
   Sparkles,
   RefreshCw,
-  ExternalLink,
   Link2,
   MoreHorizontal,
   Pencil,
@@ -80,7 +78,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
-import SkillSearchModal from './skills/SkillSearchModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
 import { AutoEnabledSkillConfigDialog } from './skills/AutoEnabledSkillConfigDialog'
 import { InstalledSkillCard } from './skills/InstalledSkillCard'
@@ -186,7 +183,6 @@ export function SkillListWithScope({
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
   const [shareScopeSkill, setShareScopeSkill] = useState<UnifiedSkill | null>(null)
-  const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [configuringSkill, setConfiguringSkill] = useState<UnifiedSkill | null>(null)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
@@ -213,31 +209,12 @@ export function SkillListWithScope({
     setUploadModalOpen(true)
   }, [createRequest])
 
-  // Skill market availability state
-  const [skillMarketInfo, setSkillMarketInfo] = useState<SkillMarketAvailability>({
-    available: false,
-  })
-
   // Reference conflict dialog state
   const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
   const [referenceDialogMode, setReferenceDialogMode] = useState<'view' | 'delete_conflict'>(
     'delete_conflict'
   )
-
-  // Check skill market availability on mount
-  useEffect(() => {
-    const checkMarketAvailability = async () => {
-      try {
-        const info = await checkSkillMarketAvailable()
-        setSkillMarketInfo(info)
-      } catch (error) {
-        console.error('Failed to check skill market availability:', error)
-        setSkillMarketInfo({ available: false })
-      }
-    }
-    checkMarketAvailability()
-  }, [])
 
   useEffect(() => {
     if (!compact) return
@@ -809,11 +786,6 @@ export function SkillListWithScope({
     setUploadModalOpen(true)
   }
 
-  const handleOpenSearch = (target: ResourceCreateTarget) => {
-    setCreateTarget(target)
-    setSearchModalOpen(true)
-  }
-
   // Check if there are any git-imported skills
   const hasGitSkills = sortedLibrarySkills.some(
     skill => !isSystemSkill(skill) && skill.source?.type === 'git'
@@ -821,28 +793,6 @@ export function SkillListWithScope({
 
   const libraryActions = (
     <>
-      {/* Go to Market button - only show if skill market is available and has URL */}
-      {skillMarketInfo.available && skillMarketInfo.marketUrl && (
-        <Button
-          onClick={() => window.open(skillMarketInfo.marketUrl, '_blank', 'noopener,noreferrer')}
-          size="sm"
-        >
-          <ExternalLink className="w-4 h-4 mr-1" />
-          {tSettings('skills.go_to_market')}
-        </Button>
-      )}
-      {/* Search Skills button - only show if skill market is available */}
-      {!hideCreateActions && skillMarketInfo.available && (
-        <ResourceCreateButton
-          label={tSettings('skills.search_skills')}
-          scope={scope}
-          groupName={selectedGroup || undefined}
-          sourceFilter={sourceFilter}
-          groups={groups}
-          onCreate={handleOpenSearch}
-          data-testid="search-skill-button"
-        />
-      )}
       {/* Update All from Git button - only show if there are git-imported skills */}
       {hasGitSkills && (
         <Button
@@ -1334,17 +1284,6 @@ export function SkillListWithScope({
           if (!open) setShareScopeSkill(null)
         }}
         onSaved={loadSkills}
-      />
-
-      {/* Search Modal */}
-      <SkillSearchModal
-        open={searchModalOpen}
-        onClose={() => {
-          setSearchModalOpen(false)
-          setCreateTarget({ scope: 'personal' })
-        }}
-        onSkillsChange={loadSkills}
-        namespace={createTarget.scope === 'group' ? createTarget.groupName : 'default'}
       />
 
       {showAutoEnabledSkills && (
