@@ -6,10 +6,12 @@
 
 import React, { useEffect, useRef } from 'react'
 import { Card } from '@/components/ui/card'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   CodeBracketIcon,
   CloudIcon,
   ClipboardDocumentCheckIcon,
+  ComputerDesktopIcon,
   PuzzlePieceIcon,
 } from '@heroicons/react/24/outline'
 interface WeCodeGettingStartedProps {
@@ -17,28 +19,40 @@ interface WeCodeGettingStartedProps {
 }
 
 export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingStartedProps) {
+  const { t } = useTranslation('tasks')
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const gettingStartedItems = [
     {
+      id: 'wework',
+      icon: <ComputerDesktopIcon className="w-6 h-6" />,
+      title: t('getting_started.wework_title'),
+      description: t('getting_started.wework_description'),
+      link: 'https://wework.intra.weibo.com',
+    },
+    {
+      id: 'ide',
       icon: <CodeBracketIcon className="w-6 h-6" />,
       title: '在IDE中使用WeCode',
       description: '在您熟悉的开发环境中直接使用WeCode，提升开发效率',
       link: 'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wiki',
     },
     {
+      id: 'cloud-ide',
       icon: <CloudIcon className="w-6 h-6" />,
       title: '使用WeCode云IDE',
       description: '基于云端的集成开发环境，随时随地开始编码',
       link: 'https://space.intra.weibo.com/develop/code-server',
     },
     {
+      id: 'browser-power',
       icon: <PuzzlePieceIcon className="w-6 h-6" />,
       title: 'Wegent Browser Power',
       description: '嵌入GitLab、Jira、钉钉，一键解决BUG，轻松完成文档评审和技术评估',
       link: 'https://chromewebstore.google.com/detail/wegent-browser-power/ambidpbogbcdlephgniokkakghccheoi',
     },
     {
+      id: 'code-review',
       icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />,
       title: '启用代码审查',
       description: '自动化代码审查，确保代码质量和团队协作',
@@ -86,8 +100,9 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
             {gettingStartedItems.map((item, index) => (
               <Card
                 key={index}
+                data-testid={`getting-started-card-${item.id}-mobile`}
                 className="
-                  cursor-pointer transition-all duration-200
+                  relative cursor-pointer transition-all duration-200
                   hover:bg-hover hover:shadow-md
                   border border-border bg-base
                   flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
@@ -96,6 +111,15 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
                 "
                 onClick={() => handleCardClick(item.link)}
               >
+                {item.id === 'wework' && (
+                  <span
+                    aria-label={t('getting_started.wework_new_badge')}
+                    title={t('getting_started.wework_new_badge')}
+                    className="absolute right-2 top-2 origin-top-right scale-75 rounded-md bg-primary px-1.5 py-1 text-xs font-medium leading-none text-white"
+                  >
+                    NEW
+                  </span>
+                )}
                 <div className="text-center flex flex-col justify-center h-full">
                   {/* 图标 */}
                   <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg mb-3 bg-primary/10 mx-auto">
@@ -103,7 +127,7 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
                   </div>
 
                   {/* 标题 */}
-                  <h3 className="text-xs font-medium text-text-primary mb-2 leading-tight">
+                  <h3 className="mb-2 text-xs font-medium leading-tight text-text-primary">
                     {item.title}
                   </h3>
 
@@ -118,18 +142,28 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
         </div>
 
         {/* 桌面端网格布局 */}
-        <div className="hidden sm:grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="hidden sm:grid grid-cols-1 lg:grid-cols-5 gap-6">
           {gettingStartedItems.map((item, index) => (
             <Card
               key={index}
+              data-testid={`getting-started-card-${item.id}-desktop`}
               className="
-                cursor-pointer transition-all duration-200
+                relative cursor-pointer transition-all duration-200
                 hover:bg-hover hover:shadow-md
                 border border-border bg-base
                 p-5
               "
               onClick={() => handleCardClick(item.link)}
             >
+              {item.id === 'wework' && (
+                <span
+                  aria-label={t('getting_started.wework_new_badge')}
+                  title={t('getting_started.wework_new_badge')}
+                  className="absolute right-3 top-3 origin-top-right scale-75 rounded-md bg-primary px-1.5 py-1 text-xs font-medium leading-none text-white"
+                >
+                  NEW
+                </span>
+              )}
               <div className="text-center">
                 <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg mb-4 bg-primary/10">
                   <div className="text-primary">{item.icon}</div>

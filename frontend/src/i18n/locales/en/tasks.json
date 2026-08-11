@@ -5,6 +5,11 @@
   "attachment": {
     "characters": "characters"
   },
+  "getting_started": {
+    "wework_title": "Use the We Work desktop workbench",
+    "wework_description": "Open local or cloud projects and let AI edit code, run commands, and deliver results",
+    "wework_new_badge": "New"
+  },
   "remote_workspace": {
     "button": "View the task files",
     "unavailable": "Remote session unavailable",

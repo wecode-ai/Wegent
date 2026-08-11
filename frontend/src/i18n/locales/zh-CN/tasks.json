@@ -5,6 +5,11 @@
   "attachment": {
     "characters": "字符"
   },
+  "getting_started": {
+    "wework_title": "使用 We Work 桌面工作台",
+    "wework_description": "打开本地或云端项目，让 AI 直接改代码、跑命令、交付结果",
+    "wework_new_badge": "新上线"
+  },
   "remote_workspace": {
     "button": "查看任务文件",
     "unavailable": "远程会话不可用",
