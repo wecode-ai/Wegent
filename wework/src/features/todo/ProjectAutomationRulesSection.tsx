@@ -23,15 +23,23 @@ interface VisualSchedule {
 
 const defaultSchedule = (): VisualSchedule => ({ frequency: 'daily', time: '03:00', weekday: '1' })
 
+const validTimePart = (value: string | undefined, fallback: number, maximum: number): number => {
+  if (!value?.trim()) return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback
+}
+
 const scheduleToCron = ({ frequency, time, weekday }: VisualSchedule): string => {
   const [hour = '3', minute = '0'] = time.split(':')
   const dayOfWeek = frequency === 'weekdays' ? '1-5' : frequency === 'weekly' ? weekday : '*'
-  return `${Number(minute)} ${Number(hour)} * * ${dayOfWeek}`
+  return `${validTimePart(minute, 0, 59)} ${validTimePart(hour, 3, 23)} * * ${dayOfWeek}`
 }
 
 const cronToSchedule = (cronExpression: string): VisualSchedule => {
   const [minute = '0', hour = '3', , , dayOfWeek = '*'] = cronExpression.trim().split(/\s+/)
-  const time = `${String(Number(hour)).padStart(2, '0')}:${String(Number(minute)).padStart(2, '0')}`
+  const time = `${String(validTimePart(hour, 3, 23)).padStart(2, '0')}:${String(
+    validTimePart(minute, 0, 59)
+  ).padStart(2, '0')}`
   if (dayOfWeek === '1-5') return { frequency: 'weekdays', time, weekday: '1' }
   if (/^[0-6]$/.test(dayOfWeek)) return { frequency: 'weekly', time, weekday: dayOfWeek }
   return { frequency: 'daily', time, weekday: '1' }
@@ -134,7 +142,13 @@ export function ProjectAutomationRulesSection({
       enabled: rule.enabled,
     })
     setSchedule(cronToSchedule(rule.cronExpression))
-    if (api) setRuns(await api.listRuns(projectId, rule.id))
+    if (!api) return
+    try {
+      setError('')
+      setRuns(await api.listRuns(projectId, rule.id))
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : String(selectError))
+    }
   }
 
   const createRule = () => {
@@ -147,7 +161,11 @@ export function ProjectAutomationRulesSection({
   }
 
   const save = async () => {
-    if (!api || !draft || !draft.name.trim() || !draft.prompt.trim() || !draft.agentId) return
+    if (!api || !draft) return
+    if (!draft.name.trim() || !draft.prompt.trim() || !draft.agentId) {
+      setError(t('workbench.project_automation_required_fields'))
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -166,19 +184,30 @@ export function ProjectAutomationRulesSection({
 
   const remove = async (rule: ProjectAutomationRule) => {
     if (!api || !window.confirm(t('workbench.project_automation_delete_confirm'))) return
-    await api.delete(projectId, rule.id)
-    setSelected(null)
-    setDraft(null)
-    setRuns([])
-    await load()
+    setBusy(true)
+    setError('')
+    try {
+      await api.delete(projectId, rule.id)
+      setSelected(null)
+      setDraft(null)
+      setRuns([])
+      await load()
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : String(removeError))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const runNow = async (rule: ProjectAutomationRule) => {
     if (!api) return
     setBusy(true)
+    setError('')
     try {
       await api.runNow(projectId, rule.id)
       setRuns(await api.listRuns(projectId, rule.id))
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : String(runError))
     } finally {
       setBusy(false)
     }
@@ -186,8 +215,16 @@ export function ProjectAutomationRulesSection({
 
   const cancelRun = async (runId: string) => {
     if (!api || !selected) return
-    await api.cancelRun(projectId, runId)
-    setRuns(await api.listRuns(projectId, selected.id))
+    setBusy(true)
+    setError('')
+    try {
+      await api.cancelRun(projectId, runId)
+      setRuns(await api.listRuns(projectId, selected.id))
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const statusLabel = useMemo(
@@ -442,7 +479,7 @@ export function ProjectAutomationRulesSection({
                   <button
                     type="button"
                     data-testid="project-automation-save"
-                    disabled={busy}
+                    disabled={busy || !draft.name.trim() || !draft.prompt.trim() || !draft.agentId}
                     onClick={() => void save()}
                     className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background disabled:opacity-50"
                   >
@@ -474,10 +511,11 @@ export function ProjectAutomationRulesSection({
                           {t('workbench.project_automation_open_task')}
                         </button>
                       ) : null}
-                      {run.status === 'waiting_device' ? (
+                      {run.status === 'waiting_device' || run.status === 'running' ? (
                         <button
                           type="button"
                           data-testid={`project-automation-cancel-run-${run.id}`}
+                          disabled={busy}
                           onClick={() => void cancelRun(run.id)}
                           className="flex h-7 items-center gap-1 rounded-md px-2 text-text-muted hover:bg-surface"
                         >

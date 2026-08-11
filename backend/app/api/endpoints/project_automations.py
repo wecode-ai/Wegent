@@ -3,11 +3,13 @@
 
 """Wework project automation endpoints."""
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
+from app.models.delivery import ProjectAutomationRun
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.schemas.project_automation import (
     AutomationBugUpsert,
@@ -27,7 +29,7 @@ def list_automations(
     project_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> list[ProjectAutomationView]:
     return project_automation_service.list(db, project_id, current_user.id)
 
 
@@ -41,7 +43,7 @@ def create_automation(
     values: ProjectAutomationCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> ProjectAutomationView:
     return project_automation_service.create(db, project_id, current_user.id, values)
 
 
@@ -54,7 +56,7 @@ def update_automation(
     values: ProjectAutomationUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> ProjectAutomationView:
     return project_automation_service.update(
         db, project_id, automation_id, current_user.id, values
     )
@@ -66,7 +68,7 @@ def delete_automation(
     automation_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> Response:
     project_automation_service.delete(db, project_id, automation_id, current_user.id)
     return Response(status_code=204)
 
@@ -80,7 +82,7 @@ async def run_automation(
     automation_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> ProjectAutomationRunView:
     return await project_automation_service.run_now(
         db, project_id, automation_id, current_user.id
     )
@@ -95,7 +97,7 @@ def list_runs(
     automation_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> list[ProjectAutomationRunView]:
     return project_automation_service.list_runs(
         db, project_id, automation_id, current_user.id
     )
@@ -108,12 +110,31 @@ def list_runs(
 def cancel_run(
     project_id: str,
     run_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
-    return project_automation_service.cancel_run(
+) -> ProjectAutomationRunView:
+    run = db.get(ProjectAutomationRun, run_id)
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == run.task_id)
+        .order_by(LoopItemExecution.id.desc())
+        .first()
+        if run is not None and run.task_id
+        else None
+    )
+    result = project_automation_service.cancel_run(
         db, project_id, run_id, current_user.id
     )
+    if (
+        execution is not None
+        and execution.runtime_device_id
+        and execution.runtime_task_id
+    ):
+        from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+        background_tasks.add_task(emit_runtime_cancels, [execution])
+    return result
 
 
 @router.post(
@@ -124,7 +145,7 @@ async def upsert_bug(
     values: AutomationBugUpsert,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> AutomationBugUpsertResponse:
     action, item = await project_automation_service.upsert_bug(
         db, run_id, current_user, values
     )

@@ -139,11 +139,6 @@ class APSchedulerBackend(SchedulerBackend):
                 from app.tasks.subscription_tasks import check_due_subscriptions_sync
 
                 check_due_subscriptions_sync()
-                from app.tasks.project_automation_tasks import (
-                    check_due_project_automations_sync,
-                )
-
-                check_due_project_automations_sync()
             except ImportError:
                 # Fallback to async version if sync not available
                 logger.warning(
@@ -154,6 +149,18 @@ class APSchedulerBackend(SchedulerBackend):
 
                 # Call the underlying function, not the Celery task
                 check_due_subscriptions()
+
+            try:
+                from app.tasks.project_automation_tasks import (
+                    check_due_project_automations_sync,
+                )
+
+                check_due_project_automations_sync()
+            except ImportError:
+                logger.exception(
+                    "[APSchedulerBackend] Project automation scheduler task "
+                    "is unavailable"
+                )
 
         try:
             from apscheduler.triggers.interval import IntervalTrigger

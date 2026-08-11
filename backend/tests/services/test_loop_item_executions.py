@@ -362,6 +362,25 @@ def test_runtime_completion_finishes_project_automation(
     assert run.completed_at is not None
 
 
+def test_complete_truncates_long_execution_note(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+
+    completed = loop_item_execution_service.complete(
+        test_db,
+        execution_id=execution.id,
+        note="验" * 600,
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.execution_note == "验" * 500
+
+
 def test_lease_expiry_recovery_requeues_then_fails(
     test_db: Session, test_user: User
 ) -> None:

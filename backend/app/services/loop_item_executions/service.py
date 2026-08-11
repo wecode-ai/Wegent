@@ -190,7 +190,9 @@ class LoopItemExecutionService:
         row.status = STATUS_CANCELLED
         row.approval_status = "rejected"
         row.rejected_reason = reason or ""
-        row.execution_note = reason or "Robot creator rejected the run"
+        row.execution_note = self._execution_note(
+            reason or "Robot creator rejected the run"
+        )
         row.completed_at = now
         # Same transaction rule as approve: the caller owns the commit so a
         # concurrent version conflict cannot leave a half-applied rejection.
@@ -212,7 +214,7 @@ class LoopItemExecutionService:
         row.status = STATUS_CANCELLED
         row.completed_at = now
         if note:
-            row.execution_note = note
+            row.execution_note = self._execution_note(note)
         db.commit()
         self._finish_project_automation_run(db, row.loop_item_id, "cancelled", note)
         db.refresh(row)
@@ -640,7 +642,7 @@ class LoopItemExecutionService:
         row.completed_at = utcnow()
         row.lease_expires_at = EPOCH_TIME
         if note:
-            row.execution_note = note
+            row.execution_note = self._execution_note(note)
         db.commit()
         self._finish_project_automation_run(db, row.loop_item_id, "succeeded", note)
         db.refresh(row)
@@ -687,7 +689,7 @@ class LoopItemExecutionService:
             row.lease_expires_at = EPOCH_TIME
             row.error_message = self._error_text(error)[:2000]
         if note:
-            row.execution_note = note
+            row.execution_note = self._execution_note(note)
         db.commit()
         if row.status == STATUS_FAILED:
             self._finish_project_automation_run(db, row.loop_item_id, "failed", error)
@@ -777,6 +779,12 @@ class LoopItemExecutionService:
             parent.completed_at = utcnow()
             parent.version += 1
         db.commit()
+
+    @staticmethod
+    def _execution_note(note: str) -> str:
+        """Fit runtime summaries into the persisted execution note column."""
+
+        return note[:500]
 
     @staticmethod
     def _error_text(error: Any) -> str:

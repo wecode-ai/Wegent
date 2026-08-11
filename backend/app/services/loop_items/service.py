@@ -486,6 +486,8 @@ class LoopItemService:
         cloud_project_id: int,
         user_id: int,
         values: LoopItemCreate,
+        *,
+        commit: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -584,8 +586,11 @@ class LoopItemService:
                     ),
                     priority=item.priority,
                 )
-        db.commit()
-        db.refresh(item)
+        if commit:
+            db.commit()
+            db.refresh(item)
+        else:
+            db.flush()
         return item
 
     def list(

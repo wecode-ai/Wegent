@@ -245,6 +245,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'click',
         '[data-testid="project-automation-cancel-run-automation-run-waiting"]'
       )
+      const cancelDeadline = Date.now() + uiTimeoutMs
+      while (!cancelRequested && Date.now() < cancelDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
       assert.equal(cancelRequested, true)
       await control.command('click', '[data-testid="cloud-project-automation-view"]')
       await control.command('waitFor', '[data-testid="project-automation-rules"]', {

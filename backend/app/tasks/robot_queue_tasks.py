@@ -748,6 +748,13 @@ async def _consumer_pass(db: Session) -> int:
 
     handled = 0
     for device_id, environment in _queued_devices(db):
+        if environment == "local" and device_id == "local-device":
+            logger.debug(
+                "[RobotQueue] Background consumer left local compatibility "
+                "device for App claim device=%s",
+                device_id,
+            )
+            continue
         with distributed_lock.acquire_context(
             f"robot_exec:{device_id}",
             expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,

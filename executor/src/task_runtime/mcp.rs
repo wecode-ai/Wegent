@@ -201,7 +201,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
         .map(ToOwned::to_owned)
         .or_else(|| default_project_id.clone());
     if requested_project_id.as_deref().is_some_and(|project_id| {
-        is_dingtalk_aitable_project(runtime, project_id) && is_task_provider_tool(name)
+        is_dingtalk_aitable_project(runtime, project_id)
+            && is_task_provider_tool(name)
+            && !is_backend_only_tool(name)
     }) {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
         return text_result(dingtalk_route_redirect(runtime, project_id), false);
@@ -236,7 +238,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
 
     let should_use_backend = backend_url.is_some()
         && auth_token.is_some()
-        && (name == "create_space" || (requested_project_id.is_some() && !is_locally_routed));
+        && (name == "create_space"
+            || is_backend_only_tool(name)
+            || (requested_project_id.is_some() && !is_locally_routed));
     if should_use_backend {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
         return match call_backend_tool(
@@ -633,6 +637,10 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "update_table_field"
             | "delete_table_field"
     )
+}
+
+fn is_backend_only_tool(name: &str) -> bool {
+    matches!(name, "report_automation_bug")
 }
 
 async fn call_backend_tool(
@@ -1165,10 +1173,10 @@ fn tools() -> Vec<Value> {
                     "bug": {
                         "type": "object",
                         "properties": {
-                            "bug_key": {"type": "string"},
-                            "title": {"type": "string"},
-                            "evidence": {"type": "string"},
-                            "reproduction": {"type": "string"},
+                            "bug_key": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "title": {"type": "string", "minLength": 1, "maxLength": 255},
+                            "evidence": {"type": "string", "minLength": 1, "maxLength": 100000},
+                            "reproduction": {"type": "string", "maxLength": 100000},
                             "priority": {
                                 "type": "string",
                                 "enum": ["none", "low", "medium", "high", "urgent"]
@@ -1398,9 +1406,9 @@ fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> V
     tools()
         .into_iter()
         .filter(|tool| {
-            tool["name"]
-                .as_str()
-                .map_or(true, |name| !is_task_provider_tool(name))
+            tool["name"].as_str().map_or(true, |name| {
+                !is_task_provider_tool(name) || is_backend_only_tool(name)
+            })
         })
         .collect()
 }
