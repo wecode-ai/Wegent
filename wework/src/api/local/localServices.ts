@@ -289,7 +289,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
         family,
         ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
-        ...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+        reasoningEfforts,
         ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
         controls: ['speed'],
         sortOrder: 20,

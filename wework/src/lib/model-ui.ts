@@ -49,6 +49,7 @@ interface ModelUiMetadata {
   modelLabel: string
   sortOrder: number
   supportedControls: Set<string>
+  reasoningEffortsDeclared: boolean
   supportedReasoningEfforts: string[]
   defaultReasoningEffort?: string
 }
@@ -77,6 +78,44 @@ const FAMILY_ORDER = [
 ]
 
 const HIDDEN_MODEL_FAMILIES = new Set(['gemini'])
+
+const MODEL_INTERFACE_REASONING_OPTIONS: Record<
+  string,
+  Pick<ModelControlOption, 'label' | 'labelKey'>
+> = {
+  none: {
+    label: 'None',
+    labelKey: 'workbench.local_model_reasoning_none',
+  },
+  minimal: {
+    label: 'Minimal',
+    labelKey: 'workbench.local_model_reasoning_minimal',
+  },
+  low: {
+    label: 'Low',
+    labelKey: 'workbench.local_model_reasoning_low',
+  },
+  medium: {
+    label: 'Medium',
+    labelKey: 'workbench.local_model_reasoning_medium',
+  },
+  high: {
+    label: 'High',
+    labelKey: 'workbench.local_model_reasoning_high',
+  },
+  xhigh: {
+    label: 'Extra high',
+    labelKey: 'workbench.local_model_reasoning_xhigh',
+  },
+  max: {
+    label: 'Maximum',
+    labelKey: 'workbench.local_model_reasoning_max',
+  },
+  ultra: {
+    label: 'Ultra',
+    labelKey: 'workbench.local_model_reasoning_ultra',
+  },
+}
 
 const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
   {
@@ -210,6 +249,31 @@ function getConfigUi(model: UnifiedModel): Record<string, unknown> {
   return ui && typeof ui === 'object' && !Array.isArray(ui) ? (ui as Record<string, unknown>) : {}
 }
 
+export function getWeworkModelKind(model: UnifiedModel): string {
+  const configuredKind = model.config?.weworkModelKind
+  if (typeof configuredKind === 'string' && configuredKind.trim()) {
+    return configuredKind.trim().toLowerCase()
+  }
+  return inferModelFamily(model)
+}
+
+export function isCodexOfficialModel(model: UnifiedModel | null): boolean {
+  return Boolean(model && getWeworkModelKind(model) === 'codex-official')
+}
+
+export function isModelInterfaceModel(model: UnifiedModel | null): boolean {
+  if (!model) return false
+  const kind = getWeworkModelKind(model)
+  return kind === 'model-interface' || kind.startsWith('model-interface:')
+}
+
+export function isSameModelSelection(
+  left: UnifiedModel | null,
+  right: UnifiedModel | null
+): boolean {
+  return Boolean(left && right && left.type === right.type && left.name === right.name)
+}
+
 function identityTextForModel(model: UnifiedModel): string {
   return [model.name, model.displayName, model.modelId].filter(Boolean).join(' ').toLowerCase()
 }
@@ -341,13 +405,31 @@ function getExplicitSupportedControls(ui: Record<string, unknown>): Set<string> 
 function getSupportedReasoningEfforts(ui: Record<string, unknown>): string[] {
   const values = ui.reasoningEfforts ?? ui.supportedReasoningEfforts
   if (!Array.isArray(values)) return []
-  return values
-    .filter((value): value is string => typeof value === 'string')
-    .map(value => normalizeModelOptionValue('reasoning', value) ?? value)
+  return Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === 'string')
+        .map(value => normalizeModelOptionValue('reasoning', value) ?? value)
+        .filter(Boolean)
+    )
+  )
+}
+
+function modelInterfaceReasoningOptions(values: string[]): ModelControlOption[] {
+  return values.map((value, index) => {
+    const configured = MODEL_INTERFACE_REASONING_OPTIONS[value]
+    return {
+      value,
+      label: configured?.label ?? value,
+      ...(configured?.labelKey ? { labelKey: configured.labelKey } : {}),
+      order: (index + 1) * 10,
+    }
+  })
 }
 
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   const ui = getConfigUi(model)
+  const reasoningEfforts = ui.reasoningEfforts ?? ui.supportedReasoningEfforts
   const modelLabel =
     typeof ui.modelLabel === 'string' && ui.modelLabel.trim()
       ? ui.modelLabel.trim()
@@ -363,6 +445,7 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
     modelLabel,
     sortOrder,
     supportedControls: getExplicitSupportedControls(ui),
+    reasoningEffortsDeclared: Array.isArray(reasoningEfforts),
     supportedReasoningEfforts: getSupportedReasoningEfforts(ui),
     defaultReasoningEffort:
       typeof ui.defaultReasoningEffort === 'string'
@@ -380,8 +463,27 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
       if ((control.scope ?? 'family') === 'family') return true
       return metadata.supportedControls.has(control.id)
     })
-    .map(control => {
-      if (control.id !== 'reasoning') return control
+    .flatMap(control => {
+      if (control.id !== 'reasoning') return [control]
+      if (isModelInterfaceModel(model) && metadata.reasoningEffortsDeclared) {
+        const options = modelInterfaceReasoningOptions(metadata.supportedReasoningEfforts)
+        if (options.length === 0) return []
+        const configuredDefault = metadata.defaultReasoningEffort
+        const defaultValue =
+          configuredDefault && options.some(option => option.value === configuredDefault)
+            ? configuredDefault
+            : options.some(option => option.value === control.defaultValue)
+              ? control.defaultValue
+              : options[0].value
+        return [
+          {
+            ...control,
+            defaultValue,
+            options,
+          },
+        ]
+      }
+
       const supportedValues = new Set(metadata.supportedReasoningEfforts)
       const options = control.options.filter(option => {
         if (supportedValues.size > 0) return supportedValues.has(option.value)
@@ -393,11 +495,13 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
         : options.some(option => option.value === control.defaultValue)
           ? control.defaultValue
           : options[0]?.value
-      return {
-        ...control,
-        defaultValue: defaultValue ?? control.defaultValue,
-        options,
-      }
+      return [
+        {
+          ...control,
+          defaultValue: defaultValue ?? control.defaultValue,
+          options,
+        },
+      ]
     })
 
   return controls
