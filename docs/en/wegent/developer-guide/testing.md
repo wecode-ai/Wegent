@@ -273,6 +273,10 @@ CI reliability depends on these invariants:
   wait for each target element before reading attributes or asserting state.
   Visible final text does not imply that associated disclosure controls or
   timelines have mounted.
+- Wework release-note lookups for GitHub commit authors retry transient API or
+  TLS failures a limited number of times with exponential backoff. The release
+  job must still fail after retries are exhausted instead of silently omitting
+  attribution or publishing incomplete notes.
 
 ### CI Cache Ownership
 
