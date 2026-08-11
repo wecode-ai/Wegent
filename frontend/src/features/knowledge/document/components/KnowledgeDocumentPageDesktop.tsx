@@ -30,6 +30,7 @@ import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
+import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
@@ -471,6 +472,16 @@ export function KnowledgeDocumentPageDesktop({
     }
 
     if (sidebar.selectedKb) {
+      // A code wiki is a knowledge base like any other and lives at the same URL.
+      // What differs is how it is read: a page tree, a page, and its outline, rather
+      // than a document workspace. Deciding that here rather than on a route of its
+      // own is what keeps one knowledge base from having two addresses — the second
+      // one needed a redirect, and that redirect lost a race with this page's own
+      // history.pushState and rendered the wiki as a notebook anyway.
+      if (sidebar.selectedKb.kb_type === 'code_wiki') {
+        return <CodeWikiReader key={sidebar.selectedKb.id} wiki={sidebar.selectedKb} />
+      }
+
       return (
         <KnowledgeDetailPanel
           key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}

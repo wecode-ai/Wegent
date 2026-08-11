@@ -14,7 +14,7 @@ use crate::logging::log_executor_event;
 
 use super::{
     chat::{self, ToolContext},
-    DEFAULT_MAX_OUTPUT_TOKENS,
+    vision, DEFAULT_MAX_OUTPUT_TOKENS,
 };
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
@@ -44,10 +44,7 @@ pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext
             Some("system") => system.push(text_value(message.get("content"))),
             Some("tool") => append_tool_result(message, &mut messages),
             Some("assistant") => messages.push(assistant_message(message)),
-            _ => messages.push(json!({
-                "role": "user",
-                "content": anthropic_content(message.get("content"))
-            })),
+            _ => append_user_content(anthropic_content(message.get("content")), &mut messages),
         }
     }
     if !system.is_empty() {
@@ -123,16 +120,24 @@ fn append_tool_result(message: &Value, messages: &mut Vec<Value>) {
         "tool_use_id": message.get("tool_call_id").cloned().unwrap_or(Value::Null),
         "content": text_value(message.get("content"))
     });
+    append_user_content(Value::Array(vec![block]), messages);
+}
+
+fn append_user_content(content: Value, messages: &mut Vec<Value>) {
+    let Value::Array(content) = content else {
+        messages.push(json!({"role": "user", "content": content}));
+        return;
+    };
     if let Some(last) = messages
         .last_mut()
         .filter(|value| value.get("role").and_then(Value::as_str) == Some("user"))
     {
-        if let Some(content) = last.get_mut("content").and_then(Value::as_array_mut) {
-            content.push(block);
+        if let Some(existing) = last.get_mut("content").and_then(Value::as_array_mut) {
+            existing.extend(content);
             return;
         }
     }
-    messages.push(json!({"role": "user", "content": [block]}));
+    messages.push(json!({"role": "user", "content": Value::Array(content)}));
 }
 
 fn anthropic_content(content: Option<&Value>) -> Value {
@@ -155,12 +160,7 @@ fn image_block(value: Option<&Value>) -> Option<Value> {
     let url = value
         .and_then(|value| value.get("url").or(Some(value)))
         .and_then(Value::as_str)?;
-    let data = url.strip_prefix("data:")?;
-    let (media_type, encoded) = data.split_once(";base64,")?;
-    Some(json!({
-        "type": "image",
-        "source": {"type": "base64", "media_type": media_type, "data": encoded}
-    }))
+    Some(vision::anthropic_image_block(url))
 }
 
 fn anthropic_tool_choice(choice: &Value) -> Value {
@@ -587,6 +587,144 @@ mod tests {
     }
 
     #[test]
+    fn preserves_structured_app_tool_results_for_anthropic_messages() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "wegent_apps",
+                    "name": "wegent-sites__get_site",
+                    "arguments": "{\"project_id\":\"prj_1\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": {
+                        "_meta": null,
+                        "content": [{
+                            "type": "text",
+                            "text": "Wegent Sites tool completed successfully."
+                        }],
+                        "structuredContent": {
+                            "id": "prj_1",
+                            "title": "Palette"
+                        }
+                    }
+                }
+            ],
+            "tools": [{
+                "type": "namespace",
+                "name": "wegent_apps",
+                "tools": [{
+                    "type": "function",
+                    "name": "wegent-sites__get_site",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(
+            converted["messages"][1]["content"][0]["content"],
+            "{\"id\":\"prj_1\",\"title\":\"Palette\"}"
+        );
+    }
+
+    #[test]
+    fn converts_tool_output_images_to_anthropic_image_blocks() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "image_1",
+                    "name": "view_image",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "image_1",
+                    "output": [
+                        {"type": "text", "text": "Rendered preview"},
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,aGVsbG8="
+                        }
+                    ]
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "view_image",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["type"], "tool_result");
+        assert_eq!(messages[1]["content"][0]["content"], "Rendered preview");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(
+            messages[1]["content"][1]["text"],
+            "Image output from tool view_image:"
+        );
+        assert_eq!(messages[1]["content"][2]["type"], "image");
+        assert_eq!(
+            messages[1]["content"][2]["source"]["media_type"],
+            "image/png"
+        );
+        assert_eq!(messages[1]["content"][2]["source"]["data"], "aGVsbG8=");
+        assert!(!messages[1]["content"][0]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("aGVsbG8=")));
+    }
+
+    #[test]
+    fn converts_user_input_images_to_anthropic_image_blocks() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this image"},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/jpeg;base64,dXNlci1pbWFnZQ=="
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": "https://example.com/image.png"
+                    }
+                ]
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(converted["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(converted["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(
+            converted["messages"][0]["content"][1]["source"]["media_type"],
+            "image/jpeg"
+        );
+        assert_eq!(
+            converted["messages"][0]["content"][1]["source"]["data"],
+            "dXNlci1pbWFnZQ=="
+        );
+        assert_eq!(converted["messages"][0]["content"][2]["type"], "image");
+        assert_eq!(
+            converted["messages"][0]["content"][2]["source"],
+            json!({"type": "url", "url": "https://example.com/image.png"})
+        );
+    }
+
+    #[test]
     fn flattens_namespace_tools_for_anthropic_messages() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -612,6 +750,78 @@ mod tests {
             converted["tools"][0]["input_schema"],
             json!({"type": "object", "properties": {}})
         );
+    }
+
+    #[test]
+    fn bridges_tool_search_and_history_for_anthropic_messages() {
+        let input = json!({
+            "model": "third-party-anthropic-model",
+            "input": [
+                {"role": "user", "content": "Find the GitHub App"},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "GitHub"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "status": "completed",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create an issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}}
+                            }
+                        }]
+                    }]
+                }
+            ],
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "description": "Search available Apps",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(converted["tools"][0]["name"], "tool_search");
+        assert_eq!(converted["tools"][1]["name"], "create_issue");
+        assert_eq!(
+            converted["tools"][0]["input_schema"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(converted["messages"][1]["role"], "assistant");
+        assert_eq!(converted["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(
+            converted["messages"][1]["content"][0]["name"],
+            "tool_search"
+        );
+        assert_eq!(
+            converted["messages"][1]["content"][0]["input"],
+            json!({"query": "GitHub"})
+        );
+        assert_eq!(converted["messages"][2]["role"], "user");
+        assert_eq!(
+            converted["messages"][2]["content"][0]["type"],
+            "tool_result"
+        );
+        assert!(converted["messages"][2]["content"][0]["content"]
+            .as_str()
+            .is_some_and(|value| value.contains("\"tools\"")));
     }
 
     #[test]

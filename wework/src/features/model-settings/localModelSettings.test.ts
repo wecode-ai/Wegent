@@ -3,8 +3,10 @@ import {
   clearLocalModelConfigs,
   deepSeekCatalogModelIdFor,
   deleteLocalModelConfig,
+  findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  localModelName,
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
@@ -106,6 +108,33 @@ describe('localModelSettings', () => {
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
     expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+  })
+
+  test('finds a custom model by its local and Codex catalog names', () => {
+    const model = saveLocalModelConfig({
+      id: 'custom-responses',
+      displayName: 'Custom Responses',
+      modelId: 'responses-model',
+      baseUrl: 'https://responses.example/v1',
+    })
+
+    expect(findLocalModelConfigByModelName(localModelName(model))).toEqual(model)
+    expect(findLocalModelConfigByModelName(model.codexCatalogModelId)).toEqual(model)
+  })
+
+  test('does not resolve a local model when the model name is absent', () => {
+    const vision = saveLocalModelConfig({
+      id: 'vision',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry: {
+        input_modalities: ['text', 'image'],
+      },
+    })
+
+    expect(vision.codexCatalogModelId).toBeUndefined()
+    expect(findLocalModelConfigByModelName()).toBeNull()
   })
 
   test('persists a vision proxy reference and clears it when that model is deleted', () => {
@@ -350,6 +379,36 @@ describe('localModelSettings', () => {
     ])
   })
 
+  test('migrates Kimi Open Platform K3 configs to the buffered catalog profile', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-kimi-k3',
+          providerProfileId: 'kimi',
+          displayName: 'Kimi K3',
+          modelId: 'kimi-k3',
+          baseUrl: 'https://api.moonshot.cn/v1',
+          apiFormat: 'openai-chat-completions',
+          contextWindow: 1_000_000,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-kimi-k3',
+        contextWindow: 1_048_576,
+        codexCatalogModelId: 'wework-kimi-k3',
+        catalogReady: true,
+      }),
+    ])
+  })
+
   test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',
@@ -382,6 +441,38 @@ describe('localModelSettings', () => {
         codexCatalogModelId: 'wework-deepseek-v4-flash',
         catalogReady: true,
         webSearchMode: 'live',
+      }),
+    ])
+  })
+
+  test('keeps existing MiniMax international configs on the global profile', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-minimax',
+          providerProfileId: 'minimax',
+          displayName: 'MiniMax M2.7',
+          modelId: 'MiniMax-M2.7',
+          baseUrl: 'https://api.minimax.io/anthropic',
+          apiFormat: 'anthropic-messages',
+          toolProfile: 'function',
+          requestPath: '/v1/messages',
+          contextWindow: 204_800,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          catalogReady: true,
+          enabled: true,
+          updatedAt: '2026-08-09T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-minimax',
+        providerProfileId: 'minimax-global',
+        baseUrl: 'https://api.minimax.io/anthropic',
       }),
     ])
   })

@@ -45,6 +45,10 @@ interface LocalLoopItemRecord {
   created_at: string
   updated_at: string
   completed_at: string | null
+  assignee_user_id?: number | null
+  assignee_agent_id?: string | null
+  execution_id?: number | null
+  execution_state?: string | null
 }
 
 interface LocalTaskBindingRecord {
@@ -78,6 +82,61 @@ interface LocalProjectFileRecord {
 
 interface LocalAccessRecord {
   path: string
+}
+
+export interface LocalProjectChatAgent {
+  id: string
+  projectId: string
+  name: string
+  runtime: 'codex'
+  model: string | null
+  systemPrompt: string
+  status: 'active' | 'archived'
+  visibility: 'private' | 'creator_admin' | 'public'
+  executionEnvironment: 'local' | 'cloud'
+  executionMode: 'auto' | 'manual_approval'
+  executionDeviceId: string | null
+  localProjectId: number | null
+  createdByUserId: number | null
+  createdByUserName?: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LocalLoopItemExecution {
+  id: number
+  loop_item_id: string
+  cloud_project_id: string
+  task_title: string
+  task_status?: string | null
+  task_priority?: string | null
+  agent_id: string
+  assigner_user_id: number
+  execution_environment: string
+  execution_device_id?: string | null
+  status: string
+  priority_weight: number
+  queued_at?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  lease_expires_at?: string | null
+  heartbeat_at?: string | null
+  retry_attempt: number
+  error_message: string
+  execution_note: string
+  approval_status?: string | null
+  approved_by_user_id?: number | null
+  rejected_reason?: string | null
+  runtime_device_id?: string | null
+  runtime_task_id?: string | null
+  version: number
+  created_at: string
+  updated_at: string
+  agent_name: string
+  agent_system_prompt: string
+  agent_model?: string | null
+  execution_payload?: Record<string, unknown> | null
 }
 
 function stringList(value: unknown): string[] {
@@ -222,6 +281,192 @@ export function createExternalIssueApi(request: LocalRequest) {
   }
 }
 
+type LocalAgentRecord = Record<string, unknown> & {
+  id: string
+  project_id?: string
+  name?: string
+  model?: string | null
+  system_prompt?: string
+  status?: string
+  visibility?: string
+  execution_environment?: string
+  execution_mode?: string
+  execution_device_id?: string | null
+  local_project_id?: number | null
+  created_by_user_id?: number | null
+  version?: number
+  created_at?: string
+  updated_at?: string
+}
+
+function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
+  return {
+    id: record.id,
+    projectId: record.project_id ?? '',
+    name: record.name ?? 'AI',
+    runtime: 'codex',
+    model: record.model ?? null,
+    systemPrompt: record.system_prompt ?? '',
+    status: record.status === 'archived' ? 'archived' : 'active',
+    visibility: (record.visibility as LocalProjectChatAgent['visibility']) ?? 'creator_admin',
+    executionEnvironment:
+      (record.execution_environment as LocalProjectChatAgent['executionEnvironment']) ?? 'local',
+    executionMode: (record.execution_mode as LocalProjectChatAgent['executionMode']) ?? 'auto',
+    executionDeviceId: record.execution_device_id ?? null,
+    localProjectId: record.local_project_id ?? null,
+    createdByUserId: record.created_by_user_id ?? null,
+    version: record.version ?? 1,
+    createdAt: record.created_at ?? '',
+    updatedAt: record.updated_at ?? '',
+  }
+}
+
+export function createLocalProjectChatAgentApi(request: LocalRequest, currentUserId?: number) {
+  return {
+    async list(projectId: string): Promise<LocalProjectChatAgent[]> {
+      const records = await request<LocalAgentRecord[]>('chat_agents.list', {
+        project_id: projectId,
+      })
+      return records.map(localAgent)
+    },
+    async create(
+      projectId: string,
+      input: {
+        name: string
+        runtime: 'codex'
+        model?: string | null
+        systemPrompt?: string
+        visibility?: LocalProjectChatAgent['visibility']
+        executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
+        executionMode?: LocalProjectChatAgent['executionMode']
+        executionDeviceId?: string | null
+        localProjectId?: number | null
+      }
+    ): Promise<LocalProjectChatAgent> {
+      const record = await request<LocalAgentRecord>('chat_agents.create', {
+        project_id: projectId,
+        agent: {
+          name: input.name,
+          model: input.model ?? null,
+          system_prompt: input.systemPrompt ?? '',
+          visibility: input.visibility ?? 'creator_admin',
+          execution_environment: input.executionEnvironment ?? 'local',
+          execution_mode: input.executionMode ?? 'auto',
+          execution_device_id: input.executionDeviceId ?? null,
+          local_project_id: input.localProjectId ?? null,
+          created_by_user_id: currentUserId ?? null,
+        },
+      })
+      return localAgent(record)
+    },
+    async update(
+      projectId: string,
+      agentId: string,
+      input: {
+        version: number
+        name?: string
+        model?: string | null
+        systemPrompt?: string
+        status?: 'active' | 'archived'
+        visibility?: LocalProjectChatAgent['visibility']
+        executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
+        executionMode?: LocalProjectChatAgent['executionMode']
+        executionDeviceId?: string | null
+        localProjectId?: number | null
+      }
+    ): Promise<LocalProjectChatAgent> {
+      const record = await request<LocalAgentRecord>('chat_agents.update', {
+        project_id: projectId,
+        agent_id: agentId,
+        agent: {
+          version: input.version,
+          name: input.name,
+          model: input.model,
+          system_prompt: input.systemPrompt,
+          status: input.status,
+          visibility: input.visibility,
+          execution_environment: input.executionEnvironment,
+          execution_mode: input.executionMode,
+          execution_device_id: input.executionDeviceId,
+          local_project_id: input.localProjectId,
+        },
+      })
+      return localAgent(record)
+    },
+    async archive(projectId: string, agentId: string, version: number) {
+      await request('chat_agents.archive', {
+        project_id: projectId,
+        agent_id: agentId,
+        version,
+      })
+      return { deleted: true }
+    },
+  }
+}
+
+export function createLocalLoopItemExecutionApi(request: LocalRequest) {
+  return {
+    async list(
+      projectId: string,
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
+    ): Promise<LocalLoopItemExecution[]> {
+      return request<LocalLoopItemExecution[]>('executions.list', {
+        project_id: projectId,
+        agent_id: options.agent_id ?? null,
+        status: options.status ?? null,
+        include_terminal: options.include_terminal ?? false,
+      })
+    },
+    async approve(executionId: number) {
+      return request<LocalLoopItemExecution>('executions.approve', {
+        execution_id: executionId,
+      })
+    },
+    async reject(executionId: number, reason?: string) {
+      return request<LocalLoopItemExecution>('executions.reject', {
+        execution_id: executionId,
+        reason: reason ?? null,
+      })
+    },
+    async claimNext(claim: {
+      execution_device_id?: string | null
+      device_capacity?: number
+      lease_seconds?: number
+    }): Promise<LocalLoopItemExecution | null> {
+      return request<LocalLoopItemExecution | null>('executions.claim_next', { claim })
+    },
+    async heartbeat(
+      executionId: number,
+      runtimeDeviceId: string | null,
+      runtimeTaskId: string | null,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution>('executions.heartbeat', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
+      })
+    },
+    async complete(executionId: number, note?: string | null) {
+      return request<LocalLoopItemExecution>('executions.complete', {
+        execution_id: executionId,
+        note: note ?? null,
+      })
+    },
+    async fail(executionId: number, error: string, requeue = true) {
+      return request<LocalLoopItemExecution>('executions.fail', {
+        execution_id: executionId,
+        error,
+        requeue,
+      })
+    },
+    async recoverStale(): Promise<{ requeued: number; failed: number }> {
+      return request<{ requeued: number; failed: number }>('executions.recover_stale', {})
+    },
+  }
+}
+
 function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
   const isPublicVisitor = role === 'RestrictedAnalyst'
@@ -239,7 +484,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : null,
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
-    assignee_user_id: null,
+    assignee_user_id: record.assignee_user_id ?? null,
+    assignee_agent_id: record.assignee_agent_id ?? null,
+    execution_id: record.execution_id ?? null,
+    execution_state: record.execution_state ?? null,
     assignee_name:
       typeof record.metadata.assignee_label === 'string'
         ? record.metadata.assignee_label || null
@@ -396,12 +644,26 @@ export function createLocalDeliveryApi(
     async listMyWork() {
       return { items: [] }
     },
-    async listLoopItems(projectId: CloudProjectId) {
+    async listLoopItems(
+      projectId: CloudProjectId,
+      options: {
+        assigneeType?: 'user' | 'agent'
+        assigneeId?: string | number
+      } = {}
+    ) {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(record => localTask(record)) }
+      let items = records.map(record => localTask(record))
+      if (options.assigneeType === 'agent' && options.assigneeId !== undefined) {
+        const agentId = String(options.assigneeId)
+        items = items.filter(item => item.assignee_agent_id === agentId)
+      } else if (options.assigneeType === 'user' && options.assigneeId !== undefined) {
+        const userId = Number(options.assigneeId)
+        items = items.filter(item => item.assignee_user_id === userId)
+      }
+      return { items }
     },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
@@ -448,6 +710,34 @@ export function createLocalDeliveryApi(
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
+    async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
+      const executions = await request<LocalLoopItemExecution[]>('executions.list', {
+        project_id: String(projectId),
+        status: 'pending_approval',
+      })
+      const execution = executions.find(entry => entry.loop_item_id === String(itemId))
+      if (!execution) throw new Error('Run is not waiting for robot approval')
+      await request('executions.approve', { execution_id: execution.id })
+      return api.getLoopItem(String(itemId))
+    },
+    async rejectLoopItemRun(
+      projectId: CloudProjectId,
+      itemId: string,
+      _version: number,
+      reason?: string
+    ): Promise<CloudLoopItem> {
+      const executions = await request<LocalLoopItemExecution[]>('executions.list', {
+        project_id: String(projectId),
+        status: 'pending_approval',
+      })
+      const execution = executions.find(entry => entry.loop_item_id === String(itemId))
+      if (!execution) throw new Error('Run is not waiting for robot approval')
+      await request('executions.reject', {
+        execution_id: execution.id,
+        reason: reason ?? null,
+      })
+      return api.getLoopItem(String(itemId))
+    },
     async archiveLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       await request('todos.archive', {
@@ -472,7 +762,9 @@ export function createLocalDeliveryApi(
       return { items: records.map(record => localTask(record)) }
     },
     async listLoopItemAttachments(itemId: string) {
+      const projectId = await resolveProjectId(itemId)
       return request<CloudLoopItemAttachment[]>('attachments.list', {
+        project_id: projectId,
         item_id: itemId,
       })
     },
@@ -573,6 +865,22 @@ export function createLocalDeliveryApi(
       return nextStatus
         ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
         : item
+    },
+    async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
+      let binding: LocalTaskBindingRecord
+      try {
+        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          device_id: task.deviceId,
+          task_id: task.taskId,
+        })
+      } catch {
+        return null
+      }
+      if (!binding.loop_item_id) return null
+      const item = await api.getLoopItem(binding.loop_item_id)
+      return item.title === title
+        ? item
+        : api.updateLoopItem(item.id, { version: item.version, title })
     },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {

@@ -2,6 +2,8 @@ import { FileArchive, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@/tauri/appPreferences'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { cn } from '@/lib/utils'
 import type { RuntimeContextUsage } from '@/types/api'
@@ -27,7 +29,11 @@ export function ContextUsageIndicator({
   onCompactContext,
 }: ContextUsageIndicatorProps) {
   const { t } = useTranslation('common')
+  const preferencesState = useAppPreferencesState()
+  const compactionThreshold =
+    preferencesState?.preferences.contextCompactionThreshold ?? DEFAULT_CONTEXT_COMPACTION_THRESHOLD
   const metrics = useMemo(() => (usage ? runtimeContextUsageMetrics(usage) : null), [usage])
+  const overThreshold = metrics ? metrics.usedPercent >= compactionThreshold : false
   const containerRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -112,17 +118,17 @@ export function ContextUsageIndicator({
         }}
         className={cn(
           'context-usage-compact-trigger flex h-4 w-4 items-center justify-center rounded-full disabled:cursor-default',
-          metrics.usedPercent >= 85 ? 'text-red-500' : 'text-[#a5abb2]'
+          overThreshold ? 'text-red-500' : 'text-text-muted'
         )}
         aria-label={t('workbench.compact_context_prompt', '是否压缩上下文?')}
       >
         <span
           className={cn(
             'context-usage-compact-visual flex h-3 w-3 items-center justify-center rounded-full',
-            metrics.usedPercent >= 85 ? 'text-red-500' : 'text-[#a5abb2]'
+            overThreshold ? 'text-red-500' : 'text-text-muted'
           )}
           style={{
-            background: `conic-gradient(currentColor ${metrics.usedPercent * 3.6}deg, #edf0f2 0deg)`,
+            background: `conic-gradient(currentColor ${metrics.usedPercent * 3.6}deg, rgb(var(--color-border) / 0.7) 0deg)`,
           }}
         >
           <span className="h-2 w-2 rounded-full bg-background" />
@@ -147,6 +153,20 @@ export function ContextUsageIndicator({
                 totalTokens: formatCompactTokens(metrics.totalTokens),
               })}
             </div>
+            {overThreshold && !disabled && onCompactContext && (
+              <button
+                type="button"
+                data-testid="context-usage-compact-hint"
+                onClick={() => {
+                  setConfirmPosition(null)
+                  setConfirmOpen(true)
+                }}
+                className="mt-1.5 flex items-center justify-center gap-1 whitespace-nowrap font-light text-red-500 hover:underline"
+              >
+                <FileArchive className="h-3.5 w-3.5" />
+                {t('workbench.context_usage_compact_hint')}
+              </button>
+            )}
           </div>
         </>
       )}

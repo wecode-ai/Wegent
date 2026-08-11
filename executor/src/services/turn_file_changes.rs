@@ -377,12 +377,19 @@ fn completion_fields_from_patch_and_files(
     if files.is_empty() {
         return json!({});
     }
-    persist_artifact(workspace, task_id, subtask_id, executor_home, patch);
+    let artifact_id = persist_named_artifact(
+        workspace,
+        &task_id.to_string(),
+        &subtask_id.to_string(),
+        executor_home,
+        patch,
+    )
+    .unwrap_or_else(|| format!("turn-file-changes/{task_id}/{subtask_id}"));
     json!({
         "file_changes": {
             "version": ARTIFACT_VERSION,
             "status": "active",
-            "artifact_id": format!("turn-file-changes/{task_id}/{subtask_id}"),
+            "artifact_id": artifact_id,
             "device_id": device_id,
             "workspace_path": workspace.display().to_string(),
             "file_count": files.len(),
@@ -394,16 +401,19 @@ fn completion_fields_from_patch_and_files(
     })
 }
 
-fn persist_artifact(
+pub fn persist_named_artifact(
     workspace: &Path,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
     executor_home: &Path,
     patch: &[u8],
-) {
+) -> Option<String> {
+    if !is_artifact_segment(task_id) || !is_artifact_segment(subtask_id) {
+        return None;
+    }
     let artifact_id = format!("turn-file-changes/{task_id}/{subtask_id}");
     let artifact_dir = executor_home.join("artifacts").join(&artifact_id);
-    let _ = fs::create_dir_all(&artifact_dir);
+    fs::create_dir_all(&artifact_dir).ok()?;
     let checksum = format!("{:x}", Sha256::digest(patch));
     let metadata = json!({
         "version": ARTIFACT_VERSION,
@@ -412,11 +422,20 @@ fn persist_artifact(
         "workspace_path": workspace.display().to_string(),
         "checksum": checksum,
     });
-    atomic_write(&artifact_dir.join("changes.patch.gz"), &gzip_bytes(patch));
+    atomic_write(&artifact_dir.join("changes.patch.gz"), &gzip_bytes(patch)).ok()?;
     atomic_write(
         &artifact_dir.join("metadata.json"),
         serde_json::to_vec(&metadata).unwrap_or_default().as_slice(),
-    );
+    )
+    .ok()?;
+    Some(artifact_id)
+}
+
+fn is_artifact_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn summarize_patch(workspace: &Path, patch: &[u8]) -> Vec<Value> {
@@ -847,13 +866,13 @@ fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap_or_default()
 }
 
-fn atomic_write(path: &Path, content: &[u8]) {
+fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent)?;
     }
     let temp_path = path.with_extension(format!("tmp-{}", unique_temp_suffix()));
-    let _ = fs::write(&temp_path, content);
-    let _ = fs::rename(temp_path, path);
+    fs::write(&temp_path, content)?;
+    fs::rename(temp_path, path)
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

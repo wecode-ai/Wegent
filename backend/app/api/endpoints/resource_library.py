@@ -78,6 +78,7 @@ def list_resource_library(
         default=None, pattern="^(agent|skill|model|shell|retriever)$"
     ),
     system_only: bool = Query(default=False),
+    featured_only: bool = Query(default=False),
     keyword: str | None = Query(default=None, max_length=200),
     tags: str | None = Query(default=None),
     target_namespace: str = Query(default="default", min_length=1, max_length=100),
@@ -92,6 +93,7 @@ def list_resource_library(
         user_id=current_user.id,
         resource_type=resource_type,
         system_only=system_only,
+        featured_only=featured_only,
         keyword=keyword,
         tags=_parse_tags(tags),
         target_namespace=target_namespace,

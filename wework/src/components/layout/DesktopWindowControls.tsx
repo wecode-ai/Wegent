@@ -8,6 +8,7 @@ interface DesktopWindowControlsProps {
   onToggleSidebar: () => void
   onNewChat?: () => void
   className?: string
+  buttonClassName?: string
   toggleTestId?: string
 }
 
@@ -16,6 +17,7 @@ export function DesktopWindowControls({
   onToggleSidebar,
   onNewChat,
   className = '',
+  buttonClassName,
   toggleTestId,
 }: DesktopWindowControlsProps) {
   const { t } = useTranslation('common')
@@ -31,7 +33,7 @@ export function DesktopWindowControls({
           toggleTestId ?? (sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button')
         }
         onClick={onToggleSidebar}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, buttonClassName)}
         aria-label={toggleLabel}
       >
         <PanelLeft />
@@ -41,7 +43,7 @@ export function DesktopWindowControls({
           type="button"
           data-testid="desktop-controls-new-chat-button"
           onClick={onNewChat}
-          className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+          className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, buttonClassName)}
           aria-label={t('workbench.new_chat', '新对话')}
         >
           <Edit3 />

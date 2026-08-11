@@ -42,7 +42,7 @@ export function getCurrentTargetPageByMode(currentMode: string): TeamTargetPage 
   if (currentMode === 'code') return 'code'
   if (currentMode === 'knowledge') return 'knowledge'
   if (currentMode === 'task') return 'devices/chat'
-  if (currentMode === 'video' || currentMode === 'image') return 'generate'
+  if (currentMode === 'video' || currentMode === 'image') return currentMode
   return 'chat'
 }
 

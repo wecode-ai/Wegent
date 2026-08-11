@@ -23,6 +23,36 @@ interface AttachmentButtonProps {
   triggerVariant?: 'icon' | 'menu-item'
 }
 
+const ACCEPT_LABELS: Record<string, string> = {
+  'image/*': 'Image',
+  'image/jpeg': 'JPG/JPEG',
+  'image/png': 'PNG',
+  'image/bmp': 'BMP',
+  'image/webp': 'WebP',
+  'image/gif': 'GIF',
+  'image/tiff': 'TIFF',
+  'video/*': 'Video',
+  'video/mp4': 'MP4',
+  'video/quicktime': 'MOV',
+  'audio/*': 'Audio',
+  'audio/wav': 'WAV',
+  'audio/mpeg': 'MP3',
+}
+
+function getAcceptLabels(accept?: string): string {
+  if (!accept) return '-'
+
+  return Array.from(
+    new Set(
+      accept
+        .split(',')
+        .map(rule => rule.trim().toLowerCase())
+        .filter(Boolean)
+        .map(rule => ACCEPT_LABELS[rule] ?? rule.replace(/^\./, '').toUpperCase())
+    )
+  ).join(', ')
+}
+
 /**
  * Attachment upload button component
  * Only responsible for showing the upload button and handling file selection
@@ -112,15 +142,18 @@ export default function AttachmentButton({
     [disabled, isFileAccepted, onFileSelect]
   )
 
-  // Tooltip content - use image-specific tooltip when accept is image/*
-  const isImageOnly = accept === 'image/*'
-  const tooltipContent = isImageOnly
-    ? t('chat:upload.image_tooltip', {
-        maxSize: MAX_FILE_SIZE / (1024 * 1024),
-      })
-    : t('chat:upload.tooltip', {
-        maxSize: MAX_FILE_SIZE / (1024 * 1024),
-      })
+  const tooltipContent =
+    accept && accept !== 'image/*'
+      ? t('chat:upload.model_material_tooltip', {
+          formats: getAcceptLabels(accept),
+        })
+      : accept === 'image/*'
+        ? t('chat:upload.image_tooltip', {
+            maxSize: MAX_FILE_SIZE / (1024 * 1024),
+          })
+        : t('chat:upload.tooltip', {
+            maxSize: MAX_FILE_SIZE / (1024 * 1024),
+          })
 
   return (
     <div onDragOver={handleDragOver} onDrop={handleDrop}>

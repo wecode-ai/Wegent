@@ -36,6 +36,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
 import {
   buildConversationMentionCandidates,
   type ConversationMentionCandidate,
@@ -118,6 +119,9 @@ export interface ProjectWorkControls {
   onCreateBranch?: (branchName: string) => Promise<void>
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
+  // When false, the project trigger renders a static folder icon instead of the
+  // hover-to-clear button (for defaults that cannot be cleared from the bar).
+  showProjectClearButton?: boolean
   projectMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
 }
@@ -127,8 +131,12 @@ export interface ChatInputProps {
   onChange: (value: string) => void
   onBlur?: () => void
   onCompositionEnd?: () => void
-  onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
+  onSubmit: (
+    valueOverride?: string,
+    options?: ChatSubmitOptions
+  ) => void | boolean | Promise<void | boolean>
   disabled: boolean
+  pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   error?: string | null
   disabledReason?: string
@@ -160,8 +168,10 @@ export interface ChatInputProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
@@ -512,6 +522,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onCompositionEnd,
     onSubmit,
     disabled,
+    pluginPickerIconOnly = false,
     submitDisabled = false,
     error,
     disabledReason,
@@ -540,8 +551,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    externalMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
+    onSelectExternalMention,
     onSelectCloudProject,
     selectedCloudProjectId,
     isStreaming = false,
@@ -722,9 +735,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    externalMentionCandidates,
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
+    onSelectExternalMention,
     onSelectCloudProject,
     selectedCloudProjectId,
   }
@@ -811,6 +826,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         <ProjectChatComposer
           ref={composerRef}
           {...composerProps}
+          pluginPickerIconOnly={pluginPickerIconOnly}
           models={controls.models}
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}

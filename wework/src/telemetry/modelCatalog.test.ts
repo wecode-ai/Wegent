@@ -6,6 +6,7 @@ describe('toKnownAiProvider', () => {
     expect(toKnownAiProvider('moonshot-kimi-k2.7-code', 'anthropic')).toBe('moonshot')
     expect(toKnownAiProvider('moonshot-kimi-k3', 'anthropic')).toBe('moonshot')
     expect(toKnownAiProvider('deepseek-v4-flash', 'openai')).toBe('deepseek')
+    expect(toKnownAiProvider('MiniMax-M2.7', 'anthropic')).toBe('minimax')
     expect(toKnownAiProvider('gpt-5.6-sol', 'local')).toBe('openai')
     expect(toKnownAiProvider('claude-3-7-sonnet', 'local')).toBe('anthropic')
     expect(toKnownAiProvider('gemini-2.5-pro', 'google')).toBe('google')
@@ -20,6 +21,7 @@ describe('toKnownAiProvider', () => {
     expect(toKnownAiProvider('my-custom-model', 'claude')).toBe('anthropic')
     expect(toKnownAiProvider('my-custom-model', 'openai')).toBe('openai')
     expect(toKnownAiProvider('my-custom-model', 'Kimi')).toBe('moonshot')
+    expect(toKnownAiProvider('my-custom-model', 'MiniMax')).toBe('minimax')
   })
 
   test('does not apply the codex-official rule to provider-configured models', () => {

@@ -127,7 +127,13 @@ import { localModelSupportsImageInput } from '@/features/model-settings/localMod
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
-import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
+import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -1361,6 +1367,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
+  standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
@@ -1469,6 +1476,7 @@ function buildLocalRuntimeExecutionRequest(
           project_workspace_path: input.workspacePath,
         }
       : {}),
+    ...(input.standaloneChatWorkspace ? { standalone_chat_workspace: true } : {}),
     ...(input.runtimeProjectKey ? { runtime_project_key: input.runtimeProjectKey } : {}),
     ...(input.runtimeProjectName ? { runtime_project_name: input.runtimeProjectName } : {}),
     ...(input.runtimeWorkspaceRoots?.length
@@ -1500,6 +1508,7 @@ async function executeLocalDeviceCommand(
   data: {
     deviceId?: string
     command_key: string
+    path?: string
     args?: string[]
     timeout_seconds?: number
     max_output_bytes?: number
@@ -1533,8 +1542,12 @@ async function loadLocalCodexAuthConfigured(
 async function prepareLocalRuntimeWorkspace(
   data: RuntimeTaskCreateRequest,
   requestWithLocalDevice: RequestWithLocalDevice
-): Promise<LocalRuntimeWorkspace> {
-  const sourceWorkspacePath = requiredRuntimeWorkspacePath(data)
+): Promise<LocalRuntimeWorkspace | null> {
+  const sourceWorkspacePath = runtimeWorkspacePath(data)
+  if (!sourceWorkspacePath) {
+    if (data.standaloneChatWorkspace) return null
+    throw new Error('workspacePath is required')
+  }
   const requestedSource = runtimeWorkspaceSource(data)
   const branch = runtimeWorkspaceBranch(data)
   if (requestedSource !== 'git_worktree') {
@@ -1584,21 +1597,49 @@ async function createLocalRuntimeTaskPayload(
   user: User
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
-  const execution = executionWithWorkspace(data, runtimeWorkspace)
+  const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
   const normalizedData: RuntimeTaskCreateRequest = {
     ...data,
     deviceId: localDeviceId,
-    workspacePath: runtimeWorkspace.workspacePath,
+    ...(runtimeWorkspace ? { workspacePath: runtimeWorkspace.workspacePath } : {}),
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
+  const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
+    ? buildLocalRuntimeExecutionRequest({
+        taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
+        runtime: 'codex',
+        teamId: normalizedData.teamId,
+        title: 'Generate friendly task title',
+        message: [
+          '为下面的用户请求生成一个简洁、具体、适合作为任务标题的中文标题。',
+          '只输出标题本身，不要引号、标点、解释或换行；最多 24 个汉字。',
+          '',
+          `用户请求：${normalizedData.message}`,
+        ].join('\n'),
+        turnSeed: createRuntimeTurnSeed(),
+        modelId: normalizedData.friendlyTitle.modelId,
+        modelType: normalizedData.friendlyTitle.modelType,
+        modelOptions: normalizedData.friendlyTitle.modelOptions,
+        cloudModelGateway,
+        localDeviceId,
+        workspacePath: runtimeWorkspace?.workspacePath,
+        standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
+        workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+        branch: runtimeWorkspace?.branch,
+        newSession: true,
+        ephemeral: true,
+        user,
+      })
+    : null
 
   return {
     ...payload,
     ...(collaborationMode ? { collaborationMode } : {}),
+    ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
@@ -1615,13 +1656,14 @@ async function createLocalRuntimeTaskPayload(
       additionalContext: normalizedData.additionalContext,
       attachments: normalizedData.attachments,
       localDeviceId,
-      workspacePath: runtimeWorkspace.workspacePath,
+      workspacePath: runtimeWorkspace?.workspacePath,
+      standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
       cloudProjectId: normalizedData.cloudProjectId,
-      workspaceSource: runtimeWorkspace.workspaceSource,
-      branch: runtimeWorkspace.branch,
+      workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+      branch: runtimeWorkspace?.branch,
       newSession: true,
       clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: normalizedData.ephemeral,
@@ -2215,10 +2257,47 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeWorkspaceSearchResponse> {
       return requestWithLocalDevice('runtime.workspace.search', data)
     },
-    revertRuntimeFileChanges(
+    async revertRuntimeFileChanges(
       data: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
-      return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
+      const summary = data.fileChanges
+      if (summary.status === 'reverted') {
+        return { fileChanges: summary }
+      }
+      const response = await executeLocalDeviceCommand(
+        requestWithLocalDevice,
+        {
+          deviceId: data.address.deviceId,
+          command_key: 'turn_file_changes_revert',
+          path: summary.workspace_path,
+          args: [summary.artifact_id],
+          timeout_seconds: 30,
+          max_output_bytes: 5 * 1024 * 1024,
+        },
+        'Failed to revert runtime file changes'
+      )
+      const payload = recordValue(response.stdout)
+      const status = stringValue(payload.status)
+      if (status === 'conflicted' || status === 'artifact_missing') {
+        return {
+          fileChanges: {
+            ...summary,
+            status,
+          },
+        }
+      }
+      if (payload.success !== true || status !== 'reverted') {
+        throw new Error(
+          stringValue(payload.error) ?? 'Local executor returned an invalid file changes result'
+        )
+      }
+      return {
+        fileChanges: {
+          ...summary,
+          status: 'reverted',
+          reverted_at: new Date().toISOString(),
+        },
+      }
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
@@ -2506,6 +2585,12 @@ export function createRuntimeWorkApiFromIpc(
       )
       debugLocalRuntimeCreatePayload(data, payload)
       const executionRequest = recordValue(payload.executionRequest)
+      console.info('[Wework] Friendly task title request', {
+        taskId: data.taskId,
+        enabled: Boolean(data.friendlyTitle),
+        executionRequestIncluded: Boolean(payload.friendlyTitleExecutionRequest),
+        modelId: data.friendlyTitle?.modelId ?? null,
+      })
       console.info('[Wework] Local runtime execution identity', {
         taskId: stringValue(executionRequest.task_id),
         userId: executionRequest.user_id ?? null,
@@ -2516,8 +2601,12 @@ export function createRuntimeWorkApiFromIpc(
         payload,
         localDeviceId
       )
-      const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
       const responseRecord = recordValue(response)
+      const workspacePath =
+        stringValue(responseRecord.workspacePath) ??
+        stringValue(responseRecord.workspace_path) ??
+        stringValue(payload.workspacePath) ??
+        requiredRuntimeWorkspacePath(data)
       const taskId =
         stringValue(responseRecord.taskId) ??
         stringValue(responseRecord.task_id) ??
@@ -2531,7 +2620,7 @@ export function createRuntimeWorkApiFromIpc(
         accepted: response.accepted ?? true,
         deviceId: localDeviceId,
         taskId,
-        workspacePath: response.workspacePath ?? workspacePath,
+        workspacePath,
         runtime: response.runtime ?? data.runtime,
         ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
@@ -2904,6 +2993,14 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   )
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
+  // Local project-space identity is the local session user, not the connected
+  // cloud account. The approval/creator checks compare against LOCAL_USER, so
+  // robots created with the cloud user id would never be approvable locally.
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
+  const localProjectChatClient = createLocalProjectChatClient(request, {
+    currentUser: LOCAL_USER,
+  })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
 
@@ -2960,6 +3057,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deviceApi,
     deliveryApi,
     externalIssueApi,
+    localProjectChatAgentApi,
+    localLoopItemExecutionApi,
+    localProjectChatClient,
     aitableApi,
     dwsApi,
     projectSpaceApis: {

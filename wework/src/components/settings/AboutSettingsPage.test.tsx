@@ -23,12 +23,14 @@ function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
   const value: AppUpdateContextValue = {
     updateChannel: 'stable',
     availableUpdate: null,
+    installedReleaseNotes: null,
     status: 'idle',
     downloadProgress: null,
     message: null,
     error: null,
     checkNow: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),
+    dismissInstalledReleaseNotes: vi.fn(),
     setUpdateChannel: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
@@ -76,5 +78,15 @@ describe('AboutSettingsPage', () => {
     fireEvent.click(channelSwitch)
 
     expect(value.setUpdateChannel).toHaveBeenCalledWith('stable')
+  })
+
+  test('explains how to recover when an older update source lacks Beta manifests', () => {
+    renderPage({
+      error: "the platform 'beta-darwin' was not found in the response `platforms` object",
+    })
+
+    expect(screen.getByTestId('about-update-status')).toHaveTextContent(
+      '当前版本的更新源不支持 Beta 通道。请先手动安装最新正式版，然后再检查 Beta 更新。'
+    )
   })
 })

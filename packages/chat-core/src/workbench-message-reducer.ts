@@ -160,6 +160,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       turnId?: string
+      itemId?: string
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges

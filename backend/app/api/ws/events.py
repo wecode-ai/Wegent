@@ -134,6 +134,10 @@ class GenerateParams(BaseModel):
     )
     ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
     duration: Optional[int] = Field(None, description="Duration in seconds")
+    generation_mode_id: Optional[str] = Field(
+        None, description="Selected video generation mode"
+    )
+    size: Optional[str] = Field(None, description="Image dimensions (e.g., '1512x648')")
 
 
 class ChatExecutionWorkspacePayload(BaseModel):

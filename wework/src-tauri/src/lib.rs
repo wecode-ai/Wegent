@@ -582,6 +582,8 @@ struct AppPreferences {
     language: String,
     #[serde(default = "default_true")]
     terminal_context_injection_enabled: bool,
+    #[serde(default = "default_context_compaction_threshold")]
+    context_compaction_threshold: u8,
     #[serde(default)]
     experimental_features_enabled: bool,
     #[serde(default)]
@@ -613,6 +615,10 @@ struct AppPreferences {
     popout_window_shortcut: Option<String>,
     #[serde(default)]
     popout_window_projectless_default_enabled: bool,
+    #[serde(default)]
+    friendly_task_titles_enabled: bool,
+    #[serde(default)]
+    friendly_task_title_model: Option<serde_json::Value>,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
 }
@@ -665,6 +671,11 @@ fn default_true() -> bool {
 }
 
 #[cfg(desktop)]
+fn default_context_compaction_threshold() -> u8 {
+    85
+}
+
+#[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
 }
@@ -695,6 +706,7 @@ impl Default for AppPreferences {
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
+            context_compaction_threshold: default_context_compaction_threshold(),
             experimental_features_enabled: false,
             telemetry_consent_asked: false,
             telemetry_enabled: false,
@@ -711,6 +723,8 @@ impl Default for AppPreferences {
             appshots_play_sound: true,
             popout_window_shortcut: default_popout_window_shortcut(),
             popout_window_projectless_default_enabled: false,
+            friendly_task_titles_enabled: false,
+            friendly_task_title_model: None,
             quick_phrases: default_quick_phrases(),
         }
     }
@@ -748,6 +762,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    context_compaction_threshold: Option<u8>,
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
@@ -765,6 +780,9 @@ struct AppPreferencesPatch {
     #[serde(default)]
     popout_window_shortcut: PatchField<String>,
     popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    #[serde(default)]
+    friendly_task_title_model: PatchField<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
@@ -1045,6 +1063,8 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    preferences.context_compaction_threshold =
+        preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1327,6 +1347,9 @@ fn update_app_preferences(
     if let Some(value) = patch.terminal_context_injection_enabled {
         preferences.terminal_context_injection_enabled = value;
     }
+    if let Some(value) = patch.context_compaction_threshold {
+        preferences.context_compaction_threshold = value.clamp(1, 100);
+    }
     if let Some(value) = patch.experimental_features_enabled {
         preferences.experimental_features_enabled = value;
     }
@@ -1378,6 +1401,12 @@ fn update_app_preferences(
     if let Some(value) = patch.popout_window_projectless_default_enabled {
         preferences.popout_window_projectless_default_enabled = value;
     }
+    if let Some(value) = patch.friendly_task_titles_enabled {
+        preferences.friendly_task_titles_enabled = value;
+    }
+    if let PatchField::Value(value) = patch.friendly_task_title_model {
+        preferences.friendly_task_title_model = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
@@ -1402,6 +1431,7 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
+    context_compaction_threshold: u8,
     experimental_features_enabled: bool,
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
@@ -1416,6 +1446,10 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
     appshots_play_sound: bool,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: bool,
+    friendly_task_titles_enabled: bool,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Vec<QuickPhrase>,
 }
 
@@ -1430,6 +1464,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    context_compaction_threshold: Option<u8>,
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
@@ -1444,6 +1479,10 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
@@ -1458,6 +1497,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
+        context_compaction_threshold: 85,
         experimental_features_enabled: false,
         telemetry_consent_asked: false,
         telemetry_enabled: false,
@@ -1472,6 +1512,10 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_download_directory: None,
         browser_ask_before_download: false,
         appshots_play_sound: true,
+        popout_window_shortcut: Some(default_popout_window_shortcut()),
+        popout_window_projectless_default_enabled: false,
+        friendly_task_titles_enabled: false,
+        friendly_task_title_model: None,
         quick_phrases: default_quick_phrases(),
     })
 }
@@ -1492,6 +1536,10 @@ fn update_app_preferences(
         terminal_context_injection_enabled: patch
             .terminal_context_injection_enabled
             .unwrap_or(true),
+        context_compaction_threshold: patch
+            .context_compaction_threshold
+            .map(|value| value.clamp(1, 100))
+            .unwrap_or(85),
         experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
@@ -1516,6 +1564,15 @@ fn update_app_preferences(
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
         appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
+        popout_window_shortcut: patch
+            .popout_window_shortcut
+            .and_then(normalized_non_empty)
+            .or_else(|| Some(default_popout_window_shortcut())),
+        popout_window_projectless_default_enabled: patch
+            .popout_window_projectless_default_enabled
+            .unwrap_or(false),
+        friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
+        friendly_task_title_model: patch.friendly_task_title_model,
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
     })
 }
@@ -2562,7 +2619,6 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to locate home directory: {error}"))?;
-    local_executor::migrate_legacy_executor_homes(&home)?;
     Ok(home.join(".wework"))
 }
 
@@ -2651,10 +2707,6 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         candidates.push(executor_home.join("device_id"));
     }
     if let Some(home) = dirs::home_dir() {
-        if let Err(error) = local_executor::migrate_legacy_executor_homes(&home) {
-            log::warn!("Failed to migrate legacy Wework home: {error}");
-            return None;
-        }
         if let Some(device_id) = read_device_config(home.join(".wework").join("device-config.json"))
         {
             return Some(device_id);
@@ -4752,8 +4804,9 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let preferences = read_app_preferences_impl(app.handle());
-                app.state::<NativeTelemetryState>()
-                    .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+                app.state::<NativeTelemetryState>().configure(
+                    preferences.telemetry_consent_asked && preferences.telemetry_enabled,
+                );
             }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
@@ -4824,6 +4877,7 @@ pub fn run() {
             #[cfg(desktop)]
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_close_many,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
@@ -4832,10 +4886,12 @@ pub fn run() {
             embedded_browser::embedded_browser_go_forward,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_pending_open_requests,
             embedded_browser::embedded_browser_pause_download,
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_active_tab,
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
@@ -4860,8 +4916,10 @@ pub fn run() {
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
             local_executor::local_executor_link_plugin_release,
+            local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
+            local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

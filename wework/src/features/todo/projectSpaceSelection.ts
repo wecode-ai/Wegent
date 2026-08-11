@@ -39,6 +39,13 @@ export function projectSpaceApis(
   )
 }
 
+/** Robot execution is supported for the local Issue store and issue-based
+ * providers (GitHub/GitLab). Record providers such as DingTalk AI Table keep
+ * their data outside the Wegent execution model for now. */
+export function projectSupportsRobotAutomation(project: CloudProject): boolean {
+  return ['local', 'github', 'gitlab'].includes(project.task_provider)
+}
+
 export function findProjectSpaceContextForTask(
   apis: ProjectSpaceApi[],
   task: RuntimeTaskAddress

@@ -479,7 +479,7 @@ class ConnectorRuntimeService:
                     f"Connector '{app.slug}' authorization is unavailable",
                 )
             headers["Authorization"] = f"Bearer {access_token}"
-        if user and app.forward_user_context_headers:
+        if user:
             headers["X-Wegent-Username"] = user.user_name
             headers["X-Wegent-User-Id"] = str(user.id)
         return {

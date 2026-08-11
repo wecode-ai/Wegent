@@ -1,6 +1,132 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, it, test, vi } from 'vitest'
+import type { HttpClient } from './http'
+import { ApiError } from './http'
 import { createDeliveryApi, type CloudLoopItem, type CloudTaskContext } from './deliveries'
-import { ApiError, type HttpClient } from './http'
+
+describe('createDeliveryApi queue and assignment routes', () => {
+  it('lists loop items with queue filters', async () => {
+    const client = {
+      get: vi.fn(async () => ({ items: [] })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.listLoopItems(123, {
+      assigneeType: 'agent',
+      assigneeId: 'bot-1',
+      executionState: 'queued',
+    })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/loop-items?assignee_type=agent&assignee_id=bot-1&execution_state=queued'
+    )
+  })
+
+  it('lists robot executions through the cloud executions route', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        items: [
+          {
+            id: 101,
+            loopItemId: 'GL-1',
+            cloudProjectId: '11',
+            taskTitle: 'Bot queued task',
+            taskStatus: 'pending',
+            taskPriority: 'medium',
+            agentId: 'bot-1',
+            assignerUserId: 2,
+            status: 'queued',
+            version: 1,
+            createdAt: '2026-08-07T00:00:00Z',
+            updatedAt: '2026-08-07T00:00:00Z',
+          },
+        ],
+        total: 1,
+      })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    const response = await api.listLoopItemExecutions(123, { agent_id: 'bot-1' })
+
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/executions?agent_id=bot-1')
+    expect(response.items[0]).toMatchObject({
+      loop_item_id: 'GL-1',
+      task_title: 'Bot queued task',
+      agent_id: 'bot-1',
+      status: 'queued',
+    })
+  })
+
+  it('stops an execution through the project route', async () => {
+    const client = {
+      post: vi.fn(async () => ({ id: 202, status: 'cancelled' })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    const response = await api.stopExecution(123, 202)
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/executions/202/stop')
+    expect(response).toMatchObject({ id: 202, status: 'cancelled' })
+  })
+
+  it('assigns a task to a robot through the project route', async () => {
+    const client = {
+      post: vi.fn(async () => ({})),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.assignLoopItem(123, 'task-1', {
+      version: 3,
+      assigneeType: 'agent',
+      assigneeId: 'bot-1',
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
+      version: 3,
+      assigneeType: 'agent',
+      assigneeId: 'bot-1',
+    })
+  })
+
+  it('assigns a task to a project member with a string user id', async () => {
+    const client = {
+      post: vi.fn(async () => ({})),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.assignLoopItem(123, 'task-1', {
+      version: 3,
+      assigneeType: 'user',
+      assigneeId: '42',
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
+      version: 3,
+      assigneeType: 'user',
+      assigneeId: '42',
+    })
+  })
+
+  it('approves and rejects pending robot runs', async () => {
+    const client = {
+      post: vi.fn(async () => ({})),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.approveLoopItemRun(123, 'task-1', 4)
+    await api.rejectLoopItemRun(123, 'task-1', 4, 'not now')
+
+    expect(client.post).toHaveBeenNthCalledWith(
+      1,
+      '/v1/cloud-projects/123/loop-items/task-1/approve',
+      { version: 4 }
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      2,
+      '/v1/cloud-projects/123/loop-items/task-1/reject',
+      { version: 4, reason: 'not now' }
+    )
+  })
+})
 
 const trackedItem: CloudLoopItem = {
   id: 'WEG-1',
@@ -100,5 +226,22 @@ describe('createDeliveryApi task tracking', () => {
       status: 'in_review',
     })
     expect(patch).toHaveBeenCalledOnce()
+  })
+
+  test('synchronizes a friendly runtime title to the bound task', async () => {
+    const renamedItem = { ...trackedItem, title: '修复登录回调', version: 2 }
+    const context = { loop_item_id: trackedItem.id } as CloudTaskContext
+    const get = vi.fn().mockResolvedValueOnce(context).mockResolvedValueOnce(trackedItem)
+    const patch = vi.fn().mockResolvedValue(renamedItem)
+    const api = createDeliveryApi(clientWith({ get, patch }))
+
+    await expect(
+      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
+    ).resolves.toEqual(renamedItem)
+
+    expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
+      version: 1,
+      title: '修复登录回调',
+    })
   })
 })

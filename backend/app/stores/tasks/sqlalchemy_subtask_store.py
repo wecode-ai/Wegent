@@ -912,6 +912,18 @@ class SqlAlchemySubtaskStore:
     def list_running(self, db: Session) -> list[Subtask]:
         return db.query(Subtask).filter(Subtask.status == SubtaskStatus.RUNNING).all()
 
+    def list_running_since(
+        self, db: Session, *, created_after: datetime
+    ) -> list[Subtask]:
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.status == SubtaskStatus.RUNNING,
+                Subtask.created_at >= created_after,
+            )
+            .all()
+        )
+
     def list_session_task_ids(self, db: Session, *, skip: int, limit: int) -> list[int]:
         rows = (
             db.query(Subtask.task_id)

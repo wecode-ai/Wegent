@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   setTelemetryEnabled: vi.fn().mockResolvedValue(undefined),
   track: vi.fn(),
   updateAppPreferences: vi.fn().mockResolvedValue(undefined),
+  officialRelease: true,
+  tauriRuntime: false,
 }))
 
 vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
@@ -18,7 +20,7 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => mocks.tauriRuntime,
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -30,6 +32,10 @@ vi.mock('./client', () => ({
   isTelemetryEnabled: () => mocks.preferences.preferences.telemetryEnabled,
   setTelemetryEnabled: mocks.setTelemetryEnabled,
   track: mocks.track,
+}))
+
+vi.mock('./config', () => ({
+  isOfficialReleaseBuild: () => mocks.officialRelease,
 }))
 
 vi.mock('@/tauri/appPreferences', () => ({
@@ -45,6 +51,8 @@ describe('TelemetryBridge', () => {
     mocks.preferences.loaded = true
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
+    mocks.officialRelease = true
+    mocks.tauriRuntime = false
   })
 
   it('initializes once and starts telemetry again after it is re-enabled', async () => {
@@ -101,5 +109,23 @@ describe('TelemetryBridge', () => {
       })
     })
     expect(mocks.installTelemetry).not.toHaveBeenCalled()
+  })
+
+  it('enables telemetry by default without prompting in development builds', async () => {
+    mocks.officialRelease = false
+    mocks.tauriRuntime = true
+    mocks.preferences.preferences.telemetryConsentAsked = false
+    mocks.preferences.preferences.telemetryEnabled = false
+
+    render(<TelemetryBridge />)
+
+    expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mocks.installTelemetry).toHaveBeenCalledWith(true)
+      expect(mocks.updateAppPreferences).toHaveBeenCalledWith({
+        telemetryConsentAsked: true,
+        telemetryEnabled: true,
+      })
+    })
   })
 })

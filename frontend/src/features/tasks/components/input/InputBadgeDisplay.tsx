@@ -36,6 +36,10 @@ interface InputBadgeDisplayProps {
   onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
   disabled?: boolean
+  /** Optional semantic labels keyed by attachment ID */
+  attachmentLabels?: Record<number, string>
+  /** Hide ready attachment cards when another component owns their preview */
+  hideAttachments?: boolean
 }
 
 interface InputContextGroup {
@@ -117,7 +121,7 @@ export function groupInputContexts(contexts: ContextItem[], t: Translate): Input
 /**
  * Custom hook to fetch image with authentication and return blob URL
  */
-function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
+export function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -185,11 +189,13 @@ function AttachmentPreviewInline({
   disabled,
   onRemove,
   t,
+  label,
 }: {
   attachment: Attachment
   disabled?: boolean
   onRemove: () => void
   t: (key: string, params?: Record<string, unknown>) => string
+  label?: string
 }) {
   const isImage = isImageExtension(attachment.file_extension)
   const {
@@ -336,17 +342,9 @@ function AttachmentPreviewInline({
     // Show loading state
     if (imageLoading) {
       return (
-        <div
-          className={`relative flex items-center gap-2 px-2 py-1.5 rounded-lg border bg-muted border-border`}
-        >
-          <div className="relative h-10 w-10 rounded overflow-hidden border border-border flex items-center justify-center bg-muted">
+        <div className="relative h-14 w-14 overflow-hidden rounded-lg border border-border bg-muted">
+          <div className="flex h-full w-full items-center justify-center">
             <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
-          </div>
-          <div className="flex flex-col min-w-0 max-w-[120px]">
-            <span className="text-xs font-medium truncate" title={attachment.filename}>
-              {attachment.filename}
-            </span>
-            <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
           </div>
           {!disabled && (
             <Button
@@ -354,7 +352,7 @@ function AttachmentPreviewInline({
               variant="ghost"
               size="icon"
               onClick={onRemove}
-              className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
+              className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
             >
               <X className="h-3 w-3" />
             </Button>
@@ -367,7 +365,7 @@ function AttachmentPreviewInline({
     if (imageUrl) {
       return (
         <div
-          className={`relative flex items-center gap-2 px-2 py-1.5 rounded-lg border ${
+          className={`relative h-14 w-14 overflow-hidden rounded-lg border ${
             attachment.status === 'ready'
               ? 'bg-muted border-border'
               : attachment.status === 'failed'
@@ -375,17 +373,16 @@ function AttachmentPreviewInline({
                 : 'bg-muted border-border'
           }`}
         >
-          <div className="relative h-10 w-10 rounded overflow-hidden border border-border">
-            <img src={imageUrl} alt={attachment.filename} className="h-full w-full object-cover" />
-          </div>
-          <div className="flex flex-col min-w-0 max-w-[120px]">
-            <span className="text-xs font-medium truncate" title={attachment.filename}>
-              {attachment.filename}
+          <img src={imageUrl} alt={attachment.filename} className="h-full w-full object-cover" />
+          {label && (
+            <span className="absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
+              {label}
             </span>
-            <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
-          </div>
+          )}
           {attachment.status === 'parsing' && (
-            <Loader2 className="h-3 w-3 animate-spin text-primary ml-1" />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+              <Loader2 className="h-4 w-4 animate-spin text-white" />
+            </div>
           )}
           {!disabled && (
             <Button
@@ -393,7 +390,7 @@ function AttachmentPreviewInline({
               variant="ghost"
               size="icon"
               onClick={onRemove}
-              className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
+              className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
             >
               <X className="h-3 w-3" />
             </Button>
@@ -416,6 +413,7 @@ function AttachmentPreviewInline({
     >
       <span className="text-base">{getFileIcon(attachment.file_extension)}</span>
       <div className="flex flex-col min-w-0 max-w-[150px]">
+        {label && <span className="text-xs font-medium text-primary">{label}</span>}
         <span className="text-xs font-medium truncate" title={attachment.filename}>
           {attachment.filename}
         </span>
@@ -453,10 +451,12 @@ export default function InputBadgeDisplay({
   onRemoveContexts,
   onRemoveAttachment,
   disabled = false,
+  attachmentLabels,
+  hideAttachments = false,
 }: InputBadgeDisplayProps) {
   const { t } = useTranslation()
   const hasContexts = contexts.length > 0
-  const hasAttachments = attachmentState.attachments.length > 0
+  const hasAttachments = !hideAttachments && attachmentState.attachments.length > 0
   const isUploading = attachmentState.uploadingFiles.size > 0
   const hasErrors = attachmentState.errors.size > 0
   const contextGroups = groupInputContexts(contexts, t)
@@ -497,16 +497,18 @@ export default function InputBadgeDisplay({
           ))}
 
           {/* Attachment badges */}
-          {attachmentState.attachments.map(attachment => (
-            <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
-              <AttachmentPreviewInline
-                attachment={attachment}
-                disabled={disabled}
-                onRemove={() => onRemoveAttachment(attachment.id)}
-                t={t}
-              />
-            </div>
-          ))}
+          {!hideAttachments &&
+            attachmentState.attachments.map(attachment => (
+              <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
+                <AttachmentPreviewInline
+                  attachment={attachment}
+                  disabled={disabled}
+                  onRemove={() => onRemoveAttachment(attachment.id)}
+                  t={t}
+                  label={attachmentLabels?.[attachment.id]}
+                />
+              </div>
+            ))}
         </div>
       )}
 

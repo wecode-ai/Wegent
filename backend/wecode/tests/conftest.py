@@ -8,8 +8,10 @@ import pytest
 
 from app.models.user import User
 from tests.conftest import (
+    test_admin_api_key,
     test_admin_token,
     test_admin_user,
+    test_api_key,
     test_client,
     test_db,
     test_engine,

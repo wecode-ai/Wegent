@@ -37,6 +37,7 @@ export interface ProjectWorkPreference {
 export interface Team {
   id: number
   name: string
+  namespace?: string | null
   displayName?: string | null
   is_active: boolean
   default_for_modes?: string[]
@@ -642,6 +643,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
@@ -1143,6 +1145,12 @@ export interface RuntimeTaskRenameRequest {
   title: string
 }
 
+export interface RuntimeTaskFriendlyTitleConfig {
+  modelId: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+}
+
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
   taskId?: string
@@ -1155,6 +1163,7 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
@@ -1168,6 +1177,7 @@ export interface RuntimeTaskCreateRequest {
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
   modelSelection?: ModelSelectionConfig | null
+  friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -1175,6 +1185,7 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
+  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
@@ -1328,6 +1339,7 @@ export interface LocalDeviceApp {
   name: string
   description?: string | null
   logoUrl?: string | null
+  logoUrlDark?: string | null
   installUrl?: string | null
   isAccessible?: boolean
   isEnabled?: boolean
@@ -1584,6 +1596,8 @@ export interface RuntimeContextUsage {
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
+  itemId?: string
+  item_id?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]
@@ -2072,6 +2086,7 @@ export interface PluginMarketplaceItem {
   featured: boolean
   installed: boolean
   installedPluginId?: string | number | null
+  installedLocally?: boolean
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
@@ -2144,6 +2159,12 @@ export interface DeviceCapabilitySyncResponse {
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
   sync?: DeviceCapabilitySyncResponse | null
+}
+
+export interface PluginDeviceSyncResponse {
+  deviceId: string
+  pendingCount: number
+  sync: DeviceCapabilitySyncResponse
 }
 
 export interface PluginMarketplaceCapabilities {
@@ -2302,6 +2323,13 @@ export interface RuntimeGoalEventPayload {
   threadId?: string
   turnId?: string
   goal?: RuntimeGoal | null
+}
+
+export interface RuntimeTaskTitleUpdatedPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  title: string
 }
 
 export type RuntimeGoalContinuationStatus = 'started' | 'settled'

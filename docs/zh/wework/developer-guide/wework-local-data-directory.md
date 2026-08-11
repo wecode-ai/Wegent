@@ -21,18 +21,22 @@ Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`�
 - `device-config.json`、`device_id`：本机设备标识。
 
 `WEGENT_EXECUTOR_HOME` 环境变量可以覆盖默认 Executor Home。显式设置该变量时，
-Wework 不会对默认目录执行迁移，用于隔离会话、测试和自定义部署。
+适用于隔离会话、测试和自定义部署。
 
-## 旧目录迁移
+## 自动清理与保留策略
 
-首次以默认目录启动时，Wework 会自动把旧数据迁移到 `~/.wework`：
+Wework 启动后会立即在后台执行一次存储维护，之后每 30 分钟重复执行。维护过程只处理
+Wework 明确拥有的临时数据，不会按时间删除用户项目或仍需恢复的托管工作树：
 
-1. 优先迁移 `~/.wegent-executor`。
-2. 再合并更早的 `~/.wecode/wegent-executor`。
+- `app-runtime/wework-<pid>-<timestamp>/`：隔离 Executor 实例超过 14 天且确认不活跃后
+  删除。持有 `.instance.lock` 的实例始终保留；兼容旧版本无锁目录时，还会检查目录名中的
+  PID，避免删除仍在运行的实例。旧版 `wework-dev-*` 目录遵循相同规则。
+- `logs/` 中超过 14 天的日志，以及反馈暂存和内置浏览器临时目录中超过 24 小时的文件，
+  会按批次清理；当前进程日志和符号链接不会删除。
+- `codex/.tmp/marketplaces/.staging/` 中超过 7 天的
+  `marketplace-add-*`、`marketplace-upgrade-*` 中间目录会删除。该规则同时覆盖
+  `~/.wework/codex` 和 `~/.wework/apps/<namespace>/codex`，不会删除已安装的
+  marketplace。
 
-迁移规则：
-
-- `~/.wework` 不存在时，直接重命名整个旧目录，保留文件属性、目录结构和软链接。
-- 新旧目录同时存在时，递归合并不冲突的内容；`~/.wework` 中的现有文件始终优先。
-- 同名冲突的旧内容归档到 `~/.wework/.legacy-migration-conflicts/<来源>/`，不会覆盖或丢失数据。
-- 迁移完成后旧目录会被移除，运行期不再读取旧路径。
+`workspace/worktrees/` 是任务数据，不属于临时缓存。其清理由归档任务和 Worktree 保留
+设置驱动，并在删除前保存 Git 快照；存储维护线程不会直接删除这些目录。

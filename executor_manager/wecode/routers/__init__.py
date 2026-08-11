@@ -6,8 +6,8 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, IPvAnyAddress
 
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -61,10 +61,11 @@ async def delete_executor_by_task_id(
 
 
 async def delete_pod_by_name(request: DeletePodByNameRequest, http_request: Request):
-    """Delete a specific executor pod by its name (kubectl fallback path).
+    """Delete an executor runtime by Pod or SandboxClaim name.
 
     Used as fallback when cleanup_stale_task_executor returns executor_not_found
-    for orphan pods that have no corresponding DB subtask records.
+    for orphan runtimes that have no corresponding DB subtask records. K8s
+    executors resolve a warm-pool Pod owner and delete its SandboxClaim first.
     """
     if not request.pod_name or not request.pod_name.strip():
         raise HTTPException(status_code=400, detail="pod_name must not be empty")
@@ -97,11 +98,11 @@ async def get_old_task_ids(
     older_than_hours: int = 48,
     http_request: Request = None,
 ):
-    """List old executor pods with task_id and pod_name for orphan cleanup.
+    """List old executor runtime cleanup targets.
 
-    Scans pods by name pattern (wegent-task or sandbox) and returns those
-    older than the given threshold, including both task_id (may be None)
-    and pod_name for direct deletion fallback.
+    Includes direct Pods and Executor warm-pool claims older than the threshold.
+    The ``pod_name`` response field remains for compatibility but may contain a
+    SandboxClaim name when that is the correct owner-level cleanup target.
     """
     # Safety guard: minimum 48h aligns with pod_delete scripts (date -v-2d)
     if older_than_hours < 48:
@@ -130,6 +131,26 @@ async def get_old_task_ids(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def get_pod_owners_by_ip(
+    http_request: Request,
+    ip_address: IPvAnyAddress = Query(..., description="Pod IP address"),
+):
+    """Find Wegent executor Pod owners by an exact Pod IP."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        "+++ Received request to resolve Pod IP %s from %s",
+        ip_address,
+        client_ip,
+    )
+    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+    if not hasattr(executor, "get_pod_owners_by_ip"):
+        raise HTTPException(
+            status_code=501,
+            detail="Pod IP lookup is not supported by this executor",
+        )
+    return executor.get_pod_owners_by_ip(str(ip_address))
+
+
 def register(api_router: APIRouter) -> None:
     """Register wecode-specific routes into executor_manager's api_router."""
     api_router.add_api_route(
@@ -145,5 +166,10 @@ def register(api_router: APIRouter) -> None:
     api_router.add_api_route(
         "/executor/old-task-ids",
         get_old_task_ids,
+        methods=["GET"],
+    )
+    api_router.add_api_route(
+        "/executor/pod-owners",
+        get_pod_owners_by_ip,
         methods=["GET"],
     )

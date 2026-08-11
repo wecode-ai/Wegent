@@ -34,6 +34,7 @@ from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlsplit
 
 import socketio
+from prometheus_client import Counter
 from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -46,8 +47,11 @@ from app.api.ws.local_task_responses import (
     emit_response_api_event,
 )
 from app.api.ws.wework_runtime_namespace import (
+    PROJECT_CHAT_AGENT_CHUNK_EVENT,
+    PROJECT_CHAT_CREATED_EVENT,
     WEWORK_RUNTIME_EVENT,
     WEWORK_RUNTIME_NAMESPACE,
+    project_chat_room,
     wework_runtime_user_room,
 )
 from app.core.auth_utils import is_api_key, verify_api_key
@@ -83,9 +87,14 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.loop_item_executions.service import (
+    loop_item_execution_service,
+)
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
+from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.project_chat.service import project_chat_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -96,6 +105,12 @@ from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
+
+DEVICE_WS_AUTH_FAILURES_TOTAL = Counter(
+    "device_ws_auth_failures_total",
+    "Device WebSocket authentication rejections",
+    ["reason"],
+)
 CODEX_RUNTIME = "codex"
 DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
 DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
@@ -579,6 +594,122 @@ def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, A
     return payload
 
 
+def _project_chat_runtime_event_sync(
+    device_id: str, event: dict[str, Any]
+) -> dict[str, Any] | None:
+    event_name = event.get("event")
+    payload = event.get("payload")
+    if not isinstance(event_name, str) or not isinstance(payload, dict):
+        logger.info(
+            "[ProjectChat] Runtime event projection skipped invalid payload: "
+            "device_id=%s event=%s payload_type=%s",
+            device_id,
+            event_name,
+            type(payload).__name__,
+        )
+        return None
+    runtime_task_id = (
+        payload.get("taskId")
+        or payload.get("task_id")
+        or payload.get("localTaskId")
+        or payload.get("local_task_id")
+    )
+    if not isinstance(runtime_task_id, str) or not runtime_task_id:
+        logger.info(
+            "[ProjectChat] Runtime event projection skipped missing runtime task id: "
+            "device_id=%s event=%s payload_keys=%s payload_status=%s",
+            device_id,
+            event_name,
+            sorted(payload.keys()),
+            payload.get("status"),
+        )
+        return None
+    logger.info(
+        "[ProjectChat] Runtime event projection received: "
+        "device_id=%s runtime_task_id=%s event=%s payload_status=%s data_status=%s",
+        device_id,
+        runtime_task_id,
+        event_name,
+        payload.get("status"),
+        (
+            (payload.get("data") or {}).get("status")
+            if isinstance(payload.get("data"), dict)
+            else None
+        ),
+    )
+    with get_db_session() as db:
+        projected = project_chat_service.project_runtime_event(
+            db,
+            device_id=device_id,
+            runtime_task_id=runtime_task_id,
+            event_name=event_name,
+            payload=payload,
+        )
+        matched_execution = loop_item_execution_service.handle_runtime_event(
+            db,
+            device_id=device_id,
+            runtime_task_id=runtime_task_id,
+            event_name=event_name,
+            payload=payload,
+        )
+        if matched_execution is not None:
+            from app.tasks.robot_queue_tasks import publish_run_event
+
+            publish_run_event(device_id, runtime_task_id, event_name)
+        if projected is None:
+            logger.info(
+                "[ProjectChat] Runtime event projection produced no project chat message: "
+                "device_id=%s runtime_task_id=%s event=%s",
+                device_id,
+                runtime_task_id,
+                event_name,
+            )
+            return None
+        message, mode = projected
+        logger.info(
+            "[ProjectChat] Runtime event projection produced message: "
+            "device_id=%s runtime_task_id=%s event=%s mode=%s "
+            "project_id=%s task_id=%s message_id=%s message_status=%s",
+            device_id,
+            runtime_task_id,
+            event_name,
+            mode,
+            message.project_id,
+            message.task_id,
+            message.message_id,
+            message.status,
+        )
+        return {"message": message.model_dump(mode="json", by_alias=True), "mode": mode}
+
+
+def _execution_runtime_event_sync(
+    device_id: str, task_id: object, event_name: str, payload: dict
+) -> None:
+    """Project device runtime events onto the matching robot execution."""
+
+    try:
+        with get_db_session() as db:
+            matched = loop_item_execution_service.handle_runtime_event(
+                db,
+                device_id=device_id,
+                runtime_task_id=str(task_id),
+                event_name=event_name,
+                payload=payload,
+            )
+            if matched is not None:
+                from app.tasks.robot_queue_tasks import publish_run_event
+
+                publish_run_event(device_id, str(task_id), event_name)
+    except Exception:
+        logger.exception(
+            "[RobotQueue] Execution runtime event write-back failed "
+            "device=%s task=%s event=%s",
+            device_id,
+            task_id,
+            event_name,
+        )
+
+
 async def emit_chat_user_event(
     *, event_name: str, payload: dict[str, Any], user_id: int
 ) -> None:
@@ -877,11 +1008,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Check auth token
         if not auth or not isinstance(auth, dict):
             logger.warning(f"[Device WS] Missing auth data sid={sid}")
+            DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="missing_token").inc()
             raise ConnectionRefusedError("Missing authentication token")
 
         token = auth.get("token")
         if not token:
             logger.warning(f"[Device WS] Missing token in auth sid={sid}")
+            DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="missing_token").inc()
             raise ConnectionRefusedError("Missing authentication token")
 
         # Determine auth type and verify token
@@ -907,6 +1040,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 logger.warning(
                     f"[Device WS] Invalid API key sid={sid}, key={key_preview}"
                 )
+                DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="invalid_api_key").inc()
                 raise ConnectionRefusedError("Invalid or expired API key")
             user_id, user_name = user_info
             # API Key has no expiry (token_exp stays None)
@@ -917,6 +1051,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             user = verify_jwt_token(token)
             if not user:
                 logger.warning(f"[Device WS] Invalid JWT token sid={sid}")
+                DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="invalid_jwt").inc()
                 raise ConnectionRefusedError("Invalid or expired token")
             user_id = user.id
             user_name = user.user_name
@@ -1188,6 +1323,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """Best-effort desired-state sync when a device comes online."""
         try:
             with _db_session() as db:
+                plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+                    db, user_id=user_id
+                )
+                plugin_device_installation_service.ensure_pending_for_device(
+                    db,
+                    user_id=user_id,
+                    device_id=device_id,
+                    reset_failed=True,
+                )
                 payload = device_capability_sync_service.build_desired_capabilities(
                     db,
                     user_id=user_id,
@@ -1589,6 +1733,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not args:
             return {"error": "Missing event data"}
 
+        # Project robot queue write-back: match the execution by runtime task
+        # id. Streaming events extend the lease; terminal events complete or
+        # fail the run.
+        event_data = args[0]
+        if isinstance(event_data, dict) and event_data.get("task_id"):
+            await run_sync_in_executor(
+                _execution_runtime_event_sync,
+                device_id,
+                event_data.get("task_id"),
+                event_type,
+                event_data,
+            )
+
         data = args[0]
         if not isinstance(data, dict):
             return {"error": "Invalid event data format"}
@@ -1761,6 +1918,63 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             return {"success": True, "notified": 0, "skipped": "non_terminal"}
         content = str(data.get("content") or "")
+
+        if _is_runtime_task_terminal_status(status):
+            event_name = (
+                "runtime.task.failed"
+                if _normalize_runtime_task_status(status)
+                in {"failed", "error", "cancelled", "canceled"}
+                else "runtime.task.completed"
+            )
+            logger.info(
+                "[ProjectChat] Runtime task terminal update received: "
+                "device_id=%s local_task_id=%s status=%s projected_event=%s "
+                "content_length=%s",
+                device_id,
+                local_task_id,
+                status,
+                event_name,
+                len(content),
+            )
+            projected = await run_sync_in_executor(
+                _project_chat_runtime_event_sync,
+                device_id,
+                {
+                    "event": event_name,
+                    "payload": {
+                        "taskId": local_task_id,
+                        "localTaskId": local_task_id,
+                        "deviceId": device_id,
+                        "device_id": device_id,
+                        "status": status,
+                        "data": {
+                            "status": status,
+                            "value": content,
+                        },
+                    },
+                },
+            )
+            if projected:
+                message = projected["message"]
+                project_id = str(message["projectId"])
+                project_task_id = message.get("taskId")
+                logger.info(
+                    "[ProjectChat] Emitting projected runtime task terminal update: "
+                    "project_id=%s task_id=%s message_id=%s message_status=%s",
+                    project_id,
+                    project_task_id,
+                    message.get("messageId"),
+                    message.get("status"),
+                )
+                await get_sio().emit(
+                    PROJECT_CHAT_CREATED_EVENT,
+                    message,
+                    room=project_chat_room(
+                        project_id, str(project_task_id) if project_task_id else None
+                    ),
+                    namespace=WEWORK_RUNTIME_NAMESPACE,
+                )
+
         if _is_runtime_task_reply_status(status) and not content.strip():
             logger.info(
                 "[RuntimeTaskNotification] Skipped empty reply update: "
@@ -1826,6 +2040,38 @@ class DeviceNamespace(socketio.AsyncNamespace):
         else:
             payload["payload"] = {"deviceId": device_id, "device_id": device_id}
 
+        # Persist project-chat output before acknowledging the executor event.
+        # The browser relay is an ephemeral projection; it must not be able to
+        # prevent the durable chat record from advancing.
+        projected = await run_sync_in_executor(
+            _project_chat_runtime_event_sync, device_id, payload
+        )
+        if projected:
+            message = projected["message"]
+            project_id = str(message["projectId"])
+            task_id = message.get("taskId")
+            event_name = (
+                PROJECT_CHAT_AGENT_CHUNK_EVENT
+                if projected["mode"] == "delta"
+                else PROJECT_CHAT_CREATED_EVENT
+            )
+            logger.info(
+                "[ProjectChat] Emitting projected runtime message: "
+                "socket_event=%s project_id=%s task_id=%s message_id=%s "
+                "message_status=%s mode=%s",
+                event_name,
+                project_id,
+                task_id,
+                message.get("messageId"),
+                message.get("status"),
+                projected["mode"],
+            )
+            await get_sio().emit(
+                event_name,
+                message,
+                room=project_chat_room(project_id, str(task_id) if task_id else None),
+                namespace=WEWORK_RUNTIME_NAMESPACE,
+            )
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,
             payload,

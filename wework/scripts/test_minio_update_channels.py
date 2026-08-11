@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 SCRIPT_DIR = Path(__file__).parent
 
 
@@ -32,28 +34,82 @@ class FakeClient:
     ) -> None:
         self.objects[object_name] = content.read(length)
 
+    def get_object(self, _bucket: str, object_name: str):
+        return FakeResponse(self.objects[object_name])
 
-def test_mac_stable_manifest_bootstraps_channel_targets() -> None:
+
+class FakeResponse:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def read(self) -> bytes:
+        return self.content
+
+    def close(self) -> None:
+        pass
+
+    def release_conn(self) -> None:
+        pass
+
+
+def test_mac_legacy_manifest_uses_platform_defaults_only(monkeypatch) -> None:
     module = load_script("upload-mac-release-to-s3.py")
     client = FakeClient()
-    entry = {"signature": "mac-signature", "url": "https://example.com/mac"}
-    manifest = {
+    arm_entry = {"signature": "arm-signature", "url": "https://example.com/arm"}
+    x64_entry = {"signature": "x64-signature", "url": "https://example.com/x64"}
+    arm_manifest = {
         "version": "1.2.3",
-        "platforms": {"darwin-aarch64": entry},
+        "platforms": {"darwin-aarch64": arm_entry},
+    }
+    x64_manifest = {
+        "version": "1.2.3",
+        "platforms": {"darwin-x86_64": x64_entry},
+    }
+    client.objects["wework/macos-arm/latest.json"] = json.dumps(arm_manifest).encode()
+    client.objects["wework/macos-x64/latest.json"] = json.dumps(x64_manifest).encode()
+    client.objects["wework/macos/stable-darwin-aarch64.json"] = json.dumps(
+        {"version": "1.2.3", "platforms": {"stable-darwin": arm_entry}}
+    ).encode()
+    client.objects["wework/macos/stable-darwin-x86_64.json"] = json.dumps(
+        {"version": "1.2.3", "platforms": {"stable-darwin": x64_entry}}
+    ).encode()
+    monkeypatch.setenv("WEWORK_MAC_ARM64_RELEASE_S3_PREFIX", "wework/macos-arm")
+    monkeypatch.setenv("WEWORK_MAC_X64_RELEASE_S3_PREFIX", "wework/macos-x64")
+    monkeypatch.setenv("WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX", "wework/macos")
+
+    module.publish_legacy_manifest(client, "releases", "1.2.3", "wework/macos")
+    published = json.loads(client.objects["wework/macos/latest.json"])
+    assert published["platforms"] == {
+        "darwin-aarch64": arm_entry,
+        "darwin-x86_64": x64_entry,
     }
 
-    module.publish_stable_bootstrap_manifest(
-        client,
-        "releases",
-        "wework/macos",
-        manifest,
-        {"darwin-aarch64"},
-    )
 
-    published = json.loads(client.objects["wework/macos/latest.json"])
-    assert published["platforms"]["darwin-aarch64"] == entry
-    assert published["platforms"]["stable-darwin"] == entry
-    assert published["platforms"]["beta-darwin"] == entry
+def test_mac_legacy_manifest_requires_both_stable_channel_manifests(
+    monkeypatch,
+) -> None:
+    module = load_script("upload-mac-release-to-s3.py")
+    client = FakeClient()
+    entry = {"signature": "signature", "url": "https://example.com/release"}
+    manifest = {"version": "1.2.3", "platforms": {"darwin-aarch64": entry}}
+    client.objects["wework/macos-arm/latest.json"] = json.dumps(manifest).encode()
+    client.objects["wework/macos-x64/latest.json"] = json.dumps(
+        {
+            "version": "1.2.3",
+            "platforms": {"darwin-x86_64": entry},
+        }
+    ).encode()
+    client.objects["wework/macos/stable-darwin-aarch64.json"] = json.dumps(
+        {"version": "1.2.3", "platforms": {"stable-darwin": entry}}
+    ).encode()
+    client.objects["wework/macos/stable-darwin-x86_64.json"] = json.dumps(
+        {"version": "1.2.3", "platforms": {}}
+    ).encode()
+    monkeypatch.setenv("WEWORK_MAC_ARM64_RELEASE_S3_PREFIX", "wework/macos-arm")
+    monkeypatch.setenv("WEWORK_MAC_X64_RELEASE_S3_PREFIX", "wework/macos-x64")
+
+    with pytest.raises(SystemExit, match="stable channel manifest"):
+        module.publish_legacy_manifest(client, "releases", "1.2.3", "wework/macos")
 
 
 def test_windows_stable_manifest_bootstraps_channel_targets(tmp_path: Path) -> None:

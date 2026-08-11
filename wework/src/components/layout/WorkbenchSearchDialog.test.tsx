@@ -28,6 +28,21 @@ describe('WorkbenchSearchDialog', () => {
     vi.useRealTimers()
   })
 
+  test('uses the themed popover surface instead of a fixed light background', () => {
+    render(
+      <WorkbenchSearchDialog
+        open
+        onClose={vi.fn()}
+        onSearchRuntimeWork={vi.fn().mockResolvedValue({ items: [] })}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    const dialog = screen.getByTestId('workbench-search-dialog')
+    expect(dialog).toHaveClass('bg-popover', 'text-text-primary', 'ring-border')
+    expect(dialog).not.toHaveClass('bg-white')
+  })
+
   test('searches transcripts and opens a runtime task result', async () => {
     const user = userEvent.setup()
     const onSearchRuntimeWork = vi.fn().mockResolvedValue({

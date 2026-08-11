@@ -17,12 +17,14 @@ import { SlidersHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { AspectRatioOption, ResolutionOption } from '@/apis/models'
 
 export interface VideoSettingsPopoverProps {
   // Aspect ratio
   selectedRatio: string
   onRatioChange: (ratio: string) => void
   availableRatios: string[]
+  ratioOptions?: AspectRatioOption[]
   // Duration
   selectedDuration: number
   onDurationChange: (duration: number) => void
@@ -31,6 +33,7 @@ export interface VideoSettingsPopoverProps {
   selectedResolution: string
   onResolutionChange: (resolution: string) => void
   availableResolutions: string[]
+  resolutionOptions?: ResolutionOption[]
   // State
   disabled?: boolean
 }
@@ -62,19 +65,32 @@ export function VideoSettingsPopover({
   selectedRatio,
   onRatioChange,
   availableRatios,
+  ratioOptions,
   selectedDuration,
   onDurationChange,
   availableDurations,
   selectedResolution,
   onResolutionChange,
   availableResolutions,
+  resolutionOptions,
   disabled = false,
 }: VideoSettingsPopoverProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
 
   // Build summary text for trigger button
-  const summaryText = `${selectedRatio} · ${selectedDuration}S · ${selectedResolution.toUpperCase()}`
+  const selectedRatioLabel =
+    ratioOptions?.find(option => option.value === selectedRatio)?.label ?? selectedRatio
+  const selectedResolutionLabel =
+    resolutionOptions?.find(option => (option.value ?? option.label) === selectedResolution)
+      ?.label ?? selectedResolution.toUpperCase()
+  const summaryText = `${selectedRatioLabel} · ${selectedDuration}S · ${selectedResolutionLabel}`
+  const displayedRatios = ratioOptions?.length
+    ? ratioOptions
+    : availableRatios.map(value => ({ label: value, value }))
+  const displayedResolutions = resolutionOptions?.length
+    ? resolutionOptions
+    : availableResolutions.map(value => ({ label: value.toUpperCase(), value }))
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -109,21 +125,21 @@ export function VideoSettingsPopover({
               {t('video.ratio_section')}
             </h4>
             <div className="flex flex-wrap gap-2">
-              {availableRatios.map(ratio => (
+              {displayedRatios.map(option => (
                 <button
-                  key={ratio}
+                  key={option.value}
                   type="button"
-                  onClick={() => onRatioChange(ratio)}
+                  onClick={() => onRatioChange(option.value)}
                   className={cn(
                     'flex flex-col items-center gap-1 px-3 py-2 rounded-lg',
                     'border transition-colors min-w-[52px]',
-                    selectedRatio === ratio
+                    selectedRatio === option.value
                       ? 'border-primary bg-primary/5 text-primary'
                       : 'border-border bg-surface hover:bg-hover text-text-secondary'
                   )}
                 >
-                  <RatioIcon ratio={ratio} selected={selectedRatio === ratio} />
-                  <span className="text-xs">{ratio}</span>
+                  <RatioIcon ratio={option.value} selected={selectedRatio === option.value} />
+                  <span className="text-xs">{option.label}</span>
                 </button>
               ))}
             </div>
@@ -159,21 +175,25 @@ export function VideoSettingsPopover({
               {t('video.resolution_section')}
             </h4>
             <div className="flex gap-2">
-              {availableResolutions.map(resolution => (
-                <button
-                  key={resolution}
-                  type="button"
-                  onClick={() => onResolutionChange(resolution)}
-                  className={cn(
-                    'flex-1 py-2 rounded-lg border transition-colors text-sm',
-                    selectedResolution === resolution
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'border-border bg-surface hover:bg-hover text-text-secondary'
-                  )}
-                >
-                  {resolution.toUpperCase()}
-                </button>
-              ))}
+              {displayedResolutions.map(option => {
+                const value = option.value ?? option.label
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onResolutionChange(value)}
+                    title={'tooltip' in option ? option.tooltip : undefined}
+                    className={cn(
+                      'flex-1 py-2 rounded-lg border transition-colors text-sm',
+                      selectedResolution === value
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-border bg-surface hover:bg-hover text-text-secondary'
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>

@@ -17,6 +17,7 @@ interface ChatPageTaskModeInput {
   selectedTask?: Pick<TaskRouteTarget, 'id' | 'task_type'> | null
   selectedDeviceId?: string | null
   isCodeAgentMode: boolean
+  requestedMode?: string | null
 }
 
 export function resolveChatPageTaskType({
@@ -24,11 +25,17 @@ export function resolveChatPageTaskType({
   selectedTask,
   selectedDeviceId,
   isCodeAgentMode,
+  requestedMode,
 }: ChatPageTaskModeInput): TaskType {
   const selectedTaskMatchesUrl = !!taskId && String(selectedTask?.id) === taskId
 
   if (selectedTaskMatchesUrl && selectedTask) {
-    if (selectedTask.task_type === 'task' || selectedTask.task_type === 'code') {
+    if (
+      selectedTask.task_type === 'task' ||
+      selectedTask.task_type === 'code' ||
+      selectedTask.task_type === 'video' ||
+      selectedTask.task_type === 'image'
+    ) {
       return selectedTask.task_type
     }
     return 'chat'
@@ -37,7 +44,14 @@ export function resolveChatPageTaskType({
   // While an existing task is loading, do not let a stale global device
   // selection change its execution mode.
   if (taskId) {
+    if (requestedMode === 'video' || requestedMode === 'image') {
+      return requestedMode
+    }
     return isCodeAgentMode ? 'code' : 'chat'
+  }
+
+  if (requestedMode === 'video' || requestedMode === 'image') {
+    return requestedMode
   }
 
   if (selectedDeviceId) {
@@ -58,15 +72,14 @@ export function getTaskTargetPath(task: TaskRouteTarget): string {
     return '/devices/chat'
   }
 
-  if (task.task_type === 'video' || task.task_type === 'image') {
-    return paths.generate.getHref()
-  }
-
   return paths.chat.getHref()
 }
 
 export function getTaskTargetHref(task: TaskRouteTarget): string {
   const params = new URLSearchParams()
+  if (task.task_type === 'video' || task.task_type === 'image') {
+    params.set('mode', task.task_type)
+  }
   params.set('taskId', String(task.id))
   return `${getTaskTargetPath(task)}?${params.toString()}`
 }

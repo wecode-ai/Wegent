@@ -1,12 +1,20 @@
 use std::collections::{HashSet, VecDeque};
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(target_os = "macos")]
+use core_foundation::base::TCFType;
+#[cfg(target_os = "macos")]
+use core_foundation::string::CFString;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 const MAX_SETTLED_TASK_IDS: usize = 256;
+#[cfg(target_os = "macos")]
+const MACOS_ASSERTION_REASON: &str = "Wework local task is running";
+#[cfg(target_os = "macos")]
+const MACOS_ASSERTION_TYPE: &str = "PreventUserIdleSystemSleep";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -168,10 +176,18 @@ struct SleepInhibitor {
     thread_id: u32,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+struct SleepInhibitor {
+    _assertion: MacSleepAssertion,
+}
+
+#[cfg(target_os = "linux")]
 struct SleepInhibitor {
     child: Child,
 }
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+struct SleepInhibitor;
 
 impl SleepInhibitor {
     fn acquire() -> Result<Self, String> {
@@ -200,21 +216,76 @@ fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
     })
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
-    let child = spawn_inhibitor_command(sleep_inhibitor_command()?)?;
-    Ok(SleepInhibitor { child })
+    MacSleepAssertion::create(MACOS_ASSERTION_REASON).map(|assertion| SleepInhibitor {
+        _assertion: assertion,
+    })
 }
 
 #[cfg(target_os = "macos")]
-fn sleep_inhibitor_command() -> Result<Command, String> {
-    let mut command = Command::new("/usr/bin/caffeinate");
-    command.arg("-i");
-    Ok(command)
+struct MacSleepAssertion {
+    id: u32,
+}
+
+#[cfg(target_os = "macos")]
+impl MacSleepAssertion {
+    fn create(name: &str) -> Result<Self, String> {
+        let assertion_type = CFString::new(MACOS_ASSERTION_TYPE);
+        let assertion_name = CFString::new(name);
+        let mut id = 0;
+        let result = unsafe {
+            IOPMAssertionCreateWithName(
+                assertion_type.as_concrete_TypeRef().cast(),
+                MACOS_ASSERTION_LEVEL_ON,
+                assertion_name.as_concrete_TypeRef().cast(),
+                &mut id,
+            )
+        };
+        if result == MACOS_IO_RETURN_SUCCESS {
+            Ok(Self { id })
+        } else {
+            Err(format!(
+                "IOPMAssertionCreateWithName returned error {result}"
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacSleepAssertion {
+    fn drop(&mut self) {
+        let result = unsafe { IOPMAssertionRelease(self.id) };
+        if result != MACOS_IO_RETURN_SUCCESS {
+            log::warn!("Failed to release macOS sleep assertion: IOKit error {result}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+type MacosCfStringRef = *const std::ffi::c_void;
+#[cfg(target_os = "macos")]
+type MacosIoReturn = std::ffi::c_int;
+#[cfg(target_os = "macos")]
+const MACOS_IO_RETURN_SUCCESS: MacosIoReturn = 0;
+#[cfg(target_os = "macos")]
+const MACOS_ASSERTION_LEVEL_ON: u32 = 255;
+
+#[cfg(target_os = "macos")]
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOPMAssertionCreateWithName(
+        assertion_type: MacosCfStringRef,
+        assertion_level: u32,
+        assertion_name: MacosCfStringRef,
+        assertion_id: *mut u32,
+    ) -> MacosIoReturn;
+
+    fn IOPMAssertionRelease(assertion_id: u32) -> MacosIoReturn;
 }
 
 #[cfg(target_os = "linux")]
-fn sleep_inhibitor_command() -> Result<Command, String> {
+fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
     let mut command = Command::new("systemd-inhibit");
     command.args([
         "--what=sleep",
@@ -224,15 +295,16 @@ fn sleep_inhibitor_command() -> Result<Command, String> {
         "sleep",
         "infinity",
     ]);
-    Ok(command)
+    let child = spawn_inhibitor_command(command)?;
+    Ok(SleepInhibitor { child })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn sleep_inhibitor_command() -> Result<Command, String> {
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
     Err("system sleep inhibition is not supported on this platform".to_owned())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 fn spawn_inhibitor_command(mut command: Command) -> Result<Child, String> {
     command
         .stdin(Stdio::null())
@@ -262,7 +334,7 @@ impl Drop for SleepInhibitor {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 impl Drop for SleepInhibitor {
     fn drop(&mut self) {
         if let Err(error) = self.child.kill() {

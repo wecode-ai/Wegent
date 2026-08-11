@@ -43,6 +43,7 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
@@ -52,6 +53,7 @@ interface ProjectChatComposerProps {
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
@@ -79,8 +81,10 @@ interface ProjectChatComposerProps {
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
@@ -119,6 +123,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCompositionEnd,
       onSubmit,
       disabled,
+      pluginPickerIconOnly = false,
       submitDisabled = false,
       disabledReason,
       placeholder,
@@ -146,8 +151,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       workspaceFileApi,
       cloudMentionCandidates,
       conversationMentionCandidates,
+      externalMentionCandidates,
       cloudProjectCandidates,
       cloudSpaceEnabled,
+      onSelectExternalMention,
       onSelectCloudProject,
       selectedCloudProjectId,
       planModeActive = false,
@@ -295,6 +302,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onCreateBranch={projectWork.onCreateBranch}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+            showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
@@ -384,8 +392,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               workspaceFileApi={workspaceFileApi}
               cloudMentionCandidates={cloudMentionCandidates}
               conversationMentionCandidates={conversationMentionCandidates}
+              externalMentionCandidates={externalMentionCandidates}
               cloudProjectCandidates={cloudProjectCandidates}
               cloudSpaceEnabled={cloudSpaceEnabled}
+              onSelectExternalMention={onSelectExternalMention}
               onSelectCloudProject={onSelectCloudProject}
               className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
               skillMenuClassName="left-[-1rem] right-[-0.5rem]"
@@ -406,6 +416,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             canSend={canSend}
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
+            pluginPickerIconOnly={pluginPickerIconOnly}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}

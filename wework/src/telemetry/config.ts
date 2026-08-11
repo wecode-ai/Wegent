@@ -34,6 +34,11 @@ export function getTelemetryConfig(): TelemetryConfig {
   }
 }
 
+export function isOfficialReleaseBuild(): boolean {
+  const { releaseChannel } = getTelemetryConfig()
+  return releaseChannel === 'stable' || releaseChannel === 'beta'
+}
+
 function architecture(): CommonTelemetryProperties['arch'] {
   const userAgent = (navigator.userAgent || '').toLowerCase()
   if (userAgent.includes('arm64') || userAgent.includes('aarch64')) return 'arm64'

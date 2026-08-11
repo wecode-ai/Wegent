@@ -17,6 +17,7 @@ export type WorkspacePanelMenuActions = Record<WorkspacePanelMenuTool, Workspace
 export type WorkspaceTerminalSessionBase = ProjectDeviceSessionResponse & {
   cwd?: string
   title?: string
+  diagnostic_task_id?: string
 }
 
 export type WorkspaceTerminalSession =

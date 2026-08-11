@@ -26,6 +26,7 @@ describe('localModelCatalog', () => {
       input_modalities: ['text'],
       supports_reasoning_summaries: true,
       supports_reasoning_summary_parameter: true,
+      supports_search_tool: true,
     })
     expect(Object.keys(entry).length).toBeGreaterThanOrEqual(30)
     expect(DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS.length).toBeGreaterThan(10_000)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from wecode.config.task_sharding_config import task_sharding_settings
 from wecode.task_sharding.global_id_allocator import UserScopedGlobalIdAllocator
 from wecode.task_sharding.store_registration import install_task_sharding_stores
+from wecode.task_sharding.task_run_metric_hooks import sharded_task_run_metric_hooks
 from wecode.task_sharding.uuid_factory import RedisIdFactory, UserScopedIdFactory
 
 _global_id_allocator: UserScopedGlobalIdAllocator | None = globals().get(
@@ -27,6 +28,7 @@ def install_task_sharding_store_patch() -> None:
     install_task_sharding_stores(
         global_id_allocator=_global_id_allocator,
     )
+    sharded_task_run_metric_hooks.register()
 
 
 def install_task_sharding_store_patch_if_enabled() -> None:
@@ -40,6 +42,7 @@ def install_task_sharding_store_patch_if_enabled() -> None:
 def shutdown_task_sharding_store_patch() -> None:
     global _global_id_allocator
 
+    sharded_task_run_metric_hooks.unregister()
     if _global_id_allocator is not None:
         _global_id_allocator.close()
     _global_id_allocator = None

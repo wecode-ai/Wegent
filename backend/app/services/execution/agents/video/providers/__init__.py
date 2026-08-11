@@ -11,7 +11,10 @@ from typing import Any, Dict
 from .base import VideoProvider
 
 
-def get_video_provider(protocol: str, model_config: Dict[str, Any]) -> VideoProvider:
+def get_video_provider(
+    protocol: str,
+    model_config: Dict[str, Any],
+) -> VideoProvider:
     """
     Get video provider by protocol.
 
@@ -28,10 +31,19 @@ def get_video_provider(protocol: str, model_config: Dict[str, Any]) -> VideoProv
     if protocol == "seedance":
         from .seedance import SeedanceProvider
 
+        video_config = dict(model_config.get("videoConfig", {}))
+        resolved_model = (
+            model_config.get("model_id")
+            or video_config.get("model")
+            or model_config.get("model")
+        )
+        if resolved_model:
+            video_config["model"] = resolved_model
         return SeedanceProvider(
             base_url=model_config.get("base_url"),
             api_key=model_config.get("api_key"),
-            video_config=model_config.get("videoConfig", {}),
+            video_config=video_config,
+            default_headers=model_config.get("default_headers"),
         )
 
     # Future providers

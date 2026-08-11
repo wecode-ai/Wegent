@@ -7,6 +7,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -90,6 +91,9 @@ describe('createLocalAppServices', () => {
     })
     const models = await services.modelApi.listModels()
 
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
+      includeHidden: true,
+    })
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
@@ -114,10 +118,18 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
-    expect(modelIds).not.toContain('gpt-5.5')
-    expect(modelIds).not.toContain('Sol')
-    expect(modelIds).not.toContain('Terra')
-    expect(modelIds).not.toContain('Luna')
+    expect(modelIds).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex-spark',
+      ])
+    )
+    expect(modelIds).not.toContain('gpt-5.2')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -675,6 +687,58 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  test('persists projectless automations as standalone chat workspaces', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.automations.create') {
+          return { automation: data.automation }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.automationApi?.createAutomation({
+      source: 'local',
+      name: 'Projectless automation',
+      prompt: 'Say hello',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'local-device',
+        standaloneChatWorkspace: true,
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Say hello',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      {
+        automation: expect.objectContaining({
+          taskPayload: expect.objectContaining({
+            standaloneChatWorkspace: true,
+            executionRequest: expect.objectContaining({
+              standalone_chat_workspace: true,
+            }),
+          }),
+        }),
+      },
+      'local-device'
+    )
+    const automationPayload = request.mock.calls[0]?.[1]?.automation.taskPayload
+    expect(automationPayload).not.toHaveProperty('workspacePath')
+    expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
+  })
+
   test('creates a git worktree from the current branch before creating a local runtime task', async () => {
     const request = vi
       .fn()
@@ -1095,7 +1159,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('uses local model settings for create and continue execution requests', async () => {
-    saveLocalModelConfig({
+    const ollama = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
@@ -1103,7 +1167,7 @@ describe('createLocalAppServices', () => {
       contextWindow: 128000,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const lmstudio = saveLocalModelConfig({
       id: 'lmstudio',
       displayName: 'LM Studio',
       modelId: 'qwen3-coder',
@@ -1113,7 +1177,7 @@ describe('createLocalAppServices', () => {
       imageGenerationEnabled: true,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const custom = saveLocalModelConfig({
       id: 'custom',
       displayName: 'Custom Gateway',
       modelId: 'custom-model',
@@ -1136,7 +1200,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1145,7 +1209,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1154,7 +1218,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'secure continue',
-      modelId: 'local-model:lmstudio',
+      modelId: lmstudio.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1163,7 +1227,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'custom continue',
-      modelId: 'local-model:custom',
+      modelId: custom.codexCatalogModelId,
     })
 
     const createPayload = request.mock.calls.find(
@@ -1179,9 +1243,9 @@ describe('createLocalAppServices', () => {
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(sendPayloads.map(payload => payload.modelSelection)).toEqual([
-      { modelName: 'local-model:ollama', modelType: null, options: {} },
-      { modelName: 'local-model:lmstudio', modelType: null, options: {} },
-      { modelName: 'local-model:custom', modelType: null, options: {} },
+      { modelName: ollama.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: lmstudio.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: custom.codexCatalogModelId, modelType: null, options: {} },
     ])
     expect(createModelConfig).toEqual(
       expect.objectContaining({
@@ -1697,6 +1761,8 @@ describe('createLocalAppServices', () => {
           reasoning: { effort: 'high' },
         })
       )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
     }
   )
 
@@ -2788,6 +2854,67 @@ describe('createLocalAppServices', () => {
       args: ['image.png', '0'],
       timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
+
+  test('reverts local runtime file changes through the owning device command', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { success: true, status: 'reverted' },
+      stderr: '',
+      error: null,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        version: '1.9.0',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const fileChanges: TurnFileChangesSummary = {
+      version: 1,
+      status: 'active',
+      artifact_id: 'turn-file-changes/codex/turn-1',
+      device_id: 'device-uuid',
+      workspace_path: '/Users/me/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'README.md',
+          change_type: 'modified',
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      revertible: true,
+    }
+
+    const response = await services.runtimeWorkApi?.revertRuntimeFileChanges({
+      address: {
+        deviceId: 'device-uuid',
+        taskId: 'runtime-1',
+        workspacePath: '/Users/me/project',
+      },
+      fileChanges,
+    })
+
+    expect(response?.fileChanges).toMatchObject({
+      status: 'reverted',
+      artifact_id: fileChanges.artifact_id,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'turn_file_changes_revert',
+      path: '/Users/me/project',
+      args: ['turn-file-changes/codex/turn-1'],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
     })
   })
 })

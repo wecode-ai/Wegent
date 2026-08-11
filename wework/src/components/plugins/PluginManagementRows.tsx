@@ -11,6 +11,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import type { PluginDistribution } from './pluginDistribution'
 import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
@@ -43,7 +44,9 @@ export function InstalledPluginRow({
   onOpen,
   onTry,
   onPublish,
+  publishLabel,
   onShare,
+  shareLabel,
   onCopy,
   onToggle,
   onUninstall,
@@ -54,13 +57,16 @@ export function InstalledPluginRow({
   onOpen?: () => void
   onTry?: () => void
   onPublish?: () => void
+  publishLabel?: string
   onShare?: () => void
+  shareLabel?: string
   onCopy?: () => void
   onToggle: () => void
   onUninstall: () => void
   isUninstalling?: boolean
 }) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
   const shareRecipient = marketplaceItem?.accessRole === 'recipient'
@@ -69,8 +75,11 @@ export function InstalledPluginRow({
     : t('workbench.plugins_enable_plugin', '启用插件')
   const logo = resolvePluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey,
-    logo: plugin.raw.spec.interface?.logo,
-    composerIcon: plugin.raw.spec.interface?.composerIcon,
+    logo: marketplaceItem?.interface?.logo || plugin.raw.spec.interface?.logo,
+    logoDark: marketplaceItem?.interface?.logoDark || plugin.raw.spec.interface?.logoDark,
+    composerIcon:
+      marketplaceItem?.interface?.composerIcon || plugin.raw.spec.interface?.composerIcon,
+    appearanceMode,
   })
   const distributionLabel =
     plugin.distribution === 'official'
@@ -214,20 +223,6 @@ export function InstalledPluginRow({
             data-testid={`installed-plugin-actions-menu-${plugin.id}`}
             className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
           >
-            {onPublish && (
-              <button
-                type="button"
-                data-testid={`installed-plugin-publish-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  onPublish()
-                }}
-              >
-                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {t('workbench.plugins_publish_to_marketplace', '发布')}
-              </button>
-            )}
             {onShare && (
               <button
                 type="button"
@@ -239,7 +234,21 @@ export function InstalledPluginRow({
                 }}
               >
                 <UserCog className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {t('workbench.plugins_manage_access', '管理权限')}
+                {shareLabel || t('workbench.plugins_manage_access', '管理权限')}
+              </button>
+            )}
+            {onPublish && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-publish-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onPublish()
+                }}
+              >
+                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {publishLabel || t('workbench.plugins_publish_to_marketplace', '发布')}
               </button>
             )}
             {onCopy && (

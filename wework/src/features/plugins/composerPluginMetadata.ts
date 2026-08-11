@@ -1,5 +1,6 @@
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import { pluginTrialTemplates } from './pluginTrial'
+import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()
@@ -95,11 +96,11 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
     metadataName
   const marketplaceName =
     (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
+    managedMarketplaceName(plugin) ||
     plugin.spec.source?.marketplace ||
     // Cloud InstalledPlugin rows use namespace "default"; composer mentions need the
-    // marketplace id (wegent / openai-official / …), not the Kind namespace.
-    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
-    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
+    // marketplace id selected by visibility, not the Kind namespace.
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
@@ -137,6 +138,7 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
     description:
       interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
     logoUrl: interfaceData?.composerIcon || interfaceData?.logo || null,
+    logoUrlDark: interfaceData?.logoDark || null,
     isAccessible: true,
     isEnabled: true,
     pluginDisplayNames: [displayName],
@@ -168,6 +170,7 @@ export function enrichComposerApps(
           description:
             interfaceData?.shortDescription || plugin.spec.description || app.description || null,
           logoUrl: interfaceData?.composerIcon || interfaceData?.logo || app.logoUrl || null,
+          logoUrlDark: interfaceData?.logoDark || app.logoUrlDark || null,
           pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
             (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
           ),

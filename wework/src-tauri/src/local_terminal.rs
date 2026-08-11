@@ -176,17 +176,46 @@ pub fn start_local_terminal(
     rows: Option<u16>,
     cols: Option<u16>,
     env: Option<HashMap<String, String>>,
+    task_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<String, String> {
+    log::info!(
+        "Tauri local terminal start requested: host_pid={}, task_id={:?}, workspace_path={:?}, cwd={:?}",
+        std::process::id(),
+        task_id,
+        workspace_path,
+        cwd
+    );
     #[cfg(target_os = "macos")]
     {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        start_pty_shell(app, &state, cwd, rows, cols, env, shell)
+        start_pty_shell(
+            app,
+            &state,
+            cwd,
+            rows,
+            cols,
+            env,
+            shell,
+            task_id,
+            workspace_path,
+        )
     }
 
     #[cfg(target_os = "windows")]
     {
         let shell = resolve_windows_shell();
-        start_pty_shell(app, &state, cwd, rows, cols, env, shell)
+        start_pty_shell(
+            app,
+            &state,
+            cwd,
+            rows,
+            cols,
+            env,
+            shell,
+            task_id,
+            workspace_path,
+        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -197,6 +226,8 @@ pub fn start_local_terminal(
         let _ = rows;
         let _ = cols;
         let _ = env;
+        let _ = task_id;
+        let _ = workspace_path;
         Err("Local terminal is supported only on macOS and Windows".to_string())
     }
 }
@@ -209,8 +240,11 @@ fn start_pty_shell(
     cols: Option<u16>,
     env: Option<HashMap<String, String>>,
     shell: String,
+    task_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<String, String> {
     let cwd = normalized_cwd(cwd)?;
+    let diagnostic_cwd = cwd.clone();
     let size = PtySize {
         rows: rows.unwrap_or(24).max(1),
         cols: cols.unwrap_or(80).max(1),
@@ -239,6 +273,7 @@ fn start_pty_shell(
         .slave
         .spawn_command(command)
         .map_err(|error| format!("Failed to spawn shell: {error}"))?;
+    let child_pid = child.process_id();
     drop(pair.slave);
 
     let (attach_sender, attach_receiver) = mpsc::sync_channel(1);
@@ -246,7 +281,7 @@ fn start_pty_shell(
     let session = LocalTerminalSession {
         master: pair.master,
         writer,
-        child_pid: child.process_id(),
+        child_pid,
         child,
         attach_sender: Some(attach_sender),
         attached: false,
@@ -256,6 +291,15 @@ fn start_pty_shell(
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?
         .insert(session_id.clone(), session);
+    log::info!(
+        "Tauri local terminal start succeeded: host_pid={}, child_pid={:?}, session_id={}, task_id={:?}, workspace_path={:?}, cwd={:?}",
+        std::process::id(),
+        child_pid,
+        session_id,
+        task_id,
+        workspace_path,
+        diagnostic_cwd
+    );
 
     let output_session_id = session_id.clone();
     let exit_session_id = session_id.clone();
@@ -299,26 +343,79 @@ fn start_pty_shell(
 pub fn attach_local_terminal(
     state: State<'_, LocalTerminalState>,
     session_id: String,
+    task_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<(), String> {
-    let mut sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "Failed to lock local terminal state".to_string())?;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Local terminal session not found: {session_id}"))?;
+    log::info!(
+        "Tauri local terminal attach requested: host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+        std::process::id(),
+        session_id,
+        task_id,
+        workspace_path
+    );
+    let mut sessions = state.sessions.lock().map_err(|_| {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=state_lock, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path
+        );
+        "Failed to lock local terminal state".to_string()
+    })?;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=session_not_found, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path
+        );
+        return Err(format!("Local terminal session not found: {session_id}"));
+    };
     if session.attached {
+        log::info!(
+            "Tauri local terminal attach skipped: reason=already_attached, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path
+        );
         return Ok(());
     }
-    let attach_sender = session
-        .attach_sender
-        .take()
-        .ok_or_else(|| format!("Local terminal session cannot be attached: {session_id}"))?;
+    let Some(attach_sender) = session.attach_sender.take() else {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=attach_sender_missing, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path
+        );
+        return Err(format!(
+            "Local terminal session cannot be attached: {session_id}"
+        ));
+    };
 
-    attach_sender
-        .send(())
-        .map_err(|_| format!("Failed to attach local terminal session: {session_id}"))?;
+    if attach_sender.send(()).is_err() {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=attach_receiver_closed, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path
+        );
+        return Err(format!(
+            "Failed to attach local terminal session: {session_id}"
+        ));
+    }
     session.attached = true;
+    log::info!(
+        "Tauri local terminal attach succeeded: host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
+        std::process::id(),
+        session_id,
+        task_id,
+        workspace_path
+    );
     Ok(())
 }
 
@@ -401,22 +498,42 @@ pub fn resize_local_terminal(
 pub fn close_local_terminal(
     state: State<'_, LocalTerminalState>,
     session_id: String,
+    task_id: Option<String>,
+    workspace_path: Option<String>,
+    reason: Option<String>,
 ) -> Result<(), String> {
     let mut sessions = state
         .sessions
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
     if let Some(mut session) = sessions.remove(&session_id) {
-        log::warn!(
-            "Tauri local terminal kill requested: sender_pid={}, session_id={session_id}",
-            std::process::id()
+        log::info!(
+            "Tauri local terminal close requested: host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}, reason={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path,
+            reason
         );
         if let Err(error) = session.child.kill() {
             log::warn!(
-                "Tauri local terminal kill failed: sender_pid={}, session_id={session_id}, error={error}",
-                std::process::id()
+                "Tauri local terminal kill failed: host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}, reason={:?}, error={error}",
+                std::process::id(),
+                session_id,
+                task_id,
+                workspace_path,
+                reason
             );
         }
+    } else {
+        log::warn!(
+            "Tauri local terminal close skipped: reason=session_not_found, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}, close_reason={:?}",
+            std::process::id(),
+            session_id,
+            task_id,
+            workspace_path,
+            reason
+        );
     }
 
     Ok(())

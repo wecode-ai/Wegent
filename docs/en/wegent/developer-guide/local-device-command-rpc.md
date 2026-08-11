@@ -95,7 +95,7 @@ Because commands run on the user's machine, callers must treat this API as high 
 
 ### Turn File Changes Commands
 
-`turn_file_changes_review` and `turn_file_changes_revert` accept only artifact ids in the form `turn-file-changes/<taskId>/<subtaskId>`. For runtime LocalTasks that do not have a central task row, `taskId` may be `0`. Both path segments must still contain only digits, and the command script uses a full regular-expression match to reject path traversal. The command reads `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` and `changes.patch.gz`, verifies the workspace and patch checksum from metadata, and only then returns the diff or attempts a safe revert.
+`turn_file_changes_review` and `turn_file_changes_revert` accept only artifact ids in the form `turn-file-changes/<taskId>/<subtaskId>`. Central tasks use numeric IDs, while native Codex LocalTasks use `turn-file-changes/codex/<turnId>`. Both path segments may contain only ASCII letters, digits, hyphens, or underscores, and the command script uses a full regular-expression match to reject path traversal. The command reads `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` and `changes.patch.gz`, verifies the workspace and patch checksum from metadata, and only then returns the diff or attempts a safe revert.
 
 Callers should bind these commands to the current LocalTask's `deviceId + workspacePath`, not to the central Task API. This keeps review and revert on the same device and workspace that produced the artifact even when the runtime task has no `TaskResource`/`Subtask` rows.
 

@@ -33,7 +33,6 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
@@ -41,7 +40,6 @@ import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnec
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { cn } from '@/lib/utils'
-import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
@@ -92,6 +90,7 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
+import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -187,17 +186,13 @@ function workspaceTabIframe(
   return src ? { src, title: app.label } : null
 }
 
-function workspaceTabAuxiliaryPage(
-  path: string,
-  search: string,
-  experimentalFeaturesEnabled: boolean
-) {
+function workspaceTabAuxiliaryPage(path: string, search: string) {
   if (path === '/plugins/manage') return <PluginManagementPage />
   if (path === '/plugins/create') return <PluginCreatePage />
   if (path === '/plugins') return <PluginsPage routeSearch={search} />
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
-  if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
+  if (path === '/automations') return <AutomationsPage />
   if (path === '/apps') return <AppsPage />
   return null
 }
@@ -205,7 +200,6 @@ function workspaceTabAuxiliaryPage(
 interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
-  experimentalFeaturesEnabled: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   tab: WorkspaceTab
@@ -215,7 +209,6 @@ interface WorkspaceTabSurfaceProps {
 function WorkspaceTabSurface({
   active,
   cloudWebUrl,
-  experimentalFeaturesEnabled,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   tab,
@@ -224,7 +217,7 @@ function WorkspaceTabSurface({
   const tabPath = workspaceTabPath(tab)
   const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch, experimentalFeaturesEnabled)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
   const auxiliaryActive = Boolean(auxiliaryPage)
   const nativeWorkbenchActive = !iframe && !auxiliaryActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
@@ -254,16 +247,21 @@ function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
-  const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
-  const usesWorkbenchDesktopSurface = nativeWorkbenchActive && isTauriRuntime()
-
+  // Task-scoped browser routing is owned by workbench effects and must remain
+  // available while another workspace tab is active.
+  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
         <div
-          className="h-full"
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            active ? 'relative h-full' : 'absolute inset-0',
+            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+          )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
+          aria-hidden={!active}
         >
           {renderProvider ? (
             <WorkbenchProvider
@@ -277,26 +275,14 @@ function WorkspaceTabSurface({
               {renderWorkbench ? (
                 <div
                   data-testid="desktop-workbench-surface"
-                  className={cn(
-                    'h-full',
-                    usesWorkbenchDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
-                    !nativeWorkbenchActive && 'hidden'
-                  )}
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
                   aria-hidden={!nativeWorkbenchActive}
                 >
                   <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
                 </div>
               ) : null}
               {auxiliaryPage ? (
-                <div
-                  data-testid="desktop-auxiliary-surface"
-                  className={cn(
-                    'h-full',
-                    usesAuxiliaryDesktopSurface &&
-                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
-                  )}
-                >
+                <div data-testid="desktop-auxiliary-surface" className="h-full">
                   {auxiliaryPage}
                 </div>
               ) : null}
@@ -347,12 +333,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     setActiveWorkspaceTabPortalOwner(workspaceTabs?.activeTabId ?? null)
   }, [workspaceTabs?.activeTabId])
 
-  useEffect(() => {
-    if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
-      navigateTo('/')
-    }
-  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, path])
-
   if (path === '/login') {
     return <LoginPage />
   }
@@ -398,7 +378,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
             : cloudConnection.webUrl
         }
-        experimentalFeaturesEnabled={experimentalFeatures.enabled}
         onOpenWeworkForAppshot={onOpenWeworkForAppshot}
         onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
         tab={tab}
@@ -418,8 +397,6 @@ export default function App() {
 }
 
 function MainApp() {
-  const isPopoutWindow = isPopoutWindowRuntime()
-
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
@@ -429,7 +406,7 @@ function MainApp() {
       <AppPreferencesProvider>
         <LanguagePreferenceInitializer />
         <AppUpdateProvider>
-          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+          <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
               <AppShell />
@@ -475,9 +452,9 @@ function AppShell() {
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
+  const tauriViewportSize = useTauriViewportSize(isTauri)
   const isPopoutWindow = isPopoutWindowRuntime()
   const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
-  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
@@ -492,8 +469,8 @@ function AppShell() {
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
-        sites: t('workbench.workspace_tab_sites', '应用'),
-        automations: t('workbench.workspace_tab_automations', '自动化'),
+        sites: t('workbench.workspace_tab_sites', '站点与小程序'),
+        automations: t('workbench.automation', '已安排'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
         apps: t('workbench.workspace_tab_apps', '应用'),
       },
@@ -505,15 +482,6 @@ function AppShell() {
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
-
-  useEffect(() => {
-    if (!usesDesktopVibrancy) return undefined
-
-    document.documentElement.dataset.desktopVibrancy = 'true'
-    return () => {
-      delete document.documentElement.dataset.desktopVibrancy
-    }
-  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -700,17 +668,25 @@ function AppShell() {
       labels={workspaceTabLabels}
     >
       <div
+        data-testid="app-shell"
+        data-tauri-viewport-height={tauriViewportSize?.height}
         className={cn(
-          'h-dvh',
+          isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
               ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-              : usesDesktopVibrancy
-                ? 'overflow-hidden bg-transparent'
-                : 'overflow-hidden bg-surface',
+              : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
+        style={
+          tauriViewportSize
+            ? {
+                width: `${tauriViewportSize.width}px`,
+                height: `${tauriViewportSize.height}px`,
+              }
+            : undefined
+        }
       >
         {showChromeTitlebar && (
           <ChromeTitlebar
@@ -729,6 +705,7 @@ function AppShell() {
           />
         ) : null}
         <div
+          data-testid="app-route-host"
           className={cn(
             'relative min-h-0',
             isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',

@@ -397,6 +397,93 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByTestId('capability-scope-marketplace')).toBeInTheDocument()
   })
 
+  it('shows example conversations when a new agent is first published to marketplace', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
+
+    expect(screen.getByTestId('team-marketplace-example-conversations-section')).toBeInTheDocument()
+    expect(screen.getByTestId('team-marketplace-example-conversations-add')).toBeInTheDocument()
+  })
+
+  it('loads LLM models for the default chat bind mode', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        undefined,
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+    })
+  })
+
+  it.each([
+    { mode: 'image', category: 'image' },
+    { mode: 'video', category: 'video' },
+  ])('loads $category models for a $mode-only agent', async ({ mode, category }) => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        undefined,
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('simple-bind-mode-chat-card'))
+    fireEvent.click(screen.getByTestId('team-bind-mode-more-toggle'))
+    fireEvent.click(screen.getByTestId(`simple-bind-mode-${mode}-card`))
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        undefined,
+        false,
+        'personal',
+        undefined,
+        category
+      )
+    })
+  })
+
   it('loads personal and target-team skills when creating a team agent', async () => {
     render(
       <TeamEditDialog
@@ -772,6 +859,13 @@ describe('Simple TeamEditDialog', () => {
     )
 
     fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
+    fireEvent.click(screen.getByTestId('team-marketplace-example-conversations-add'))
+    fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-title-0'), {
+      target: { value: 'Example task' },
+    })
+    fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-url-0'), {
+      target: { value: 'https://example.com/shared/task' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
@@ -780,6 +874,12 @@ describe('Simple TeamEditDialog', () => {
           resource_type: 'agent',
           source_id: 1,
           name: 'agent',
+          example_conversations: [
+            {
+              title: 'Example task',
+              url: 'https://example.com/shared/task',
+            },
+          ],
         })
       )
     })

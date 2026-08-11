@@ -7,9 +7,9 @@ use super::{browser_url, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV};
 pub(super) fn bridge_navigation_url(url: &str) -> Result<tauri::Url, String> {
     let parsed = browser_url(url)?;
     match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
+        "http" | "https" | "file" => Ok(parsed),
         scheme => Err(format!(
-            "Embedded browser bridge only allows http/https URLs, got {scheme}"
+            "Embedded browser bridge only allows http/https/file URLs, got {scheme}"
         )),
     }
 }

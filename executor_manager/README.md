@@ -12,6 +12,7 @@ cd executor_manager
 ```
 
 The script will automatically:
+
 - Check Python version (3.8+ required)
 - Install uv if not present
 - Sync dependencies with uv

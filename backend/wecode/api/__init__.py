@@ -69,6 +69,7 @@ from wecode.api.internal.attachments_video import (
     router as internal_attachments_video_router,
 )
 from wecode.api.internal.multimodal_gcs import router as internal_multimodal_gcs_router
+from wecode.api.ip_user_lookup import router as ip_user_lookup_router
 from wecode.api.knowledge_document_protection import (
     router as knowledge_document_protection_router,
 )
@@ -185,6 +186,11 @@ api_router.include_router(
 api_router.include_router(
     dept_visibility_admin_router,
     prefix="/internal/admin/dept-visibility",
+    tags=["internal-admin"],
+)
+api_router.include_router(
+    ip_user_lookup_router,
+    prefix="/internal/admin/users",
     tags=["internal-admin"],
 )
 api_router.include_router(

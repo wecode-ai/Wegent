@@ -23,6 +23,8 @@ import {
   getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
+  updateRuntimeWorkTask,
+  updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
@@ -101,6 +103,7 @@ export type WorkbenchAction =
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_removed'; projectId: number }
+  | { type: 'user_updated'; user: User }
   | {
       type: 'project_cleared'
       standaloneDeviceId?: string | null
@@ -124,6 +127,22 @@ export type WorkbenchAction =
   | {
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
+    }
+  | {
+      type: 'runtime_task_title_updated'
+      address: RuntimeTaskAddress
+      title: string
+    }
+  | {
+      type: 'runtime_task_execution_updated'
+      address: RuntimeTaskAddress
+      running: boolean
+      status: string
+    }
+  | {
+      type: 'runtime_task_snapshot_updated'
+      address: RuntimeTaskAddress
+      task: RuntimeTaskSummary
     }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
@@ -1109,6 +1128,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: state.currentProject?.id === action.projectId ? null : state.currentProject,
         projects: state.projects.filter(project => project.id !== action.projectId),
       }
+    case 'user_updated':
+      return {
+        ...state,
+        user: action.user,
+      }
     case 'project_cleared':
       return {
         ...state,
@@ -1169,6 +1193,25 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
+      }
+    case 'runtime_task_title_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
+      }
+    case 'runtime_task_execution_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          running: action.running,
+          status: action.status,
+          optimistic: true,
+        }),
+      }
+    case 'runtime_task_snapshot_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
       }
     case 'runtime_tasks_archived':
       return {

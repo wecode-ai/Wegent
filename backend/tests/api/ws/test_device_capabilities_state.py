@@ -721,6 +721,11 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
         "send_runtime_task_update_for_user",
         fake_send_runtime_task_update,
     )
+    monkeypatch.setattr(
+        device_namespace,
+        "_project_chat_runtime_event_sync",
+        lambda *args, **kwargs: None,
+    )
 
     result = await namespace.on_runtime_task_updated(
         "sid-1",
@@ -766,6 +771,11 @@ async def test_runtime_task_updated_event_skips_im_notification_until_terminal(
         "send_runtime_task_update_for_user",
         fake_send_runtime_task_update,
     )
+    monkeypatch.setattr(
+        device_namespace,
+        "_project_chat_runtime_event_sync",
+        lambda *args, **kwargs: None,
+    )
 
     result = await namespace.on_runtime_task_updated(
         "sid-1",
@@ -802,6 +812,11 @@ async def test_runtime_task_updated_event_skips_success_notification_without_con
         device_namespace.im_notification_dispatcher,
         "send_runtime_task_update_for_user",
         fake_send_runtime_task_update,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "_project_chat_runtime_event_sync",
+        lambda *args, **kwargs: None,
     )
 
     result = await namespace.on_runtime_task_updated(
