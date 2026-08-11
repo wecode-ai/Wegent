@@ -75,7 +75,8 @@ interface ContextBadgeListProps {
 interface MessageContextGroup {
   key: string
   context: SubtaskContextBrief
-  count: number
+  folderCount: number
+  documentCount: number
 }
 
 export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageContextGroup[] {
@@ -83,21 +84,35 @@ export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageCo
   const groupIndexes = new Map<string, number>()
 
   for (const context of contexts) {
-    const isExternalDocument =
+    const isExternalKnowledge =
       context.context_type === 'external_knowledge' &&
-      context.external_target_type === 'document' &&
       context.external_provider &&
       context.external_mode
-    const key = isExternalDocument
+    const key = isExternalKnowledge
       ? `external:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}`
       : `${context.context_type}:${context.id}`
     const existingIndex = groupIndexes.get(key)
+    const isWholeKnowledgeBase =
+      isExternalKnowledge &&
+      (!context.external_target_type || context.external_target_type === 'knowledge_base')
+    const folderCount = isExternalKnowledge && context.external_target_type === 'folder' ? 1 : 0
+    const documentCount = isExternalKnowledge && context.external_target_type === 'document' ? 1 : 0
 
     if (existingIndex === undefined) {
       groupIndexes.set(key, groups.length)
-      groups.push({ key, context, count: 1 })
+      groups.push({ key, context, folderCount, documentCount })
     } else {
-      groups[existingIndex].count += 1
+      const existing = groups[existingIndex]
+      const existingIsWholeKnowledgeBase =
+        !existing.context.external_target_type ||
+        existing.context.external_target_type === 'knowledge_base'
+      if (existingIsWholeKnowledgeBase) continue
+      if (isWholeKnowledgeBase) {
+        groups[existingIndex] = { key, context, folderCount: 0, documentCount: 0 }
+        continue
+      }
+      existing.folderCount += folderCount
+      existing.documentCount += documentCount
     }
   }
 
@@ -130,7 +145,8 @@ export function ContextBadgeList({
         <ContextBadgeItem
           key={group.key}
           context={group.context}
-          count={group.count}
+          folderCount={group.folderCount}
+          documentCount={group.documentCount}
           onReselect={onContextReselect}
           shareToken={shareToken}
           displayGeneratedMedia={displayGeneratedMedia}
@@ -145,13 +161,15 @@ export function ContextBadgeList({
  */
 function ContextBadgeItem({
   context,
-  count,
+  folderCount,
+  documentCount,
   onReselect,
   shareToken,
   displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
-  count: number
+  folderCount: number
+  documentCount: number
   onReselect?: (context: SubtaskContextBrief) => void
   shareToken?: string
   displayGeneratedMedia: boolean
@@ -168,7 +186,13 @@ function ContextBadgeItem({
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
     case 'external_knowledge':
-      return <ExternalKnowledgeBadge context={context} count={count} />
+      return (
+        <ExternalKnowledgeBadge
+          context={context}
+          folderCount={folderCount}
+          documentCount={documentCount}
+        />
+      )
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -308,10 +332,12 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
 
 function ExternalKnowledgeBadge({
   context,
-  count,
+  folderCount,
+  documentCount,
 }: {
   context: SubtaskContextBrief
-  count: number
+  folderCount: number
+  documentCount: number
 }) {
   const { t } = useTranslation('knowledge')
   const externalSources = useExternalKnowledgeSources()
@@ -319,11 +345,9 @@ function ExternalKnowledgeBadge({
     source => source.providerId === context.external_provider
   )
   const scopeLabel =
-    context.external_target_type === 'document'
-      ? formatCompactKnowledgeScope(0, count, t)
-      : context.external_target_type === 'folder'
-        ? formatCompactKnowledgeScope(count, 0, t)
-        : undefined
+    folderCount > 0 || documentCount > 0
+      ? formatCompactKnowledgeScope(folderCount, documentCount, t)
+      : undefined
   const sourceLabel = context.external_provider
     ? getExternalKnowledgeSourceLabel(context.external_provider, externalSource)
     : undefined

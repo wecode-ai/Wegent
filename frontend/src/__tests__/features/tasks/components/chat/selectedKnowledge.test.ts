@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildDingTalkKnowledgeRef } from '@/features/tasks/components/chat/selectedKnowledge'
-import type { DingTalkDocContext } from '@/types/context'
+import {
+  buildDingTalkKnowledgeRef,
+  normalizeSelectedExternalKnowledgeRefs,
+} from '@/features/tasks/components/chat/selectedKnowledge'
+import type { DingTalkDocContext, ExternalKnowledgeRef } from '@/types/context'
 
 function context(overrides: Partial<DingTalkDocContext>): DingTalkDocContext {
   return {
@@ -70,5 +73,54 @@ describe('buildDingTalkKnowledgeRef', () => {
       document_id: 'doc-1',
       resource_url: 'https://alidocs.dingtalk.com/i/nodes/doc-1',
     })
+  })
+})
+
+describe('normalizeSelectedExternalKnowledgeRefs', () => {
+  it('keeps only the whole knowledge base when the same batch contains descendants', () => {
+    const refs = [
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        id: 'workspace-1',
+        target_type: 'knowledge_base',
+      },
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        id: 'workspace-1',
+        target_type: 'folder',
+        node_id: 'folder-1',
+      },
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        id: 'workspace-1',
+        target_type: 'document',
+        node_id: 'doc-1',
+      },
+    ] satisfies ExternalKnowledgeRef[]
+
+    expect(normalizeSelectedExternalKnowledgeRefs(refs)).toEqual([refs[0]])
+  })
+
+  it('keeps resources from different knowledge bases', () => {
+    const refs = [
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        id: 'workspace-1',
+        target_type: 'knowledge_base',
+      },
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        id: 'workspace-2',
+        target_type: 'document',
+        node_id: 'doc-2',
+      },
+    ] satisfies ExternalKnowledgeRef[]
+
+    expect(normalizeSelectedExternalKnowledgeRefs(refs)).toEqual(refs)
   })
 })

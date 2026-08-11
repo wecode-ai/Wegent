@@ -4,6 +4,44 @@
 
 import type { DingTalkDocContext, ExternalKnowledgeRef } from '@/types/context'
 
+function externalKnowledgeScopeKey(ref: ExternalKnowledgeRef): string {
+  return `${ref.provider}:${ref.mode}:${ref.id}`
+}
+
+function externalKnowledgeTargetKey(ref: ExternalKnowledgeRef): string {
+  return [
+    externalKnowledgeScopeKey(ref),
+    ref.target_type ?? 'knowledge_base',
+    ref.node_id ?? ref.document_id ?? 'source',
+  ].join(':')
+}
+
+export function normalizeSelectedExternalKnowledgeRefs(
+  refs: ExternalKnowledgeRef[]
+): ExternalKnowledgeRef[] {
+  const wholeKnowledgeBaseScopes = new Set(
+    refs
+      .filter(ref => !ref.target_type || ref.target_type === 'knowledge_base')
+      .map(externalKnowledgeScopeKey)
+  )
+  const seen = new Set<string>()
+
+  return refs.filter(ref => {
+    if (
+      ref.target_type &&
+      ref.target_type !== 'knowledge_base' &&
+      wholeKnowledgeBaseScopes.has(externalKnowledgeScopeKey(ref))
+    ) {
+      return false
+    }
+
+    const targetKey = externalKnowledgeTargetKey(ref)
+    if (seen.has(targetKey)) return false
+    seen.add(targetKey)
+    return true
+  })
+}
+
 export function buildDingTalkKnowledgeRef(context: DingTalkDocContext): ExternalKnowledgeRef {
   const isWorkspaceRoot =
     context.source === 'wikispace' &&
