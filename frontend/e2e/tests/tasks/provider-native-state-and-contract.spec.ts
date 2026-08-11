@@ -56,7 +56,7 @@ test.describe('Provider-native binding state and contracts', () => {
     await deleteProviderNativeResources(request, resources)
   })
 
-  test('E2E-A2-012 fails before model execution when DingTalk MCP is missing and recovers', async ({
+  test('E2E-A2-012 guides DingTalk MCP configuration without fallback and recovers', async ({
     page,
     request,
   }) => {
@@ -64,22 +64,30 @@ test.describe('Provider-native binding state and contracts', () => {
     await knowledge.selectDingTalkDocuments(['doc-d1'])
     await configureDingTalkService(request, resources.token, 'docs', false)
     await request.post(`${PROVIDER_NATIVE_MOCK_URL}/clear-requests`)
-    await knowledge.sendMessage(makePrompt('012-missing', '输出唯一断言标记。'))
-    const failedTaskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, failedTaskId, /^FAILED/)
+    const missingPrompt = makePrompt('012-missing', '输出唯一断言标记。')
+    const modalLink = 'wegent://modal/mcp-provider-config?provider=dingtalk&service=docs'
+    await scenario(request, missingPrompt, [
+      {
+        responseContent: `当前会话还没有可用的钉钉文档 MCP。请点击 [打开钉钉文档 MCP 配置弹窗](${modalLink}) 完成配置。`,
+      },
+    ])
+    const guidanceTask = await sendCurrentTask(page, request, missingPrompt)
 
-    const failedTask = await getTask(request, resources.token, failedTaskId)
-    expect(JSON.stringify(failedTask)).toContain('Required provider Skill has no enabled MCP URL')
     expect(await getMcpCalls(request)).toHaveLength(0)
-    const captures = await request.get(`${PROVIDER_NATIVE_MOCK_URL}/captured-requests`)
-    const modelRequests = (await captures.json()) as Array<{ url?: string; body?: unknown }>
-    expect(
-      modelRequests.some(
-        capture =>
-          capture.url?.includes('/chat/completions') &&
-          JSON.stringify(capture.body).includes('E2E-A2-012-missing')
-      )
-    ).toBe(false)
+    const missingBodies = await getScenarioModelBodies(request, missingPrompt)
+    const missingRequestText = modelRequestText(missingBodies)
+    const missingToolNames = modelToolNames(missingBodies)
+    expect(missingBodies.length).toBeGreaterThan(0)
+    expect(missingRequestText).toContain('Configuration Required')
+    expect(missingRequestText).toContain(modalLink)
+    expect(missingToolNames.some(name => name.includes('dingtalk-docs'))).toBe(false)
+    expect(missingToolNames.some(name => /knowledge_search$/.test(name))).toBe(false)
+    expect(extractTaskAnswer(guidanceTask)).toContain(modalLink)
+    expect(extractTaskAnswer(guidanceTask)).not.toContain(DINGTALK_D1)
+    await expect(page.getByRole('link', { name: '打开钉钉文档 MCP 配置弹窗' })).toHaveAttribute(
+      'href',
+      modalLink
+    )
 
     await configureDingTalkService(request, resources.token, 'docs', true)
     const retryPrompt = makePrompt('012-retry', '输出唯一断言标记。')

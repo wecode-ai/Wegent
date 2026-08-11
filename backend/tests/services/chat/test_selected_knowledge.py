@@ -324,6 +324,26 @@ def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:
     assert request.provider_native_knowledge is False
 
 
+@pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode"])
+def test_activate_provider_native_knowledge_allows_user_config_guidance(
+    shell_type: str,
+) -> None:
+    request = ExecutionRequest(
+        bot=[{"shell_type": shell_type, "mcp_servers": []}],
+        skill_names=["dingtalk-docs"],
+        skill_configs=[
+            {
+                "name": "dingtalk-docs",
+                "prompt": "Configuration Required",
+            }
+        ],
+    )
+
+    activate_provider_native_knowledge(request, ["dingtalk-docs"])
+
+    assert request.provider_native_knowledge is True
+
+
 @pytest.mark.parametrize(
     ("skill_name", "server_name"),
     [

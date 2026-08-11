@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
     KnowledgeScopeType,
     SelectedKnowledgeRef,
@@ -146,7 +147,7 @@ def activate_provider_native_knowledge(
     request: "ExecutionRequest",
     provider_skills: list[str],
 ) -> None:
-    """Activate provider-native access after every required MCP is available."""
+    """Activate provider-native access or user-facing configuration guidance."""
     request.provider_native_knowledge = False
     if not provider_skills:
         return
@@ -176,6 +177,7 @@ def activate_provider_native_knowledge(
 
     expected_mcp_names: set[str] = set()
     invalid_mcp_skills: list[str] = []
+    guidance_only_skills: list[str] = []
     for skill_name in provider_skills:
         valid_servers = [
             server
@@ -183,7 +185,11 @@ def activate_provider_native_knowledge(
             if server.get("url")
         ]
         if not valid_servers:
-            invalid_mcp_skills.append(skill_name)
+            runtime_service = get_mcp_service_by_skill_name(skill_name)
+            if runtime_service and runtime_service[0]["configuration_mode"] == "user":
+                guidance_only_skills.append(skill_name)
+            else:
+                invalid_mcp_skills.append(skill_name)
             continue
         expected_mcp_names.update(server["name"] for server in valid_servers)
 
@@ -198,6 +204,14 @@ def activate_provider_native_knowledge(
         _raise_capability_error(
             "Required provider Skill has no enabled MCP URL: "
             + ", ".join(invalid_mcp_skills)
+        )
+
+    if guidance_only_skills:
+        _log_e2e_event(
+            "activation_guidance_only",
+            request,
+            provider_skills=provider_skills,
+            guidance_only_skills=guidance_only_skills,
         )
 
     if get_request_shell_type(request) == "ClaudeCode":
@@ -233,6 +247,7 @@ def activate_provider_native_knowledge(
         provider_skills=provider_skills,
         resolved_skill_names=sorted(skill_names),
         expected_mcp_names=sorted(expected_mcp_names),
+        guidance_only_skills=guidance_only_skills,
         provider_native_knowledge=True,
     )
 
