@@ -337,6 +337,18 @@ function findInternalDocumentNode(
   return undefined
 }
 
+function findInternalFolderNode(
+  nodes: InternalTreeNode[],
+  folderId: number
+): InternalTreeNode | undefined {
+  for (const node of nodes) {
+    if (node.folderId === folderId) return node
+    const match = findInternalFolderNode(node.children, folderId)
+    if (match) return match
+  }
+  return undefined
+}
+
 function getEffectiveInternalDocuments(
   existing: KnowledgeBaseContext,
   tree: InternalTreeNode[],
@@ -855,9 +867,31 @@ export function KnowledgeSourcePicker({
         treeState.tree,
         treeState.documents
       ).filter(document => !removedDocumentIds.has(document.id))
+      const remainingFolders = existingFolderIds.flatMap((folderId, index) => {
+        if (folderId === node.folderId) return []
+        const folderNode = findInternalFolderNode(treeState.tree, folderId)
+        if (
+          !folderNode ||
+          collectInternalDocuments(folderNode).some(document => removedDocumentIds.has(document.id))
+        ) {
+          return []
+        }
+        return [{ id: folderId, name: existingFolderNames[index] }]
+      })
       replaceContexts(
         [existing.id],
-        nextDocuments.length > 0 ? [toKnowledgeContext(kb, { documents: nextDocuments })] : []
+        nextDocuments.length > 0 || remainingFolders.length > 0
+          ? [
+              toKnowledgeContext(kb, {
+                documents: nextDocuments,
+                folderIds: remainingFolders.map(folder => folder.id),
+                folderNames: remainingFolders
+                  .map(folder => folder.name)
+                  .filter((name): name is string => Boolean(name)),
+                includeSubfolders: existing.include_subfolders ?? true,
+              }),
+            ]
+          : []
       )
       return
     }
