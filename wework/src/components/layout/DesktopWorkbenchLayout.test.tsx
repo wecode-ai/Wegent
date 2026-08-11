@@ -1880,6 +1880,13 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.getAttribute('data-testid') === 'composer-toolbar') {
+        return createRect({ left: 0, top: 0, width: 600, height: 32 })
+      }
+      return createRect({ left: 0, top: 0, width: 0, height: 0 })
+    })
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1920,6 +1927,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7', 'w-7')
+    expect(screen.queryByTestId('composer-plugin-preview-icons')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
     expect(paneTitle).toHaveClass('truncate', 'text-sm', 'text-text-primary')

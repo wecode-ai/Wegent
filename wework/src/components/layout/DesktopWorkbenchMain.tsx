@@ -3424,6 +3424,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     onDraftEdit={paneSession.clearError}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled}
+                                    pluginPickerIconOnly={hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
                                     disabledReason={inlineComposerDisabledReason}
