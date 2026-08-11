@@ -28,6 +28,7 @@ static HARNESS_SESSION_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 enum HarnessPromptMode {
     Flag(&'static str),
     Positional,
+    TerminalInput,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +67,7 @@ const LOCAL_HARNESSES: [LocalHarnessDefinition; 3] = [
         executable: "kimi",
         version_args: &["--version"],
         home_relative_paths: &[".local/bin/kimi", ".kimi-code/bin/kimi"],
-        prompt_mode: HarnessPromptMode::Flag("--prompt"),
+        prompt_mode: HarnessPromptMode::TerminalInput,
         resume_args: &["--continue"],
     },
 ];
@@ -122,6 +123,7 @@ struct LocalTerminalSession {
     child_pid: Option<u32>,
     attach_sender: Option<mpsc::SyncSender<()>>,
     attached: bool,
+    initial_input: Option<String>,
     harness: Option<LocalHarnessSessionMetadata>,
     output_sequence: u64,
     scrollback: String,
@@ -545,8 +547,23 @@ fn harness_launch_args(
             args.push(prompt.to_string());
         }
         HarnessPromptMode::Positional => args.push(prompt.to_string()),
+        HarnessPromptMode::TerminalInput => {}
     }
     args
+}
+
+fn harness_initial_terminal_input(
+    definition: LocalHarnessDefinition,
+    prompt: &str,
+) -> Option<String> {
+    if !matches!(definition.prompt_mode, HarnessPromptMode::TerminalInput) {
+        return None;
+    }
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(format!("\u{1b}[200~{prompt}\u{1b}[201~\r"))
 }
 
 #[tauri::command]
@@ -981,6 +998,12 @@ pub fn start_local_harness(
             .as_ref()
             .map_or(request.prompt.as_str(), |_| ""),
     );
+    let initial_input = harness_initial_terminal_input(
+        definition,
+        resume_record
+            .as_ref()
+            .map_or(request.prompt.as_str(), |_| ""),
+    );
     let title = resume_record
         .as_ref()
         .map(|record| record.title.clone())
@@ -1031,6 +1054,7 @@ pub fn start_local_harness(
         None,
         None,
         Some(session_id.clone()),
+        initial_input,
     );
     let started_session_id = result?;
     let persisted = LocalHarnessSessionDescriptor {
@@ -1090,6 +1114,7 @@ fn start_pty_shell(
         task_id,
         workspace_path,
         None,
+        None,
     )
 }
 
@@ -1105,6 +1130,7 @@ fn start_pty_process(
     task_id: Option<String>,
     workspace_path: Option<String>,
     session_id_override: Option<String>,
+    initial_input: Option<String>,
 ) -> Result<String, String> {
     let cwd = normalized_cwd(cwd)?;
     let diagnostic_cwd = cwd.clone();
@@ -1162,6 +1188,7 @@ fn start_pty_process(
         child,
         attach_sender: Some(attach_sender),
         attached: false,
+        initial_input,
         harness: harness.map(|metadata| LocalHarnessSessionMetadata {
             harness_id: metadata.harness_id,
             title: metadata.title,
@@ -1306,6 +1333,17 @@ pub fn attach_local_terminal(
         ));
     };
 
+    if let Some(initial_input) = session.initial_input.as_deref() {
+        session
+            .writer
+            .write_all(initial_input.as_bytes())
+            .map_err(|error| format!("Failed to write initial terminal input: {error}"))?;
+        session
+            .writer
+            .flush()
+            .map_err(|error| format!("Failed to flush initial terminal input: {error}"))?;
+        session.initial_input = None;
+    }
     if attach_sender.send(()).is_err() {
         log::warn!(
             "Tauri local terminal attach failed: reason=attach_receiver_closed, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
@@ -1522,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn launches_kimi_code_with_the_prompt_flag() {
+    fn launches_kimi_code_interactively_without_the_prompt_flag() {
         let prompt = "verify Wework plugins";
 
         assert_eq!(
@@ -1535,13 +1573,32 @@ mod tests {
                 ]),
                 prompt
             ),
-            vec![
-                "--model",
-                "__kimi_env_model__",
-                "--auto",
-                "--prompt",
+            vec!["--model", "__kimi_env_model__", "--auto"]
+        );
+        assert_eq!(
+            harness_initial_terminal_input(
+                local_harness_definition(KIMI_CODE_HARNESS_ID).unwrap(),
                 prompt
-            ]
+            ),
+            Some(format!("\u{1b}[200~{prompt}\u{1b}[201~\r"))
+        );
+    }
+
+    #[test]
+    fn does_not_inject_terminal_input_for_argument_based_harnesses() {
+        assert_eq!(
+            harness_initial_terminal_input(
+                local_harness_definition(OPEN_CODE_HARNESS_ID).unwrap(),
+                "inspect the project"
+            ),
+            None
+        );
+        assert_eq!(
+            harness_initial_terminal_input(
+                local_harness_definition(CLAUDE_CODE_HARNESS_ID).unwrap(),
+                "inspect the project"
+            ),
+            None
         );
     }
 

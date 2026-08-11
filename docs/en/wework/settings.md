@@ -56,6 +56,10 @@ remain available. The right and bottom panels can create additional harness sess
 workspace through a picker instead of exposing every installed tool inline. The primary session
 can be switched but not closed from a panel; additional sessions can be closed explicitly.
 
+Kimi Code starts as an interactive TUI. When the terminal attaches, Wework injects the first task
+through bracketed paste instead of using the one-shot `--prompt` mode, so the same terminal remains
+available for follow-up messages after the first turn completes.
+
 Session metadata, selected model, plugin sources, workspace, and native harness session identity
 remain on the current device. Reloading the main WebView or restarting Wework keeps sessions under
 their project. Reopening one uses the native continue or resume mechanism of OpenCode, Claude Code,

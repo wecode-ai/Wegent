@@ -10,6 +10,9 @@ const OPEN_CODE_PROXY_FILE = '.wework-opencode-e2e-proxy'
 const CLAUDE_CODE_ARGS_FILE = '.wework-claude-code-e2e-args'
 const CLAUDE_CODE_ENV_FILE = '.wework-claude-code-e2e-env'
 const CLAUDE_CODE_PROXY_FILE = '.wework-claude-code-e2e-proxy'
+const KIMI_CODE_ARGS_FILE = '.wework-kimi-code-e2e-args'
+const KIMI_CODE_ENV_FILE = '.wework-kimi-code-e2e-env'
+const KIMI_CODE_INPUT_FILE = '.wework-kimi-code-e2e-input'
 
 async function createHarnessFixture({
   executablePath,
@@ -45,6 +48,7 @@ exec sleep 600
 async function createHarnessFixtures(homePath) {
   const openCodeExecutable = join(homePath, '.wework-e2e-bin', 'opencode')
   const claudeCodeExecutable = join(homePath, '.wework-e2e-bin', 'claude')
+  const kimiCodeExecutable = join(homePath, '.wework-e2e-bin', 'kimi')
   await Promise.all([
     createHarnessFixture({
       executablePath: openCodeExecutable,
@@ -63,8 +67,31 @@ async function createHarnessFixtures(homePath) {
       proxyFile: CLAUDE_CODE_PROXY_FILE,
       proxyVariable: 'ANTHROPIC_BASE_URL',
     }),
+    (async () => {
+      await mkdir(dirname(kimiCodeExecutable), { recursive: true })
+      await writeFile(
+        kimiCodeExecutable,
+        `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'kimi-code-e2e 3.0.0\\n'
+  exit 0
+fi
+args_file="$HOME/${KIMI_CODE_ARGS_FILE}"
+: > "$args_file"
+for arg in "$@"; do
+  printf '%s\\n' "$arg" >> "$args_file"
+done
+printf '%s\\n%s\\n%s\\n' "$KIMI_MODEL_BASE_URL" "$KIMI_MODEL_PROVIDER_TYPE" "$KIMI_CODE_HOME" > "$HOME/${KIMI_CODE_ENV_FILE}"
+printf '\\033[2J\\033[HKimi Code E2E harness\\r\\n'
+IFS= read -r initial_input
+printf '%s\\n' "$initial_input" > "$HOME/${KIMI_CODE_INPUT_FILE}"
+exec sleep 600
+`
+      )
+      await chmod(kimiCodeExecutable, 0o755)
+    })(),
   ])
-  return { openCodeExecutable, claudeCodeExecutable }
+  return { openCodeExecutable, claudeCodeExecutable, kimiCodeExecutable }
 }
 
 async function waitForFile(path, expected, timeoutMs) {
@@ -189,6 +216,9 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   await control.command('fill', '[data-testid="harness-executable-claude_code"]', {
     value: executables.claudeCodeExecutable,
   })
+  await control.command('fill', '[data-testid="harness-executable-kimi_code"]', {
+    value: executables.kimiCodeExecutable,
+  })
   await control.command('select', '[data-testid="harness-permission-mode-claude_code"]', {
     value: 'plan',
   })
@@ -207,6 +237,10 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   })
   await control.command('waitFor', '[data-testid="harness-settings-claude_code"]', {
     text: 'claude-code-e2e 2.0.0',
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="harness-settings-kimi_code"]', {
+    text: 'kimi-code-e2e 3.0.0',
     timeoutMs,
   })
   await capturePage(control, 'local-harness-02-settings-detected.png')
@@ -558,9 +592,66 @@ export async function createDesktopScenario({
         `${claudeCodeBaseUrl}/v1/messages`,
         'WEWORK_HARNESS_CLAUDE_RESPONSES_PROXY'
       )
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await startHarness({
+        control,
+        harnessId: 'kimi_code',
+        model: 'Desktop E2E Vision',
+        prompt: 'Inspect the project with Kimi',
+        timeoutMs: uiTimeoutMs,
+        capturePage,
+        runtimeMenuScreenshot: 'local-harness-15-kimi-code-runtime-menu.png',
+        modelMenuScreenshot: 'local-harness-16-kimi-code-model-menu.png',
+        readyScreenshot: 'local-harness-17-kimi-code-ready.png',
+      })
+      await captureWorkbench(control, 'local-harness-18-kimi-code-running.png')
+      await verifyHarnessWorkbenchChrome({
+        control,
+        title: 'Inspect the project with Kimi',
+        timeoutMs: uiTimeoutMs,
+        captureWorkbench: capturePage,
+        screenshot: 'local-harness-19-kimi-code-workbench-panels.png',
+      })
+      await waitForFile(
+        join(homePath, KIMI_CODE_ARGS_FILE),
+        '--model\n__kimi_env_model__\n',
+        uiTimeoutMs
+      )
+      await waitForFile(
+        join(homePath, KIMI_CODE_INPUT_FILE),
+        '\u001b[200~Inspect the project with Kimi\u001b[201~\n',
+        uiTimeoutMs
+      )
+      const [kimiCodeBaseUrl, kimiCodeProviderType, kimiCodeHome] = (
+        await readFileWhenReady(join(homePath, KIMI_CODE_ENV_FILE), uiTimeoutMs)
+      ).split('\n')
+      assert.equal(kimiCodeProviderType, 'anthropic', 'Kimi Code did not use Messages mode')
+      assert.ok(kimiCodeHome, 'Kimi Code did not receive an isolated home directory')
+      const kimiMcpConfig = JSON.parse(await readFile(join(kimiCodeHome, 'mcp.json'), 'utf8'))
+      assert.ok(
+        kimiMcpConfig.mcpServers?.wework_browser,
+        'Kimi Code did not receive the Wework built-in browser MCP server'
+      )
+      assert.match(
+        await readFile(
+          join(kimiCodeHome, 'skills', 'wework-built-in-browser', 'SKILL.md'),
+          'utf8'
+        ),
+        /Wework built-in browser/,
+        'Kimi Code did not receive the Wework built-in browser Skill'
+      )
+      await probeMessagesProxy(
+        `${kimiCodeBaseUrl}/v1/messages`,
+        'WEWORK_HARNESS_KIMI_CHAT_PROXY'
+      )
       assert.deepEqual(harnessModelRequests, [
         { model: 'kimi-k3', protocol: 'chat' },
         { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'kimi-k3', protocol: 'chat' },
       ])
 
       await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
@@ -588,12 +679,12 @@ export async function createDesktopScenario({
         ).length >= 2,
         'The workspace did not retain multiple harness sessions'
       )
-      await captureWorkbench(control, 'local-harness-15-multiple-sessions.png')
+      await captureWorkbench(control, 'local-harness-20-multiple-sessions.png')
       await control.command('click', '[data-testid="central-harness-close-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await captureWorkbench(control, 'local-harness-16-session-closed.png')
+      await captureWorkbench(control, 'local-harness-21-session-closed.png')
     },
 
     diagnostics() {
@@ -603,6 +694,9 @@ export async function createDesktopScenario({
         claudeCodeArgsFile: join(homePath, CLAUDE_CODE_ARGS_FILE),
         claudeCodeEnvFile: join(homePath, CLAUDE_CODE_ENV_FILE),
         claudeCodeProxyFile: join(homePath, CLAUDE_CODE_PROXY_FILE),
+        kimiCodeArgsFile: join(homePath, KIMI_CODE_ARGS_FILE),
+        kimiCodeEnvFile: join(homePath, KIMI_CODE_ENV_FILE),
+        kimiCodeInputFile: join(homePath, KIMI_CODE_INPUT_FILE),
       }
     },
   }
