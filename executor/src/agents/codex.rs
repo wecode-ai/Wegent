@@ -1261,7 +1261,6 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1270,12 +1269,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         initial_thread_name,
         initial_thread_goal,
         notifications,
-        cancellation,
+        mut cancellation,
         request_user_input_answers,
         thread_started,
         active_turn_started,
         active_turn_finished,
     } = options;
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
@@ -1382,6 +1382,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
             let turn_input = turn_input(&request.prompt);
             turn_fields.push(("input_items", turn_input.len().to_string()));
             log_executor_event("codex shared turn request started", &turn_fields);
@@ -1484,7 +1485,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1497,6 +1497,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         ..
     } = options;
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
@@ -1626,6 +1627,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
+        ensure_codex_turn_not_cancelled(&mut cancellation)?;
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
@@ -3361,13 +3363,25 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
     overrides
 }
 
-fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCodexExecutionRequest {
+async fn prepare_codex_execution_request(
+    request: ExecutionRequest,
+    cancellation: Option<&mut oneshot::Receiver<()>>,
+) -> Result<PreparedCodexExecutionRequest, String> {
+    let mut request = if let Some(cancellation) = cancellation {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            request = super::runtime_capabilities::prepare_runtime_attachments(request) => request,
+        }
+    } else {
+        super::runtime_capabilities::prepare_runtime_attachments(request).await
+    };
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
-        return PreparedCodexExecutionRequest {
+        return Ok(PreparedCodexExecutionRequest {
             request,
             generated_files: Vec::new(),
-        };
+        });
     }
     log_executor_event(
         "codex attachment payload received",
@@ -3462,9 +3476,23 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
 
-    PreparedCodexExecutionRequest {
+    Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
+    })
+}
+
+fn ensure_codex_turn_not_cancelled(
+    cancellation: &mut Option<oneshot::Receiver<()>>,
+) -> Result<(), String> {
+    let Some(cancellation) = cancellation.as_mut() else {
+        return Ok(());
+    };
+    match cancellation.try_recv() {
+        Ok(()) | Err(oneshot::error::TryRecvError::Closed) => {
+            Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned())
+        }
+        Err(oneshot::error::TryRecvError::Empty) => Ok(()),
     }
 }
 

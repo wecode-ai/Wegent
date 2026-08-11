@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
@@ -235,6 +235,66 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
         &result.success,
         &result.failed,
     )
+}
+
+pub async fn prepare_runtime_attachments(mut request: ExecutionRequest) -> ExecutionRequest {
+    let attachments = attachment_records(&request);
+    let pending_ids = pending_download_attachments(&attachments)
+        .into_iter()
+        .map(|attachment| attachment.id)
+        .collect::<HashSet<_>>();
+    if pending_ids.is_empty() {
+        return request;
+    }
+
+    let original = request
+        .extra
+        .get("attachments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let pending = original
+        .iter()
+        .filter(|attachment| {
+            value_i64(attachment.get("id")).is_some_and(|id| pending_ids.contains(&id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return request;
+    }
+
+    let mut sync_request = request.clone();
+    sync_request
+        .extra
+        .insert("attachments".to_owned(), Value::Array(pending));
+    let response = sync_attachments_for_request(sync_request).await;
+    let synced = response
+        .get("attachments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    request.extra.insert(
+        "attachments".to_owned(),
+        Value::Array(merge_synced_attachments(&original, &synced)),
+    );
+    request
+}
+
+fn merge_synced_attachments(original: &[Value], synced: &[Value]) -> Vec<Value> {
+    let synced_by_id = synced
+        .iter()
+        .filter_map(|attachment| value_i64(attachment.get("id")).map(|id| (id, attachment.clone())))
+        .collect::<HashMap<_, _>>();
+    original
+        .iter()
+        .map(|attachment| {
+            value_i64(attachment.get("id"))
+                .and_then(|id| synced_by_id.get(&id))
+                .cloned()
+                .unwrap_or_else(|| attachment.clone())
+        })
+        .collect()
 }
 
 fn apply_attachment_prompt_updates(
@@ -2311,6 +2371,33 @@ mod tests {
         assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
         assert_eq!(payload["attachments"][1]["status"], "failed");
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
+    }
+
+    #[test]
+    fn merge_synced_attachments_preserves_local_items_and_replaces_downloaded_items() {
+        let original = vec![
+            json!({
+                "id": 1,
+                "original_filename": "local.png",
+                "local_path": "/workspace/local.png"
+            }),
+            json!({
+                "id": 2,
+                "original_filename": "cloud.png"
+            }),
+        ];
+        let synced = vec![json!({
+            "id": 2,
+            "original_filename": "cloud.png",
+            "local_path": "/workspace/cloud.png",
+            "status": "success"
+        })];
+
+        let merged = merge_synced_attachments(&original, &synced);
+
+        assert_eq!(merged[0], original[0]);
+        assert_eq!(merged[1]["local_path"], "/workspace/cloud.png");
+        assert_eq!(merged[1]["status"], "success");
     }
 
     #[test]

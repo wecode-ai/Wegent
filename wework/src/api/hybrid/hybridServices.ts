@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { invoke } from '@tauri-apps/api/core'
 import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
@@ -22,6 +23,7 @@ import {
 } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
+  Attachment,
   ArchivedConversationItem,
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
@@ -56,6 +58,34 @@ import type {
 
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
+
+interface LocalFilePayload {
+  name: string
+  bytes: number[]
+}
+
+async function uploadLocalAttachmentToCloud(
+  attachment: Attachment,
+  uploadAttachment: (file: File) => Promise<Attachment>
+): Promise<Attachment> {
+  const localPath = attachment.local_path?.trim()
+  if (!localPath) {
+    throw new Error(`Attachment ${attachment.filename} has no local file path`)
+  }
+
+  const files = await invoke<LocalFilePayload[]>('read_dropped_files', {
+    paths: [localPath],
+  })
+  const payload = files[0]
+  if (!payload) {
+    throw new Error(`Attachment file is unavailable: ${attachment.filename}`)
+  }
+
+  const file = new File([Uint8Array.from(payload.bytes)], attachment.filename || payload.name, {
+    type: attachment.mime_type || 'application/octet-stream',
+  })
+  return uploadAttachment(file)
+}
 
 export interface HybridWorkbenchServicesOptions {
   backendUrl?: string
@@ -975,7 +1005,12 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     automationApi,
-    attachmentApi: localServices.attachmentApi,
+    attachmentApi: {
+      uploadAttachment: localServices.attachmentApi!.uploadAttachment,
+      deleteAttachment: localServices.attachmentApi!.deleteAttachment,
+      uploadLocalAttachmentToCloud: attachment =>
+        uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
+    },
     userApi: localServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,

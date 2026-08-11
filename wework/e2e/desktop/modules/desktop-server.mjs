@@ -76,6 +76,7 @@ import {
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
+  CLOUD_MULTIMODAL_VISION_CASE,
   COMPLETION_TEXT,
   CONCURRENT_MEMORY_TASK_COUNT,
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
@@ -206,6 +207,8 @@ import {
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_PROMPT,
+  MULTIMODAL_VISION_COMPLETION_TEXT,
+  MULTIMODAL_VISION_PROMPT,
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   WINDOW_LIFECYCLE_PROMPT,
   assert,
@@ -394,6 +397,7 @@ class DesktopE2EServer {
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
     this.visionSidecarRequests = []
+    this.multimodalVisionRequests = []
   }
 
   async start() {
@@ -590,6 +594,7 @@ class DesktopE2EServer {
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
+        'multimodal_vision',
         'view_image',
         'tool_block_order',
         'official_plugin',
@@ -1343,6 +1348,42 @@ class DesktopE2EServer {
         ])
         return
       }
+    }
+
+    if (this.scenario === 'multimodal_vision') {
+      const serialized = JSON.stringify(body)
+      assert.equal(
+        body.model,
+        CLOUD_MULTIMODAL_VISION_CASE.mainModelId,
+        `Unexpected multimodal vision model request: ${body.model}`
+      )
+      assert.equal(protocol, 'responses', 'The multimodal model used the wrong protocol')
+      if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
+        const responseId = `multimodal-vision-empty-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+        return
+      }
+      assert.ok(
+        serialized.includes(MULTIMODAL_VISION_PROMPT),
+        'The multimodal model did not receive the user prompt'
+      )
+      assert.ok(
+        serialized.includes('input_image'),
+        'The multimodal model did not receive the image'
+      )
+      assert.equal(
+        serialized.includes(VISION_SIDECAR_DESCRIPTION),
+        false,
+        'The multimodal model unexpectedly received a sidecar description'
+      )
+      this.multimodalVisionRequests.push(body)
+      const responseId = `multimodal-vision-main-${this.modelRequests.length}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MULTIMODAL_VISION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
     }
 
     const localModel = localProtocolCase(body.model)
