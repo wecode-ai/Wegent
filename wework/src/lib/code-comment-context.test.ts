@@ -189,6 +189,14 @@ describe('appendCodeCommentContexts', () => {
     ).toBeNull()
   })
 
+  test('keeps an end-of-message block that lacks the protocol structure', () => {
+    expect(
+      parseCodeCommentContexts(
+        '看这个例子\n\n<workspace_comment_context>\n[{"filePath":"a.ts","userComment":"x"}]\n</workspace_comment_context>'
+      )
+    ).toBeNull()
+  })
+
   test('restores the browser annotation target for history previews', () => {
     const withTarget: CodeCommentContext = {
       ...browserComment,

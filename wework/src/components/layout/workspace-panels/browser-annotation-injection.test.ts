@@ -296,4 +296,26 @@ describe('browser annotation injection', () => {
     expect(target.style.color).toBe('blue')
     expect(target.style.backgroundColor).toBe('yellow')
   })
+
+  test('keeps the page new value when the page overrides an annotated property', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    target.style.color = 'blue'
+    const input = openEditor(target)
+    input!.value = 'Use a stronger color'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.value = '#ff0000'
+    color.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+
+    target.style.color = 'green'
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.suspend()
+
+    expect(target.style.color).toBe('green')
+  })
 })

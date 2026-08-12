@@ -1,6 +1,9 @@
 import type { BrowserAnnotationContextData } from '@/types/browser-annotation'
 import type { CodeCommentContext } from '@/types/workspace-files'
 
+const CONTEXT_INSTRUCTION =
+  'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.'
+
 function lineRangeLabel(context: CodeCommentContext): string {
   return context.startLine === context.endLine
     ? String(context.startLine)
@@ -46,7 +49,7 @@ export function appendCodeCommentContexts(message: string, contexts: CodeComment
 
   const contextBlock = [
     '<workspace_comment_context>',
-    'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.',
+    CONTEXT_INSTRUCTION,
     serializedCodeCommentContexts(contexts),
     '</workspace_comment_context>',
   ].join('\n')
@@ -86,8 +89,12 @@ function deserializeCodeCommentContext(item: unknown, index: number): CodeCommen
   if (!item || typeof item !== 'object') return null
   const record = item as Record<string, unknown>
   if (
-    typeof record.filePath !== 'string' &&
-    typeof record.selectedText !== 'string' &&
+    typeof record.commentNumber !== 'number' ||
+    (record.source !== 'browser_annotation' && record.source !== 'code_selection') ||
+    typeof record.location !== 'string' ||
+    typeof record.filePath !== 'string' ||
+    typeof record.fileName !== 'string' ||
+    typeof record.selectedText !== 'string' ||
     typeof record.userComment !== 'string'
   ) {
     return null
@@ -129,6 +136,7 @@ export function parseCodeCommentContexts(
   if (!blockMatch) return null
   const strippedContent = content.replace(blockMatch[0], '').trim()
   const inner = blockMatch[0]
+  if (!inner.includes(CONTEXT_INSTRUCTION)) return null
   const jsonStart = inner.indexOf('[')
   const jsonEnd = inner.lastIndexOf(']')
   if (jsonStart < 0 || jsonEnd <= jsonStart) return null

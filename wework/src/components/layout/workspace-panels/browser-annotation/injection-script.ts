@@ -108,7 +108,7 @@ export function browserAnnotationInjectionScript({
   const positionBox = (box, rect) => style(box, { left: rect.x + 'px', top: rect.y + 'px', width: Math.max(1, rect.width) + 'px', height: Math.max(1, rect.height) + 'px' });
   const rememberBaseline = element => {
     if (!element || state.baselineByElement.has(element)) return;
-    state.baselineByElement.set(element, { inlineValues: new Map(), text: undefined, textTouched: false });
+    state.baselineByElement.set(element, { inlineValues: new Map(), appliedValues: new Map(), text: undefined, textTouched: false, appliedText: undefined });
   };
   const simpleTextTarget = element => Boolean(element && element.children.length === 0 && !element.isContentEditable && !['INPUT', 'TEXTAREA'].includes(element.tagName));
   const recordBaselineProperty = (element, property) => {
@@ -118,14 +118,20 @@ export function browserAnnotationInjectionScript({
     const inlineValue = element.style.getPropertyValue(property);
     baseline.inlineValues.set(property, inlineValue === '' ? null : inlineValue);
   };
-  const restoreBaseline = element => {
+  const restoreBaseline = (element, onlyIfUnchanged = false) => {
     const baseline = state.baselineByElement.get(element);
     if (!baseline) return;
     baseline.inlineValues.forEach((value, property) => {
+      if (onlyIfUnchanged) {
+        const lastApplied = baseline.appliedValues.get(property);
+        if (lastApplied !== undefined && element.style.getPropertyValue(property) !== lastApplied) return;
+      }
       if (value === null) element.style.removeProperty(property);
       else element.style.setProperty(property, value);
     });
-    if (baseline.textTouched && baseline.text !== undefined) element.textContent = baseline.text;
+    if (baseline.textTouched && baseline.text !== undefined) {
+      if (!(onlyIfUnchanged && baseline.appliedText !== undefined && element.textContent !== baseline.appliedText)) element.textContent = baseline.text;
+    }
   };
   const applyAdjustment = (element, adjustment) => {
     if (!element?.isConnected) return;
@@ -135,11 +141,13 @@ export function browserAnnotationInjectionScript({
         const baseline = state.baselineByElement.get(element);
         if (baseline && !baseline.textTouched) { baseline.text = element.textContent; baseline.textTouched = true; }
         element.textContent = adjustment.after;
+        if (baseline) baseline.appliedText = element.textContent;
       }
       return;
     }
     recordBaselineProperty(element, adjustment.property);
     element.style.setProperty(adjustment.property, adjustment.after);
+    state.baselineByElement.get(element)?.appliedValues.set(adjustment.property, element.style.getPropertyValue(adjustment.property));
   };
   const replayElement = (element, draft = []) => {
     if (!element?.isConnected) return;
@@ -147,7 +155,7 @@ export function browserAnnotationInjectionScript({
     state.annotations.filter(annotation => annotation.element === element).sort((a, b) => a.number - b.number).forEach(annotation => annotation.adjustments.forEach(adjustment => applyAdjustment(element, adjustment)));
     draft.forEach(adjustment => applyAdjustment(element, adjustment));
   };
-  const restoreAll = () => state.baselineByElement.forEach((_, element) => restoreBaseline(element));
+  const restoreAll = () => state.baselineByElement.forEach((_, element) => restoreBaseline(element, true));
   const clearHover = () => { state.hoverBox?.remove(); state.hoverBox = null; state.hoverElement = null; };
   const closeEditor = () => { state.activeEditor?.remove(); state.activeEditor = null; state.activeInput = null; };
   const positionMarker = annotation => {
