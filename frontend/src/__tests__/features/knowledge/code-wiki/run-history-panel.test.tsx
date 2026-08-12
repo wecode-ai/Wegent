@@ -100,28 +100,16 @@ describe('a failure reason of any length', () => {
     expect(reason).toHaveAttribute('title', LONG)
   })
 
-  it('is reachable without a mouse', async () => {
-    // It was a <p> with a click handler, which reads the same to a sighted mouse
-    // user and leaves a keyboard user unable to open a clamped reason at all.
+  it('stays clamped after clicking, like the reader summary', async () => {
     render(<RunHistory knowledgeBaseId={1} status={null} />)
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
 
     const reason = await screen.findByTestId('code-wiki-run-error')
-    expect(reason.tagName).toBe('BUTTON')
-    expect(reason).toHaveAttribute('aria-expanded', 'false')
+    expect(reason.tagName).toBe('P')
 
     fireEvent.click(reason)
 
-    expect(reason).toHaveAttribute('aria-expanded', 'true')
-  })
-
-  it('opens up when clicked, because that is what this panel is for', async () => {
-    render(<RunHistory knowledgeBaseId={1} status={null} />)
-    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
-    const reason = await screen.findByTestId('code-wiki-run-error')
-
-    fireEvent.click(reason)
-
-    expect(reason.className).not.toContain('line-clamp-3')
+    expect(reason.className).toContain('line-clamp-3')
+    expect(reason).toHaveAttribute('title', LONG)
   })
 })
