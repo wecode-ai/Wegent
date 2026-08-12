@@ -6685,20 +6685,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual([])
 
     await act(async () => {
-      cloudRuntimeWork.resolve(
-        createRuntimeWork({
-          projects: [
-            {
-              ...staleRuntimeWork.projects[0],
-              project: {
-                ...staleRuntimeWork.projects[0].project,
-                id: 8,
-                name: 'Restored under a new identity',
-              },
-            },
-          ],
-        })
-      )
+      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
     })
 
     await waitFor(() =>

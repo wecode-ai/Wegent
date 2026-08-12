@@ -165,20 +165,13 @@ function removeRuntimeProject(
   projectId: number,
   workspace?: { deviceId: string; workspacePath: string }
 ): RuntimeWorkListResponse {
+  const projects = runtimeWork.projects.filter(
+    project => runtimeProjectUiId(project.project) !== projectId
+  )
   const normalizedDeviceId = workspace?.deviceId.trim()
   const normalizedWorkspacePath = workspace
     ? normalizeRuntimeWorkspacePath(workspace.workspacePath)
     : null
-  const projects = runtimeWork.projects.filter(project => {
-    if (runtimeProjectUiId(project.project) === projectId) return false
-    if (!normalizedDeviceId || !normalizedWorkspacePath) return true
-
-    return !project.deviceWorkspaces.some(
-      projectWorkspace =>
-        projectWorkspace.deviceId.trim() === normalizedDeviceId &&
-        normalizeRuntimeWorkspacePath(projectWorkspace.workspacePath) === normalizedWorkspacePath
-    )
-  })
   const chats =
     normalizedDeviceId && normalizedWorkspacePath
       ? runtimeWork.chats.filter(

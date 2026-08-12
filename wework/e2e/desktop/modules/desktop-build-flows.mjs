@@ -814,7 +814,9 @@ async function verifyCloudProjectFlow(
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   const replacementProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'The duplicate regression cloud project was not created'
   )
   const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
