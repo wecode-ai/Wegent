@@ -37,8 +37,7 @@ classify_path() {
       changed[node]=true
       changed[python]=true
       ;;
-    .github/workflows/wework-e2e.yml | \
-      .github/scripts/install-wework-tauri-system-dependencies.sh)
+    .github/workflows/wework-e2e.yml)
       changed[node]=true
       changed[python]=true
       changed[wework_rust]=true

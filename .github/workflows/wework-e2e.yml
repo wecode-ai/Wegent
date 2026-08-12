@@ -23,6 +23,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   changes:
@@ -134,39 +135,19 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wecode-ai/wegent-wework-e2e:ubuntu24.04-v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set APT cache key
-        id: apt-cache-key
-        run: |
-          week="$(date -u +'%G-%V')"
-          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Restore shared Tauri system packages
-        id: wework-apt-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.apt-cache-key.outputs.key }}
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
-
-      - name: Install Tauri build dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: .github/scripts/install-wework-tauri-system-dependencies.sh full redis
-
-      - name: Save shared Tauri system packages
-        if: github.ref == 'refs/heads/main' && steps.wework-apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.wework-apt-cache.outputs.cache-primary-key }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -243,6 +224,14 @@ jobs:
       - build-wework-desktop-core-e2e
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wecode-ai/wegent-wework-e2e:ubuntu24.04-v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -251,26 +240,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set APT cache key
-        id: apt-cache-key
-        run: |
-          week="$(date -u +'%G-%V')"
-          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Restore shared Tauri system packages
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.apt-cache-key.outputs.key }}
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
-
-      - name: Install Tauri runtime dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: .github/scripts/install-wework-tauri-system-dependencies.sh runtime
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -319,6 +288,14 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wecode-ai/wegent-wework-e2e:ubuntu24.04-v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -327,32 +304,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set APT cache key
-        id: apt-cache-key
-        run: |
-          week="$(date -u +'%G-%V')"
-          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Restore shared Tauri system packages
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.apt-cache-key.outputs.key }}
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
-
-      - name: Install Tauri system dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-          E2E_COMMAND: ${{ matrix.command }}
-        run: |
-          if [[ "$E2E_COMMAND" == "e2e:desktop:cloud" ]]; then
-            .github/scripts/install-wework-tauri-system-dependencies.sh full redis
-          else
-            .github/scripts/install-wework-tauri-system-dependencies.sh full
-          fi
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
