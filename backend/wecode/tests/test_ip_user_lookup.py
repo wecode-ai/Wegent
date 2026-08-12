@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -11,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.device.local_provider import local_device_provider
+from wecode.service.cloud_device_ip_index import (
+    NEVIS_IP_FIELD,
+    NEVIS_IP_OBSERVED_AT_FIELD,
+    NEVIS_IP_SANDBOX_ID_FIELD,
+)
 from wecode.service.ip_user_lookup import ip_user_lookup_service
 
 
@@ -22,7 +27,26 @@ def _create_device(
     device_id: str,
     device_type: str,
     client_ip: str,
+    nevis_ip: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
+    observed_at: Optional[str] = None,
+    indexed_sandbox_id: Optional[str] = None,
 ) -> None:
+    spec = {
+        "deviceId": device_id,
+        "deviceType": device_type,
+        "clientIp": client_ip,
+    }
+    if runtime_transfer_host is not None:
+        spec["runtimeTransferHost"] = runtime_transfer_host
+    if device_type == "cloud" and nevis_ip is not None:
+        sandbox_id = f"sandbox-{device_id}"
+        spec["cloudConfig"] = {
+            "sandboxId": sandbox_id,
+            NEVIS_IP_FIELD: nevis_ip,
+            NEVIS_IP_OBSERVED_AT_FIELD: observed_at or "2020-01-01T00:00:00+00:00",
+            NEVIS_IP_SANDBOX_ID_FIELD: indexed_sandbox_id or sandbox_id,
+        }
     db.add(
         Kind(
             user_id=user_id,
@@ -33,11 +57,7 @@ def _create_device(
                 "apiVersion": "agent.wecode.io/v1",
                 "kind": "Device",
                 "metadata": {"name": device_id, "namespace": "default"},
-                "spec": {
-                    "deviceId": device_id,
-                    "deviceType": device_type,
-                    "clientIp": client_ip,
-                },
+                "spec": spec,
                 "status": {"state": "Available"},
             },
             is_active=True,
@@ -58,6 +78,7 @@ def test_internal_admin_ip_lookup_combines_cloud_and_pod_matches(
         device_id="cloud-1",
         device_type="cloud",
         client_ip="10.20.30.40",
+        nevis_ip="10.20.30.40",
     )
     _create_device(
         test_db,
@@ -114,6 +135,7 @@ def test_internal_admin_ip_lookup_returns_partial_cloud_result(
         device_id="cloud-2",
         device_type="cloud",
         client_ip="2001:db8::5",
+        nevis_ip="2001:db8::5",
     )
     pod_lookup = AsyncMock(return_value=([], "executor-manager unavailable"))
 
@@ -133,7 +155,7 @@ def test_internal_admin_ip_lookup_returns_partial_cloud_result(
     ]
 
 
-def test_internal_admin_ip_lookup_resolves_nevis_cloud_ip(
+def test_internal_admin_ip_lookup_resolves_indexed_nevis_cloud_ip(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -145,25 +167,11 @@ def test_internal_admin_ip_lookup_resolves_nevis_cloud_ip(
         device_id="cloud-nevis",
         device_type="cloud",
         client_ip="",
+        nevis_ip="10.30.40.50",
     )
-    device = test_db.query(Kind).filter(Kind.name == "cloud-nevis").one()
-    device.json["spec"].pop("clientIp")
-    device.json["spec"]["cloudConfig"] = {"sandboxId": "sandbox-1"}
-    test_db.commit()
 
     pod_lookup = AsyncMock(return_value=([], None))
-    online_key = local_device_provider.generate_online_key(test_user.id, "cloud-nevis")
-    with (
-        patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup),
-        patch(
-            "wecode.service.ip_user_lookup.cache_manager.mget",
-            new=AsyncMock(return_value={online_key: {"client_ip": "127.0.0.1"}}),
-        ),
-        patch(
-            "wecode.service.ip_user_lookup.nevis_client.get_sandbox",
-            new=AsyncMock(return_value={"details": {"urls": "10.30.40.50"}}),
-        ),
-    ):
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
         response = test_client.get(
             "/api/internal/admin/users/by-ip",
             params={"ip": "10.30.40.50"},
@@ -177,7 +185,7 @@ def test_internal_admin_ip_lookup_resolves_nevis_cloud_ip(
     assert payload["matches"][0]["resource_name"] == "cloud-nevis"
 
 
-def test_internal_admin_ip_lookup_resolves_runtime_transfer_host(
+def test_internal_admin_ip_lookup_does_not_trust_runtime_transfer_host(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -189,31 +197,11 @@ def test_internal_admin_ip_lookup_resolves_runtime_transfer_host(
         device_id="cloud-runtime-host",
         device_type="cloud",
         client_ip="",
-    )
-    online_key = local_device_provider.generate_online_key(
-        test_user.id, "cloud-runtime-host"
+        nevis_ip="10.201.4.120",
+        runtime_transfer_host="10.201.4.119",
     )
     pod_lookup = AsyncMock(return_value=([], None))
-    nevis_lookup = AsyncMock()
-
-    with (
-        patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup),
-        patch(
-            "wecode.service.ip_user_lookup.cache_manager.mget",
-            new=AsyncMock(
-                return_value={
-                    online_key: {
-                        "client_ip": "127.0.0.1",
-                        "runtime_transfer_host": "10.201.4.119",
-                    }
-                }
-            ),
-        ),
-        patch(
-            "wecode.service.ip_user_lookup.nevis_client.get_sandbox",
-            new=nevis_lookup,
-        ),
-    ):
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
         response = test_client.get(
             "/api/internal/admin/users/by-ip",
             params={"ip": "10.201.4.119"},
@@ -222,9 +210,75 @@ def test_internal_admin_ip_lookup_resolves_runtime_transfer_host(
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["user_names"] == []
+    assert payload["matches"] == []
+    assert payload["lookup_errors"] == []
+
+
+def test_internal_admin_ip_lookup_does_not_expire_nevis_index(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_admin_token: str,
+):
+    _create_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="cloud-stale",
+        device_type="cloud",
+        client_ip="",
+        nevis_ip="10.201.4.121",
+        observed_at="2020-01-01T00:00:00+00:00",
+    )
+    pod_lookup = AsyncMock(return_value=([], None))
+
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
+        response = test_client.get(
+            "/api/internal/admin/users/by-ip",
+            params={"ip": "10.201.4.121"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
     assert payload["user_names"] == [test_user.user_name]
-    assert payload["matches"][0]["resource_name"] == "cloud-runtime-host"
-    nevis_lookup.assert_not_awaited()
+    assert payload["lookup_errors"] == []
+
+
+def test_internal_admin_ip_lookup_rejects_mismatched_sandbox_index(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_admin_token: str,
+):
+    _create_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="cloud-recreated",
+        device_type="cloud",
+        client_ip="",
+        nevis_ip="10.201.4.122",
+        indexed_sandbox_id="previous-sandbox",
+    )
+    pod_lookup = AsyncMock(return_value=([], None))
+
+    with patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup):
+        response = test_client.get(
+            "/api/internal/admin/users/by-ip",
+            params={"ip": "10.201.4.122"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_names"] == []
+    assert payload["matches"] == []
+    assert payload["lookup_errors"] == [
+        {
+            "source": "cloud_device",
+            "message": "Nevis IP index is missing for 1 active cloud devices",
+        }
+    ]
 
 
 def test_internal_admin_ip_lookup_rejects_invalid_ip(

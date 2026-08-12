@@ -77,13 +77,49 @@ describe('generate release notes', () => {
     expect(readGitHubAuthorLogin('example/repo', '1234567', () => '')).toBe('')
   })
 
-  test('fails release-note generation when GitHub author lookup fails', () => {
-    const error = new Error('GitHub API unavailable')
-    expect(() =>
-      readGitHubAuthorLogin('example/repo', '1234567', () => {
+  test('retries transient GitHub author lookup failures with exponential backoff', () => {
+    const error = new Error('TLS certificate verification failed')
+    const runCommand = vi
+      .fn()
+      .mockImplementationOnce(() => {
         throw error
       })
+      .mockImplementationOnce(() => {
+        throw error
+      })
+      .mockReturnValue('contributor\n')
+    const sleep = vi.fn()
+    const log = vi.fn()
+
+    expect(
+      readGitHubAuthorLogin('example/repo', '1234567', runCommand, {
+        retryDelayMs: 25,
+        sleep,
+        log,
+      })
+    ).toBe('contributor')
+    expect(runCommand).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenNthCalledWith(1, 25)
+    expect(sleep).toHaveBeenNthCalledWith(2, 50)
+    expect(log).toHaveBeenCalledTimes(2)
+  })
+
+  test('fails release-note generation when GitHub author lookup fails', () => {
+    const error = new Error('GitHub API unavailable')
+    const runCommand = vi.fn(() => {
+      throw error
+    })
+    const sleep = vi.fn()
+    expect(() =>
+      readGitHubAuthorLogin('example/repo', '1234567', runCommand, {
+        attempts: 3,
+        retryDelayMs: 0,
+        sleep,
+        log: vi.fn(),
+      })
     ).toThrow(error)
+    expect(runCommand).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
   })
 
   test('resolves each commit author while preserving release order', () => {

@@ -78,6 +78,10 @@ describe('VNC code ownership', () => {
       resolve(weworkDirectory, 'e2e/desktop/task-flow.e2e.mjs'),
       'utf8'
     )
+    const taskFlowMainSource = readFileSync(
+      resolve(weworkDirectory, 'e2e/desktop/modules/task-flow-main.mjs'),
+      'utf8'
+    )
     const wecodeEntrySource = readFileSync(
       resolve(weworkDirectory, 'wecode/e2e/desktop/task-flow.e2e.mjs'),
       'utf8'
@@ -86,8 +90,9 @@ describe('VNC code ownership', () => {
       readFileSync(resolve(weworkDirectory, 'package.json'), 'utf8')
     ) as { scripts?: Record<string, string> }
 
-    expect(taskFlowSource).toContain('WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
-    expect(taskFlowSource).not.toContain('createWecodeDesktopScenario')
+    expect(taskFlowSource).toContain("import { main } from './modules/task-flow-main.mjs'")
+    expect(taskFlowMainSource).toContain('WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
+    expect(taskFlowMainSource).not.toContain('createWecodeDesktopScenario')
     expect(wecodeEntrySource).toContain('WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
     expect(wecodeEntrySource).toContain("await import('../../../e2e/desktop/task-flow.e2e.mjs')")
     expect(packageJson.scripts?.['e2e:desktop:wecode']).toBe(

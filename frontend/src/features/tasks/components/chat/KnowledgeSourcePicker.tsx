@@ -337,6 +337,18 @@ function findInternalDocumentNode(
   return undefined
 }
 
+function findInternalFolderNode(
+  nodes: InternalTreeNode[],
+  folderId: number
+): InternalTreeNode | undefined {
+  for (const node of nodes) {
+    if (node.folderId === folderId) return node
+    const match = findInternalFolderNode(node.children, folderId)
+    if (match) return match
+  }
+  return undefined
+}
+
 function getEffectiveInternalDocuments(
   existing: KnowledgeBaseContext,
   tree: InternalTreeNode[],
@@ -850,14 +862,43 @@ export function KnowledgeSourcePicker({
       const removedDocumentIds = new Set(
         collectInternalDocuments(node).map(document => document.id)
       )
-      const nextDocuments = getEffectiveInternalDocuments(
+      const nextSelectedDocuments = getEffectiveInternalDocuments(
         existing,
         treeState.tree,
         treeState.documents
       ).filter(document => !removedDocumentIds.has(document.id))
+      const remainingFolders = existingFolderIds.flatMap((folderId, index) => {
+        if (folderId === node.folderId) return []
+        const folderNode = findInternalFolderNode(treeState.tree, folderId)
+        if (!folderNode) {
+          return []
+        }
+        const folderDocuments = collectInternalDocuments(folderNode)
+        if (folderDocuments.some(document => removedDocumentIds.has(document.id))) {
+          return []
+        }
+        return [{ id: folderId, name: existingFolderNames[index], documents: folderDocuments }]
+      })
+      const remainingFolderDocumentIds = new Set(
+        remainingFolders.flatMap(folder => folder.documents.map(document => document.id))
+      )
+      const nextExplicitDocuments = nextSelectedDocuments.filter(
+        document => !remainingFolderDocumentIds.has(document.id)
+      )
       replaceContexts(
         [existing.id],
-        nextDocuments.length > 0 ? [toKnowledgeContext(kb, { documents: nextDocuments })] : []
+        nextSelectedDocuments.length > 0 || remainingFolders.length > 0
+          ? [
+              toKnowledgeContext(kb, {
+                documents: nextExplicitDocuments,
+                folderIds: remainingFolders.map(folder => folder.id),
+                folderNames: remainingFolders
+                  .map(folder => folder.name)
+                  .filter((name): name is string => Boolean(name)),
+                includeSubfolders: existing.include_subfolders ?? true,
+              }),
+            ]
+          : []
       )
       return
     }
@@ -2250,7 +2291,7 @@ function ExternalDocumentNode({
             <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
+              <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
             </span>
           </span>
           <SelectionIndicator checked={selected} />

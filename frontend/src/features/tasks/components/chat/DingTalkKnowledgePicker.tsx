@@ -117,9 +117,8 @@ function DingTalkPickerSyncEmpty({
   onSync?: () => void
 }) {
   const { t } = useTranslation('chat')
-  if (!onSync) {
-    return <DingTalkPickerEmpty label={label} />
-  }
+  if (!onSync) return <DingTalkPickerEmpty label={label} />
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
       <div className="text-sm text-text-muted">{label}</div>
@@ -137,11 +136,10 @@ function DingTalkPickerSyncEmpty({
   )
 }
 
-/** Format a sync timestamp as compact "MM-DD HH:mm" for the narrow column. */
 function formatSyncTimeShort(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  const pad = (n: number) => String(n).padStart(2, '0')
+  const pad = (part: number) => String(part).padStart(2, '0')
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
@@ -155,9 +153,8 @@ function DingTalkSyncToolbar({
   onSync?: () => void
 }) {
   const { t } = useTranslation('chat')
-  if (!onSync) {
-    return null
-  }
+  if (!onSync) return null
+
   const syncLabel = syncing ? t('dingtalkDocs.syncing') : t('dingtalkDocs.sync')
   return (
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">

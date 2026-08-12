@@ -28,6 +28,14 @@ from wecode.service.skill_market import weibo_skill_market_provider
 
 skill_market_registry.register(weibo_skill_market_provider)
 
+# Register Weibo System Skill Provider
+from app.services.system_skill_providers.core.registry import (
+    system_skill_provider_registry,
+)
+from wecode.service.system_skill_providers import weibo_system_skill_provider
+
+system_skill_provider_registry.register(weibo_system_skill_provider)
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_monitor_patch  # noqa: F401  register internal admin restart handler
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
@@ -60,6 +68,7 @@ from wecode.api.admin_published_apps import router as admin_published_apps_route
 from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
+from wecode.api.cloud_device_ip_index import router as cloud_device_ip_index_router
 from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.department_search import router as department_search_router
 from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
@@ -183,6 +192,11 @@ api_router.include_router(
 api_router.include_router(
     ip_user_lookup_router,
     prefix="/internal/admin/users",
+    tags=["internal-admin"],
+)
+api_router.include_router(
+    cloud_device_ip_index_router,
+    prefix="/internal/admin/cloud-device-ip-index",
     tags=["internal-admin"],
 )
 api_router.include_router(

@@ -160,6 +160,44 @@ describe('pipeline next-step helpers', () => {
     ])
   })
 
+  it('keeps restricted scopes with different descendant inclusion values distinct', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 211,
+            context_type: 'knowledge_base',
+            name: 'Scoped KB',
+            status: 'ready',
+            knowledge_id: 21,
+            folder_ids: [8],
+            document_ids: [5],
+            include_subfolders: true,
+            scope_restricted: true,
+          },
+          {
+            id: 212,
+            context_type: 'knowledge_base',
+            name: 'Scoped KB',
+            status: 'ready',
+            knowledge_id: 21,
+            folder_ids: [8],
+            document_ids: [5],
+            include_subfolders: false,
+            scope_restricted: true,
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems.map(item => item.id)).toEqual([
+      'knowledge_base:21:restricted:8:5:true',
+      'knowledge_base:21:restricted:8:5:false',
+    ])
+    expect(draft.structuredItems).toHaveLength(2)
+  })
+
   it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
     const draft = buildPipelineNextStepDraft(
       [

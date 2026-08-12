@@ -12,13 +12,15 @@ the online status of cloud devices and sends notifications.
 import asyncio
 import logging
 import threading
-from datetime import datetime
+import time
 
 logger = logging.getLogger(__name__)
 
 MONITOR_INTERVAL_SECONDS = 600  # 10 minutes
 MONITOR_LOCK_KEY = "cloud_device_monitor:lock"
 MONITOR_LOCK_EXPIRE_SECONDS = 600  # 10 minutes, same as interval
+NEVIS_IP_SYNC_INTERVAL_SECONDS = 3600  # 1 hour
+NEVIS_IP_SYNC_WINDOW_KEY = "cloud_device_ip_index:sync_window:v1"
 
 
 async def acquire_monitor_lock(redis_client) -> bool:
@@ -47,7 +49,23 @@ async def acquire_monitor_lock(redis_client) -> bool:
         return False
 
 
-def cloud_device_monitor_worker(stop_event: threading.Event):
+async def claim_nevis_ip_sync_window(redis_client) -> bool:
+    """Claim the global hourly window for Nevis IP synchronization."""
+    try:
+        return bool(
+            await redis_client.set(
+                NEVIS_IP_SYNC_WINDOW_KEY,
+                "1",
+                nx=True,
+                ex=NEVIS_IP_SYNC_INTERVAL_SECONDS,
+            )
+        )
+    except Exception as e:
+        logger.error(f"[cloud-device-ip-index] Error claiming sync window: {e}")
+        return False
+
+
+def cloud_device_monitor_worker(stop_event: threading.Event) -> None:
     """
     Background worker that monitors cloud device status every 10 minutes.
 
@@ -55,11 +73,16 @@ def cloud_device_monitor_worker(stop_event: threading.Event):
         stop_event: Threading event to signal shutdown
     """
     logger.info("[cloud-device-monitor] Worker started")
+    next_nevis_ip_sync_at = time.monotonic() + NEVIS_IP_SYNC_INTERVAL_SECONDS
 
     while not stop_event.is_set():
+        run_nevis_ip_sync = time.monotonic() >= next_nevis_ip_sync_at
+        if run_nevis_ip_sync:
+            next_nevis_ip_sync_at = time.monotonic() + NEVIS_IP_SYNC_INTERVAL_SECONDS
+
         try:
             # Run the async monitoring logic
-            asyncio.run(_run_monitor_check())
+            asyncio.run(_run_monitor_check(run_nevis_ip_sync=run_nevis_ip_sync))
         except Exception as e:
             logger.exception(f"[cloud-device-monitor] Error during check: {e}")
 
@@ -69,16 +92,45 @@ def cloud_device_monitor_worker(stop_event: threading.Event):
     logger.info("[cloud-device-monitor] Worker stopped")
 
 
-async def _run_monitor_check():
-    """Run a single monitoring check."""
+async def _sync_nevis_ip_index(redis_client) -> None:
+    """Synchronize missing Nevis IPs at most once per global hourly window."""
+    from app.db.session import get_db_session
+    from wecode.service.cloud_device_ip_index import cloud_device_ip_index_service
+
+    if not await claim_nevis_ip_sync_window(redis_client):
+        logger.debug("[cloud-device-ip-index] Hourly sync window already claimed")
+        return
+
+    try:
+        with get_db_session() as db:
+            ip_sync = await cloud_device_ip_index_service.sync_missing(
+                db,
+                redis_client,
+            )
+
+        if ip_sync.skipped:
+            logger.debug(
+                "[cloud-device-ip-index] Sync skipped: reason=%s",
+                ip_sync.skip_reason,
+            )
+        else:
+            logger.info(
+                "[cloud-device-ip-index] Sync completed: "
+                "total=%s, persisted=%s, missing_ip=%s, failed=%s",
+                ip_sync.total,
+                ip_sync.persisted,
+                ip_sync.missing_ip,
+                ip_sync.failed,
+            )
+    except Exception:
+        logger.exception("[cloud-device-ip-index] Sync failed")
+
+
+async def _run_monitor_check(run_nevis_ip_sync: bool = False) -> None:
+    """Optionally refresh the Nevis IP index and run offline monitoring."""
     from redis.asyncio import Redis
 
     from app.core.config import settings
-
-    # Check if cloud device offline alert is enabled
-    if not settings.CLOUD_DEVICE_OFFLINE_ALERT_ENABLED:
-        logger.debug("[cloud-device-monitor] Alert is disabled, skipping check")
-        return
     from app.db.session import get_db_session
     from wecode.service.cloud_device_monitor_service import (
         check_cloud_devices_status,
@@ -86,8 +138,8 @@ async def _run_monitor_check():
         trigger_auto_heal_for_offline_devices,
     )
     from wecode.service.dingtalk_webhook import (
-        DINGTALK_WEBHOOK_URL,
         DINGTALK_WEBHOOK_SECRET,
+        DINGTALK_WEBHOOK_URL,
         DingTalkWebhookSender,
     )
 
@@ -99,10 +151,17 @@ async def _run_monitor_check():
             decode_responses=True,
         )
 
+        if run_nevis_ip_sync:
+            await _sync_nevis_ip_index(redis_client)
+
         # Try to acquire distributed lock
         lock_acquired = await acquire_monitor_lock(redis_client)
         if not lock_acquired:
             return  # Another instance is handling this check
+
+        if not settings.CLOUD_DEVICE_OFFLINE_ALERT_ENABLED:
+            logger.debug("[cloud-device-monitor] Alert is disabled, skipping check")
+            return
 
         with get_db_session() as db:
             result = await check_cloud_devices_status(db, redis_client)
@@ -128,9 +187,7 @@ async def _run_monitor_check():
 
         # Send notification if there are offline devices or changes
         should_notify = (
-            result["offline_count"] > 0
-            or result["new_offline"]
-            or result["recovered"]
+            result["offline_count"] > 0 or result["new_offline"] or result["recovered"]
         )
 
         if should_notify:

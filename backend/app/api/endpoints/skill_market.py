@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from app.core import security
 from app.models.user import User
 from app.services.skill_market import (
+    ISkillMarketProvider,
     SearchParams,
     skill_market_registry,
 )
@@ -66,12 +67,79 @@ class AvailableResponse(BaseModel):
     market_url: Optional[str] = None
 
 
+class ProviderResponse(BaseModel):
+    """Available skill market provider."""
+
+    key: str
+    name: str
+    market_url: Optional[str] = None
+
+
+class ProvidersResponse(BaseModel):
+    """Available skill market providers."""
+
+    providers: List[ProviderResponse]
+
+
 class ErrorResponse(BaseModel):
     """Error response"""
 
     error: str
     message: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+
+
+def _resolve_provider(provider_key: Optional[str]) -> ISkillMarketProvider:
+    if provider_key:
+        provider = skill_market_registry.get_provider(provider_key)
+        if provider:
+            return provider
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Skill market provider not found",
+                "details": {"provider": provider_key},
+            },
+        )
+
+    provider = skill_market_registry.get_single_provider()
+    if provider:
+        return provider
+
+    if skill_market_registry.count() > 1:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Skill market provider is required",
+                "message": "Specify the provider query parameter.",
+            },
+        )
+
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "error": "Skill market not available",
+            "message": "No skill market provider is configured.",
+        },
+    )
+
+
+@router.get("/providers", response_model=ProvidersResponse)
+async def list_providers(
+    current_user: User = Depends(security.get_current_user),
+) -> ProvidersResponse:
+    """List registered skill market providers."""
+    providers = skill_market_registry.list_providers()
+    return ProvidersResponse(
+        providers=[
+            ProviderResponse(
+                key=provider.key,
+                name=provider.name,
+                market_url=provider.market_url or None,
+            )
+            for provider in providers
+        ]
+    )
 
 
 @router.get("/available", response_model=AvailableResponse)
@@ -81,12 +149,11 @@ async def check_availability(
     """
     Check if a skill market provider is available.
 
-    Returns { available: true, market_name, market_url } if a provider is registered,
-    otherwise { available: false }.
+    Legacy availability endpoint for single-provider clients.
     """
     try:
         available = skill_market_registry.has_provider()
-        provider = skill_market_registry.get_provider()
+        provider = skill_market_registry.list_providers()[0] if available else None
         provider_name = provider.name if provider else None
         provider_market_url = provider.market_url if provider else None
         logger.info(
@@ -106,6 +173,7 @@ async def check_availability(
 
 @router.get("/search", response_model=SearchResultResponse)
 async def search_skills(
+    provider: Optional[str] = Query(None, description="Skill market provider key"),
     keyword: Optional[str] = Query(None, description="Keyword search"),
     tags: Optional[str] = Query(None, description="Tag filter"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -118,18 +186,7 @@ async def search_skills(
     Delegates to the registered skill market provider.
     If no provider is registered, returns a 503 error.
     """
-    provider = skill_market_registry.get_provider()
-
-    if not provider:
-        logger.info("[SkillMarket] No provider registered, returning error")
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "Skill market not available",
-                "message": "No skill market provider is configured. "
-                "This feature requires a skill market provider to be installed.",
-            },
-        )
+    market_provider = _resolve_provider(provider)
 
     # Build search params with current user's username
     params = SearchParams(
@@ -141,7 +198,7 @@ async def search_skills(
     )
 
     try:
-        result = await provider.search(params)
+        result = await market_provider.search(params)
 
         return SearchResultResponse(
             total=result.total,
@@ -166,6 +223,7 @@ async def search_skills(
 @router.get("/download/{skill_key:path}")
 async def download_skill(
     skill_key: str,
+    provider: Optional[str] = Query(None, description="Skill market provider key"),
     current_user: User = Depends(security.get_current_user),
 ) -> Response:
     """
@@ -177,21 +235,10 @@ async def download_skill(
     Args:
         skill_key: Unique skill identifier (path parameter, can contain slashes)
     """
-    provider = skill_market_registry.get_provider()
-
-    if not provider:
-        logger.info("[SkillMarket] No provider registered, returning error")
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "Skill market not available",
-                "message": "No skill market provider is configured. "
-                "This feature requires a skill market provider to be installed.",
-            },
-        )
+    market_provider = _resolve_provider(provider)
 
     try:
-        result = await provider.download(skill_key, user=current_user.user_name)
+        result = await market_provider.download(skill_key, user=current_user.user_name)
 
         # Sanitize filename for Content-Disposition header
         filename = result.filename or "download.zip"

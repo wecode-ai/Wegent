@@ -205,6 +205,45 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     true,
     'Reloading exposed a direct send path while the provider turn was still active'
   )
+  assert.ok(
+    reloadedContinuationDebugSnapshot.workbench?.currentRuntimeTask,
+    'The reloaded Goal did not expose its runtime address for stale transcript recovery'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: reloadedContinuationDebugSnapshot.workbench.currentRuntimeTask,
+      type: 'transcript_received',
+      transcript: {
+        taskId: goalTaskId,
+        messages: [],
+        running: false,
+        turns: [{ id: 'stale-running-state-turn', items: [], status: 'streaming' }],
+      },
+    }),
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'A stale coarse transcript running flag hid the active turn from the sidebar'
+  )
+  const staleTranscriptDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.isAssistantStreaming === true &&
+      snapshot.pane?.status?.isBusy === true,
+    'The active turn did not remain authoritative after receiving stale transcript running state'
+  )
+  assert.equal(
+    staleTranscriptDebugSnapshot.pane?.status?.taskExecution?.running,
+    true,
+    'The stale transcript running flag overrode the concrete active turn'
+  )
   await assertConversationTextOccurrences(control, {
     [GOAL_IDLE_INITIAL_TEXT]: 1,
   })
