@@ -38,6 +38,7 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
+    server::{executor_loopback_base_url, local_model_proxy},
 };
 
 mod archives;
@@ -87,7 +88,10 @@ use super::{
         user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},
+    transcript::{
+        full_transcript_messages, normalized_user_request_content, notification_item,
+        transcript_messages,
+    },
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
@@ -541,6 +545,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
+            "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
+            "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
             "runtime.connectors.status" => self.connectors.status().await,

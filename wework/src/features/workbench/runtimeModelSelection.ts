@@ -19,6 +19,8 @@ export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = 'weworkCloudModelMaxOutputTo
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
 export const CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCodexCatalogModelId'
 export const CLOUD_MODEL_VISION_SIDECAR_OPTION = 'weworkCloudVisionSidecar'
+export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = 'weworkCloudModelNativeToolSearch'
+export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = 'weworkCloudModelNativeNamespaceTools'
 
 const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = 'visionSidecarModel'
@@ -71,6 +73,51 @@ function getBooleanConfigValue(
   key: string
 ): boolean {
   return config?.[key] === true
+}
+
+function configuredBooleanValue(
+  config: Record<string, unknown> | null | undefined,
+  snakeCaseKey: string,
+  camelCaseKey: string
+): boolean | null {
+  const value = config?.[snakeCaseKey] ?? config?.[camelCaseKey]
+  return typeof value === 'boolean' ? value : null
+}
+
+function isNativeOpenAIResponsesModel(model: UnifiedModel, upstreamApiFormat: string): boolean {
+  if (upstreamApiFormat !== 'openai-responses') return false
+
+  const candidates = [
+    model.modelId,
+    model.name,
+    getRawStringConfigValue(model.config, 'model_id'),
+    getRawStringConfigValue(model.config, 'modelId'),
+    getRawStringConfigValue(model.config, 'model'),
+  ]
+  return candidates.some(candidate => {
+    const match = candidate
+      ?.trim()
+      .toLowerCase()
+      .match(/^gpt-(\d+)\.(\d+)(?:-|$)/)
+    if (!match) return false
+    const major = Number(match[1])
+    const minor = Number(match[2])
+    return major > 5 || (major === 5 && minor >= 4)
+  })
+}
+
+function cloudNativeToolCapabilities(
+  model: UnifiedModel,
+  upstreamApiFormat: string
+): { nativeToolSearch: boolean; nativeNamespaceTools: boolean } {
+  const inferred = isNativeOpenAIResponsesModel(model, upstreamApiFormat)
+  return {
+    nativeToolSearch:
+      configuredBooleanValue(model.config, 'native_tool_search', 'nativeToolSearch') ?? inferred,
+    nativeNamespaceTools:
+      configuredBooleanValue(model.config, 'native_namespace_tools', 'nativeNamespaceTools') ??
+      inferred,
+  }
 }
 
 function modelKind(model: UnifiedModel): string {
@@ -176,6 +223,13 @@ export function selectedModelExecutionFields(
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
+      const nativeCapabilities = cloudNativeToolCapabilities(selectedModel, upstreamApiFormat)
+      if (nativeCapabilities.nativeToolSearch) {
+        modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] = 'true'
+      }
+      if (nativeCapabilities.nativeNamespaceTools) {
+        modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] = 'true'
+      }
     }
     const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel)
     if (codexCatalogModelId) {

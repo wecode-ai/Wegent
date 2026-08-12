@@ -27,4 +27,11 @@ describe('createBackendWorkbenchServices', () => {
 
     expect(services.feedbackApi).toBeDefined()
   })
+
+  test('provides the connected backend attachment API', () => {
+    const services = createBackendWorkbenchServices(baseOptions)
+
+    expect(services.attachmentApi?.uploadAttachment).toBeTypeOf('function')
+    expect(services.attachmentApi?.deleteAttachment).toBeTypeOf('function')
+  })
 })

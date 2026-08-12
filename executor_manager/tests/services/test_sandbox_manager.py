@@ -615,6 +615,150 @@ class TestSandboxManager:
 
         assert task["skip_git_clone"] is True
 
+    def test_build_sandbox_task_populates_resolved_skills(
+        self, sandbox_manager_with_mock_redis, sample_sandbox
+    ):
+        """Sandbox task should carry every field required by Skill deployment."""
+        from executor_manager.services.sandbox.skill_sync import ResolvedTaskSkills
+
+        manager = sandbox_manager_with_mock_redis
+        resolved = ResolvedTaskSkills(
+            team_namespace="team-a",
+            skills=["abtest-file-analyzer", "sandbox"],
+            preload_skills=["sandbox"],
+            skill_refs={
+                "abtest-file-analyzer": {
+                    "skill_id": 237510,
+                    "namespace": "default",
+                }
+            },
+            preload_skill_refs={"sandbox": {"skill_id": 1, "namespace": "default"}},
+            required_skills=["abtest-file-analyzer"],
+        )
+
+        task = manager._build_sandbox_task(sample_sandbox, resolved)
+
+        assert task["team_namespace"] == "team-a"
+        assert task["skill_names"] == ["abtest-file-analyzer", "sandbox"]
+        assert task["preload_skills"] == ["sandbox"]
+        assert task["required_skills"] == ["abtest-file-analyzer"]
+        assert task["bot"][0]["skills"] == ["abtest-file-analyzer", "sandbox"]
+        assert task["bot"][0]["skill_refs"] == resolved.skill_refs
+
+    @pytest.mark.asyncio
+    async def test_cold_sandbox_waits_for_required_skills_before_running(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """A cold sandbox must stay pending until the executor confirms Skills."""
+        from executor_manager.models.sandbox import SandboxStatus
+        from executor_manager.services.sandbox.skill_sync import ResolvedTaskSkills
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.PENDING
+        sample_sandbox.base_url = None
+        sample_sandbox.metadata["auth_token"] = "task-jwt"
+        resolved = ResolvedTaskSkills(
+            skills=["abtest-file-analyzer"],
+            required_skills=["abtest-file-analyzer"],
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        )
+
+        async def sync_before_running(base_url, task, task_skills):
+            assert sample_sandbox.status == SandboxStatus.PENDING
+            assert task["required_skills"] == ["abtest-file-analyzer"]
+            assert task_skills is resolved
+            return {"success": True}
+
+        sync = mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+            side_effect=sync_before_running,
+        )
+        executor = mocker.MagicMock()
+        executor.submit_executor.return_value = {
+            "status": "success",
+            "executor_name": "cold-sandbox",
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
+        mocker.patch.object(
+            manager,
+            "_wait_for_container_ready",
+            new_callable=AsyncMock,
+            return_value="http://sandbox:8080",
+        )
+
+        error = await manager._start_sandbox_container(sample_sandbox)
+
+        assert error is None
+        assert sample_sandbox.status == SandboxStatus.RUNNING
+        sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reused_warm_sandbox_syncs_newly_loaded_skill(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        sample_sandbox_redis_data,
+    ):
+        """A reused warm sandbox must sync Skills loaded after its first use."""
+        from executor_manager.services.sandbox.skill_sync import ResolvedTaskSkills
+
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        ensure_workspace = mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        resolved = ResolvedTaskSkills(
+            skills=["abtest-file-analyzer"],
+            required_skills=["abtest-file-analyzer"],
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        )
+        sync = mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        )
+        start = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={
+                "task_id": 12345,
+                "auth_token": "task-jwt",
+                "required_skills": '["abtest-file-analyzer"]',
+            },
+        )
+
+        assert error is None
+        assert sandbox.metadata["required_skills"] == ["abtest-file-analyzer"]
+        ensure_workspace.assert_awaited_once_with(sandbox)
+        sync.assert_awaited_once()
+        start.assert_not_called()
+
     # ----- get_sandbox Tests -----
 
     @pytest.mark.asyncio

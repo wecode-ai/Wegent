@@ -28,6 +28,7 @@ interface BottomWorkspacePanelProps {
   terminalContextTitle?: string | null
   workspaceSessionApi?: WorkspaceSessionApi
   showWorkbenchBackground?: boolean
+  workspaceActions?: WorkspaceAddMenuItem[]
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
 }
@@ -48,6 +49,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   terminalContextTitle,
   workspaceSessionApi,
   showWorkbenchBackground = false,
+  workspaceActions = [],
   onRequestClose,
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
@@ -134,9 +136,9 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   )
 
   const menuItems = useMemo<WorkspaceAddMenuItem[]>(() => {
-    if (!activeMenuActions) return []
+    const items: WorkspaceAddMenuItem[] = [...workspaceActions]
+    if (!activeMenuActions) return items
 
-    const items: WorkspaceAddMenuItem[] = []
     if (activeMenuActions.terminal.visible) {
       items.push({
         id: 'terminal',
@@ -158,7 +160,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
       })
     }
     return items
-  }, [activeMenuActions, openTerminalTab, t])
+  }, [activeMenuActions, openTerminalTab, t, workspaceActions])
 
   return (
     <section

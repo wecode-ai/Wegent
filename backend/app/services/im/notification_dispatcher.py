@@ -188,6 +188,8 @@ class IMNotificationDispatcher:
         settings = await im_session_service.get_global_notification_settings(user_id)
         if not settings.enabled or not settings.session_key:
             return []
+        if not await im_session_service.is_user_away_for_im_notifications(user_id):
+            return []
         session = await im_session_service.get_session(settings.session_key)
         if session is None or session.user_id != user_id:
             return []

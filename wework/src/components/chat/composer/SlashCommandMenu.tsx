@@ -88,8 +88,15 @@ export function SlashCommandMenu({
                   ].join(' ')}
                 >
                   {command.iconUrl ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
-                      <img src={command.iconUrl} alt="" className="h-full w-full object-cover" />
+                    <span
+                      className={[
+                        'plugin-icon-slot h-6 w-6 rounded-md',
+                        command.iconContrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <img src={command.iconUrl} alt="" />
                     </span>
                   ) : (
                     <Icon className="h-4 w-4 shrink-0 text-text-secondary" />

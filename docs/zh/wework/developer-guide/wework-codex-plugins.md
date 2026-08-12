@@ -86,6 +86,8 @@ Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型�
 
 ## 对话运行时
 
+新对话的 Composer 会展开显示插件入口和最多三个可用插件预览；进入会话后，插件入口折叠为单个图标以减少工具栏占用，但点击图标仍会打开完整插件选择器。窄工具栏同样使用图标形态。
+
 用户在输入框中选择 skill、app 或插件时，编辑器插入不可拆分的行内 mention。光标只能停在 mention 前后；复制或提交时，编辑器会把 mention 序列化为 Codex app-server 支持的 markdown 输入：
 
 - skill 使用 `[$name](/absolute/path/to/SKILL.md)`。

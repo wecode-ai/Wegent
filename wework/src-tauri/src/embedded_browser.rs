@@ -14,17 +14,21 @@ use serde_json::{json, Value};
 use tauri::{
     async_runtime::Mutex as AsyncMutex,
     webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
-    Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
+    Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Wry,
 };
 
 #[cfg(target_os = "macos")]
 use objc2_web_kit::WKWebView;
+#[cfg(not(target_os = "linux"))]
+use tauri::{Position, Rect, Size};
 
 mod agent_control;
 mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
 mod data_clearing;
+#[cfg(target_os = "linux")]
+mod linux_host;
 mod local_file_preview;
 mod popup;
 mod screenshot;
@@ -42,7 +46,9 @@ use bridge_security::bridge_navigation_url;
 use bridge_security::bridge_request_authorized;
 #[cfg(test)]
 use bridge_server::read_http_request;
-pub(crate) use bridge_server::start_embedded_browser_bridge;
+pub(crate) use bridge_server::{
+    embedded_browser_bridge_runtime_path, start_embedded_browser_bridge,
+};
 #[cfg(test)]
 use browser_runtime::script_semantic_inspect_for_test as script_semantic_inspect;
 use browser_runtime::{
@@ -328,6 +334,7 @@ struct NormalizedBounds {
 }
 
 impl NormalizedBounds {
+    #[cfg(not(target_os = "linux"))]
     fn rect(&self) -> Rect {
         Rect {
             position: Position::Logical(self.position),
@@ -343,6 +350,12 @@ fn normalize_bounds(bounds: EmbeddedBrowserBounds) -> NormalizedBounds {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn apply_webview_bounds(webview: &Webview<Wry>, bounds: NormalizedBounds) -> Result<(), String> {
+    linux_host::apply_bounds(webview, bounds.position, bounds.size)
+}
+
+#[cfg(not(target_os = "linux"))]
 fn apply_webview_bounds(webview: &Webview<Wry>, bounds: NormalizedBounds) -> Result<(), String> {
     webview
         .set_bounds(bounds.rect())
@@ -1150,7 +1163,8 @@ fn request_browser_open(
                 return Err(format!("Failed to request embedded browser open: {error}"));
             }
             log_embedded_browser_diagnostic(
-                state, base_label,
+                state,
+                base_label,
                 "open_request_emitted",
                 json!({
                     "requestedUrl": url,
@@ -1190,7 +1204,8 @@ fn request_browser_open(
             app.emit(EMBEDDED_BROWSER_OPEN_REQUEST_EVENT, request.clone())
                 .map_err(|error| format!("Failed to replay embedded browser open: {error}"))?;
             log_embedded_browser_diagnostic(
-                state, base_label,
+                state,
+                base_label,
                 "open_request_replayed",
                 json!({
                     "requestedUrl": url,
@@ -1941,6 +1956,29 @@ pub async fn embedded_browser_open(
             }
         };
 
+    #[cfg(target_os = "linux")]
+    if let Err(error) = apply_webview_bounds(&webview, normalized_bounds) {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_host_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
+        }
+        let _ = webview.close();
+        return Err(error);
+    }
+
     log_embedded_browser_diagnostic(
         &state,
         &label,
@@ -2373,7 +2411,8 @@ fn close_embedded_browser_entry(
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(label)
+        webviews
+            .get(label)
             .filter(|entry| {
                 expected_native_label.is_none_or(|expected| entry.native_label == expected)
             })

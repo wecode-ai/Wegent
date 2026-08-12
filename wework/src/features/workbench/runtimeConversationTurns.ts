@@ -382,15 +382,10 @@ function mergeRuntimeConversationItem(
   snapshot: RuntimeConversationItem
 ): RuntimeConversationItem {
   if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
-  const localComplete = local.block.status === 'done' || local.block.status === 'error'
-  const snapshotComplete = snapshot.block.status === 'done' || snapshot.block.status === 'error'
-  if (!localComplete || !snapshotComplete || local.block.completedAt === undefined) {
-    return snapshot
-  }
 
   return {
     ...snapshot,
-    block: preserveCompletedProcessingBlockTiming(local.block, snapshot.block),
+    block: preserveProcessingBlockTiming(local.block, snapshot.block),
   }
 }
 
@@ -636,7 +631,7 @@ function upsertBlocks(
       type: 'block',
       block:
         index >= 0 && next[index]?.type === 'block'
-          ? preserveCompletedProcessingBlockTiming(next[index].block, block)
+          ? preserveProcessingBlockTiming(next[index].block, block)
           : block,
     }
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
@@ -785,7 +780,15 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  let merged = { ...block, ...updates } as ProcessingBlock
+  const { durationMs, ...directUpdates } = updates
+  let merged = {
+    ...block,
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs),
+    }),
+  } as ProcessingBlock
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }
@@ -797,24 +800,31 @@ function mergeProcessingBlockUpdate(
   return merged
 }
 
-function preserveCompletedProcessingBlockTiming(
+function preserveProcessingBlockTiming(
   previous: ProcessingBlock,
   next: ProcessingBlock
 ): ProcessingBlock {
   const previousComplete = previous.status === 'done' || previous.status === 'error'
   const nextComplete = next.status === 'done' || next.status === 'error'
-  if (
-    !previousComplete ||
-    !nextComplete ||
-    previous.completedAt === undefined ||
-    next.completedAt !== undefined
-  ) {
-    return next
+  const createdAt = previousComplete ? next.createdAt : previous.createdAt
+  if (previousComplete && nextComplete && previous.completedAt !== undefined) {
+    if (next.completedAt === undefined) {
+      return {
+        ...next,
+        createdAt: previous.createdAt,
+        completedAt: previous.completedAt,
+        durationMs: next.durationMs ?? previous.durationMs,
+      } as ProcessingBlock
+    }
   }
+  if (createdAt === next.createdAt) return next
   return {
     ...next,
-    createdAt: previous.createdAt,
-    completedAt: previous.completedAt,
+    createdAt,
+    ...(nextComplete &&
+      next.durationMs !== undefined && {
+        completedAt: createdAt + next.durationMs,
+      }),
   } as ProcessingBlock
 }
 

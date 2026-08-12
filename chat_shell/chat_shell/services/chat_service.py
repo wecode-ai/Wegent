@@ -314,6 +314,16 @@ class ChatService(ChatInterface):
             )
             context_metrics_tracker: ContextMetricsTracker | None = None
 
+            # The prompt advertises attachment paths inside the task sandbox.
+            # Materialize those files before the model can call sandbox tools so
+            # a newly-created sandbox cannot race the upload-time best-effort sync.
+            from chat_shell.services.sandbox_attachment_sync import (
+                sync_chat_attachments_to_sandbox,
+            )
+
+            add_span_event("syncing_sandbox_attachments")
+            await sync_chat_attachments_to_sandbox(request)
+
             # Prepare all context resources in parallel
             add_span_event("preparing_context")
             t0 = time.perf_counter()

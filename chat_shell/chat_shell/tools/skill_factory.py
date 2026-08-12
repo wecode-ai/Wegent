@@ -144,6 +144,7 @@ async def _create_provider_tools_for_skill(
     user_name: Optional[str] = None,
     auth_token: Optional[str] = None,
     skill_identity_token: Optional[str] = None,
+    load_skill_tool: Optional[Any] = None,
 ) -> list[Any]:
     """Load a skill provider if needed and create concrete tool instances."""
     from chat_shell.skills import SkillToolContext
@@ -237,6 +238,7 @@ async def _create_provider_tools_for_skill(
         user_name=user_name,
         auth_token=auth_token,
         skill_identity_token=skill_identity_token,
+        load_skill_tool=load_skill_tool,
     )
 
     create_tools_start = time.perf_counter()
@@ -483,6 +485,7 @@ async def prepare_skill_tools(
                         user_name=user_name,
                         auth_token=auth_token,
                         skill_identity_token=skill_identity_token,
+                        load_skill_tool=load_skill_tool,
                     )
                     logger.info(
                         "[skill_factory_perf] skill=%s deferred_provider_load=%.2fms "
@@ -525,6 +528,7 @@ async def prepare_skill_tools(
             user_name=user_name,
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
+            load_skill_tool=load_skill_tool,
         )
 
         if skill_tools:

@@ -345,6 +345,7 @@ describe('createRuntimeWorkApi', () => {
       runtimeTaskSubscriptions: [],
     })
     await api.updateGlobalImNotification({ enabled: true, sessionKey: 'session-a' })
+    await api.updateImNotificationPresence({ clientId: 'desktop-client-1', away: false })
     await api.subscribeRuntimeTaskNotifications({
       address: {
         deviceId: 'device-1',
@@ -362,7 +363,11 @@ describe('createRuntimeWorkApi', () => {
       enabled: true,
       sessionKey: 'session-a',
     })
-    expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/runtime-task', {
+    expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/presence', {
+      clientId: 'desktop-client-1',
+      away: false,
+    })
+    expect(put).toHaveBeenNthCalledWith(3, '/runtime-work/im-notifications/runtime-task', {
       address: {
         deviceId: 'device-1',
         taskId: 'codex-1',

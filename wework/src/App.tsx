@@ -40,6 +40,9 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
+import { createHttpClient } from '@/api/http'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { useAwayImNotificationPresence } from '@/features/workbench/awayImNotificationPresence'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
@@ -89,7 +92,6 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
-import { useTauriViewportSize } from '@/hooks/useTauriViewportSize'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -450,9 +452,12 @@ function AppShell() {
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const tauriViewportSize = useTauriViewportSize(isTauri)
   const isPopoutWindow = isPopoutWindowRuntime()
-  const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
+  const currentWindowLabel = isTauri ? getCurrentWindow().label : null
+  const isMainWindow = currentWindowLabel === 'main'
+  const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const cloudApiBaseUrl = cloudConnection.apiBaseUrl
+  const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
@@ -476,6 +481,20 @@ function AppShell() {
   )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const updateImNotificationPresence = useMemo(() => {
+    if (!cloudApiBaseUrl || !cloudToken) return undefined
+    return createRuntimeWorkApi(
+      createHttpClient({
+        baseUrl: cloudApiBaseUrl,
+        getToken: () => cloudToken,
+        redirectOnUnauthorized: false,
+      })
+    ).updateImNotificationPresence
+  }, [cloudApiBaseUrl, cloudToken])
+  useAwayImNotificationPresence({
+    enabled: isMainWindow && hasTauriIpc() && cloudConnection.isConnected,
+    updatePresence: updateImNotificationPresence,
+  })
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
@@ -666,7 +685,6 @@ function AppShell() {
     >
       <div
         data-testid="app-shell"
-        data-tauri-viewport-height={tauriViewportSize?.height}
         className={cn(
           isTauri ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
@@ -676,14 +694,6 @@ function AppShell() {
               : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
-        style={
-          tauriViewportSize
-            ? {
-                width: `${tauriViewportSize.width}px`,
-                height: `${tauriViewportSize.height}px`,
-              }
-            : undefined
-        }
       >
         {showChromeTitlebar && (
           <ChromeTitlebar

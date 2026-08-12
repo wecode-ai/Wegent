@@ -41,12 +41,21 @@ interface ModelRequest {
   messages?: VisionMessage[]
   system?: unknown
   stream?: boolean
-  tools?: unknown[]
+  tools?: Array<Record<string, unknown>>
+}
+
+interface ToolResponse {
+  id: string
+  nameIncludes: string
+  input: Record<string, unknown>
+  text?: string
 }
 
 interface StreamRule {
   matchText: string
-  responseContent: string
+  responseContent?: string
+  responseTool?: ToolResponse
+  responseTools?: ToolResponse[]
   chunkDelayMs?: number
   doneDelayMs?: number
 }
@@ -72,6 +81,7 @@ interface ToolScenario {
 const capturedRequests: CapturedRequest[] = []
 const streamRules: StreamRule[] = []
 const toolScenarios: ToolScenario[] = []
+const servedToolRuleCounts = new Map<string, number>()
 
 // Port for the mock server
 const PORT = parseInt(process.env.MOCK_MODEL_PORT || '9999')
@@ -559,6 +569,113 @@ function writeAnthropicJsonToolCalls(
   })
 }
 
+function findToolName(request: ModelRequest | null, nameIncludes: string): string | null {
+  const tool = request?.tools?.find(candidate => {
+    const name = candidate.name
+    return typeof name === 'string' && name.includes(nameIncludes)
+  })
+  const name = tool?.name
+  return typeof name === 'string' ? name : null
+}
+
+function writeAnthropicToolUseResponse(
+  res: http.ServerResponse,
+  request: ModelRequest | null,
+  tool: ToolResponse,
+  model: string
+): void {
+  const toolName = findToolName(request, tool.nameIncludes)
+  if (!toolName) {
+    writeJson(res, 400, {
+      error: `Configured response tool was not offered: ${tool.nameIncludes}`,
+    })
+    return
+  }
+  const input = JSON.stringify(tool.input)
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  writeAnthropicSseEvent(res, 'message_start', {
+    type: 'message_start',
+    message: {
+      id: `msg_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 0,
+      },
+    },
+  })
+  let toolBlockIndex = 0
+  if (tool.text) {
+    writeAnthropicSseEvent(res, 'content_block_start', {
+      type: 'content_block_start',
+      index: 0,
+      content_block: {
+        type: 'text',
+        text: '',
+      },
+    })
+    writeAnthropicSseEvent(res, 'content_block_delta', {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'text_delta',
+        text: tool.text,
+      },
+    })
+    writeAnthropicSseEvent(res, 'content_block_stop', {
+      type: 'content_block_stop',
+      index: 0,
+    })
+    toolBlockIndex = 1
+  }
+  writeAnthropicSseEvent(res, 'content_block_start', {
+    type: 'content_block_start',
+    index: toolBlockIndex,
+    content_block: {
+      type: 'tool_use',
+      id: tool.id,
+      name: toolName,
+      input: {},
+    },
+  })
+  writeAnthropicSseEvent(res, 'content_block_delta', {
+    type: 'content_block_delta',
+    index: toolBlockIndex,
+    delta: {
+      type: 'input_json_delta',
+      partial_json: input,
+    },
+  })
+  writeAnthropicSseEvent(res, 'content_block_stop', {
+    type: 'content_block_stop',
+    index: toolBlockIndex,
+  })
+  writeAnthropicSseEvent(res, 'message_delta', {
+    type: 'message_delta',
+    delta: {
+      stop_reason: 'tool_use',
+      stop_sequence: null,
+    },
+    usage: {
+      output_tokens: 1,
+    },
+  })
+  writeAnthropicSseEvent(res, 'message_stop', {
+    type: 'message_stop',
+  })
+  res.end()
+}
+
 function writeAnthropicJsonResponse(
   res: http.ServerResponse,
   content: string,
@@ -750,7 +867,14 @@ const server = http.createServer((req, res) => {
       const isStreaming = parsedBody?.stream === true
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
 
-      if (isStreaming) {
+      const responseTools =
+        streamRule?.responseTools || (streamRule?.responseTool ? [streamRule.responseTool] : [])
+      const servedToolCount = streamRule ? servedToolRuleCounts.get(streamRule.matchText) || 0 : 0
+      const responseTool = responseTools[servedToolCount]
+      if (isStreaming && streamRule && responseTool) {
+        servedToolRuleCounts.set(streamRule.matchText, servedToolCount + 1)
+        writeAnthropicToolUseResponse(res, parsedBody, responseTool, model)
+      } else if (isStreaming) {
         writeAnthropicStreamingResponse(
           res,
           responseContent,
@@ -774,12 +898,20 @@ const server = http.createServer((req, res) => {
       writeJson(res, 200, streamRules)
     } else if (req.url === '/stream-rules' && req.method === 'POST') {
       const streamRule = parseJsonBody<StreamRule>(body)
-      if (!streamRule?.matchText || !streamRule.responseContent) {
-        writeJson(res, 400, { error: 'matchText and responseContent are required' })
+      if (
+        !streamRule?.matchText ||
+        (!streamRule.responseContent &&
+          !streamRule.responseTool &&
+          !streamRule.responseTools?.length)
+      ) {
+        writeJson(res, 400, {
+          error: 'matchText and responseContent, responseTool, or responseTools are required',
+        })
         return
       }
 
       const existingIndex = streamRules.findIndex(rule => rule.matchText === streamRule.matchText)
+      servedToolRuleCounts.delete(streamRule.matchText)
       if (existingIndex >= 0) {
         streamRules[existingIndex] = streamRule
       } else {
@@ -796,8 +928,10 @@ const server = http.createServer((req, res) => {
         if (ruleIndex >= 0) {
           streamRules.splice(ruleIndex, 1)
         }
+        servedToolRuleCounts.delete(matchText)
       } else {
         streamRules.length = 0
+        servedToolRuleCounts.clear()
       }
 
       writeJson(res, 200, { message: 'Stream rules cleared', remainingCount: streamRules.length })

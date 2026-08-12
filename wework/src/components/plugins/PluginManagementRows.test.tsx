@@ -71,29 +71,14 @@ describe('InstalledPluginRow', () => {
     expect(screen.getByTestId('installed-plugin-row-59')).toHaveClass('min-h-[76px]')
   })
 
-  test('falls back to bundled brand icons when the plugin has no logo metadata', () => {
+  test('uses the neutral default icon when the plugin has no logo metadata', () => {
     render(<InstalledPluginRow plugin={createPlugin()} onToggle={vi.fn()} onUninstall={vi.fn()} />)
-
-    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
-      'src',
-      '/plugin-icons/github.svg'
-    )
-    expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
-  })
-
-  test('uses the Wework fallback icon when no logo metadata and no known plugin key', () => {
-    render(
-      <InstalledPluginRow
-        plugin={createPlugin({ pluginKey: 'unknown-plugin' })}
-        onToggle={vi.fn()}
-        onUninstall={vi.fn()}
-      />
-    )
 
     expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
       'src',
       '/plugin-icons/wework.svg'
     )
+    expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
   })
 
   test('uses the switch only for enablement and keeps uninstall in the more menu', () => {

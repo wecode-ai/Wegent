@@ -963,6 +963,16 @@ export interface RuntimeGlobalIMNotificationUpdateRequest {
   sessionKey?: string | null
 }
 
+export interface RuntimeIMNotificationPresenceUpdateRequest {
+  clientId: string
+  away: boolean
+}
+
+export interface RuntimeIMNotificationPresenceResponse {
+  away: boolean
+  ttlSeconds: number
+}
+
 export interface RuntimeTaskIMNotificationSubscriptionRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
@@ -2275,6 +2285,8 @@ export interface ChatBlock {
   timestamp?: number | string | null
   created_at?: number | string | null
   createdAt?: number | string | null
+  completed_at?: number | string | null
+  completedAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -2300,6 +2312,8 @@ export interface ChatBlockUpdatedPayload {
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
+  completedAt?: number
+  durationMs?: number
   deviceId?: string
 }
 

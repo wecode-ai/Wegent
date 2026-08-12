@@ -70,6 +70,19 @@ Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search
 
 前端搜索框打开结果里的运行时地址，随后仍通过最新 runtime work 列表恢复工作区上下文。搜索框只在内存中保留最近查询结果，用于避免同一会话内重复输入触发相同 RPC；缓存结果不写入 Backend，也不替代 executor 侧的 transcript 读取。
 
+## 云设备附件传输
+
+Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或回滚编辑时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
+
+云 executor 收到运行请求后，会在启动 Codex turn 前通过已认证的 Backend executor-download 接口下载缺少 `local_path` 的附件，并把设备侧路径合并回 execution request。已经有设备侧路径的附件不会重复下载；下载失败会沿用现有失败附件处理，不允许退回桌面端路径。
+
+图片进入模型后的处理取决于所选模型能力：
+
+- 原生多模态模型接收下载后的图片输入。
+- 文本主模型配置视觉旁路模型时，旁路模型接收图片并生成描述，主模型只接收描述。相同图片可以命中 executor 侧视觉描述缓存。
+
+桌面 E2E 的 cloud vision 场景使用真实远程项目和设备 RPC，同时覆盖旁路模型首发、旁路缓存命中和原生多模态输入，避免把本地 executor 流程误当作云设备验证。
+
 ## 打开和继续任务
 
 打开 LocalTask 时，Wework 调用 Backend：

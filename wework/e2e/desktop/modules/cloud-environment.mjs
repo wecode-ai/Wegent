@@ -3,6 +3,7 @@ import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.
 import {
   CLOUD_DEVICE_ID,
   CLOUD_MODEL_CASES,
+  CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -252,6 +253,33 @@ class RealCloudEnvironment {
         apiFormat: 'responses',
         modelType: 'llm',
         isWeworkAvailable: true,
+      },
+    })
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: CLOUD_MULTIMODAL_VISION_CASE.mainOptionId,
+        namespace: 'default',
+        displayName: CLOUD_MULTIMODAL_VISION_CASE.mainLabel,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_MULTIMODAL_VISION_CASE.mainModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+        },
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: true,
+        },
       },
     })
   }

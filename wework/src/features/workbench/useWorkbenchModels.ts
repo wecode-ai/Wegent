@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getDefaultModelOptions,
   inferModelFamily,
+  isSameModelSelection,
   isSupportedModelFamily,
   normalizeModelOptions,
 } from '@/lib/model-ui'
@@ -176,6 +177,43 @@ export function useWorkbenchModels({
     [scopeKey]
   )
 
+  const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
+    const selectedModelPatch: Record<string, UnifiedModel> = {}
+    const selectedOptionsPatch: Record<string, ModelOptions> = {}
+
+    for (const [selectedScopeKey, currentModel] of Object.entries(selectedModelRef.current)) {
+      if (!currentModel) continue
+      const refreshedModel = nextModels.find(model => isSameModelSelection(model, currentModel))
+      if (!refreshedModel) continue
+
+      if (refreshedModel !== currentModel) {
+        selectedModelPatch[selectedScopeKey] = refreshedModel
+      }
+
+      const currentOptions = selectedModelOptionsRef.current[selectedScopeKey] ?? {}
+      const normalizedOptions = normalizeModelOptions(refreshedModel, currentOptions)
+      if (!areModelOptionsEqual(currentOptions, normalizedOptions)) {
+        selectedOptionsPatch[selectedScopeKey] = normalizedOptions
+      }
+    }
+
+    if (Object.keys(selectedModelPatch).length > 0) {
+      selectedModelRef.current = {
+        ...selectedModelRef.current,
+        ...selectedModelPatch,
+      }
+      setSelectedModelByScope(current => ({ ...current, ...selectedModelPatch }))
+    }
+
+    if (Object.keys(selectedOptionsPatch).length > 0) {
+      selectedModelOptionsRef.current = {
+        ...selectedModelOptionsRef.current,
+        ...selectedOptionsPatch,
+      }
+      setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
 
@@ -186,6 +224,7 @@ export function useWorkbenchModels({
         const response = await api.listModels()
         if (!cancelled) {
           const filtered = response.data.filter(isSupportedModelFamily)
+          reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
           setAvailableModels(filtered)
         }
       } catch (nextError) {
@@ -207,7 +246,7 @@ export function useWorkbenchModels({
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
       window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     }
-  }, [api])
+  }, [api, filterModel, reconcileSelectedModels])
 
   useEffect(() => {
     if (!selectionReady) {
