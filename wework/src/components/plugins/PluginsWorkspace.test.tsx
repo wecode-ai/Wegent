@@ -51,6 +51,9 @@ type CodexPluginMock = {
   category?: string
   logo?: string
   defaultPrompt?: string | string[]
+  availability?: string
+  disabledReason?: string | null
+  installPolicy?: string
 }
 
 const defaultCodexPlugin: CodexPluginMock = {
@@ -72,8 +75,10 @@ function codexPluginSummary(plugin: CodexPluginMock, installed: boolean, enabled
     name: plugin.name,
     installed,
     enabled,
-    installPolicy: 'AVAILABLE',
+    installPolicy: plugin.installPolicy ?? 'AVAILABLE',
     authPolicy: 'ON_USE',
+    availability: plugin.availability ?? 'AVAILABLE',
+    disabledReason: plugin.disabledReason ?? null,
     interface: {
       displayName: plugin.displayName ?? plugin.name,
       shortDescription: plugin.description ?? '',
@@ -1054,6 +1059,46 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('locks admin-disabled remote plugins instead of showing Install', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          displayName: 'OpenAI',
+          path: null,
+          plugins: [
+            {
+              id: 'gmail@openai-curated-remote',
+              remotePluginId: 'plugin_connector_1p_95d39881713c8191931482a62d6edff9',
+              name: 'gmail',
+              displayName: 'Gmail',
+              description: 'Read and manage Gmail',
+              category: 'Communication',
+              availability: 'DISABLED_BY_ADMIN',
+              disabledReason: 'plan_not_eligible',
+              installPolicy: 'NOT_AVAILABLE',
+            },
+          ],
+        },
+      ],
+    })
+
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Gmail')).toBeInTheDocument()
+    const locked = screen.getByTestId('plugin-marketplace-locked-gmail@openai-curated-remote')
+    expect(locked).toHaveTextContent('你的套餐不支持')
+    expect(locked).toHaveAttribute('data-lock-kind', 'plan_not_eligible')
+    expect(
+      screen.queryByTestId('plugin-marketplace-install-gmail@openai-curated-remote')
+    ).not.toBeInTheDocument()
+  })
+
   test('keeps local marketplace plugins visible when the cloud marketplace fails', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -1191,40 +1236,38 @@ describe('PluginsWorkspace', () => {
     ).toHaveLength(2)
   })
 
-  test('reveals marketplace plugins six at a time and updates the next-item preview', async () => {
+  test('previews four plugins per category and opens a browse dialog for the rest', async () => {
     mockSystemSkillsFetch({ marketplaceCount: 20 })
     render(<PluginsWorkspace />)
 
     expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
-    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(10)
+    expect(screen.getByTestId('plugins-category-section-category-productivity')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(4)
 
-    const firstReveal = screen.getByTestId('plugins-show-more-button')
-    expect(firstReveal).toHaveTextContent('查看 Plugin 11, Plugin 12，以及另外 8 个')
-    expect(firstReveal.querySelector('img')).toHaveAttribute(
+    const reveal = screen.getByTestId('plugins-category-more-category-productivity')
+    expect(reveal).toHaveTextContent('查看 Plugin 5, Plugin 6，以及另外 14 个')
+    expect(reveal.querySelector('img')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/test/plugins/plugin-11/assets/logo.png'
+      'asset://localhost/Users/test/plugins/plugin-5/assets/logo.png'
     )
 
-    await userEvent.click(firstReveal)
+    await userEvent.click(reveal)
 
-    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(16)
-    const secondReveal = screen.getByTestId('plugins-show-more-button')
-    expect(secondReveal).toHaveTextContent('查看 Plugin 17, Plugin 18，以及另外 2 个')
-    expect(secondReveal.querySelector('img')).toHaveAttribute(
-      'src',
-      'asset://localhost/Users/test/plugins/plugin-17/assets/logo.png'
-    )
+    const dialog = await screen.findByTestId('plugins-category-browse-dialog')
+    expect(dialog).toHaveTextContent('Productivity')
+    expect(dialog).toHaveTextContent('20 个插件')
+    expect(within(dialog).getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(20)
+    expect(within(dialog).getByTestId('plugin-marketplace-row-101')).toHaveTextContent('Documents')
+    expect(within(dialog).getByTestId('plugin-marketplace-row-120')).toHaveTextContent('Plugin 20')
 
-    await userEvent.click(secondReveal)
-
-    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(20)
-    expect(screen.queryByTestId('plugins-show-more-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-category-browse-close'))
+    expect(screen.queryByTestId('plugins-category-browse-dialog')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
 
-    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(10))
-    expect(screen.getByTestId('plugins-show-more-button')).toHaveTextContent(
-      '查看 Plugin 11, Plugin 12，以及另外 8 个'
+    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(4))
+    expect(screen.getByTestId('plugins-category-more-category-productivity')).toHaveTextContent(
+      '查看 Plugin 5, Plugin 6，以及另外 14 个'
     )
   })
 
@@ -1327,7 +1370,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(isTauri).mockReturnValue(true)
     clearPluginMarketplaceCache()
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v1',
+      'wework.plugins.codexReadState.v2',
       JSON.stringify({
         version: 1,
         entries: {
@@ -1429,6 +1472,10 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
     expect(await screen.findByText('Gmail')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-openai-official-empty')).not.toBeInTheDocument()
+    // Stale durable peek must paint immediately and stay interactive while plugin/list
+    // revalidates in the background — returning from background used to block here.
+    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled()
     expect(resolveList).not.toBeNull()
   })
 
@@ -1594,9 +1641,13 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+    // Dialog opens immediately with sync connector labels, then drops already-connected
+    // connectors once connector-apps / health resolve.
     const confirmInstall = await screen.findByTestId('install-plugin-dialog-confirm')
-    expect(confirmInstall).toHaveTextContent('安装插件')
-    expect(screen.getByTestId('install-plugin-dialog')).not.toHaveTextContent('需要连接 GitHub')
+    await waitFor(() => {
+      expect(confirmInstall).toHaveTextContent('安装插件')
+      expect(screen.getByTestId('install-plugin-dialog')).not.toHaveTextContent('需要连接 GitHub')
+    })
     await userEvent.click(confirmInstall)
 
     await waitFor(() =>

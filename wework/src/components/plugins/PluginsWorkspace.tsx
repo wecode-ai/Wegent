@@ -1,4 +1,13 @@
-import { Boxes, ChevronDown, MoreHorizontal, RefreshCw, Search, Settings2, X } from 'lucide-react'
+import {
+  Boxes,
+  ChevronDown,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+  Settings2,
+  UserRoundX,
+  X,
+} from 'lucide-react'
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -64,6 +73,7 @@ import type {
   PluginAccessUpdateRequest,
   PluginMarketplaceItem,
 } from '@/types/api'
+import { connectorDisplayName } from './connectorDisplayName'
 import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
 import { retainMarketplaceInstallHints } from './retainMarketplaceInstallHints'
 import { type InstalledPluginItem } from './PluginManagementRows'
@@ -82,6 +92,7 @@ import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
+  resolveProgressiveLocalInstalledRaw,
 } from './installedPluginMerge'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
@@ -90,9 +101,13 @@ import {
   mergeMarketplaceCatalog,
   shouldShowInstalledMarketplaceActions,
 } from './marketplaceCatalogMerge'
+import { humanizeMarketplaceInstallError } from './marketplaceInstallError'
+import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'
 import {
   groupMarketplaceItemsByCategory,
+  previewMarketplaceSectionItems,
   prioritizeFeaturedMarketplaceItems,
+  type MarketplaceCategorySection,
 } from './marketplaceCategorySections'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
 import {
@@ -145,8 +160,25 @@ interface PluginShareState {
   access: PluginAccessResponse
 }
 
-const MARKETPLACE_INITIAL_VISIBLE_COUNT = 10
-const MARKETPLACE_REVEAL_BATCH_SIZE = 6
+const MARKETPLACE_SECTION_PREVIEW_COUNT = 4
+
+function marketplaceSectionRevealLabel(
+  hiddenItems: PluginMarketplaceItem[],
+  t: (key: string, defaultValue: string, options?: Record<string, unknown>) => string
+): string {
+  const names = hiddenItems
+    .slice(0, 2)
+    .map(item => item.displayName || item.name)
+    .join(', ')
+  if (hiddenItems.length > 2) {
+    return t('workbench.plugins_view_more_with_count', '查看 {{names}}，以及另外 {{count}} 个', {
+      names,
+      count: hiddenItems.length - 2,
+    })
+  }
+  return t('workbench.plugins_view_more', '查看 {{names}}', { names })
+}
+
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const labels = item.metadata['labels']
   const id =
@@ -341,26 +373,11 @@ function withMarketplaceDetailComponents(
   }
 }
 
-const CONNECTOR_DISPLAY_NAMES: Record<string, string> = {
-  github: 'GitHub',
-  gitlab: 'GitLab',
-}
-
-function connectorDisplayName(slug: string): string {
-  const normalized = slug.trim().toLowerCase()
-  if (CONNECTOR_DISPLAY_NAMES[normalized]) return CONNECTOR_DISPLAY_NAMES[normalized]
-  return slug
-    .trim()
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map(part => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
-    .join(' ')
-}
-
 function requiredConnectionNames(item: PluginMarketplaceItem): string[] {
+  const pluginName = item.displayName || item.name
   return (item.components.connectors ?? [])
     .filter(connector => connector.authPolicy === 'on_install')
-    .map(connector => connectorDisplayName(connector.slug))
+    .map(connector => connectorDisplayName(connector.slug, { pluginName }))
 }
 
 function marketplaceRowMetaItems(
@@ -752,6 +769,8 @@ function PluginMarketplaceRow({
     appearanceMode,
   })
   const showInstalledState = shouldShowInstalledMarketplaceActions(item, isLoggedIn)
+  const installLock = resolveMarketplacePluginLock(item)
+  const installLockLabel = installLock ? marketplacePluginLockLabel(installLock, t) : ''
   const deviceState = item.currentDeviceInstallation?.state
   const showFailedState = marketplaceItemOffersDeviceSyncRetry(item, {
     autoSyncSettled: allowPendingRetry,
@@ -780,7 +799,7 @@ function PluginMarketplaceRow({
   return (
     <article
       data-testid={`${testIdPrefix}plugin-marketplace-row-${item.id}`}
-      className="plugin-market-card"
+      className={['plugin-market-card', installLock ? 'is-locked' : ''].filter(Boolean).join(' ')}
       onClick={onOpen}
     >
       <button
@@ -814,7 +833,20 @@ function PluginMarketplaceRow({
         </div>
       </button>
       <div className="plugin-market-card-action">
-        {actionPending ? (
+        {installLock ? (
+          <div
+            className="plugin-market-card-locked"
+            role="status"
+            data-testid={`${testIdPrefix}plugin-marketplace-locked-${item.id}`}
+            data-lock-kind={installLock.kind}
+            title={installLockLabel}
+            aria-label={`${installLockLabel} ${item.displayName || item.name}`}
+            onClick={event => event.stopPropagation()}
+          >
+            <span className="plugin-market-card-locked-label">{installLockLabel}</span>
+            <UserRoundX className="plugin-market-card-locked-icon" aria-hidden="true" />
+          </div>
+        ) : actionPending ? (
           <span
             className="plugin-market-card-install-status"
             role="status"
@@ -918,17 +950,19 @@ function PluginMarketplaceRow({
 function PluginMarketplaceRevealButton({
   items,
   label,
+  testId = 'plugins-show-more-button',
   onReveal,
 }: {
   items: PluginMarketplaceItem[]
   label: string
+  testId?: string
   onReveal: () => void
 }) {
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   return (
     <button
       type="button"
-      data-testid="plugins-show-more-button"
+      data-testid={testId}
       className="plugin-market-reveal-button"
       aria-label={label}
       onClick={onReveal}
@@ -961,6 +995,141 @@ function PluginMarketplaceRevealButton({
       <span className="plugin-market-reveal-copy">{label}</span>
       <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </button>
+  )
+}
+
+function CategoryBrowseDialog({
+  section,
+  isLoggedIn,
+  installingMarketplacePluginIds,
+  uninstallingPluginIds,
+  allowPendingRetry,
+  onClose,
+  onOpen,
+  onInstall,
+  onTry,
+  onManage,
+  onUninstall,
+}: {
+  section: MarketplaceCategorySection
+  isLoggedIn: boolean
+  installingMarketplacePluginIds: Set<string | number>
+  uninstallingPluginIds: Set<string | number>
+  allowPendingRetry: boolean
+  onClose: () => void
+  onOpen: (item: PluginMarketplaceItem) => void
+  onInstall: (item: PluginMarketplaceItem) => void
+  onTry: (item: PluginMarketplaceItem) => void
+  onManage: (item: PluginMarketplaceItem) => void
+  onUninstall: (item: PluginMarketplaceItem) => void
+}) {
+  const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const frameId = window.requestAnimationFrame(() => dialogRef.current?.focus())
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
+  }, [])
+
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ) ?? []
+    )
+    if (focusable.length === 0) {
+      event.preventDefault()
+      dialogRef.current?.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  return (
+    <div
+      className="plugin-dialog-overlay fixed inset-0 z-50 flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plugins-category-browse-title"
+        tabIndex={-1}
+        data-testid="plugins-category-browse-dialog"
+        className="plugin-dialog-surface flex max-h-[88vh] w-full max-w-[920px] flex-col overflow-hidden"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
+      >
+        <div className="plugin-dialog-divider flex shrink-0 items-start justify-between gap-6 border-b px-6 py-5">
+          <div className="min-w-0">
+            <h2 id="plugins-category-browse-title" className="heading-subsection text-text-primary">
+              {section.title}
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t('workbench.plugins_category_browse_count', '{{count}} 个插件', {
+                count: section.items.length,
+              })}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="plugins-category-browse-close"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            aria-label={t('common.close', '关闭')}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div className="plugin-market-card-grid">
+            {section.items.map(item => (
+              <PluginMarketplaceRow
+                key={item.id}
+                item={item}
+                isLoggedIn={isLoggedIn}
+                isInstalling={installingMarketplacePluginIds.has(item.id)}
+                isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
+                allowPendingRetry={allowPendingRetry}
+                installLabel={t('workbench.plugins_install', '安装')}
+                installingLabel={t('workbench.plugins_installing', '正在安装')}
+                uninstallingLabel={t('workbench.plugins_uninstalling', '正在卸载')}
+                retryLabel={t('workbench.plugins_retry_install', '重试安装')}
+                syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
+                tryLabel={t('workbench.plugins_try_now', '立即对话')}
+                manageLabel={t('workbench.plugins_manage', '管理')}
+                uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
+                onOpen={() => onOpen(item)}
+                onInstall={() => onInstall(item)}
+                onTry={() => onTry(item)}
+                onManage={() => onManage(item)}
+                onUninstall={() => onUninstall(item)}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1032,9 +1201,7 @@ export function PluginsWorkspace({
   const [marketplaceDistributionFilter, setMarketplaceDistributionFilter] = useState<
     'all' | PluginDistribution
   >('all')
-  const [marketplaceVisibleCount, setMarketplaceVisibleCount] = useState(
-    MARKETPLACE_INITIAL_VISIBLE_COUNT
-  )
+  const [browsingCategoryKey, setBrowsingCategoryKey] = useState<string | null>(null)
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
@@ -1100,9 +1267,9 @@ export function PluginsWorkspace({
   const marketplaceScrollRegionRef = useRef<HTMLDivElement>(null)
   const marketplaceReturnScrollTopRef = useRef<number | null>(null)
   const preparingInstallPluginIdsRef = useRef(new Set<string | number>())
-  const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(
-    () => Boolean(initialDurablePeek) && !initialMarketplaceCache
-  )
+  // Durable peek / warm cache already paints the catalog — do not start in a
+  // "refreshing" skeleton state just because Codex plugin/list will revalidate.
+  const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>(() => {
     if (initialMarketplaceCache?.marketplaces?.length) {
       return initialMarketplaceCache.marketplaces
@@ -1121,10 +1288,12 @@ export function PluginsWorkspace({
   // previously selected local marketplace filter when navigating back from another route.
   const [marketplaceSourceFilterKey, setMarketplaceSourceFilterKey] = useState('')
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    if (initialMarketplaceCache?.installedPlugins?.length) {
+    // Empty cached installs are authoritative for this account — do not fall back
+    // to a device-local Codex peek (that can belong to another session).
+    if (initialMarketplaceCache) {
       return initialMarketplaceCache.installedPlugins
     }
-    return (initialDurablePeek?.installedPlugins ?? []).map(toInstalledPluginItem)
+    return []
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
     () => initialMarketplaceCache?.deviceId || initialDurablePeek?.deviceId || ''
@@ -1169,8 +1338,9 @@ export function PluginsWorkspace({
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
   // Account/session identity is encoded in the cache key; hydrate from durable cache on
-  // switch. A cache miss must clear prior-account catalog/installs — never keep showing
-  // another user's plugins while the new key loads.
+  // switch. Catalog may use a device-local Codex peek for OpenAI/local first paint, but
+  // the installed strip is account-scoped: cache hit (including empty) wins, cache miss
+  // clears prior-account installs — never paint peek installs onto another account.
   useEffect(() => {
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const durablePeek =
@@ -1187,13 +1357,11 @@ export function PluginsWorkspace({
         : [])
     setMarketplaces(nextMarketplaces)
     setSelectedMarketplaceKey(cached?.selectedMarketplaceKey || rememberedMarketplaceKey())
-    setInstalledPlugins(
-      cached?.installedPlugins ?? (durablePeek?.installedPlugins ?? []).map(toInstalledPluginItem)
-    )
+    setInstalledPlugins(cached != null ? cached.installedPlugins : [])
     setCurrentDeviceId(cached?.deviceId || durablePeek?.deviceId || '')
     setCanPublish(cached?.canPublish ?? false)
     setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
-    setIsMarketplaceRefreshing(items.length > 0 && cached == null)
+    setIsMarketplaceRefreshing(false)
     setPluginMarketplaceState({
       items,
       isLoading: items.length === 0,
@@ -1952,7 +2120,9 @@ export function PluginsWorkspace({
       )
       if (requiredConnectors.length === 0) return []
 
+      const pluginName = item.displayName || item.name
       let connectedCloudSlugs = new Set<string>()
+      let connectorAppNameBySlug = new Map<string, string>()
       if (
         cloudApiBaseUrl &&
         cloudToken &&
@@ -1964,6 +2134,11 @@ export function PluginsWorkspace({
             apps
               .filter(app => app.connection.status === 'connected')
               .map(app => app.slug.trim().toLowerCase())
+          )
+          connectorAppNameBySlug = new Map(
+            apps
+              .map(app => [app.slug.trim().toLowerCase(), app.name.trim()] as const)
+              .filter((entry): entry is readonly [string, string] => Boolean(entry[0] && entry[1]))
           )
         } catch {
           // Treat unavailable connection state as requiring authorization.
@@ -1990,12 +2165,29 @@ export function PluginsWorkspace({
         })
       )
 
-      return pending.filter((slug): slug is string => Boolean(slug)).map(connectorDisplayName)
+      return pending
+        .filter((slug): slug is string => Boolean(slug))
+        .map(slug =>
+          connectorDisplayName(slug, {
+            appName: connectorAppNameBySlug.get(slug.trim().toLowerCase()),
+            pluginName,
+          })
+        )
     },
     [cloudApiBaseUrl, cloudToken]
   )
 
   const installMarketplacePlugin = (item: PluginMarketplaceItem, promptAfterInstall?: string) => {
+    const installLock = resolveMarketplacePluginLock(item)
+    if (installLock) {
+      setPluginOperationNotice({
+        id: `install-locked-${item.id}`,
+        kind: 'error',
+        message: marketplacePluginLockLabel(installLock, t),
+      })
+      return
+    }
+
     const installFromLocal = isLocalMarketplaceItem(item)
 
     // 检查是否已登录（未登录时没有 deviceId 或 token）
@@ -2084,6 +2276,16 @@ export function PluginsWorkspace({
 
     if (preparingInstallPluginIdsRef.current.has(item.id)) return
     preparingInstallPluginIdsRef.current.add(item.id)
+
+    // Open the confirm dialog immediately. Do not wait on plugin/read, connector-apps,
+    // or health probes — that made Install feel broken (no UI for seconds).
+    if (!promptAfterInstall) {
+      setPendingInstall({
+        item,
+        requiredConnectionNames: requiredConnectionNames(item),
+      })
+    }
+
     void prepareMarketplaceInstallItem(item)
       .then(async preparedItem => {
         if (promptAfterInstall) {
@@ -2094,10 +2296,17 @@ export function PluginsWorkspace({
           })
           return
         }
-        setPendingInstall({
-          item: preparedItem,
-          requiredConnectionNames: await connectionNamesRequiredForInstall(preparedItem),
+        const names = await connectionNamesRequiredForInstall(preparedItem)
+        setPendingInstall(previous => {
+          if (!previous || String(previous.item.id) !== String(item.id)) return previous
+          return {
+            item: preparedItem,
+            requiredConnectionNames: names,
+          }
         })
+      })
+      .catch(() => {
+        // Keep the immediately opened dialog; confirm still uses the list-row item.
       })
       .finally(() => {
         preparingInstallPluginIdsRef.current.delete(item.id)
@@ -2106,8 +2315,37 @@ export function PluginsWorkspace({
 
   function executeMarketplaceInstall(install: PendingMarketplaceInstall | null = pendingInstall) {
     if (!install) return
-    const { item, promptAfterInstall } = install
-    if (installingMarketplacePluginIds.has(item.id)) return
+    const { item: dialogItem, promptAfterInstall } = install
+    if (installingMarketplacePluginIds.has(dialogItem.id)) return
+
+    // Re-check lock against the latest catalog row. Stale-peek SWR can open the
+    // confirm dialog before background plugin/list paints DISABLED_BY_ADMIN.
+    const latestItem =
+      pluginMarketplaceStateRef.current.items.find(
+        candidate => String(candidate.id) === String(dialogItem.id)
+      ) ?? dialogItem
+    const installLock = resolveMarketplacePluginLock(latestItem)
+    if (installLock) {
+      setPendingInstall(null)
+      setPluginOperationNotice({
+        id: `install-locked-${latestItem.id}`,
+        kind: 'error',
+        message: marketplacePluginLockLabel(installLock, t),
+      })
+      return
+    }
+
+    const item = {
+      ...latestItem,
+      // Keep any connector detail already prepared into the dialog snapshot.
+      components: dialogItem.components?.connectors?.length
+        ? dialogItem.components
+        : latestItem.components,
+      manifest: {
+        ...dialogItem.manifest,
+        ...latestItem.manifest,
+      },
+    }
 
     const localMarketplaceId = localMarketplaceIdFromItem(item)
     const installFromLocal = localMarketplaceId !== null
@@ -2118,16 +2356,40 @@ export function PluginsWorkspace({
       ...previous,
       error: null,
     }))
-    const request = ensureMarketplaceConnectors(item)
-      .then(() =>
+    // Always re-prepare before connector auth + install. The confirm dialog opens
+    // immediately with the list-row item; a fast confirm must not skip connector
+    // detail that prepareMarketplaceInstallItem is still loading.
+    const request = prepareMarketplaceInstallItem(item)
+      .then(async preparedItem => {
+        await ensureMarketplaceConnectors(preparedItem)
+        return preparedItem
+      })
+      .then(preparedItem => {
+        // Re-check lock after prepare/connectors — background refresh may have
+        // painted DISABLED_BY_ADMIN while the dialog was open.
+        const latest =
+          pluginMarketplaceStateRef.current.items.find(
+            candidate => String(candidate.id) === String(preparedItem.id)
+          ) ?? preparedItem
+        const lock = resolveMarketplacePluginLock(latest)
+        if (lock) {
+          throw Object.assign(new Error(marketplacePluginLockLabel(lock, t)), {
+            code: 'MARKETPLACE_PLUGIN_LOCKED',
+          })
+        }
+        return preparedItem
+      })
+      .then(preparedItem =>
         installFromLocal
-          ? localPluginApi.installAvailablePlugin(item.id, localMarketplaceId!)
+          ? localPluginApi
+              .installAvailablePlugin(preparedItem.id, localMarketplaceId!)
+              .then(plugin => ({ plugin, preparedItem }))
           : pluginApi
-              .installMarketplacePlugin(item.id, currentDeviceId)
-              .then(response => response.plugin)
+              .installMarketplacePlugin(preparedItem.id, currentDeviceId)
+              .then(response => ({ plugin: response.plugin, preparedItem }))
       )
-      .then(async plugin => {
-        await ensureLocalConnectorsAfterInstall(item, plugin)
+      .then(async ({ plugin, preparedItem }) => {
+        await ensureLocalConnectorsAfterInstall(preparedItem, plugin)
         return plugin
       })
 
@@ -2241,17 +2503,22 @@ export function PluginsWorkspace({
           navigateTo('/')
         }
       })
-      .catch((error: Error) => {
+      .catch((error: unknown) => {
+        const rawErrorMessage = getErrorMessage(
+          error,
+          t('workbench.plugins_install_failed', '安装失败，请稍后重试')
+        )
+        const errorMessage = humanizeMarketplaceInstallError(rawErrorMessage, t)
         console.error('[Wework plugins] install failed', {
           pluginId: item.id,
           pluginName: item.name,
           marketplaceId: localMarketplaceIdFromItem(item),
           installFromLocal,
-          error: error.message,
+          error: rawErrorMessage,
         })
         const syncSettled =
-          /failed to synchronize/i.test(error.message) ||
-          /PLUGIN_DEVICE_SYNC_FAILED/i.test(error.message)
+          /failed to synchronize/i.test(rawErrorMessage) ||
+          /PLUGIN_DEVICE_SYNC_FAILED/i.test(rawErrorMessage)
         // Older backends 502 after Kind create; refresh so the row can show the
         // account install instead of leaving a permanent pink sync banner.
         if (syncSettled) {
@@ -2272,16 +2539,23 @@ export function PluginsWorkspace({
           })
           return
         }
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
-          error: null,
-        }))
+        // Do not paint the pre-lock dialog snapshot back over a catalog row that
+        // background refresh already marked DISABLED_BY_ADMIN.
+        const lockedAbort = Reflect.get(error as object, 'code') === 'MARKETPLACE_PLUGIN_LOCKED'
+        if (!lockedAbort) {
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
+            error: null,
+          }))
+        } else {
+          setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+        }
         track('operation_failed', { operation: 'plugin_install' })
         setPluginOperationNotice({
           id: `install-error-${item.id}`,
           kind: 'error',
-          message: error.message,
+          message: errorMessage,
         })
       })
       .finally(() => {
@@ -2322,14 +2596,22 @@ export function PluginsWorkspace({
     const oauthRequired = required.filter(connector => !isLocalConnector(connector))
     if (oauthRequired.length === 0) return
     if (!cloudApiBaseUrl || !cloudToken) {
+      // OpenAI/local plugins may declare host-agnostic connector ids. Do not block
+      // install just because Wegent cloud OAuth is unavailable for those rows.
+      if (isLocalMarketplaceItem(item)) return
       throw new Error(
         t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub')
       )
     }
     const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
     for (const requirement of oauthRequired) {
-      const app = apps.find(candidate => candidate.slug === requirement.slug)
+      const app = apps.find(
+        candidate => candidate.slug.trim().toLowerCase() === requirement.slug.trim().toLowerCase()
+      )
       if (!app) {
+        // Codex/OpenAI marketplace connectors often use opaque ids that are not
+        // Wegent connector-apps. Skip host OAuth there; runtime auth still applies.
+        if (isLocalMarketplaceItem(item)) continue
         throw new Error(t('workbench.plugins_connector_unavailable', '所需应用连接暂不可用'))
       }
       if (app.connection.status === 'connected') continue
@@ -2565,7 +2847,17 @@ export function PluginsWorkspace({
     } else {
       // Cache-first / durable-peek: keep the catalog mounted while revalidating.
       // Flipping isLoading made action buttons vanish mid-click and flashed empty tabs.
-      setIsMarketplaceRefreshing(true)
+      // Silent background revalidate when we already have a painted/cached catalog —
+      // returning from background must not look like a full marketplace reload.
+      const alreadyPainted =
+        pluginMarketplaceStateRef.current.items.length > 0 || hasCachedCatalog || hasDurablePeek
+      if (isExplicitRefresh) {
+        setIsMarketplaceRefreshing(true)
+      } else if (alreadyPainted) {
+        setIsMarketplaceRefreshing(false)
+      } else {
+        setIsMarketplaceRefreshing(true)
+      }
       setPluginMarketplaceState(previous => ({
         ...previous,
         isLoading: false,
@@ -2579,8 +2871,13 @@ export function PluginsWorkspace({
             }
           : {}),
       }))
-      if (cached?.installedPlugins.length) {
-        setInstalledPlugins(previous => (previous.length > 0 ? previous : cached.installedPlugins))
+      if (cached) {
+        // Empty cached installs are valid — do not leave a prior peek/strip mounted.
+        setInstalledPlugins(previous =>
+          sameInstalledPlugins(previous, cached.installedPlugins)
+            ? previous
+            : cached.installedPlugins
+        )
       }
       if (peekedLocalState && marketplacesRef.current.length === 0) {
         applyLocalMarketplaceState(peekedLocalState)
@@ -2606,13 +2903,15 @@ export function PluginsWorkspace({
     }
     // Catalog loads stay query-agnostic; search filters client-side from the cached list.
     // OpenAI/personal catalogs come from Codex plugin/list (~10s). Reuse a durable peek
-    // for first paint, then refresh in the background when the snapshot is stale.
-    const localPromise = localStateIsFresh
-      ? Promise.resolve(peekedLocalState!)
-      : localPluginApi.readState({
-          ...localReadParams,
-          refresh: isExplicitRefresh || Boolean(peekedLocalState),
-        })
+    // for first paint; never block settle on a stale peek refresh (that made OpenAI官方
+    // feel like a cold load every time the user returned from background).
+    const localPromise =
+      !isExplicitRefresh && peekedLocalState
+        ? Promise.resolve(peekedLocalState)
+        : localPluginApi.readState({
+            ...localReadParams,
+            refresh: isExplicitRefresh,
+          })
     // Use a known device id when available (cache / prior load). Otherwise start cloud
     // immediately for progressive first paint; a device-scoped pass follows once local
     // resolves the device id.
@@ -2792,6 +3091,7 @@ export function PluginsWorkspace({
       // Only reuse durable/in-flight data for the current cache key. React refs can
       // still hold the previous account for one frame after a key switch.
       const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+      const hasCachedSnapshot = cachedSnapshot != null
       const cachedMarketplaceItems = cachedSnapshot?.marketplaceItems ?? []
       const cachedCloudItems = cachedMarketplaceItems.filter(item => !isLocalMarketplaceItem(item))
       const cachedInstalledRaw = (cachedSnapshot?.installedPlugins ?? []).map(plugin => plugin.raw)
@@ -2802,19 +3102,30 @@ export function PluginsWorkspace({
       )
       // When this key has a warm snapshot, its installed list is authoritative even if
       // empty — never fall back to installedPluginsRef (may still be the prior account).
-      const previousInstalledRaw = hasCachedCatalog
+      // Device-local Codex peek may still paint OpenAI catalog rows, but must not widen
+      // the account install strip until a refreshed local read (or cloud installs) arrives.
+      const previousInstalledRaw = hasCachedSnapshot
         ? cachedInstalledRaw
         : (localStateForMerge?.installedPlugins ?? [])
+      const localInstalledForMerge = resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot,
+        cachedInstalledRaw,
+        localInstalledRaw: localStateForMerge?.installedPlugins,
+        localStateIsPeek:
+          peekedLocalState != null &&
+          localStateForMerge != null &&
+          localStateForMerge === peekedLocalState,
+      })
       // Local-first paint must not blank cloud installs for THIS account. Never keep
       // prior-account strip rows when the current key has no warm snapshot.
       const cloudInstalled =
         cloudInstalledForMerge ??
-        (cloudMarketplaceAvailable && hasCachedCatalog
+        (cloudMarketplaceAvailable && hasCachedSnapshot
           ? previousInstalledRaw.filter(plugin => typeof plugin.spec.pluginId === 'number')
           : [])
       const nextInstalledRaw = mergeInstalledPlugins(
         cloudInstalled,
-        localStateForMerge?.installedPlugins ?? previousInstalledRaw,
+        localInstalledForMerge,
         localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
       ).map(toInstalledPluginItem)
       // Prefer in-flight cloud rows, then this key's durable cache — never stale
@@ -2864,8 +3175,90 @@ export function PluginsWorkspace({
     if (peekedLocalState) {
       paintPartialCatalog({
         localState: peekedLocalState,
-        keepRefreshing: !localStateIsFresh || cloudMarketplaceAvailable || hasCachedCatalog,
+        // Peek already paints OpenAI/local rows. Only keep the top-bar spinner for an
+        // explicit refresh — background revalidation must stay silent.
+        keepRefreshing: isExplicitRefresh,
       })
+    }
+
+    const applyBackgroundLocalCatalog = (
+      localState: Awaited<ReturnType<typeof localPluginApi.readState>>
+    ) => {
+      if (!isCurrent) return
+      setCurrentDeviceId(localState.deviceId)
+      applyLocalMarketplaceState(localState)
+      const localRows = mergeDiskPersonalIntoLocalRows(
+        localState.marketplaceItems,
+        diskPersonalItemsForMerge
+      )
+      const cloudInstalled = installedPluginsRef.current
+        .map(plugin => plugin.raw)
+        .filter(plugin => typeof plugin.spec.pluginId === 'number')
+      const nextInstalledRaw = mergeInstalledPlugins(
+        cloudInstalled,
+        localState.installedPlugins,
+        localState.deviceId || currentDeviceIdRef.current || ''
+      ).map(toInstalledPluginItem)
+      const heldBack = holdBackInFlightMarketplaceInstalls({
+        items: mergeMarketplaceCatalog(
+          pluginMarketplaceStateRef.current.items.filter(item => !isLocalMarketplaceItem(item)),
+          localRows,
+          nextInstalledRaw.map(plugin => plugin.raw)
+        ),
+        installed: nextInstalledRaw,
+        installingIds: installingMarketplacePluginIdsRef.current,
+        authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+      })
+      const nextInstalled = heldBack.installed
+      setInstalledPlugins(previous =>
+        sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
+      )
+      setPluginMarketplaceState(previous => {
+        const nextItems = retainMarketplaceInstallHints(previous.items, heldBack.items)
+        if (sameMarketplaceItems(previous.items, nextItems) && !previous.error) {
+          return previous
+        }
+        const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+        if (cachedSnapshot) {
+          setPluginMarketplaceCache({
+            ...cachedSnapshot,
+            marketplaceItems: nextItems,
+            installedPlugins: nextInstalled,
+            marketplaces: toMarketplaceOptions(
+              localState.marketplaces,
+              cloudMarketplaceAvailable,
+              t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
+            ),
+            deviceId: localState.deviceId || cachedSnapshot.deviceId,
+            fetchedAt: Date.now(),
+          })
+        }
+        return { items: nextItems, isLoading: false, error: null }
+      })
+    }
+
+    // Stale durable peek: revalidate Codex plugin/list in the background without
+    // blocking first paint or the OpenAI官方 tab.
+    if (!isExplicitRefresh && peekedLocalState && !localStateIsFresh) {
+      void localPluginApi
+        .readState({
+          ...localReadParams,
+          refresh: true,
+        })
+        .then(localState => {
+          if (!isCurrent) return
+          localStateForMerge = localState
+          if (catalogSettled) {
+            applyBackgroundLocalCatalog(localState)
+            return
+          }
+          paintPartialCatalog({
+            localState,
+            diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
+            keepRefreshing: false,
+          })
+        })
+        .catch(() => undefined)
     }
 
     const personalDiskPromise = listPersonalMarketplacePluginsFromDisk().catch(error => {
@@ -2887,15 +3280,22 @@ export function PluginsWorkspace({
             (cached?.marketplaceItems ?? []).filter(isLocalMarketplaceItem),
           diskPersonalItems
         )
+        const cachedInstalledRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
+        const localInstalledForMerge = resolveProgressiveLocalInstalledRaw({
+          hasCachedSnapshot: cached != null,
+          cachedInstalledRaw,
+          localInstalledRaw: localStateForMerge?.installedPlugins,
+          localStateIsPeek:
+            peekedLocalState != null &&
+            localStateForMerge != null &&
+            localStateForMerge === peekedLocalState,
+        })
         const nextInstalledRaw = mergeInstalledPlugins(
           cloudInstalledForMerge ??
-            (cloudMarketplaceAvailable
-              ? installedPluginsRef.current
-                  .map(plugin => plugin.raw)
-                  .filter(plugin => typeof plugin.spec.pluginId === 'number')
+            (cloudMarketplaceAvailable && cached != null
+              ? cachedInstalledRaw.filter(plugin => typeof plugin.spec.pluginId === 'number')
               : []),
-          localStateForMerge?.installedPlugins ??
-            installedPluginsRef.current.map(plugin => plugin.raw),
+          localInstalledForMerge,
           localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
         ).map(toInstalledPluginItem)
         const heldBack = holdBackInFlightMarketplaceInstalls({
@@ -2924,21 +3324,21 @@ export function PluginsWorkspace({
       paintPartialCatalog({
         diskPersonalItems,
         localState: localStateForMerge,
-        keepRefreshing: true,
+        keepRefreshing: isExplicitRefresh,
       })
     })
 
     void localPromise
       .then(localState => {
         localStateForMerge = localState
-        // Peek already painted this snapshot; wait for a refreshed result when stale.
-        if (peekedLocalState && localState === peekedLocalState && !localStateIsFresh) {
+        // Peek path already painted above; avoid a redundant same-snapshot paint.
+        if (peekedLocalState && localState === peekedLocalState) {
           return
         }
         paintPartialCatalog({
           localState,
           diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
-          keepRefreshing: cloudMarketplaceAvailable || hasCachedCatalog,
+          keepRefreshing: isExplicitRefresh,
         })
       })
       .catch(() => undefined)
@@ -2952,7 +3352,7 @@ export function PluginsWorkspace({
         cloudInstalled: installed.items,
         localState: localStateForMerge,
         diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
-        keepRefreshing: true,
+        keepRefreshing: isExplicitRefresh,
       })
     })
 
@@ -2976,7 +3376,7 @@ export function PluginsWorkspace({
           cloudInstalled,
           localState: localStateForMerge,
           diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
-          keepRefreshing: true,
+          keepRefreshing: isExplicitRefresh,
         })
       }
     )
@@ -3009,7 +3409,11 @@ export function PluginsWorkspace({
         return
       }
 
-      const localState = localResult.status === 'fulfilled' ? localResult.value : localStateForMerge
+      // Prefer a background-refreshed local snapshot over the settle promise value.
+      // Stale-peek SWR resolves localPromise immediately with the peek; a concurrent
+      // refresh:true may already have written a newer localStateForMerge.
+      const localState =
+        localStateForMerge ?? (localResult.status === 'fulfilled' ? localResult.value : null)
       const cloudItems = cloudResult.status === 'fulfilled' ? cloudResult.value.items : []
       const cloudInstalled =
         installedResult.status === 'fulfilled' ? installedResult.value.items : []
@@ -3048,10 +3452,13 @@ export function PluginsWorkspace({
         ])
           .then(([deviceCloud, deviceInstalled]) => {
             if (!isCurrent) return
+            // Prefer a background-refreshed local snapshot over the settle-time
+            // peek — otherwise device cloud arrival can clobber DISABLED_BY_ADMIN
+            // rows that refresh already painted.
             applyCatalogSnapshot(
               deviceCloud.items,
               deviceInstalled.items,
-              localState,
+              localStateForMerge ?? localState,
               capabilities,
               {
                 preferExistingOnSameSignature: true,
@@ -3411,31 +3818,23 @@ export function PluginsWorkspace({
     normalizedQuery,
     pluginMarketplaceState.items,
   ])
-  const displayedMarketplaceItems = visibleMarketplaceItems.slice(0, marketplaceVisibleCount)
-  const hiddenMarketplaceItems = visibleMarketplaceItems.slice(marketplaceVisibleCount)
   const marketplaceCategorySections = useMemo(() => {
     // Featured is a Codex/OpenAI concept — keep the English title.
     // On the OpenAI官方 tab, Other / All plugins stay English too; other tabs localize.
     const openAiOfficialLabels = marketplaceDistributionFilter === 'official'
-    return groupMarketplaceItemsByCategory(displayedMarketplaceItems, {
+    return groupMarketplaceItemsByCategory(visibleMarketplaceItems, {
       featured: 'Featured',
       other: openAiOfficialLabels ? 'Other' : t('workbench.plugins_category_other', '其他'),
       all: openAiOfficialLabels ? 'All plugins' : t('workbench.plugins_all', '全部插件'),
     })
-  }, [displayedMarketplaceItems, marketplaceDistributionFilter, t])
-  const marketplaceRevealNames = hiddenMarketplaceItems
-    .slice(0, 2)
-    .map(item => item.displayName || item.name)
-    .join(', ')
-  const marketplaceRevealLabel =
-    hiddenMarketplaceItems.length > 2
-      ? t('workbench.plugins_view_more_with_count', '查看 {{names}}，以及另外 {{count}} 个', {
-          names: marketplaceRevealNames,
-          count: hiddenMarketplaceItems.length - 2,
-        })
-      : t('workbench.plugins_view_more', '查看 {{names}}', {
-          names: marketplaceRevealNames,
-        })
+  }, [marketplaceDistributionFilter, t, visibleMarketplaceItems])
+  const browsingCategorySection = useMemo(
+    () =>
+      browsingCategoryKey
+        ? (marketplaceCategorySections.find(section => section.key === browsingCategoryKey) ?? null)
+        : null,
+    [browsingCategoryKey, marketplaceCategorySections]
+  )
   const visibleInstalledPlugins = useMemo(
     () =>
       installedPlugins.filter(plugin => {
@@ -3471,7 +3870,7 @@ export function PluginsWorkspace({
     hasMarketplace && (!normalizedQuery || visibleInstalledPlugins.length > 0)
 
   useEffect(() => {
-    setMarketplaceVisibleCount(MARKETPLACE_INITIAL_VISIBLE_COUNT)
+    setBrowsingCategoryKey(null)
   }, [marketplaceDistributionFilter, marketplaceRefreshTick, normalizedQuery])
 
   useEffect(() => {
@@ -3480,6 +3879,12 @@ export function PluginsWorkspace({
       marketplaceScrollRegionRef.current.scrollTop = 0
     }
   }, [marketplaceDistributionFilter, marketplaceSourceFilterKey, normalizedQuery])
+
+  useEffect(() => {
+    if (!browsingCategoryKey) return
+    if (marketplaceCategorySections.some(section => section.key === browsingCategoryKey)) return
+    setBrowsingCategoryKey(null)
+  }, [browsingCategoryKey, marketplaceCategorySections])
 
   useEffect(() => {
     if (selectedMarketplacePluginId !== null) return
@@ -4491,68 +4896,68 @@ export function PluginsWorkspace({
               )
             ) : (
               <div className="plugin-market-category-sections" data-testid="plugins-all-section">
-                {marketplaceCategorySections.map(section => (
-                  <section
-                    key={section.key}
-                    data-testid={`plugins-category-section-${section.key}`}
-                    className="plugin-market-category-section"
-                  >
-                    <div className="plugin-market-section-head">
-                      <h2>{section.title}</h2>
-                    </div>
-                    <div className="plugin-market-card-grid">
-                      {section.items.map(item => (
-                        <PluginMarketplaceRow
-                          key={item.id}
-                          item={item}
-                          isLoggedIn={Boolean(cloudToken && currentDeviceId)}
-                          isInstalling={installingMarketplacePluginIds.has(item.id)}
-                          isUninstalling={uninstallingPluginIds.has(
-                            item.installedPluginId ?? item.id
-                          )}
-                          allowPendingRetry={deviceAutoSyncSettled}
-                          installLabel={t('workbench.plugins_install', '安装')}
-                          installingLabel={t('workbench.plugins_installing', '正在安装')}
-                          uninstallingLabel={t('workbench.plugins_uninstalling', '正在卸载')}
-                          retryLabel={t('workbench.plugins_retry_install', '重试安装')}
-                          syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
-                          tryLabel={t('workbench.plugins_try_now', '立即对话')}
-                          manageLabel={t('workbench.plugins_manage', '管理')}
-                          uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
-                          onOpen={() => openMarketplacePluginDetail(item)}
-                          onInstall={() => installMarketplacePlugin(item)}
-                          onTry={() => tryMarketplacePluginInChat(item)}
-                          onManage={() => openMarketplacePluginDetail(item)}
-                          onUninstall={() => {
-                            // Always call real uninstall. Clearing the card alone left
-                            // Codex membership installed (composer picker still listed it).
-                            const uninstallId =
-                              item.installedPluginId ??
-                              (typeof item.manifest?.marketplaceId === 'string' &&
-                              item.manifest.marketplaceId
-                                ? `${item.name}@${item.manifest.marketplaceId}`
-                                : item.id)
-                            requestUninstallPlugin(uninstallId, item.displayName || item.name)
-                          }}
+                {marketplaceCategorySections.map(section => {
+                  const { preview, rest } = previewMarketplaceSectionItems(
+                    section.items,
+                    MARKETPLACE_SECTION_PREVIEW_COUNT
+                  )
+                  return (
+                    <section
+                      key={section.key}
+                      data-testid={`plugins-category-section-${section.key}`}
+                      className="plugin-market-category-section"
+                    >
+                      <div className="plugin-market-section-head">
+                        <h2>{section.title}</h2>
+                      </div>
+                      <div className="plugin-market-card-grid">
+                        {preview.map(item => (
+                          <PluginMarketplaceRow
+                            key={item.id}
+                            item={item}
+                            isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+                            isInstalling={installingMarketplacePluginIds.has(item.id)}
+                            isUninstalling={uninstallingPluginIds.has(
+                              item.installedPluginId ?? item.id
+                            )}
+                            allowPendingRetry={deviceAutoSyncSettled}
+                            installLabel={t('workbench.plugins_install', '安装')}
+                            installingLabel={t('workbench.plugins_installing', '正在安装')}
+                            uninstallingLabel={t('workbench.plugins_uninstalling', '正在卸载')}
+                            retryLabel={t('workbench.plugins_retry_install', '重试安装')}
+                            syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
+                            tryLabel={t('workbench.plugins_try_now', '立即对话')}
+                            manageLabel={t('workbench.plugins_manage', '管理')}
+                            uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
+                            onOpen={() => openMarketplacePluginDetail(item)}
+                            onInstall={() => installMarketplacePlugin(item)}
+                            onTry={() => tryMarketplacePluginInChat(item)}
+                            onManage={() => openMarketplacePluginDetail(item)}
+                            onUninstall={() => {
+                              // Always call real uninstall. Clearing the card alone left
+                              // Codex membership installed (composer picker still listed it).
+                              const uninstallId =
+                                item.installedPluginId ??
+                                (typeof item.manifest?.marketplaceId === 'string' &&
+                                item.manifest.marketplaceId
+                                  ? `${item.name}@${item.manifest.marketplaceId}`
+                                  : item.id)
+                              requestUninstallPlugin(uninstallId, item.displayName || item.name)
+                            }}
+                          />
+                        ))}
+                      </div>
+                      {rest.length > 0 && (
+                        <PluginMarketplaceRevealButton
+                          items={rest}
+                          label={marketplaceSectionRevealLabel(rest, t)}
+                          testId={`plugins-category-more-${section.key}`}
+                          onReveal={() => setBrowsingCategoryKey(section.key)}
                         />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-                {hiddenMarketplaceItems.length > 0 && (
-                  <PluginMarketplaceRevealButton
-                    items={hiddenMarketplaceItems}
-                    label={marketplaceRevealLabel}
-                    onReveal={() =>
-                      setMarketplaceVisibleCount(previous =>
-                        Math.min(
-                          previous + MARKETPLACE_REVEAL_BATCH_SIZE,
-                          visibleMarketplaceItems.length
-                        )
-                      )
-                    }
-                  />
-                )}
+                      )}
+                    </section>
+                  )
+                })}
               </div>
             )}
           </section>
@@ -4560,6 +4965,37 @@ export function PluginsWorkspace({
       </div>
       {pluginOverlayDialogs}
       {pluginOperationNoticeOverlay}
+      {browsingCategorySection && (
+        <CategoryBrowseDialog
+          section={browsingCategorySection}
+          isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          installingMarketplacePluginIds={installingMarketplacePluginIds}
+          uninstallingPluginIds={uninstallingPluginIds}
+          allowPendingRetry={deviceAutoSyncSettled}
+          onClose={() => setBrowsingCategoryKey(null)}
+          onOpen={item => {
+            setBrowsingCategoryKey(null)
+            openMarketplacePluginDetail(item)
+          }}
+          onInstall={item => installMarketplacePlugin(item)}
+          onTry={item => {
+            setBrowsingCategoryKey(null)
+            tryMarketplacePluginInChat(item)
+          }}
+          onManage={item => {
+            setBrowsingCategoryKey(null)
+            openMarketplacePluginDetail(item)
+          }}
+          onUninstall={item => {
+            const uninstallId =
+              item.installedPluginId ??
+              (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId
+                ? `${item.name}@${item.manifest.marketplaceId}`
+                : item.id)
+            requestUninstallPlugin(uninstallId, item.displayName || item.name)
+          }}
+        />
+      )}
       {showAddMarketDialog && (
         <AddMarketDialog
           isOpen={showAddMarketDialog}

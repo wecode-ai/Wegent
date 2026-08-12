@@ -34,6 +34,21 @@ export function prioritizeFeaturedMarketplaceItems(
   return featured.length === 0 ? items : [...featured, ...rest]
 }
 
+/**
+ * Split a category section into the home-page preview and the overflow list
+ * shown after clicking "more".
+ */
+export function previewMarketplaceSectionItems(
+  items: PluginMarketplaceItem[],
+  limit: number
+): { preview: PluginMarketplaceItem[]; rest: PluginMarketplaceItem[] } {
+  const safeLimit = Math.max(0, Math.floor(limit))
+  return {
+    preview: items.slice(0, safeLimit),
+    rest: items.slice(safeLimit),
+  }
+}
+
 export function groupMarketplaceItemsByCategory(
   items: PluginMarketplaceItem[],
   labels: {

@@ -6,6 +6,7 @@ import {
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
+import { prefetchLocalConnectorAuthForPluginNames } from '@/features/plugins/prefetchLocalConnectorAuth'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
@@ -282,6 +283,9 @@ export function PluginPickerMenu({
                       }
                       insertPluginReference(reference)
                       showPluginTrialGuide(displayAppName(app), app.trialTemplates, app)
+                      // Warm connector membership/health while the user types so send
+                      // is not blocked on plugin/read + local auth probe.
+                      void prefetchLocalConnectorAuthForPluginNames([composerAppPluginKey(app)])
                       const recent = JSON.parse(
                         window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
                       ) as string[]

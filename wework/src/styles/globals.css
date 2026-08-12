@@ -2240,7 +2240,7 @@ button.plugin-route-back-button:hover {
   gap: 28px;
 }
 
-.plugin-market-category-section + .plugin-market-reveal-button {
+.plugin-market-category-section .plugin-market-reveal-button {
   margin-top: 4px;
 }
 
@@ -2302,6 +2302,41 @@ article.plugin-market-card {
 article.plugin-market-card:hover {
   border-color: rgb(var(--color-border) / 0.48);
   background-color: rgb(var(--color-bg-surface));
+}
+
+article.plugin-market-card.is-locked {
+  opacity: 0.72;
+}
+
+article.plugin-market-card.is-locked:hover {
+  background-color: rgb(var(--color-bg-base));
+}
+
+.plugin-market-card-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 72px;
+  padding: 2px 4px;
+  color: rgb(var(--color-text-muted));
+  cursor: default;
+  user-select: none;
+}
+
+.plugin-market-card-locked-label {
+  max-width: 84px;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.plugin-market-card-locked-icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
 }
 
 article.plugin-market-card:focus-visible {

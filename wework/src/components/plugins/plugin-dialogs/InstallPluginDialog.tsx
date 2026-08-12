@@ -29,7 +29,7 @@ export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPlug
   const useInitial = Boolean(plugin.useLogoInitial) || !logo
   const requiredConnectionNames = plugin.requiredConnectionNames ?? []
   const requiredConnectionName =
-    requiredConnectionNames.length === 1 ? requiredConnectionNames[0] : null
+    requiredConnectionNames.length === 1 ? requiredConnectionNames[0]?.trim() || null : null
 
   useEffect(() => {
     confirmRef.current?.focus()

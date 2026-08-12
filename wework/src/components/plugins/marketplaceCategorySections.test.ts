@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
 import {
   groupMarketplaceItemsByCategory,
+  previewMarketplaceSectionItems,
   prioritizeFeaturedMarketplaceItems,
 } from './marketplaceCategorySections'
 
@@ -107,7 +108,7 @@ describe('groupMarketplaceItemsByCategory', () => {
     ])
   })
 
-  test('groups a truncated display slice without inventing missing sections', () => {
+  test('groups categorized items without depending on a prior display truncation', () => {
     const items = [
       item({
         id: 'gmail',
@@ -120,11 +121,34 @@ describe('groupMarketplaceItemsByCategory', () => {
         name: 'notion',
         interface: { category: 'Productivity' },
       }),
+      item({
+        id: 'linear',
+        name: 'linear',
+        interface: { category: 'Productivity' },
+      }),
     ]
     expect(groupMarketplaceItemsByCategory(items, labels).map(section => section.key)).toEqual([
       'featured',
       'category-productivity',
     ])
+  })
+
+  test('previews a fixed number of section items for the home page', () => {
+    const items = [
+      item({ id: 'a', name: 'a', displayName: 'A' }),
+      item({ id: 'b', name: 'b', displayName: 'B' }),
+      item({ id: 'c', name: 'c', displayName: 'C' }),
+      item({ id: 'd', name: 'd', displayName: 'D' }),
+      item({ id: 'e', name: 'e', displayName: 'E' }),
+    ]
+    expect(previewMarketplaceSectionItems(items, 4)).toEqual({
+      preview: items.slice(0, 4),
+      rest: items.slice(4),
+    })
+    expect(previewMarketplaceSectionItems(items, 0)).toEqual({
+      preview: [],
+      rest: items,
+    })
   })
 
   test('moves featured plugins ahead of the ranked list before truncation', () => {

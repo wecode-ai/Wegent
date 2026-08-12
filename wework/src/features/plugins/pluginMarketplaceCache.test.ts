@@ -222,6 +222,28 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems([base], [failed])).toBe(false)
   })
 
+  test('detects Codex availability lock changes via signature', () => {
+    const available = [
+      item({
+        id: 'gmail@openai-curated-remote',
+        name: 'gmail',
+        manifest: { availability: 'AVAILABLE' },
+      }),
+    ]
+    const locked = [
+      item({
+        id: 'gmail@openai-curated-remote',
+        name: 'gmail',
+        manifest: {
+          availability: 'DISABLED_BY_ADMIN',
+          disabledReason: 'plan_not_eligible',
+          installPolicy: 'NOT_AVAILABLE',
+        },
+      }),
+    ]
+    expect(sameMarketplaceItems(available, locked)).toBe(false)
+  })
+
   test('detects installed plugin name and distribution changes via signature', () => {
     const left: InstalledPluginItem[] = [
       {

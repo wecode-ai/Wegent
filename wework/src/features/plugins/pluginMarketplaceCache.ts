@@ -270,6 +270,11 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         item.currentDeviceInstallation?.state ?? '',
         item.currentDeviceInstallation?.errorMessage ?? '',
         item.currentDeviceInstallation?.actualReleaseId ?? '',
+        // Codex remote lock state — must invalidate SWR equality when admin/plan
+        // availability changes after a durable peek painted the unlocked card.
+        typeof item.manifest?.availability === 'string' ? item.manifest.availability : '',
+        typeof item.manifest?.disabledReason === 'string' ? item.manifest.disabledReason : '',
+        typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
       ].join(':')
     )
     .join('|')

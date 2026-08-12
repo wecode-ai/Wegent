@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
-import { isCloudManagedInstalledPlugin, mergeInstalledPlugins } from './installedPluginMerge'
+import {
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+  resolveProgressiveLocalInstalledRaw,
+} from './installedPluginMerge'
 
 function cloudPlugin(
   overrides?: Partial<InstalledPlugin['spec']> & { id?: number }
@@ -202,5 +206,55 @@ describe('isCloudManagedInstalledPlugin', () => {
   test('treats only numeric cloud pluginId as cloud-managed', () => {
     expect(isCloudManagedInstalledPlugin(cloudPlugin())).toBe(true)
     expect(isCloudManagedInstalledPlugin(localCodexPlugin())).toBe(false)
+  })
+})
+
+describe('resolveProgressiveLocalInstalledRaw', () => {
+  const cached = [cloudPlugin({ id: 1 })]
+  const peeked = [localCodexPlugin()]
+  const refreshed = [localCodexPlugin({ id: 'refreshed-local' })]
+
+  test('keeps empty account cache authoritative over peek installs', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: [],
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+      })
+    ).toEqual([])
+  })
+
+  test('keeps non-empty account cache authoritative over peek installs', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: cached,
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+      })
+    ).toEqual(cached)
+  })
+
+  test('allows refreshed local reads to replace warm cache', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: cached,
+        localInstalledRaw: refreshed,
+        localStateIsPeek: false,
+      })
+    ).toEqual(refreshed)
+  })
+
+  test('uses peek installs when the account cache is cold', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: false,
+        cachedInstalledRaw: [],
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+      })
+    ).toEqual(peeked)
   })
 })

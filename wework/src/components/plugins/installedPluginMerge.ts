@@ -178,3 +178,23 @@ export function installedPluginSourceLabel(item: InstalledPlugin): string {
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
   return typeof item.spec.pluginId === 'number'
 }
+
+/**
+ * Progressive paints may reuse a device-local Codex peek while an account-scoped
+ * marketplace cache already has an authoritative install strip (including empty).
+ * Peek must not widen that strip; refreshed local reads may still replace it.
+ */
+export function resolveProgressiveLocalInstalledRaw<T>(options: {
+  hasCachedSnapshot: boolean
+  cachedInstalledRaw: T[]
+  localInstalledRaw?: T[] | null
+  localStateIsPeek: boolean
+}): T[] {
+  if (options.hasCachedSnapshot && options.localStateIsPeek) {
+    return options.cachedInstalledRaw
+  }
+  if (options.localInstalledRaw != null) {
+    return options.localInstalledRaw
+  }
+  return options.hasCachedSnapshot ? options.cachedInstalledRaw : []
+}
