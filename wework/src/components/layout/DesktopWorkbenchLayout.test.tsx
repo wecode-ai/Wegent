@@ -4760,7 +4760,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo', 'repo')
     expect(onCreateProject).not.toHaveBeenCalled()
     expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
