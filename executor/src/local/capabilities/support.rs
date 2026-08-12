@@ -594,7 +594,18 @@ fn parse_skill_frontmatter(content: &str) -> BTreeMap<String, String> {
 }
 
 pub(super) fn sorted_dir_entries(path: &Path) -> Result<Vec<fs::DirEntry>, CapabilitySyncError> {
-    if !path.is_dir() {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "Refusing to traverse managed directory symlink: {}",
+            path.display()
+        )));
+    }
+    if !metadata.is_dir() {
         return Ok(Vec::new());
     }
     let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;

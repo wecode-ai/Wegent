@@ -219,10 +219,16 @@ import {
 } from './shared.mjs'
 
 class DesktopE2EServer {
-  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
+  constructor(
+    workspacePath,
+    cloudWorkspacePath = workspacePath,
+    desktopScenario = null,
+    { enableMarketplaceConnectorAppsStub = false } = {}
+  ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
     this.desktopScenario = desktopScenario
+    this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -891,6 +897,53 @@ class DesktopE2EServer {
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
       })
+      return
+    }
+
+    // Official/local marketplace plugins may infer on_install connectors from
+    // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
+    // lists Wegent connector-apps before plugin/install; stub them as already
+    // connected so desktop E2E can exercise the real install path.
+    if (
+      this.enableMarketplaceConnectorAppsStub &&
+      request.method === 'GET' &&
+      url.pathname === '/api/connector-apps'
+    ) {
+      const connected = status => ({
+        status,
+        external_account_name: status === 'connected' ? 'desktop-e2e' : null,
+        granted_scopes: status === 'connected' ? ['e2e'] : [],
+        expires_at: null,
+      })
+      json(response, 200, [
+        {
+          id: 1,
+          slug: 'openai-platform',
+          name: 'OpenAI Platform',
+          description: 'Desktop E2E stub for OpenAI Developers app connectors',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+        {
+          id: 2,
+          slug: 'openai-developers',
+          name: 'OpenAI Developers',
+          description: 'Desktop E2E stub matching inferred plugin-name connectors',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+        {
+          id: 3,
+          slug: 'github',
+          name: 'GitHub',
+          description: 'Desktop E2E stub for cloud connector authorization flows',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+      ])
       return
     }
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   composerSkillFilePath,
   createComposerMentionElement,
@@ -7,6 +7,7 @@ import {
   registerComposerMentionIcon,
   replaceComposerMentionTrigger,
 } from './composerMentions'
+import { publishComposerApps, resetComposerAppsMemory } from './composerAppsSnapshot'
 
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
@@ -92,6 +93,10 @@ describe('cloud references', () => {
 })
 
 describe('composer mention icons', () => {
+  afterEach(() => {
+    resetComposerAppsMemory()
+  })
+
   test('uses a registered plugin brand icon', () => {
     const reference = '[$GitHub](plugin://github@openai-bundled)'
     registerComposerMentionIcon(reference, {
@@ -129,7 +134,7 @@ describe('composer mention icons', () => {
     )
   })
 
-  test('falls back to bundled plugin brand icons for plugin mentions', () => {
+  test('keeps the generic cube icon when a plugin mention has no package logo', () => {
     const reference = '[$superpowers](plugin://superpowers@openai-official)'
     const element = createComposerMentionElement({
       name: 'superpowers',
@@ -137,8 +142,32 @@ describe('composer mention icons', () => {
       reference,
     })
 
-    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
-    expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
+    expect(element.querySelector('img')).toBeNull()
+    expect(element.querySelector('svg.composer-mention-icon')).not.toBeNull()
+  })
+
+  test('uses the composer app inventory logo for connector-backed plugin mentions', () => {
+    publishComposerApps([
+      {
+        id: 'wegent:dingtalk',
+        name: '钉钉',
+        pluginKey: 'dingtalk',
+        description: null,
+        logoUrl: 'https://example.com/dingtalk.png',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'wegent-connector',
+      },
+    ])
+
+    const reference = '[$钉钉](plugin://dingtalk@wegent)'
+    const element = createComposerMentionElement({
+      name: '钉钉',
+      label: '钉钉',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/dingtalk.png')
   })
 
   test('keeps the generic cube icon for skill mentions without a brand logo', () => {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { defaultAppPreferences } from '@/tauri/appPreferences'
@@ -89,14 +89,12 @@ describe('HarnessSettingsPage', () => {
       '/opt/claude/bin/claude'
     )
     await userEvent.selectOptions(screen.getByTestId('harness-permission-mode-claude_code'), 'plan')
-    await userEvent.type(
-      screen.getByTestId('harness-args-claude_code'),
-      '--verbose\n--model\nsonnet'
-    )
-    await userEvent.type(
-      screen.getByTestId('harness-env-claude_code'),
-      'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-west-2'
-    )
+    fireEvent.change(screen.getByTestId('harness-args-claude_code'), {
+      target: { value: '--verbose\n--model\nsonnet' },
+    })
+    fireEvent.change(screen.getByTestId('harness-env-claude_code'), {
+      target: { value: 'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-west-2' },
+    })
     await userEvent.click(screen.getByTestId('harness-enabled-opencode'))
     await waitFor(() =>
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
@@ -141,7 +139,9 @@ describe('HarnessSettingsPage', () => {
 
     await screen.findByText('1.2.3')
     await userEvent.click(screen.getByTestId('harness-settings-toggle-opencode'))
-    await userEvent.type(screen.getByTestId('harness-env-opencode'), 'MISSING_VALUE')
+    fireEvent.change(screen.getByTestId('harness-env-opencode'), {
+      target: { value: 'MISSING_VALUE' },
+    })
     await waitFor(() =>
       expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
         'OpenCode 的环境变量第 1 行无效'

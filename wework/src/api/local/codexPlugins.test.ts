@@ -75,6 +75,74 @@ test('wegent cloud catalog rows inherit local wegent installs without marketplac
   ])
 })
 
+test('local install overrides a stale failed cloud device state', () => {
+  const item: PluginMarketplaceItem = {
+    id: 267250,
+    remotePluginId: 'wegent-sites',
+    name: 'wegent-sites',
+    displayName: '快速建站',
+    description: '用 Wegent 构建并部署站点',
+    version: '0.1.5',
+    visibility: 'workspace',
+    featured: false,
+    installed: true,
+    installedPluginId: 267250,
+    enabled: true,
+    sourceType: 'marketplace',
+    components,
+    manifest: {},
+    ownerUserId: 0,
+    latestReleaseId: 10,
+    sourceProvider: 'wegent',
+    sourceLabel: 'Wegent 官方',
+    currentDeviceInstallation: {
+      deviceId: 'current-device',
+      desiredReleaseId: 10,
+      actualReleaseId: 8,
+      state: 'failed',
+      attemptCount: 1,
+      updatedAt: '2026-08-12T00:00:00Z',
+    },
+  }
+  const installed: InstalledPlugin = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'wegent-sites',
+      namespace: 'wegent',
+      labels: { id: 'wegent-sites@wegent' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent',
+        pluginKey: 'wegent-sites',
+        catalogItemId: 'wegent-sites@wegent',
+        marketplace: 'wegent',
+      },
+      origin: 'marketplace',
+      installState: 'update_available',
+      enabled: true,
+      displayName: '快速建站',
+      description: '用 Wegent 构建并部署站点',
+      componentStates: {},
+      components,
+      interface: null,
+      packageRef: null,
+      sourcePayload: { marketplaceName: 'wegent' },
+    },
+    status: { state: 'enabled' },
+  }
+
+  expect(applyInstalledPluginsToMarketplaceItems([item], [installed])).toEqual([
+    expect.objectContaining({
+      installed: true,
+      installedPluginId: 'wegent-sites@wegent',
+      installedLocally: true,
+    }),
+  ])
+})
+
 test('personal marketplace aliases share installed state', () => {
   const item: PluginMarketplaceItem = {
     id: 'dev-tools@personal',

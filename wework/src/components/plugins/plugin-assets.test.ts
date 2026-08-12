@@ -3,6 +3,7 @@ import {
   currentPluginLogoAppearanceMode,
   resolvePluginLogo,
   resolvePluginLogoUrl,
+  resolvePreferredPluginLogo,
 } from './plugin-assets'
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -55,23 +56,37 @@ describe('resolvePluginLogo', () => {
     })
   })
 
-  test('uses the neutral default icon without a contrast pad when the package has no logo', () => {
+  test('returns an empty fallback so UI can show the name initial instead of wework.svg', () => {
     expect(
       resolvePluginLogo({
         pluginKey: 'github',
         appearanceMode: 'dark',
       })
     ).toEqual({
-      url: '/plugin-icons/wework.svg',
+      url: '',
       source: 'fallback',
       contrastPad: false,
     })
     expect(
       resolvePluginLogoUrl({
-        pluginKey: 'github',
+        pluginKey: 'weibo-api-wiki',
         appearanceMode: 'light',
       })
-    ).toBe('/plugin-icons/wework.svg')
+    ).toBe('')
+  })
+
+  test('treats the host wework.svg icon as missing so personal plugins use initials', () => {
+    expect(
+      resolvePluginLogo({
+        pluginKey: 'dev-tools',
+        logo: '/plugin-icons/wework.svg',
+        appearanceMode: 'light',
+      })
+    ).toEqual({
+      url: '',
+      source: 'fallback',
+      contrastPad: false,
+    })
   })
 
   test('reads appearance mode from the document theme attribute', () => {
@@ -79,5 +94,19 @@ describe('resolvePluginLogo', () => {
     expect(currentPluginLogoAppearanceMode()).toBe('dark')
     document.documentElement.dataset.theme = 'light'
     expect(currentPluginLogoAppearanceMode()).toBe('light')
+  })
+
+  test('prefers the first interface that yields a real package logo', () => {
+    expect(
+      resolvePreferredPluginLogo({
+        pluginKey: 'sites',
+        appearanceMode: 'light',
+        interfaces: [{ logo: './assets/logo.png' }, { logo: 'data:image/png;base64,sites' }],
+      })
+    ).toEqual({
+      url: 'data:image/png;base64,sites',
+      source: 'provided',
+      contrastPad: false,
+    })
   })
 })
