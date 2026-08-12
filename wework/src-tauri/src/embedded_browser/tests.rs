@@ -11,10 +11,10 @@ use std::{
 
 use super::{
     available_logical_entry, bridge_navigation_url, bridge_request_authorized,
-    browser_file_url_from_path, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
-    download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
-    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
+    browser_file_url_from_path, browser_open_action, browser_open_action_requires_navigation,
+    browser_webview_url, consume_approved_agent_risk, directory_entry_modified_unix_seconds,
+    directory_listing_html, download_event_owner, file_url_path, format_directory_entry_modified,
+    format_file_size, loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
     merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
     register_agent_approval, register_preview_source, relabel_logical_entry,
     remove_logical_entry_if_native_matches, resolve_agent_bridge_label,
@@ -404,6 +404,19 @@ fn bridge_open_waits_for_an_opening_route_without_requesting_again() {
         browser_open_action(Some(EmbeddedBrowserReadiness::Ready)),
         EmbeddedBrowserOpenAction::Ready
     );
+}
+
+#[test]
+fn bridge_open_request_uses_the_url_from_new_tab_creation() {
+    assert!(!browser_open_action_requires_navigation(
+        EmbeddedBrowserOpenAction::RequestOpen
+    ));
+    assert!(browser_open_action_requires_navigation(
+        EmbeddedBrowserOpenAction::WaitForReady
+    ));
+    assert!(browser_open_action_requires_navigation(
+        EmbeddedBrowserOpenAction::Ready
+    ));
 }
 
 #[test]

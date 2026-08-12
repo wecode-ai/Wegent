@@ -6800,7 +6800,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed runtime project from an in-flight cloud refresh', async () => {
+  test('does not restore a removed workspace under a different project identity', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
@@ -6811,7 +6811,17 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
       cloudBackgroundApi: {
         listTeams: vi.fn().mockResolvedValue([]),
-        listDevices: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Project Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]),
         listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
       },
     })
@@ -6831,7 +6841,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual([])
 
     await act(async () => {
-      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      cloudRuntimeWork.resolve(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
+              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
+              totalTasks: 3,
+            },
+          ],
+        })
+      )
     })
 
     await waitFor(() =>

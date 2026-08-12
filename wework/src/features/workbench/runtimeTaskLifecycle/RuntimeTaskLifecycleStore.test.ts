@@ -202,6 +202,21 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('settles a local harness turn from an authoritative idle executor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.syncRuntimeWork(
+      runtimeWork(task({ runtime: 'claude_code', running: false, status: 'active' }))
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isThinking).toBe(false)
+  })
+
   test('does not clear an active send because a transcript contains historical settled output', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
