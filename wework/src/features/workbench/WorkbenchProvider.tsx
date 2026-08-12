@@ -1560,6 +1560,27 @@ export function WorkbenchProvider({
         })
       })
   })
+  const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
+    const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
+    if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
+
+    void runtimeTasks
+      .getRuntimeGoal(address)
+      .then(response => {
+        if (!response.accepted) return
+        const goal = response.goal
+        if (!goal) return
+        setRuntimeConversationGoal(address, goal)
+        lifecycleStore.goalStatusReceived(address, goal.status)
+      })
+      .catch(error => {
+        console.warn('[Wework] Runtime Goal snapshot sync failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+      })
+  })
   const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
     const normalizedTitle = title.trim()
     if (!normalizedTitle) return
@@ -1650,6 +1671,7 @@ export function WorkbenchProvider({
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
             syncRuntimeTaskSnapshot(address)
+            syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1690,6 +1712,7 @@ export function WorkbenchProvider({
       lifecycleStore,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,

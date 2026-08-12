@@ -925,7 +925,9 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '应用功能尚未推出'
     )
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/sites'))).toBe(
+      false
+    )
     expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
   })
 

@@ -23,11 +23,12 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
-        CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
+        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
+        CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
     config::device::ConnectionConfig,
     hooks::{
@@ -44,6 +45,7 @@ use crate::{
 
 mod archives;
 mod automation_rpc;
+mod claude_turns;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -301,6 +303,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
     codex_app_server: CodexAppServerClient,
+    claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
@@ -390,6 +393,7 @@ impl RuntimeWorkRpcHandler {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
+            claude_process_engine: AgentProcessEngine::new(AgentCommandPlanner::from_env()),
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
