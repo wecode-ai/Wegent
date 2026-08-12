@@ -15,25 +15,21 @@ export function mergeRuntimeConversationTurns(
   const localIndexByTurnId = new Map(
     localTurns.flatMap((turn, index) => (turn.id === null ? [] : [[turn.id, index] as const]))
   )
-  const localOptimisticIndexByClientUserMessageId = new Map(
+  const localIndexByClientUserMessageId = new Map(
     localTurns.flatMap((turn, index) =>
-      turn.id === null && turn.clientUserMessageId
-        ? [[turn.clientUserMessageId, index] as const]
-        : []
+      runtimeConversationTurnClientUserMessageIds(turn).map(id => [id, index] as const)
     )
   )
   const emittedLocalIndexes = new Set<number>()
   const snapshotUserMessageIds = new Set(
-    snapshotTurns.flatMap(turn =>
-      turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : []))
-    )
+    snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds)
   )
   const merged = snapshotTurns.map(snapshotTurn => {
     const localIndex =
       (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
-      (snapshotTurn.clientUserMessageId
-        ? localOptimisticIndexByClientUserMessageId.get(snapshotTurn.clientUserMessageId)
-        : undefined)
+      runtimeConversationTurnClientUserMessageIds(snapshotTurn)
+        .map(id => localIndexByClientUserMessageId.get(id))
+        .find((index): index is number => index !== undefined)
     if (localIndex === undefined) return snapshotTurn
     emittedLocalIndexes.add(localIndex)
     return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn)
@@ -42,9 +38,7 @@ export function mergeRuntimeConversationTurns(
   localTurns.forEach((turn, index) => {
     if (emittedLocalIndexes.has(index)) return
     if (
-      turn.id === null &&
-      turn.clientUserMessageId &&
-      snapshotUserMessageIds.has(turn.clientUserMessageId)
+      runtimeConversationTurnClientUserMessageIds(turn).some(id => snapshotUserMessageIds.has(id))
     ) {
       return
     }
@@ -53,6 +47,15 @@ export function mergeRuntimeConversationTurns(
     }
   })
   return orderRuntimeConversationTurns(merged)
+}
+
+function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTurn): string[] {
+  return Array.from(
+    new Set([
+      ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+      ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+    ])
+  )
 }
 
 export function reduceRuntimeConversationTurns(
@@ -321,12 +324,18 @@ function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  const localById = new Map(localItems.map(item => [item.id, item]))
+  const reconciledLocalItems = localItems.filter(
+    localItem =>
+      !snapshotItems.some(snapshotItem =>
+        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
+      )
+  )
+  const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item)
   )
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
-  const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
+  const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
   for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
     const snapshotItem = mergedSnapshotItems[snapshotIndex]
     if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
@@ -353,20 +362,30 @@ function mergeRuntimeConversationItems(
   return mergedLocalItems
 }
 
+function isEquivalentAssistantTextRepresentation(
+  local: RuntimeConversationItem,
+  snapshot: RuntimeConversationItem
+): boolean {
+  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  const localContent = assistantTextRepresentationContent(local)
+  const snapshotContent = assistantTextRepresentationContent(snapshot)
+  return localContent !== undefined && localContent === snapshotContent
+}
+
+function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {
+  if (item.type === 'assistant_text') return item.content
+  return item.type === 'block' && item.block.type === 'text' ? item.block.content : undefined
+}
+
 function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
   snapshot: RuntimeConversationItem
 ): RuntimeConversationItem {
   if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
-  const localComplete = local.block.status === 'done' || local.block.status === 'error'
-  const snapshotComplete = snapshot.block.status === 'done' || snapshot.block.status === 'error'
-  if (!localComplete || !snapshotComplete || local.block.completedAt === undefined) {
-    return snapshot
-  }
 
   return {
     ...snapshot,
-    block: preserveCompletedProcessingBlockTiming(local.block, snapshot.block),
+    block: preserveProcessingBlockTiming(local.block, snapshot.block),
   }
 }
 
@@ -612,7 +631,7 @@ function upsertBlocks(
       type: 'block',
       block:
         index >= 0 && next[index]?.type === 'block'
-          ? preserveCompletedProcessingBlockTiming(next[index].block, block)
+          ? preserveProcessingBlockTiming(next[index].block, block)
           : block,
     }
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
@@ -761,7 +780,15 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  let merged = { ...block, ...updates } as ProcessingBlock
+  const { durationMs, ...directUpdates } = updates
+  let merged = {
+    ...block,
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs),
+    }),
+  } as ProcessingBlock
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }
@@ -773,24 +800,31 @@ function mergeProcessingBlockUpdate(
   return merged
 }
 
-function preserveCompletedProcessingBlockTiming(
+function preserveProcessingBlockTiming(
   previous: ProcessingBlock,
   next: ProcessingBlock
 ): ProcessingBlock {
   const previousComplete = previous.status === 'done' || previous.status === 'error'
   const nextComplete = next.status === 'done' || next.status === 'error'
-  if (
-    !previousComplete ||
-    !nextComplete ||
-    previous.completedAt === undefined ||
-    next.completedAt !== undefined
-  ) {
-    return next
+  const createdAt = previousComplete ? next.createdAt : previous.createdAt
+  if (previousComplete && nextComplete && previous.completedAt !== undefined) {
+    if (next.completedAt === undefined) {
+      return {
+        ...next,
+        createdAt: previous.createdAt,
+        completedAt: previous.completedAt,
+        durationMs: next.durationMs ?? previous.durationMs,
+      } as ProcessingBlock
+    }
   }
+  if (createdAt === next.createdAt) return next
   return {
     ...next,
-    createdAt: previous.createdAt,
-    completedAt: previous.completedAt,
+    createdAt,
+    ...(nextComplete &&
+      next.durationMs !== undefined && {
+        completedAt: createdAt + next.durationMs,
+      }),
   } as ProcessingBlock
 }
 

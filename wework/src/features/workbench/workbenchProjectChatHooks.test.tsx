@@ -78,6 +78,229 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
+  test('refreshes the selected model metadata while preserving supported options', async () => {
+    const originalModel: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      displayName: 'API Sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['low', 'high'],
+          defaultReasoningEffort: 'low',
+        },
+      },
+    }
+    const refreshedModel: UnifiedModel = {
+      ...originalModel,
+      displayName: 'API Sol Updated',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['minimal', 'high', 'max'],
+          defaultReasoningEffort: 'max',
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [originalModel] })
+        .mockResolvedValueOnce({ data: [refreshedModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: originalModel.name,
+          modelType: originalModel.type,
+          options: { reasoning: 'high' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(originalModel))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+    expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
+  test('falls back to the refreshed model default when the selected option is removed', async () => {
+    const originalModel: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['low', 'high'],
+          defaultReasoningEffort: 'low',
+        },
+      },
+    }
+    const refreshedModel: UnifiedModel = {
+      ...originalModel,
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['minimal', 'max'],
+          defaultReasoningEffort: 'max',
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [originalModel] })
+        .mockResolvedValueOnce({ data: [refreshedModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: originalModel.name,
+          modelType: originalModel.type,
+          options: { reasoning: 'high' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' }))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'max' })
+    expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
+  test('falls back to the first refreshed option when the configured default is invalid', async () => {
+    const originalModel: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['high'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const refreshedModel: UnifiedModel = {
+      ...originalModel,
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['minimal', 'max'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [originalModel] })
+        .mockResolvedValueOnce({ data: [refreshedModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: originalModel.name,
+          modelType: originalModel.type,
+          options: { reasoning: 'high' },
+        },
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' }))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'minimal' })
+  })
+
+  test('clears removed controls for every cached model selection scope', async () => {
+    const originalModel: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['minimal', 'max'],
+          defaultReasoningEffort: 'minimal',
+        },
+      },
+    }
+    const refreshedModel: UnifiedModel = {
+      ...originalModel,
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: [],
+        },
+      },
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [originalModel] })
+        .mockResolvedValueOnce({ data: [refreshedModel] }),
+    }
+    const { result, rerender } = renderHook(
+      ({ scopeKey }: { scopeKey: string }) =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          scopeKey,
+          persistSelection: false,
+        }),
+      { initialProps: { scopeKey: 'blank:1' } }
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([originalModel]))
+    act(() => {
+      result.current.setSelectionForScope('blank:1', originalModel, { reasoning: 'max' })
+      result.current.setSelectionForScope('runtime:task-1', originalModel, { reasoning: 'minimal' })
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
+    expect(result.current.selectedModelOptions).toEqual({})
+
+    rerender({ scopeKey: 'runtime:task-1' })
+
+    expect(result.current.selectedModel).toBe(refreshedModel)
+    expect(result.current.selectedModelOptions).toEqual({})
+  })
+
   test('reloads models after a background cloud model refresh', async () => {
     const localModel: UnifiedModel = { name: 'local-model', type: 'runtime' }
     const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }

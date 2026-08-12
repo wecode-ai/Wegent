@@ -10,6 +10,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationPresenceResponse,
+  RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
@@ -256,6 +258,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeGlobalIMNotificationUpdateRequest
     ): Promise<RuntimeIMNotificationSettingsResponse> {
       return client.put('/runtime-work/im-notifications/global', data)
+    },
+    updateImNotificationPresence(
+      data: RuntimeIMNotificationPresenceUpdateRequest
+    ): Promise<RuntimeIMNotificationPresenceResponse> {
+      return client.put('/runtime-work/im-notifications/presence', data)
     },
     subscribeRuntimeTaskNotifications(
       data: RuntimeTaskIMNotificationSubscriptionRequest

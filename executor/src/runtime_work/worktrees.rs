@@ -136,7 +136,7 @@ impl WorktreeManager {
         Self::new(runtime_work_dir().join("worktrees.json"))
     }
 
-    fn new(state_path: PathBuf) -> Self {
+    pub(crate) fn new(state_path: PathBuf) -> Self {
         Self {
             state_path,
             mutation_lock: Arc::new(Mutex::new(())),
@@ -145,6 +145,10 @@ impl WorktreeManager {
 
     pub fn settings(&self) -> WorktreeSettings {
         self.load().settings
+    }
+
+    pub fn is_managed_path(&self, path: &Path) -> bool {
+        ensure_managed_path(path, &self.load().known_roots).is_ok()
     }
 
     pub fn update_settings(
@@ -295,6 +299,7 @@ impl WorktreeManager {
         record.last_error = None;
         state.records.insert(key, record.clone());
         self.save(&state)?;
+        remove_empty_worktree_container(path)?;
         Ok(record)
     }
 
@@ -513,6 +518,31 @@ fn remove_git_worktree(path: &Path) -> Result<(), String> {
     git_output(path, &["worktree", "remove", "--force", value], None).map(|_| ())
 }
 
+fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    remove_empty_directory(parent)
+}
+
+fn remove_empty_directory(path: &Path) -> Result<(), String> {
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "Failed to remove empty worktree directory {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -569,7 +599,8 @@ fn discover_worktrees(state: &mut WorktreeState) {
             continue;
         };
         for id in ids.flatten().filter(|entry| entry.path().is_dir()) {
-            let Ok(repositories) = fs::read_dir(id.path()) else {
+            let id_path = id.path();
+            let Ok(repositories) = fs::read_dir(&id_path) else {
                 continue;
             };
             for repository in repositories.flatten().filter(|entry| entry.path().is_dir()) {
@@ -585,6 +616,7 @@ fn discover_worktrees(state: &mut WorktreeState) {
                     ..ManagedWorktree::default()
                 });
             }
+            let _ = remove_empty_directory(&id_path);
         }
     }
     for record in state.records.values_mut() {
@@ -1005,6 +1037,10 @@ mod tests {
         let deleted = manager.delete(&path, true).unwrap();
         assert_eq!(deleted.state, "restorable");
         assert!(!path.exists());
+        assert!(
+            !path.parent().unwrap().exists(),
+            "deleting a worktree must remove its empty runtime container"
+        );
 
         manager.restore(&path).unwrap();
         assert_eq!(
@@ -1014,6 +1050,29 @@ mod tests {
         assert_eq!(
             fs::read_to_string(path.join("untracked.txt")).unwrap(),
             "new\n"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discovery_removes_legacy_empty_worktree_containers() {
+        let root = test_directory("wegent-empty-worktree-container-test");
+        let managed_root = root.join("managed");
+        let empty_container = managed_root.join("stale-task");
+        fs::create_dir_all(&empty_container).unwrap();
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(managed_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+
+        manager.list(&[]).unwrap();
+
+        assert!(
+            !empty_container.exists(),
+            "discovering worktrees must remove legacy empty runtime containers"
         );
         let _ = fs::remove_dir_all(root);
     }

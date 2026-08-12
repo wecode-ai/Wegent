@@ -112,6 +112,63 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('reconciles a provisional live turn with the canonical transcript turn', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-from-start-response',
+        clientUserMessageId: 'client-user-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Prompt'),
+          },
+          {
+            id: 'live-process',
+            type: 'block',
+            block: {
+              id: 'live-process',
+              subtaskId: 'turn-from-start-response',
+              type: 'text',
+              content: 'Working',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-from-transcript',
+        clientUserMessageId: 'client-user-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-1', 'Prompt'),
+              subtaskId: 'turn-from-transcript',
+              turnId: 'turn-from-transcript',
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'turn-from-transcript',
+      clientUserMessageId: 'client-user-1',
+      status: 'streaming',
+    })
+    expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'live-process'])
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [
@@ -675,6 +732,54 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('reconciles legacy assistant text with the resumed live text block', () => {
+    const content = 'Continue with the existing beta conversation.'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'live-message-1',
+            type: 'block',
+            block: {
+              id: 'live-message-1',
+              subtaskId: 'turn-1',
+              type: 'text',
+              content,
+              status: 'done',
+              createdAt: 2,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'legacy-assistant-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toEqual(snapshot[0].items)
+    expect(projectRuntimeConversationTurns(merged)).toEqual([
+      expect.objectContaining({
+        content,
+        blocks: undefined,
+      }),
+    ])
+  })
+
   test('keeps realtime tail items temporarily missing from a full Codex snapshot', () => {
     const local: RuntimeConversationTurn[] = [
       {
@@ -984,6 +1089,47 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].status).toBe('done')
   })
 
+  test('preserves the live tool start when a snapshot falls back to the turn start', () => {
+    const localBlock: ProcessingBlock = {
+      id: 'tool-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'cargo test' },
+      status: 'streaming',
+      createdAt: 1_786_442_820_000,
+    }
+    const snapshotBlock: ProcessingBlock = {
+      ...localBlock,
+      createdAt: 1_786_440_000_000,
+    }
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: localBlock.id, type: 'block', block: localBlock }],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: snapshotBlock.id, type: 'block', block: snapshotBlock }],
+        status: 'streaming',
+      },
+    ]
+
+    const mergedBlock = mergeRuntimeConversationTurns(local, snapshot)[0].items[0]
+
+    expect(mergedBlock).toEqual({
+      id: localBlock.id,
+      type: 'block',
+      block: {
+        ...snapshotBlock,
+        createdAt: localBlock.createdAt,
+      },
+    })
+  })
+
   test('preserves completed tool timing when a conversation snapshot is restored', () => {
     const localBlock: ProcessingBlock = {
       id: 'tool-1',
@@ -1028,6 +1174,50 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('applies snapshot duration to the preserved live tool start', () => {
+    const localBlock: ProcessingBlock = {
+      id: 'tool-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'bash',
+      status: 'streaming',
+      createdAt: 1_786_458_436_531,
+    }
+    const snapshotBlock: ProcessingBlock = {
+      ...localBlock,
+      status: 'done',
+      createdAt: 1_786_458_436_134,
+      completedAt: 1_786_458_451_000,
+      durationMs: 14_866,
+    }
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: localBlock.id, type: 'block', block: localBlock }],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: snapshotBlock.id, type: 'block', block: snapshotBlock }],
+        status: 'done',
+      },
+    ]
+
+    const mergedBlock = mergeRuntimeConversationTurns(local, snapshot)[0].items[0]
+
+    expect(mergedBlock).toEqual({
+      id: localBlock.id,
+      type: 'block',
+      block: {
+        ...snapshotBlock,
+        createdAt: localBlock.createdAt,
+        completedAt: localBlock.createdAt + snapshotBlock.durationMs!,
+      },
+    })
+  })
+
   test('records tool completion time in runtime conversation state', () => {
     vi.useFakeTimers()
     try {
@@ -1068,6 +1258,43 @@ describe('runtimeConversationTurns', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  test('uses the runtime tool duration when completing a streamed block', () => {
+    const createdAt = 1_780_000_001_250
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'tool-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'streaming',
+        createdAt,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'tool-1',
+      updates: {
+        status: 'done',
+        completedAt: createdAt + 3_700,
+        durationMs: 3_500,
+      },
+    })
+
+    expect(turns[0].items[0]).toEqual(
+      expect.objectContaining({
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt,
+          completedAt: createdAt + 3_500,
+        }),
+      })
+    )
   })
 
   test('keeps a live Codex turn failure when the provider snapshot omits the failure', () => {

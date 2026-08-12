@@ -81,6 +81,8 @@ class LoopItemResponse(BaseModel):
     approval: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
+    execution_error: str | None = None
+    automation: dict[str, Any] | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -152,6 +154,16 @@ class LoopItemResponse(BaseModel):
                     value.get("execution_note")
                     if value.get("execution_note") is not None
                     else metadata.get("execution_note")
+                ),
+                "execution_error": (
+                    value.get("execution_error")
+                    if value.get("execution_error") is not None
+                    else metadata.get("execution_error")
+                ),
+                "automation": (
+                    value.get("automation")
+                    if value.get("automation") is not None
+                    else metadata.get("automation")
                 ),
             }
         return value

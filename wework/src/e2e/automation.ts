@@ -23,11 +23,19 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import {
+  getRuntimeConversationCacheStats,
+  getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
+import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import type { LocalHarnessId } from '@/lib/local-harness'
+import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -95,7 +103,9 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
-  const value = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
+  const value =
+    getDesktopE2ERuntimeConfig().controlUrl ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
   return value ? value.replace(/\/+$/, '') : null
 }
 
@@ -230,13 +240,20 @@ function createBridge(): WeworkAutomationBridge {
 }
 
 async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl =
+    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
-  const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
+  const modelServerUrl =
+    runtimeConfig.modelServerUrl ??
+    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
+    backendUrl
   const localModelsCatalogReady =
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
-    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
+    runtimeConfig.cloudToken ??
+    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
+    'wework-desktop-e2e-cloud-token'
 
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
@@ -338,6 +355,9 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  if (isTauriRuntime()) {
+    await loadDesktopE2ERuntimeConfig()
+  }
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
@@ -842,6 +862,42 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       return ''
+    case 'reconcileLegacyRuntimeAssistantSnapshot': {
+      const payload = JSON.parse(command.value ?? '{}') as {
+        address: RuntimeTaskAddress
+        content: string
+        itemId: string
+      }
+      const targetMessage = getRuntimeConversationMessages(payload.address)
+        .toReversed()
+        .find(
+          message =>
+            message.role === 'assistant' &&
+            (message.content === payload.content ||
+              message.blocks?.some(
+                block => block.type === 'text' && block.content === payload.content
+              ))
+        )
+      const turnId = targetMessage?.turnId ?? targetMessage?.subtaskId
+      if (!turnId) {
+        throw new Error('Unable to find the runtime turn for the legacy assistant snapshot')
+      }
+      reconcileRuntimeConversationSnapshot(payload.address, [
+        {
+          id: turnId,
+          items: [
+            {
+              id: payload.itemId,
+              type: 'assistant_text',
+              content: payload.content,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          status: 'done',
+        },
+      ])
+      return turnId
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
@@ -858,6 +914,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         params: { proxyUrl: proxyUrl || null },
       })
       return JSON.stringify(config)
+    }
+    case 'setLocalHarnessExecutablePaths': {
+      const executablePaths = JSON.parse(command.value ?? '{}') as Partial<
+        Record<LocalHarnessId, string>
+      >
+      const preferences = await getAppPreferences()
+      const updated = await updateAppPreferences({
+        localHarnesses: preferences.localHarnesses.map(preference => ({
+          ...preference,
+          executablePath: executablePaths[preference.id]?.trim() || null,
+        })),
+      })
+      return JSON.stringify(updated.localHarnesses)
     }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
@@ -1388,6 +1457,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 }
 
 function installDesktopControlClient() {
+  if (!isTauriRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getCurrentWindow().label
   if (

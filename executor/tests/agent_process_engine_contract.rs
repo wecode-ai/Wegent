@@ -61,6 +61,7 @@ impl Drop for EnvGuard {
 #[tokio::test]
 async fn agent_process_engine_runs_planned_claude_command_and_parses_stream_output() {
     let _lock = env_lock().lock().await;
+    let workspace_dir = unique_dir("claude-planned-command-workspace");
     let fake_claude = write_fake_executable(
         "fake-claude",
         r#"#!/bin/sh
@@ -70,6 +71,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
+        project_workspace_path: Some(workspace_dir.display().to_string()),
         prompt: json!("run"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -90,6 +92,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 #[tokio::test]
 async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs() {
     let _lock = env_lock().lock().await;
+    let workspace_dir = unique_dir("claude-no-space-mcp-workspace");
     let args_dir = unique_dir("claude-no-space-mcp");
     fs::create_dir_all(&args_dir).unwrap();
     let args_file = args_dir.join("args.txt");
@@ -106,6 +109,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
+        project_workspace_path: Some(workspace_dir.display().to_string()),
         prompt: json!("run"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -138,6 +142,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 #[tokio::test]
 async fn agent_process_engine_applies_claude_specific_process_timeout() {
     let _lock = env_lock().lock().await;
+    let workspace_dir = unique_dir("claude-timeout-workspace");
     let _legacy_timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");
     let _timeout = EnvGuard::set("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS", "1");
     let fake_claude = write_fake_executable(
@@ -149,6 +154,7 @@ sleep 5
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
+        project_workspace_path: Some(workspace_dir.display().to_string()),
         prompt: json!("run"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),

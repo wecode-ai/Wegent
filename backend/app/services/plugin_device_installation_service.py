@@ -220,8 +220,6 @@ class PluginDeviceInstallationService:
         row.desired_release_id = release_id
         if state == "installed":
             row.actual_release_id = release_id
-        elif state != "failed":
-            row.actual_release_id = 0
         row.state = state
         row.error_code = "PLUGIN_SYNC_FAILED" if state == "failed" else ""
         row.error_message = error_message or ""
@@ -281,8 +279,6 @@ class PluginDeviceInstallationService:
             row.state = "pending"
             row.error_code = ""
             row.error_message = ""
-            if row.actual_release_id != release_id:
-                row.actual_release_id = 0
             changed += 1
         db.commit()
         return changed

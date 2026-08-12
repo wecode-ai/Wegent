@@ -6,10 +6,12 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
+import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -32,10 +34,13 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 import {
+  findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
   removeRuntimeTasks,
   runtimeWorkContainsTask,
+  updateRuntimeWorkTask,
+  updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 import type { RefreshWorkLists } from './workbenchContextTypes'
@@ -45,6 +50,29 @@ import {
   writeCachedRemoteRuntimeWork,
 } from './remoteRuntimeWorkCache'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+
+/**
+ * Resolve the standalone device after a device or runtime-work refresh.
+ *
+ * While a standalone workspace is open its device must be preserved verbatim:
+ * the workspace may belong to a cloud or remote device that the standalone-task
+ * preference intentionally excludes. Re-picking a local device here would
+ * render a phantom local project row next to the real remote workspace.
+ */
+function resolveStandaloneDeviceIdForRefresh(
+  devices: DeviceInfo[],
+  standaloneDeviceId: string | null | undefined,
+  standaloneWorkspacePath: string | null | undefined
+): string | null {
+  if (standaloneWorkspacePath && standaloneDeviceId) {
+    return standaloneDeviceId
+  }
+  return getPreferredStandaloneDeviceId(devices, standaloneDeviceId)
+}
+
+function localDeviceSnapshot(devices: DeviceInfo[]): DeviceInfo[] {
+  return devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
+}
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
@@ -191,6 +219,9 @@ export function useWorkbenchDataRefresh({
   const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
   const runtimeWorkRef = useRef(state.runtimeWork)
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
+  const runtimeTaskTitleOverridesRef = useRef(
+    new Map<string, { address: RuntimeTaskAddress; title: string }>()
+  )
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   const removedRuntimeProjectsRef = useRef<
@@ -215,6 +246,22 @@ export function useWorkbenchDataRefresh({
     setCloudRuntimeState(next)
   }, [])
 
+  const applyRuntimeTaskTitleOverrides = useCallback(
+    (runtimeWork: RuntimeWorkListResponse, confirmExecutorTitles = false) => {
+      let next = runtimeWork
+      runtimeTaskTitleOverridesRef.current.forEach((override, key) => {
+        const task = findRuntimeTask(runtimeWork, override.address)
+        if (confirmExecutorTitles && task?.title === override.title) {
+          runtimeTaskTitleOverridesRef.current.delete(key)
+          return
+        }
+        next = updateRuntimeWorkTaskTitle(next, override.address, override.title) ?? next
+      })
+      return next
+    },
+    []
+  )
+
   useEffect(() => {
     cloudBackgroundApiRef.current = services.cloudBackgroundApi
     runtimeWorkRef.current = state.runtimeWork
@@ -226,6 +273,7 @@ export function useWorkbenchDataRefresh({
       userId: user.id,
       runtimeWork: initialCachedRemoteRuntimeWork,
     }
+    runtimeTaskTitleOverridesRef.current.clear()
     archivedRuntimeTaskAddressesRef.current = []
     removedRuntimeProjectsRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
@@ -315,6 +363,7 @@ export function useWorkbenchDataRefresh({
       options?: {
         projects: ProjectWithTasks[]
         standaloneDeviceId: string | null
+        standaloneWorkspacePath?: string | null
         trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
         isCancelled?: () => boolean
       }
@@ -385,14 +434,16 @@ export function useWorkbenchDataRefresh({
           devicesResult?.status === 'fulfilled'
         ) {
           const devices = resolveDeviceListWithCache(
-            mergeDeviceLists(baseDevices, devicesResult.value)
+            mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
+            { useCacheFallback: false }
           )
           dispatch({
             type: 'devices_refreshed',
             devices,
-            standaloneDeviceId: getPreferredStandaloneDeviceId(
+            standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
               devices,
-              options?.standaloneDeviceId ?? null
+              options?.standaloneDeviceId ?? null,
+              options?.standaloneWorkspacePath
             ),
           })
         }
@@ -415,21 +466,25 @@ export function useWorkbenchDataRefresh({
           return
         }
 
-        const latestLocalRuntimeWork = localRuntimeWorkRef.current ?? baseRuntimeWork
+        const latestLocalRuntimeWork = applyRuntimeTaskTitleOverrides(
+          localRuntimeWorkRef.current ?? baseRuntimeWork
+        )
         const filteredRuntimeWorkResult =
           runtimeWorkResult?.status === 'fulfilled'
             ? {
                 status: 'fulfilled' as const,
-                value: filterRemovedRuntimeProjects(runtimeWorkResult.value),
+                value: applyRuntimeTaskTitleOverrides(
+                  filterRemovedRuntimeProjects(runtimeWorkResult.value)
+                ),
               }
             : runtimeWorkResult
         if (filteredRuntimeWorkResult?.status === 'fulfilled') {
           releaseConfirmedArchivedRuntimeTasks(
             mergeRuntimeWorkLists(latestLocalRuntimeWork, filteredRuntimeWorkResult.value, {
-              devices: [
-                ...baseDevices,
-                ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
-              ],
+              devices:
+                devicesResult?.status === 'fulfilled'
+                  ? [...localDeviceSnapshot(baseDevices), ...devicesResult.value]
+                  : baseDevices,
             })
           )
         }
@@ -467,7 +522,11 @@ export function useWorkbenchDataRefresh({
         updateCloudRuntimeState(nextCloudState)
 
         const devices = resolveDeviceListWithCache(
-          selectVisibleDevices(baseDevices, nextCloudState)
+          selectVisibleDevices(
+            devicesResult?.status === 'fulfilled' ? localDeviceSnapshot(baseDevices) : baseDevices,
+            nextCloudState
+          ),
+          { useCacheFallback: devicesResult?.status !== 'fulfilled' }
         )
         const runtimeWork = selectVisibleRuntimeWork(
           latestLocalRuntimeWork,
@@ -480,9 +539,10 @@ export function useWorkbenchDataRefresh({
           projects: options?.projects ?? [],
           devices,
           runtimeWork,
-          standaloneDeviceId: getPreferredStandaloneDeviceId(
+          standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
             devices,
-            options?.standaloneDeviceId ?? null
+            options?.standaloneDeviceId ?? null,
+            options?.standaloneWorkspacePath
           ),
         })
       } finally {
@@ -493,6 +553,7 @@ export function useWorkbenchDataRefresh({
       }
     },
     [
+      applyRuntimeTaskTitleOverrides,
       dispatch,
       filterRemovedRuntimeProjects,
       selectVisibleRuntimeWork,
@@ -530,7 +591,9 @@ export function useWorkbenchDataRefresh({
       }
 
       const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
-      const devices = resolveDeviceListWithCache(rawDevices)
+      const devices = resolveDeviceListWithCache(rawDevices, {
+        useCacheFallback: devicesResult.status !== 'fulfilled',
+      })
       const standaloneDeviceId = getRememberedStandaloneDeviceId(user, devices)
 
       // Do not force-clear currentProject / runtimeWork here. CLI `wework <path>` may
@@ -552,7 +615,10 @@ export function useWorkbenchDataRefresh({
         if (cancelled) return
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'
-            ? filterRemovedRuntimeProjects(runtimeWorkResult.value)
+            ? applyRuntimeTaskTitleOverrides(
+                filterRemovedRuntimeProjects(runtimeWorkResult.value),
+                true
+              )
             : EMPTY_RUNTIME_WORK
         if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
@@ -590,6 +656,7 @@ export function useWorkbenchDataRefresh({
       window.clearTimeout(slowTimer)
     }
   }, [
+    applyRuntimeTaskTitleOverrides,
     dispatch,
     executorClient,
     filterRemovedRuntimeProjects,
@@ -609,12 +676,13 @@ export function useWorkbenchDataRefresh({
         }),
         executorClient.runtime.listRuntimeWork().catch(() => undefined),
       ])
-      const devices = resolveDeviceListWithCache(devicesResult)
+      const devices = resolveDeviceListWithCache(devicesResult, { useCacheFallback: false })
       const visibleDevices = resolveDeviceListWithCache(
-        selectVisibleDevices(devices, cloudRuntimeStateRef.current)
+        selectVisibleDevices(devices, cloudRuntimeStateRef.current),
+        { useCacheFallback: false }
       )
       const filteredRuntimeWorkResult = runtimeWorkResult
-        ? filterRemovedRuntimeProjects(runtimeWorkResult)
+        ? applyRuntimeTaskTitleOverrides(filterRemovedRuntimeProjects(runtimeWorkResult), true)
         : undefined
       if (filteredRuntimeWorkResult) {
         localRuntimeWorkRef.current = filteredRuntimeWorkResult
@@ -641,20 +709,23 @@ export function useWorkbenchDataRefresh({
         projects: state.projects,
         devices: visibleDevices,
         runtimeWork,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(
+        standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
           visibleDevices,
-          state.standaloneDeviceId
+          state.standaloneDeviceId,
+          state.standaloneWorkspacePath
         ),
       })
       if (options?.syncCloud !== false) {
         void refreshCloudBackgroundData(devices, localRuntimeWork, {
           projects: state.projects,
           standaloneDeviceId: state.standaloneDeviceId,
+          standaloneWorkspacePath: state.standaloneWorkspacePath,
           trigger: 'manual-refresh',
         }).catch(() => undefined)
       }
     },
     [
+      applyRuntimeTaskTitleOverrides,
       dispatch,
       executorClient,
       filterRemovedRuntimeProjects,
@@ -666,6 +737,7 @@ export function useWorkbenchDataRefresh({
       state.projects,
       state.runtimeWork,
       state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
     ]
   )
 
@@ -683,7 +755,7 @@ export function useWorkbenchDataRefresh({
           throw error
         }
       }
-      return resolveDeviceListWithCache(devices)
+      return resolveDeviceListWithCache(devices, { useCacheFallback: false })
     },
     [executorClient]
   )
@@ -709,10 +781,14 @@ export function useWorkbenchDataRefresh({
       }
       cachedRemoteRuntimeWorkRef.current = {
         ...cachedRemoteRuntimeWorkRef.current,
-        runtimeWork: removeRuntimeProject(
-          cachedRemoteRuntimeWorkRef.current.runtimeWork,
-          projectId,
-          normalizedWorkspace
+        runtimeWork: writeCachedRemoteRuntimeWork(
+          user.id,
+          removeRuntimeProject(
+            cachedRemoteRuntimeWorkRef.current.runtimeWork,
+            projectId,
+            normalizedWorkspace
+          ),
+          devicesRef.current
         ),
       }
       updateCloudRuntimeState(
@@ -723,7 +799,7 @@ export function useWorkbenchDataRefresh({
         )
       )
     },
-    [updateCloudRuntimeState]
+    [updateCloudRuntimeState, user.id]
   )
 
   const clearRuntimeProjectRemoval = useCallback(
@@ -746,11 +822,16 @@ export function useWorkbenchDataRefresh({
       dispatch({
         type: 'devices_refreshed',
         devices,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
+        standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
+          devices,
+          state.standaloneDeviceId,
+          state.standaloneWorkspacePath
+        ),
       })
       void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
         projects: state.projects,
         standaloneDeviceId: state.standaloneDeviceId,
+        standaloneWorkspacePath: state.standaloneWorkspacePath,
         trigger: 'manual-refresh',
       }).catch(() => undefined)
     },
@@ -761,7 +842,59 @@ export function useWorkbenchDataRefresh({
       state.projects,
       state.runtimeWork,
       state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
     ]
+  )
+
+  const updateLocalRuntimeTaskTitle = useCallback((address: RuntimeTaskAddress, title: string) => {
+    runtimeTaskTitleOverridesRef.current.set(getRuntimeTaskRouteKey(address), {
+      address,
+      title,
+    })
+    localRuntimeWorkRef.current = updateRuntimeWorkTaskTitle(
+      localRuntimeWorkRef.current,
+      address,
+      title
+    )
+  }, [])
+
+  const updateLocalRuntimeTaskExecution = useCallback(
+    (address: RuntimeTaskAddress, running: boolean, status: string) => {
+      localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
+        running,
+        status,
+        optimistic: true,
+      })
+    },
+    []
+  )
+
+  const refreshRuntimeTask = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      const runtimeWork = applyRuntimeTaskTitleOverrides(
+        filterRemovedRuntimeProjects(await executorClient.runtime.listRuntimeWork()),
+        true
+      )
+      const task = findRuntimeTask(runtimeWork, address)
+      return task ? { ...task, optimistic: false } : null
+    },
+    [applyRuntimeTaskTitleOverrides, executorClient, filterRemovedRuntimeProjects]
+  )
+
+  const updateLocalRuntimeTaskSnapshot = useCallback(
+    (address: RuntimeTaskAddress, task: RuntimeTaskSummary) => {
+      localRuntimeWorkRef.current = updateRuntimeWorkTask(
+        localRuntimeWorkRef.current,
+        address,
+        task
+      )
+      dispatch({
+        type: 'runtime_task_snapshot_updated',
+        address,
+        task,
+      })
+    },
+    [dispatch]
   )
 
   const getRemoteDeviceStartupCommand =
@@ -779,7 +912,11 @@ export function useWorkbenchDataRefresh({
     markRuntimeProjectRemoved,
     clearRuntimeProjectRemoval,
     refreshWorkLists,
+    refreshRuntimeTask,
     refreshDevices,
+    updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   }
 }

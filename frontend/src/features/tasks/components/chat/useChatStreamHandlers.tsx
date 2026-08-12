@@ -126,6 +126,8 @@ export interface GenerateParams {
   ratio?: string
   /** Duration in seconds for video generation */
   duration?: number
+  /** Selected model-defined video generation mode */
+  generation_mode_id?: string
   /** Model name for video/image generation (for display in user message) */
   model?: string
   /** Image size for image generation (e.g., '2048x2048') */
@@ -672,7 +674,7 @@ export function useChatStreamHandlers({
           pendingContexts.push({
             id: -(pendingContexts.length + 1),
             context_type: 'external_knowledge',
-            name: ctx.name,
+            name: externalContext.ref.name ?? ctx.name,
             status: 'ready',
             external_provider: externalContext.ref.provider,
             external_mode: externalContext.ref.mode,

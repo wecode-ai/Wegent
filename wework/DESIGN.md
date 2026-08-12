@@ -474,6 +474,10 @@ The active-conversation capture is also normative:
   multiple markers may be active when content from multiple turns is visible.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- Runtime stream lifecycle events update only the affected task's in-memory
+  status. They must not refresh the whole sidebar work list. A generated task
+  title is authoritative over older list requests already in flight until the
+  local executor confirms the same title.
 - When opening, closing, or resizing a side panel reflows conversation content,
   preserve the reader's visible message or content anchor. Continue following
   the bottom only when the reader was already at the bottom before the reflow.
@@ -528,6 +532,8 @@ recipe closely:
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
+- selecting a model is a terminal menu action and closes the model selector;
+  reasoning and speed adjustments keep it open for consecutive changes;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -599,6 +605,8 @@ a preferred shape.
 Dialogs use:
 
 - a centered elevated surface with `20px` radius;
+- semantic theme surfaces such as `bg-background` or `bg-popover`; never
+  hardcode a light-only background for a theme-aware dialog;
 - `0.5px` semantic ring, light `lg` shadow, and subtle translucent blur;
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;
@@ -623,6 +631,13 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- Use the shared `Tooltip` component for compact controls instead of the native
+  HTML `title` attribute. Icon-only controls must keep a localized
+  `aria-label`; controls that currently have neither a visible label nor a
+  tooltip must add both where applicable.
+- Tooltips inside clipped sidebars, cards, tables, and panels must render
+  through the shared portal-based layer so ancestor `overflow` rules cannot
+  hide them.
 
 ### 6.7 Cards and empty states
 

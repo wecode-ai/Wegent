@@ -15,6 +15,11 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import {
+  RUNTIME_PERMISSION_MODE_OPTION,
+  runtimePermissionMode,
+} from '@/features/workbench/runtimePermissionMode'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -28,10 +33,11 @@ interface ComposerToolbarProps {
   onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
@@ -76,6 +82,7 @@ export function ComposerToolbar({
   onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
+  modelSelectorOverride,
   onFileSelect,
   planModeActive = false,
   onSetPlanMode,
@@ -169,30 +176,37 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
+        <PermissionModeSelector
+          value={runtimePermissionMode(selectedModelOptions)}
+          disabled={disabled}
+          iconOnly
+          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+        />
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
           onCompactContext={onCompactContext}
         />
-        {isModelSelectionReady ? (
-          <ModelSelector
-            models={models}
-            selectedModel={selectedModel}
-            selectedModelOptions={selectedModelOptions}
-            nextTurn={isStreaming && modelChangePending}
-            openSignal={modelSelectorOpenSignal}
-            onOpenChange={onModelSelectorOpenChange}
-            disabled={disabled}
-            onSelectModel={onSelectModel}
-            onSelectModelAndOptions={onSelectModelAndOptions}
-            onSelectModelOption={onSelectModelOption}
-            onBlockedModelSelect={onBlockedModelSelect}
-            buttonClassName="opacity-90 hover:opacity-100"
-            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
-          />
-        ) : (
-          <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
-        )}
+        {modelSelectorOverride ??
+          (isModelSelectionReady ? (
+            <ModelSelector
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              nextTurn={isStreaming && modelChangePending}
+              openSignal={modelSelectorOpenSignal}
+              onOpenChange={onModelSelectorOpenChange}
+              disabled={disabled}
+              onSelectModel={onSelectModel}
+              onSelectModelAndOptions={onSelectModelAndOptions}
+              onSelectModelOption={onSelectModelOption}
+              onBlockedModelSelect={onBlockedModelSelect}
+              buttonClassName="opacity-90 hover:opacity-100"
+              maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+            />
+          ) : (
+            <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+          ))}
         {showWorkspaceMenu && projectWorkMenuContext ? (
           <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}

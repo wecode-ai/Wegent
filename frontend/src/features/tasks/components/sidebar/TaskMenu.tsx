@@ -13,6 +13,7 @@ import {
   FolderIcon,
   PlusIcon,
   PencilIcon,
+  QueueListIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -36,6 +37,7 @@ interface TaskMenuProps {
   handleCopyTaskId: (taskId: number) => void
   handleDeleteTask: (taskId: number) => void
   onRename?: () => void
+  onSelectMultiple?: (taskId: number) => void
   isGroupChat?: boolean
 }
 
@@ -44,6 +46,7 @@ export default function TaskMenu({
   handleCopyTaskId,
   handleDeleteTask,
   onRename,
+  onSelectMultiple,
   isGroupChat = false,
 }: TaskMenuProps) {
   const { t } = useTranslation()
@@ -146,6 +149,19 @@ export default function TaskMenu({
               </>
             )}
           </DropdownMenuItem>
+
+          {!isGroupChat && onSelectMultiple && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                onSelectMultiple(taskId)
+              }}
+              data-testid={`task-bulk-delete-${taskId}`}
+            >
+              <QueueListIcon className="h-3.5 w-3.5 mr-2" />
+              {t('history:actions.bulk_delete')}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

@@ -4,7 +4,7 @@ sidebar_position: 21
 
 # Wework Plugin Marketplace Developer Guide
 
-For developers who need to build, migrate, or publish Wework plugins. See [Plugin Marketplace V2](./plugin-marketplace-v2.md) for architecture and operations, and [Codex Plugin Runtime](./wework-codex-plugins.md) for local runtime details.
+For developers who need to build, migrate, or publish Wework plugins. See [Plugin Marketplace V2](./plugin-marketplace-v2.md) for architecture and operations, [Codex Plugin Runtime](./wework-codex-plugins.md) for local runtime details, and [Plugin Icon Guide](./wework-plugin-icons.md) for light/dark logos.
 
 ## 1. Mental model
 
@@ -64,6 +64,9 @@ my-plugin/
     "shortDescription": "GitLab review and CI workflows",
     "developerName": "Wegent",
     "category": "Productivity",
+    "logo": "./assets/app-icon.svg",
+    "composerIcon": "./assets/app-icon.svg",
+    "logoDark": "./assets/app-icon-dark.svg",
     "defaultPrompt": [
       {
         "title": "Review MR",
@@ -79,6 +82,7 @@ Conventions:
 - `name` must be a slug: lowercase letters, digits, `.`, `_`, `-`, up to about 100 characters.
 - `version` must be SemVer such as `1.2.0`. Official publishing rejects versions older than the current latest.
 - `interface.displayName` / `shortDescription` appear on marketplace cards; describe user value, not implementation detail.
+- `interface.logo` / `logoDark` / `composerIcon` point at package `assets/`; provide `logoDark` when the light mark fails on dark UI. Details: [Plugin Icon Guide](./wework-plugin-icons.md).
 - A single-skill plugin may be listed as `listing_type=skill`.
 
 ### Example `SKILL.md`
@@ -237,6 +241,7 @@ Use this checklist when moving a GitHub, Codex, or Claude-ecosystem plugin into 
 - [ ] Make `name` a stable slug; avoid spaces and non-ASCII identifiers.
 - [ ] Add a SemVer `version`.
 - [ ] Fill `interface.displayName` / `shortDescription` for marketplace cards.
+- [ ] Add `interface.logo` (and preferably `composerIcon`); add `logoDark` when dark contrast is weak (see [Plugin Icon Guide](./wework-plugin-icons.md)).
 - [ ] Remove `.env`, secrets, sessions, private keys, and symlinks.
 - [ ] Drop unrelated repo files: `.git`, `node_modules`, caches, huge sample datasets.
 - [ ] For multi-plugin upstream ZIPs, keep only the selected plugin root.

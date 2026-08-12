@@ -156,6 +156,22 @@ class DocumentParser:
         ".gif": "image/gif",
         ".bmp": "image/bmp",
         ".webp": "image/webp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        # Video formats (binary, no text extraction)
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".m4v": "video/x-m4v",
+        # Audio formats (binary, no text extraction)
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
         # Archive formats (binary, no text extraction)
         ".zip": "application/zip",
     }
@@ -177,6 +193,20 @@ class DocumentParser:
         ".gif",
         ".bmp",
         ".webp",
+        ".tif",
+        ".tiff",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".webm",
+        ".mkv",
+        ".m4v",
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".aac",
+        ".ogg",
+        ".flac",
         # Archive formats (binary, no text extraction)
         ".zip",
     }
@@ -385,10 +415,34 @@ class DocumentParser:
                 text, truncation_info = self._parse_csv_smart(binary_data, max_length)
             elif extension == ".xmind":
                 text, truncation_info = self._parse_xmind_smart(binary_data, max_length)
-            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+            elif extension in [
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".gif",
+                ".bmp",
+                ".webp",
+                ".tif",
+                ".tiff",
+            ]:
                 text, image_base64, image_mime_type = self._parse_image(
                     binary_data, extension
                 )
+            elif extension in [
+                ".mp4",
+                ".mov",
+                ".avi",
+                ".webm",
+                ".mkv",
+                ".m4v",
+                ".mp3",
+                ".wav",
+                ".m4a",
+                ".aac",
+                ".ogg",
+                ".flac",
+            ]:
+                text = ""
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:
@@ -410,10 +464,34 @@ class DocumentParser:
                 text = self._parse_csv(binary_data)
             elif extension == ".xmind":
                 text = self._parse_xmind(binary_data)
-            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+            elif extension in [
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".gif",
+                ".bmp",
+                ".webp",
+                ".tif",
+                ".tiff",
+            ]:
                 text, image_base64, image_mime_type = self._parse_image(
                     binary_data, extension
                 )
+            elif extension in [
+                ".mp4",
+                ".mov",
+                ".avi",
+                ".webm",
+                ".mkv",
+                ".m4v",
+                ".mp3",
+                ".wav",
+                ".m4a",
+                ".aac",
+                ".ogg",
+                ".flac",
+            ]:
+                text = ""
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:

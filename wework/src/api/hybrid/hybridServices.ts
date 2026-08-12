@@ -1,9 +1,14 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { withAITableNotifications } from '@/api/aitable'
+import { invoke } from '@tauri-apps/api/core'
 import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
-import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
+import {
+  createAutomationApiFromIpc,
+  createLocalAppServices,
+  createRuntimeWorkApiFromIpc,
+} from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
@@ -23,18 +28,20 @@ import {
 } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
+  Attachment,
   ArchivedConversationItem,
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
   DeleteDeviceWorkspaceRequest,
   DeviceCommandResponse,
-  DeviceInfo,
+  DeviceInfo as RuntimeDeviceInfo,
   DeviceWorkspacePrepareRequest,
   RuntimeArchivedConversationCleanupResponse,
   RuntimeCompactRequest,
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -53,9 +60,39 @@ import type {
   UnifiedModelListResponse,
   User,
 } from '@/types/api'
+import type { Automation } from '@/types/automation'
+import type { DeviceInfo } from '@/types/devices'
 
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
+
+interface LocalFilePayload {
+  name: string
+  bytes: number[]
+}
+
+async function uploadLocalAttachmentToCloud(
+  attachment: Attachment,
+  uploadAttachment: (file: File) => Promise<Attachment>
+): Promise<Attachment> {
+  const localPath = attachment.local_path?.trim()
+  if (!localPath) {
+    throw new Error(`Attachment ${attachment.filename} has no local file path`)
+  }
+
+  const files = await invoke<LocalFilePayload[]>('read_dropped_files', {
+    paths: [localPath],
+  })
+  const payload = files[0]
+  if (!payload) {
+    throw new Error(`Attachment file is unavailable: ${attachment.filename}`)
+  }
+
+  const file = new File([Uint8Array.from(payload.bytes)], attachment.filename || payload.name, {
+    type: attachment.mime_type || 'application/octet-stream',
+  })
+  return uploadAttachment(file)
+}
 
 export interface HybridWorkbenchServicesOptions {
   backendUrl?: string
@@ -299,10 +336,16 @@ export function createHybridWorkbenchServices(
     token: options.token,
   })
   const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
+  const cloudAutomationApis = new Map<string, NonNullable<WorkbenchServices['automationApi']>>()
+  const automationDevices = new Map<string, string>()
   const localDeviceIds = new Set<string>([LOCAL_DEVICE_ID])
   const localRuntimeInstanceIds = new Set<string>()
   const localRuntimeProjectKeys = new Set<string>()
   let rememberedCloudDevices: DeviceInfo[] = []
+  let rememberedCloudDevicesRevision = 0
+  let nextCloudDevicesRevision = 1
+  let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
+  const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
   let rememberedCloudModels: UnifiedModel[] = []
   let cloudModelsLoaded = false
   let cloudModelsRequest: Promise<void> | null = null
@@ -320,8 +363,10 @@ export function createHybridWorkbenchServices(
       }
     })
   }
-  const rememberCloudDevices = (devices: DeviceInfo[]) => {
-    rememberedCloudDevices = mergeDeviceLists(rememberedCloudDevices, devices)
+  const rememberCloudDevices = (devices: DeviceInfo[], revision: number) => {
+    if (revision < rememberedCloudDevicesRevision) return
+    rememberedCloudDevices = devices
+    rememberedCloudDevicesRevision = revision
   }
   const loadCloudModelsInBackground = () => {
     if (cloudModelsLoaded || cloudModelsRequest) return
@@ -357,7 +402,7 @@ export function createHybridWorkbenchServices(
     work.chats.forEach(workspace => localDeviceIds.add(workspace.deviceId))
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
-    Boolean(deviceId && localDeviceIds.has(deviceId))
+    Boolean(deviceId && (deviceId === 'local-device' || localDeviceIds.has(deviceId)))
   const isKnownCloudDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
   const runtimeApiForCreate = async (deviceId?: string | null) => {
@@ -419,6 +464,37 @@ export function createHybridWorkbenchServices(
   }
   const runtimeApi = (deviceId?: string | null) =>
     isLocalDeviceId(deviceId) ? localServices.runtimeWorkApi! : cloudRuntimeApi(deviceId)
+  const automationApiForDevice = (deviceId?: string | null) => {
+    const logicalDeviceId = deviceId?.trim()
+    if (!logicalDeviceId || isLocalDeviceId(logicalDeviceId)) {
+      return localServices.automationApi!
+    }
+    const cached = cloudAutomationApis.get(logicalDeviceId)
+    if (cached) return cached
+    const request = <T>(
+      method: string,
+      params?: Record<string, unknown>,
+      requestDeviceId?: string
+    ) =>
+      cloudRuntimeIpc.request<T>(
+        method,
+        params,
+        runtimeDeviceIdFor(requestDeviceId ?? logicalDeviceId)
+      )
+    const api = createAutomationApiFromIpc(
+      request,
+      (method, params) => request(method, params as Record<string, unknown>, logicalDeviceId),
+      {
+        resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
+        cloudModelGateway,
+        user: options.user,
+      },
+      logicalDeviceId,
+      'cloud'
+    )
+    cloudAutomationApis.set(logicalDeviceId, api)
+    return api
+  }
   const deviceApi = (deviceId?: string | null) =>
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
@@ -430,7 +506,9 @@ export function createHybridWorkbenchServices(
     rememberLocalDevices(devices)
     return devices
   }
-  const listCloudDevices = async (signal?: AbortSignal) => {
+  const fetchCloudDevices = async (signal?: AbortSignal) => {
+    const revision = nextCloudDevicesRevision
+    nextCloudDevicesRevision += 1
     const devices = (
       signal
         ? await cloudServices.deviceApi.listDevices({ signal })
@@ -439,12 +517,29 @@ export function createHybridWorkbenchServices(
       device =>
         (isCloudDevice(device) || isRemoteDevice(device)) && !isAppDeviceRegistration(device)
     )
-    rememberCloudDevices(devices)
+    rememberCloudDevices(devices, revision)
     return devices
+  }
+  const listCloudDevices = (signal?: AbortSignal): Promise<DeviceInfo[]> => {
+    if (signal) {
+      const existing = cloudDevicesRequestsBySignal.get(signal)
+      if (existing) return existing
+      const request = fetchCloudDevices(signal)
+      cloudDevicesRequestsBySignal.set(signal, request)
+      return request
+    }
+    if (unscopedCloudDevicesRequest) return unscopedCloudDevicesRequest
+    const request = fetchCloudDevices().finally(() => {
+      if (unscopedCloudDevicesRequest === request) {
+        unscopedCloudDevicesRequest = null
+      }
+    })
+    unscopedCloudDevicesRequest = request
+    return request
   }
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeDeviceLists(await listLocalDevices(signal), rememberedCloudDevices)
-  const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
+  const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
     const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
     if (knownDevice) return knownDevice
 
@@ -760,7 +855,7 @@ export function createHybridWorkbenchServices(
       return runtimeApi(data.deviceId).restoreWorktree(data)
     },
     bindRuntimeTaskImSessions(data) {
-      return routeByAddress(data.address).bindRuntimeTaskImSessions(data)
+      return cloudServices.runtimeWorkApi!.bindRuntimeTaskImSessions(data)
     },
     getImNotificationSettings() {
       return cloudServices.runtimeWorkApi!.getImNotificationSettings()
@@ -768,11 +863,14 @@ export function createHybridWorkbenchServices(
     updateGlobalImNotification(data: RuntimeGlobalIMNotificationUpdateRequest) {
       return cloudServices.runtimeWorkApi!.updateGlobalImNotification(data)
     },
+    updateImNotificationPresence(data: RuntimeIMNotificationPresenceUpdateRequest) {
+      return cloudServices.runtimeWorkApi!.updateImNotificationPresence(data)
+    },
     subscribeRuntimeTaskNotifications(data: RuntimeTaskIMNotificationSubscriptionRequest) {
-      return routeByAddress(data.address).subscribeRuntimeTaskNotifications(data)
+      return cloudServices.runtimeWorkApi!.subscribeRuntimeTaskNotifications(data)
     },
     unsubscribeRuntimeTaskNotifications(address: RuntimeTaskAddress) {
-      return routeByAddress(address).unsubscribeRuntimeTaskNotifications(address)
+      return cloudServices.runtimeWorkApi!.unsubscribeRuntimeTaskNotifications(address)
     },
     archiveRuntimeTask(address: RuntimeTaskAddress) {
       const request = routeByAddress(address).archiveRuntimeTask(address)
@@ -893,7 +991,90 @@ export function createHybridWorkbenchServices(
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
     },
   }
-  const automationApi = localServices.automationApi
+  const rememberAutomationRoutes = (deviceId: string, automations: Automation[]) => {
+    automations.forEach(automation => automationDevices.set(automation.id, deviceId))
+  }
+  const automationMutationDeviceId = (data: { taskRequest?: RuntimeTaskCreateRequest }) => {
+    const deviceId = data.taskRequest?.deviceId?.trim()
+    if (!deviceId) throw new Error('Automation target device is required')
+    return deviceId
+  }
+  const automationDeviceId = async (automationId: string) => {
+    const known = automationDevices.get(automationId)
+    if (known) return known
+    await automationApi.listAutomations()
+    const discovered = automationDevices.get(automationId)
+    if (!discovered) throw new Error(`Automation ${automationId} was not found`)
+    return discovered
+  }
+  const automationApi: NonNullable<WorkbenchServices['automationApi']> = {
+    async listAutomations() {
+      const cloudDeviceIds = rememberedCloudDevices
+        .filter(device => isUsableDevice(device))
+        .map(device => device.device_id)
+      const deviceIds = [LOCAL_DEVICE_ID, ...cloudDeviceIds]
+      const responses = await Promise.all(
+        deviceIds.map(deviceId => automationApiForDevice(deviceId).listAutomations())
+      )
+      responses.forEach((response, index) =>
+        rememberAutomationRoutes(deviceIds[index], response.items)
+      )
+      return { items: responses.flatMap(response => response.items) }
+    },
+    async getAutomation(automationId) {
+      const deviceId = await automationDeviceId(automationId)
+      const response = await automationApiForDevice(deviceId).getAutomation(automationId)
+      rememberAutomationRoutes(deviceId, [response.automation])
+      return response
+    },
+    async createAutomation(data) {
+      const deviceId = automationMutationDeviceId(data)
+      const response = await automationApiForDevice(deviceId).createAutomation(data)
+      rememberAutomationRoutes(deviceId, [response.automation])
+      return response
+    },
+    async updateAutomation(automationId, data) {
+      const deviceId = automationDevices.get(automationId) ?? automationMutationDeviceId(data)
+      const response = await automationApiForDevice(deviceId).updateAutomation(automationId, data)
+      rememberAutomationRoutes(deviceId, [response.automation])
+      return response
+    },
+    async deleteAutomation(automationId) {
+      const deviceId = await automationDeviceId(automationId)
+      const response = await automationApiForDevice(deviceId).deleteAutomation(automationId)
+      automationDevices.delete(automationId)
+      return response
+    },
+    async toggleAutomation(automationId, enabled) {
+      const deviceId = await automationDeviceId(automationId)
+      const response = await automationApiForDevice(deviceId).toggleAutomation(
+        automationId,
+        enabled
+      )
+      rememberAutomationRoutes(deviceId, [response.automation])
+      return response
+    },
+    async runAutomationNow(automationId) {
+      const deviceId = await automationDeviceId(automationId)
+      return automationApiForDevice(deviceId).runAutomationNow(automationId)
+    },
+    async listAutomationRuns(automationId) {
+      if (automationId) {
+        const deviceId = await automationDeviceId(automationId)
+        return automationApiForDevice(deviceId).listAutomationRuns(automationId)
+      }
+      const deviceIds = [
+        LOCAL_DEVICE_ID,
+        ...rememberedCloudDevices
+          .filter(device => isUsableDevice(device))
+          .map(device => device.device_id),
+      ]
+      const responses = await Promise.all(
+        deviceIds.map(deviceId => automationApiForDevice(deviceId).listAutomationRuns())
+      )
+      return { items: responses.flatMap(response => response.items) }
+    },
+  }
 
   const cloudRuntimeChatStream = createRuntimeChatStream({
     request: (method, params) => {
@@ -958,6 +1139,7 @@ export function createHybridWorkbenchServices(
     dwsApi: localServices.dwsApi,
     localProjectChatAgentApi: localServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
+    localHarnessModelApi: localServices.localHarnessModelApi,
     localProjectChatClient: localServices.localProjectChatClient,
     projectSpaceApis: {
       local: localServices.deliveryApi,
@@ -982,8 +1164,13 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     automationApi,
-    attachmentApi: localServices.attachmentApi,
-    userApi: localServices.userApi,
+    attachmentApi: {
+      uploadAttachment: localServices.attachmentApi!.uploadAttachment,
+      deleteAttachment: localServices.attachmentApi!.deleteAttachment,
+      uploadLocalAttachmentToCloud: attachment =>
+        uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
+    },
+    userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,

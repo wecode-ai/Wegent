@@ -72,6 +72,8 @@ Skills are Claude Code capability extension packages:
 
 Desktop Wework settings can show archived Project and Conversation chats. Deleting one archived chat or using **Delete all** first opens a confirmation dialog; the app only permanently deletes the selected local runtime conversation records after confirmation. Bulk deletion applies only to the items currently listed as archived and does not affect non-archived chats.
 
+OpenCode coding sessions can also be archived. Archiving stops the current process, preserves the session metadata, and moves the session to **Settings → Archived**. From there, users can unarchive it back into the workbench or permanently delete its record. Archiving does not delete files from the project workspace.
+
 ### Desktop App Preferences
 
 Desktop Wework's **General** settings control the interface language, whether the main window is shown after launch, and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.

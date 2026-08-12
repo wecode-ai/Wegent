@@ -1,9 +1,12 @@
-import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceApp, PluginPathComponent } from '@/types/api'
 import {
   currentPluginLogoAppearanceMode,
-  resolvePluginLogoUrl,
+  resolveInstalledPluginLogoUrl,
+  resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
+import { composerAppPluginKey } from './composerPluginMetadata'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
@@ -23,7 +26,8 @@ export function insertPluginReference(reference: string) {
 
 export function showPluginTrialGuide(
   pluginName: string,
-  templates: PluginPathComponent[] | undefined
+  templates: PluginPathComponent[] | undefined,
+  app?: LocalDeviceApp
 ) {
   const normalizedName = pluginName.trim()
   const availableTemplates = (templates ?? []).filter(template => !template.unavailableReason)
@@ -33,6 +37,7 @@ export function showPluginTrialGuide(
       detail: {
         pluginName: normalizedName,
         templates: availableTemplates.slice(0, 6),
+        app,
       },
     })
   )
@@ -42,6 +47,7 @@ interface PendingPluginTrial {
   input: string
   pluginName: string
   templates: PluginPathComponent[]
+  app?: LocalDeviceApp
   openInNewChat?: boolean
 }
 
@@ -92,20 +98,76 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
   return `plugin://${pluginName}@${marketplaceName}`
 }
 
+function composerAppForPlugin(plugin: InstalledPlugin): LocalDeviceApp | null {
+  const rawPluginKey = plugin.spec.source.pluginKey
+  const rawMetadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : ''
+  const pluginKey = (rawPluginKey || rawMetadataName).trim().toLowerCase()
+  const displayName = (plugin.spec.displayName || '').trim().toLowerCase()
+  if (!pluginKey && !displayName) return null
+  const apps = getComposerApps()
+  return (
+    apps.find(app => composerAppPluginKey(app).trim().toLowerCase() === pluginKey) ||
+    apps.find(app => (app.pluginKey || '').trim().toLowerCase() === pluginKey) ||
+    apps.find(app => app.name.trim().toLowerCase() === displayName) ||
+    null
+  )
+}
+
+function registerMentionIconFromResolved(
+  reference: string,
+  logo: { url: string; source: string; contrastPad: boolean }
+): void {
+  if (logo.source !== 'provided' || !logo.url) return
+  registerComposerMentionIcon(reference, {
+    url: logo.url,
+    contrastPad: logo.contrastPad,
+  })
+}
+
 function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
   const pluginKey =
     plugin.spec.source.pluginKey ||
     (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null)
-  registerComposerMentionIcon(
+  const packageLogo = resolvePluginLogo({
+    pluginKey,
+    logo: plugin.spec.interface?.logo,
+    logoDark: plugin.spec.interface?.logoDark,
+    composerIcon: plugin.spec.interface?.composerIcon,
+    appearanceMode: currentPluginLogoAppearanceMode(),
+  })
+  if (packageLogo.source === 'provided' && packageLogo.url) {
+    registerMentionIconFromResolved(reference, packageLogo)
+    return
+  }
+
+  // Connectors often only expose icon_url on the composer app inventory.
+  const composerApp = composerAppForPlugin(plugin)
+  if (!composerApp) return
+  registerMentionIconFromResolved(
     reference,
-    resolvePluginLogoUrl({
-      pluginKey,
-      logo: plugin.spec.interface?.logo,
-      logoDark: plugin.spec.interface?.logoDark,
-      composerIcon: plugin.spec.interface?.composerIcon,
+    resolvePluginLogo({
+      pluginKey: composerAppPluginKey(composerApp),
+      logo: composerApp.logoUrl,
+      logoDark: composerApp.logoUrlDark,
       appearanceMode: currentPluginLogoAppearanceMode(),
     })
   )
+}
+
+function pluginTrialApp(plugin: InstalledPlugin): LocalDeviceApp {
+  const pluginKey = plugin.spec.source.pluginKey
+  const name = plugin.spec.displayName || pluginKey
+  const composerApp = composerAppForPlugin(plugin)
+  const packageLight = resolveInstalledPluginLogoUrl(plugin, 'light') || null
+  const packageDark = resolveInstalledPluginLogoUrl(plugin, 'dark') || null
+  return {
+    id: `plugin:${pluginKey}`,
+    name,
+    pluginKey,
+    logoUrl: packageLight || composerApp?.logoUrl || null,
+    logoUrlDark: packageDark || composerApp?.logoUrlDark || null,
+    source: 'installed-plugin',
+  }
 }
 
 function skillFilePath(path: string): string {
@@ -240,6 +302,7 @@ export function queuePluginTrial(
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
     templates: pluginTrialTemplates(plugin, options.prompt),
+    app: pluginTrialApp(plugin),
     openInNewChat: options.openInNewChat === true,
   })
 }
@@ -259,6 +322,23 @@ export function queuePluginPromptTrial(
     input: `${reference} ${normalizedPrompt}`,
     pluginName,
     templates: pluginTrialTemplates(plugin, normalizedPrompt),
+    app: pluginTrialApp(plugin),
+    openInNewChat,
+  })
+}
+
+export function queuePluginInputTrial(
+  plugin: InstalledPlugin,
+  input: string,
+  { openInNewChat = false, prompt }: PluginTrialOptions = {}
+): boolean {
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const normalizedInput = input.trim()
+  if (!pluginName || !normalizedInput) return false
+  return queuePendingPluginTrial({
+    input: normalizedInput,
+    pluginName,
+    templates: pluginTrialTemplates(plugin, prompt ?? normalizedInput),
     openInNewChat,
   })
 }
@@ -292,6 +372,13 @@ export function consumePluginTrial(): PendingPluginTrial | null {
       input: payload.input,
       pluginName: typeof payload.pluginName === 'string' ? payload.pluginName : '',
       templates: Array.isArray(payload.templates) ? payload.templates : [],
+      app:
+        payload.app &&
+        typeof payload.app === 'object' &&
+        typeof payload.app.id === 'string' &&
+        typeof payload.app.name === 'string'
+          ? payload.app
+          : undefined,
       openInNewChat: payload.openInNewChat === true,
     }
   } catch {

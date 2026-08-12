@@ -72,7 +72,7 @@ describe('ComposerToolbar', () => {
     expect(screen.getByTestId('quick-phrase-layout')).toHaveTextContent('icon')
   })
 
-  it('collapses the plugin picker trigger to an icon once a conversation has started', () => {
+  it('keeps the expanded plugin picker until the toolbar itself is compact', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       width: 600,
@@ -120,5 +120,44 @@ describe('ComposerToolbar', () => {
     )
 
     expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7')
+  })
+
+  it('places the icon-only permission control before context usage', () => {
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{ permissionMode: 'full-access' }}
+        isModelSelectionReady
+        contextUsage={{
+          total: {
+            totalTokens: 15_000,
+            inputTokens: 12_000,
+            cachedInputTokens: 2_000,
+            outputTokens: 3_000,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 8_000,
+            inputTokens: 7_000,
+            cachedInputTokens: 1_000,
+            outputTokens: 1_000,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 258_000,
+        }}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const permission = screen.getByTestId('permission-mode-menu-button')
+    const contextUsage = screen.getByTestId('context-usage-indicator')
+    expect(permission).toHaveTextContent('')
+    expect(permission.compareDocumentPosition(contextUsage)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 })

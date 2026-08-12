@@ -1,11 +1,17 @@
 import {
+  AlertCircle,
   ArrowDownUp,
   Bot,
   Check,
+  CircleCheck,
+  CircleSlash,
+  Clock3,
+  Copy,
   ExternalLink,
   Hash,
   LoaderCircle,
   MessageSquareText,
+  RotateCcw,
   Square,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -16,12 +22,19 @@ import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
+import {
+  ChatInput,
+  type ProjectChatControls,
+  type ProjectWorkControls,
+} from '@/components/chat/ChatInput'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { Tooltip } from '@/components/ui/tooltip'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import {
   buildRobotRoleDescription,
   mergeProjectChatMessages,
@@ -29,6 +42,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
+import { executionDisplayStatus, isExecutionFailed } from './executionStatus'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -385,15 +399,56 @@ export function TaskActivityView({
         : null,
     [assignedAgent, localProjects]
   )
+  // The composer project bar reuses the homepage ProjectWorkBar directly; the
+  // selection drives only the per-comment execution project. The default ('')
+  // follows the robot-bound repository, so picking that repository explicitly
+  // is mapped back to the default and the clear button only appears while an
+  // actual override is selected.
+  const effectiveCommentProject =
+    selectedCommentProjectId !== ''
+      ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
+      : robotBoundProject
+  const commentProjectWork = useMemo<ProjectWorkControls>(
+    () => ({
+      projects: localProjects,
+      devices: state.devices,
+      runtimeWork: state.runtimeWork,
+      currentProject: effectiveCommentProject,
+      currentProjectId: effectiveCommentProject?.id,
+      currentStandaloneDeviceId: null,
+      selectedDeviceWorkspaceId: null,
+      pendingProjectWorkspaceProjectId: null,
+      executionMode: 'current_workspace',
+      executionModeLocked: true,
+      // The execution-mode control is meaningless for comment runs; hide it.
+      isGitProject: false,
+      showProjectClearButton: selectedCommentProjectId !== '',
+      onSelectProject: projectId =>
+        setSelectedCommentProjectId(
+          projectId == null || projectId === robotBoundProject?.id ? '' : projectId
+        ),
+      onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),
+      onSelectProjectWorkspace: projectId =>
+        setSelectedCommentProjectId(projectId === robotBoundProject?.id ? '' : projectId),
+      onExecutionModeChange: () => {},
+    }),
+    [
+      effectiveCommentProject,
+      localProjects,
+      robotBoundProject?.id,
+      selectedCommentProjectId,
+      state.devices,
+      state.runtimeWork,
+    ]
+  )
   const activeUserId = currentUserId ?? chatCurrentUserId
   const isBotCreator = assignedAgent
     ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
     : false
   const canApproveCurrentRun = task.can_approve === true || isBotCreator
   const awaitingApproval = task.execution_state === 'pending_approval'
-  const aiTerminalFailure = ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(
-    task.ai_state?.status ?? ''
-  )
+  const rawExecutionStatus = task.ai_state?.status ?? task.execution_state
+  const aiTerminalFailure = isExecutionFailed(task.ai_state?.status)
   const commentCards = useMemo(() => {
     const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
     const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
@@ -429,23 +484,23 @@ export function TaskActivityView({
         Boolean(message.runtimeAddress?.taskId)
     )
     const latest = agentRuns.at(-1)
-    return latest?.runtimeAddress
-      ? {
-          runtimeDeviceId: latest.runtimeAddress.deviceId,
-          runtimeTaskId: latest.runtimeAddress.taskId,
-        }
-      : null
+    if (!latest) return null
+    const deviceId = latest.runtimeAddress?.deviceId
+    const runtimeTaskId = latest.runtimeAddress?.taskId
+    if (!deviceId || !runtimeTaskId) return null
+    // A board run may live under a bound project or a standalone chat
+    // workspace. Resolve both through the canonical runtime-work lookup so an
+    // existing queue session is never mistaken for a lost session.
+    const sessionExists = Boolean(
+      findRuntimeTask(state.runtimeWork, { deviceId, taskId: runtimeTaskId })
+    )
+    if (!sessionExists) return null
+    return { runtimeDeviceId: deviceId, runtimeTaskId }
   }
 
   function cardSessionActive(card: { root: ProjectChatMessage; replies: ProjectChatMessage[] }) {
-    const session = cardSessionAddress(card)
-    if (!session) return false
     return [card.root, ...card.replies].some(
-      message =>
-        message.sender.type === 'agent' &&
-        message.status === 'streaming' &&
-        message.runtimeAddress?.deviceId === session.runtimeDeviceId &&
-        message.runtimeAddress?.taskId === session.runtimeTaskId
+      message => message.sender.type === 'agent' && message.status === 'streaming'
     )
   }
 
@@ -503,10 +558,6 @@ export function TaskActivityView({
     } finally {
       setCancellingMessageId(null)
     }
-  }
-
-  function focusContinueComment() {
-    document.querySelector<HTMLElement>('[data-testid="cloud-task-activity-composer"]')?.focus()
   }
 
   async function rerunTaskAi() {
@@ -673,7 +724,6 @@ export function TaskActivityView({
           prompt: text,
           trigger: message,
           messages,
-          replyTo: null,
           attachments,
           models: availableModels,
           selectedModel,
@@ -744,120 +794,114 @@ export function TaskActivityView({
               最新
             </button>
           ) : null}
-          {assignedAgent ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-700">
-              <Bot className="h-3.5 w-3.5" />
-              {assignedAgent.name}
-            </span>
-          ) : null}
-          {awaitingApproval && canApproveCurrentRun ? (
-            <div
-              data-testid={`cloud-task-activity-approval-${task.id}`}
-              className="flex items-center gap-1.5"
-            >
-              <button
-                type="button"
-                data-testid={`cloud-task-activity-reject-${task.id}`}
-                onClick={() => void rejectTaskRun()}
-                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-red-600"
+          <div className="task-detail-activity-tools">
+            {assignedAgent ? (
+              <span className="task-detail-activity-agent" title={assignedAgent.name}>
+                <Bot className="h-4 w-4" />
+                <span>{assignedAgent.name}</span>
+              </span>
+            ) : null}
+            {awaitingApproval && canApproveCurrentRun ? (
+              <div
+                data-testid={`cloud-task-activity-approval-${task.id}`}
+                className="flex items-center gap-1.5"
               >
-                {t('workbench.task_activity_reject')}
-              </button>
-              <button
-                type="button"
-                data-testid={`cloud-task-activity-approve-${task.id}`}
-                onClick={() => void approveTaskRun()}
-                className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
-              >
-                {t('workbench.task_activity_approve')}
-              </button>
-            </div>
-          ) : null}
-          {awaitingApproval && !canApproveCurrentRun ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700">
-              {assignedAgent?.createdByUserName
-                ? t('workbench.task_activity_awaiting_approval_with_creator', {
-                    name: assignedAgent.createdByUserName,
-                  })
-                : t('workbench.task_activity_awaiting_approval')}
-            </span>
-          ) : null}
-          {task.execution_state === 'cancelled' ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-700">
-              {t('workbench.task_activity_cancelled')}
-            </span>
-          ) : null}
-          {task.execution_note ? (
-            <span
-              data-testid={`cloud-task-activity-execution-note-${task.id}`}
-              className="inline-flex max-w-56 items-center gap-1.5 truncate rounded-full bg-muted px-2.5 py-1 text-xs text-text-secondary"
-              title={task.execution_note}
-            >
-              {task.execution_note}
-            </span>
-          ) : null}
-          {assignedAgent &&
-          (task.execution_state === 'queued' ||
-            task.execution_state === 'claimed' ||
-            task.execution_state === 'assigned') &&
-          task.status !== 'in_review' ? (
-            <button
-              type="button"
-              data-testid={`cloud-task-activity-run-now-${task.id}`}
-              disabled={!client || sending}
-              onClick={() => void rerunTaskAi()}
-              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
-            >
-              {t('workbench.task_activity_run_now')}
-            </button>
-          ) : null}
-          {task.status === 'in_review' || task.ai_state?.status === 'completed' ? (
-            <div
-              data-testid={`cloud-task-activity-review-actions-${task.id}`}
-              className="flex items-center gap-1.5"
-            >
-              <button
-                type="button"
-                data-testid={`cloud-task-activity-continue-${task.id}`}
-                onClick={focusContinueComment}
-                className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
-              >
-                {t('workbench.task_activity_continue')}
-              </button>
-              {assignedAgent ? (
                 <button
                   type="button"
-                  data-testid={`cloud-task-activity-rerun-${task.id}`}
-                  disabled={!client || sending}
-                  onClick={() => void rerunTaskAi()}
-                  className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                  data-testid={`cloud-task-activity-reject-${task.id}`}
+                  onClick={() => void rejectTaskRun()}
+                  className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-red-600"
                 >
-                  {t('workbench.task_activity_rerun')}
+                  {t('workbench.task_activity_reject')}
                 </button>
-              ) : null}
-              {projectDeliveryApi ? (
                 <button
                   type="button"
-                  data-testid={`cloud-task-activity-accept-${task.id}`}
-                  onClick={() => void acceptTask()}
+                  data-testid={`cloud-task-activity-approve-${task.id}`}
+                  onClick={() => void approveTaskRun()}
                   className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
                 >
-                  {t('workbench.task_activity_accept')}
+                  {t('workbench.task_activity_approve')}
                 </button>
-              ) : null}
-            </div>
-          ) : null}
-          {assignedAgent && aiTerminalFailure && task.status !== 'in_review' ? (
-            <button
-              type="button"
-              data-testid={`cloud-task-activity-rerun-${task.id}`}
-              disabled={!client || sending}
-              onClick={() => void rerunTaskAi()}
-              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
-            >
-              {t('workbench.task_activity_rerun')}
-            </button>
-          ) : null}
+              </div>
+            ) : null}
+            {rawExecutionStatus ? (
+              <TaskExecutionStatusControl
+                taskId={task.id}
+                status={rawExecutionStatus}
+                error={task.execution_error ?? task.ai_state?.last_error}
+                note={task.execution_note}
+                approvalLabel={
+                  awaitingApproval && !canApproveCurrentRun
+                    ? assignedAgent?.createdByUserName
+                      ? t('workbench.task_activity_awaiting_approval_with_creator', {
+                          name: assignedAgent.createdByUserName,
+                        })
+                      : t('workbench.task_activity_awaiting_approval')
+                    : undefined
+                }
+              />
+            ) : null}
+            {assignedAgent &&
+            (task.execution_state === 'queued' ||
+              task.execution_state === 'claimed' ||
+              task.execution_state === 'assigned') &&
+            task.status !== 'in_review' ? (
+              <button
+                type="button"
+                data-testid={`cloud-task-activity-run-now-${task.id}`}
+                title={t('workbench.task_activity_run_now')}
+                disabled={!client || sending}
+                onClick={() => void rerunTaskAi()}
+                className="task-detail-activity-icon-button"
+              >
+                <LoaderCircle className="h-4 w-4" />
+                <span className="sr-only">{t('workbench.task_activity_run_now')}</span>
+              </button>
+            ) : null}
+            {task.status === 'in_review' || task.ai_state?.status === 'completed' ? (
+              <div
+                data-testid={`cloud-task-activity-review-actions-${task.id}`}
+                className="flex items-center gap-1.5"
+              >
+                {assignedAgent ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-activity-rerun-${task.id}`}
+                    title={t('workbench.task_activity_rerun')}
+                    disabled={!client || sending}
+                    onClick={() => void rerunTaskAi()}
+                    className="task-detail-activity-icon-button"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span className="sr-only">{t('workbench.task_activity_rerun')}</span>
+                  </button>
+                ) : null}
+                {projectDeliveryApi ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-activity-accept-${task.id}`}
+                    onClick={() => void acceptTask()}
+                    className="rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
+                  >
+                    {t('workbench.task_activity_accept')}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {assignedAgent && aiTerminalFailure && task.status !== 'in_review' ? (
+              <button
+                type="button"
+                data-testid={`cloud-task-activity-rerun-${task.id}`}
+                title={t('workbench.task_activity_rerun')}
+                disabled={!client || sending}
+                onClick={() => void rerunTaskAi()}
+                className="task-detail-activity-icon-button"
+              >
+                <RotateCcw className="h-4 w-4" />
+                <span className="sr-only">{t('workbench.task_activity_rerun')}</span>
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <div
@@ -1037,39 +1081,6 @@ export function TaskActivityView({
             !compact && 'pt-2'
           )}
         >
-          {localProjects.length > 0 ? (
-            <label className="mb-2 flex h-7 max-w-[280px] items-center rounded-lg border border-border bg-muted/50 pl-2 pr-1">
-              <span className="sr-only">{t('workbench.task_activity_execution_project')}</span>
-              <select
-                data-testid="cloud-task-activity-execution-project"
-                value={selectedCommentProjectId}
-                onChange={event =>
-                  setSelectedCommentProjectId(
-                    event.target.value === '' ? '' : Number(event.target.value)
-                  )
-                }
-                className="h-full w-full appearance-none truncate bg-transparent text-xs text-text-primary outline-none"
-              >
-                <option value="">{t('workbench.task_activity_execution_project_none')}</option>
-                {taskPageProject ? (
-                  <option value={taskPageProject.id}>
-                    {t('workbench.task_activity_execution_project_task', {
-                      name: taskPageProject.name,
-                    })}
-                  </option>
-                ) : null}
-                {localProjects
-                  .filter(project => project.id !== taskPageProject?.id)
-                  .map(project => (
-                    <option key={project.id} value={project.id}>
-                      {t('workbench.task_activity_execution_project_option', {
-                        name: project.name,
-                      })}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          ) : null}
           <div className="task-detail-comment-chat-input">
             <ChatInput
               value={newCommentDraft}
@@ -1085,7 +1096,8 @@ export function TaskActivityView({
               }
               variant="desktop"
               projectChat={commentProjectChat}
-              showProjectWorkBar={false}
+              projectWork={commentProjectWork}
+              showProjectWorkBar={localProjects.length > 0}
               inputTestId="cloud-task-activity-composer"
             />
           </div>
@@ -1112,6 +1124,169 @@ function resolveMessageRunStatus(
   return taskAiState?.project_chat_message_id === message.messageId && taskAiState.status
     ? taskAiState.status
     : message.status
+}
+
+type TaskExecutionStatusKind =
+  | 'waiting'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+function taskExecutionStatusKind(status: string): TaskExecutionStatusKind {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'done':
+    case 'success':
+    case 'succeeded':
+      return 'success'
+    case 'failed':
+    case 'failure':
+    case 'error':
+    case 'stalled':
+      return 'failed'
+    case 'cancelled':
+    case 'canceled':
+    case 'skipped':
+      return 'cancelled'
+    case 'interrupted':
+      return 'interrupted'
+    case 'assigned':
+    case 'pending':
+    case 'pending_approval':
+    case 'queued':
+    case 'waiting_device':
+      return 'waiting'
+    default:
+      return 'running'
+  }
+}
+
+function TaskExecutionStatusControl({
+  taskId,
+  status,
+  error,
+  note,
+  approvalLabel,
+}: {
+  taskId: string
+  status: string
+  error?: string | null
+  note?: string | null
+  approvalLabel?: string
+}) {
+  const { t } = useTranslation('common')
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const kind = taskExecutionStatusKind(status)
+  const labels: Record<TaskExecutionStatusKind, string> = {
+    waiting: approvalLabel ?? t('workbench.task_activity_status_waiting'),
+    running: t('workbench.project_chat_processing'),
+    success: t('workbench.task_activity_status_succeeded'),
+    failed: t('workbench.task_activity_status_failed'),
+    cancelled: t('workbench.task_activity_status_cancelled'),
+    interrupted: t('workbench.task_activity_status_interrupted'),
+  }
+  const label = labels[kind]
+  const Icon =
+    kind === 'success'
+      ? CircleCheck
+      : kind === 'failed'
+        ? AlertCircle
+        : kind === 'cancelled' || kind === 'interrupted'
+          ? CircleSlash
+          : kind === 'waiting'
+            ? Clock3
+            : LoaderCircle
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [open])
+
+  const copyDetails = async () => {
+    const details = [
+      `${t('workbench.task_activity_status_label')}: ${label}`,
+      error ? `${t('workbench.task_activity_error_label')}: ${error}` : null,
+      note ? `${t('workbench.task_activity_note_label')}: ${note}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    await copyTextToClipboard(details)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <span ref={rootRef} className="task-detail-execution-status-control">
+      <Tooltip label={label} side="bottom" align="end">
+        <button
+          type="button"
+          data-testid={`cloud-task-activity-execution-status-${taskId}`}
+          data-status={kind}
+          aria-label={label}
+          aria-expanded={open}
+          onClick={() => setOpen(current => !current)}
+          className="task-detail-execution-status-trigger"
+        >
+          <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+        </button>
+      </Tooltip>
+      {open ? (
+        <span
+          role="dialog"
+          aria-label={t('workbench.task_activity_status_details')}
+          data-testid={`cloud-task-activity-execution-details-${taskId}`}
+          className="task-detail-execution-status-popover"
+        >
+          <span className="task-detail-execution-status-popover-head">
+            <span className="task-detail-execution-status-popover-title">
+              <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+              {label}
+            </span>
+            <button
+              type="button"
+              onClick={() => void copyDetails()}
+              className="task-detail-execution-copy"
+              aria-label={t('workbench.task_activity_copy_details')}
+            >
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? t('workbench.task_activity_copied') : t('workbench.task_activity_copy')}
+            </button>
+          </span>
+          {error ? (
+            <span
+              data-testid={`cloud-task-activity-execution-error-${taskId}`}
+              className="task-detail-execution-status-detail is-error"
+            >
+              <span>{t('workbench.task_activity_error_label')}</span>
+              <span>{error}</span>
+            </span>
+          ) : null}
+          {note ? (
+            <span
+              data-testid={`cloud-task-activity-execution-note-${taskId}`}
+              className="task-detail-execution-status-detail"
+            >
+              <span>{t('workbench.task_activity_note_label')}</span>
+              <span>{note}</span>
+            </span>
+          ) : null}
+          {!error && !note ? (
+            <span className="task-detail-execution-status-empty">
+              {t('workbench.task_activity_no_status_details')}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  )
 }
 
 function ChatMessage({
@@ -1325,40 +1500,22 @@ function ExecutionStatusBadge({
   stopping?: boolean
 }) {
   const { t } = useTranslation('common')
-  const terminal = [
-    'completed',
-    'failed',
-    'interrupted',
-    'stalled',
-    'cancelled',
-    'canceled',
-  ].includes(status)
-  const statusContent =
-    status === 'completed' ? (
-      <>
-        <Check className="h-3 w-3" />
-        {t('workbench.project_chat_completed')}
-      </>
-    ) : ['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'].includes(status) ? (
-      <>
-        <ExternalLink className="h-3.5 w-3.5" />
-        {t('workbench.task_activity_failed')}
-      </>
-    ) : (
-      <>
-        <LoaderCircle className="h-3 w-3 animate-spin" />
-        {t('workbench.project_chat_processing')}
-      </>
-    )
+  const displayStatus = executionDisplayStatus(status)
+  const terminal = displayStatus === 'completed'
+  const statusContent = terminal ? (
+    <>
+      <Check className="h-3 w-3" />
+      {t('workbench.project_chat_completed')}
+    </>
+  ) : (
+    <>
+      <LoaderCircle className="h-3 w-3 animate-spin" />
+      {t('workbench.project_chat_processing')}
+    </>
+  )
 
   return (
-    <span
-      className={cn(
-        'task-detail-execution-pill',
-        status === 'failed' && 'is-failed',
-        !onOpenExecution && 'is-static'
-      )}
-    >
+    <span className={cn('task-detail-execution-pill', !onOpenExecution && 'is-static')}>
       <button
         type="button"
         disabled={!onOpenExecution}

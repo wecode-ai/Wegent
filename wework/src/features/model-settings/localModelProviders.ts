@@ -9,6 +9,7 @@ import {
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K27_CATALOG_MODEL_ID,
   KIMI_K3_CATALOG_MODEL_ID,
+  KIMI_K3_CONTEXT_WINDOW,
   type LocalModelApiFormat,
   type LocalModelConfig,
   type LocalModelToolProfile,
@@ -22,10 +23,12 @@ export type LocalModelProviderProfileId =
   | 'kimi'
   | 'kimi-coding'
   | 'minimax'
+  | 'minimax-global'
 
 export interface LocalModelProviderProfile {
   id: LocalModelProviderProfileId
   displayName: string
+  displayNameKey?: string
   description: string
   baseUrl: string
   apiFormat: LocalModelApiFormat
@@ -51,6 +54,41 @@ export interface LocalModelProviderProfile {
 export interface DiscoveredLocalModel {
   id: string
   displayName: string
+}
+
+const MINIMAX_MODEL_DEFAULTS = {
+  'MiniMax-M2.7': { contextWindow: 204_800 },
+  'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
+  'MiniMax-M2.5': { contextWindow: 204_800 },
+  'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
+  'MiniMax-M2.1': { contextWindow: 204_800 },
+  'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
+  'MiniMax-M2': { contextWindow: 204_800 },
+}
+
+function miniMaxProviderProfile(
+  id: Extract<LocalModelProviderProfileId, 'minimax' | 'minimax-global'>,
+  displayName: string,
+  displayNameKey: string,
+  baseUrl: string
+): LocalModelProviderProfile {
+  return {
+    id,
+    displayName,
+    displayNameKey,
+    description: 'MiniMax Anthropic-compatible API',
+    baseUrl,
+    apiFormat: 'anthropic-messages',
+    requestPath: '/v1/messages',
+    modelsPath: '/v1/models',
+    modelsApiKeyHeader: 'X-Api-Key',
+    toolProfile: 'function',
+    group: 'MiniMax',
+    contextWindow: 204_800,
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    modelDefaults: MINIMAX_MODEL_DEFAULTS,
+  }
 }
 
 export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
@@ -97,7 +135,11 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     webSearchMode: 'disabled',
     imageGenerationEnabled: false,
     modelDefaults: {
-      'kimi-k3': { contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
+      'kimi-k3': {
+        contextWindow: KIMI_K3_CONTEXT_WINDOW,
+        codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
+        inputModalities: ['text', 'image'],
+      },
       'kimi-k2.7-code': { contextWindow: 262_144 },
       'kimi-k2.7-code-highspeed': { contextWindow: 262_144 },
       'kimi-k2.6': { contextWindow: 262_144 },
@@ -161,30 +203,18 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
       'glm-5.2': { contextWindow: 1_000_000 },
     },
   },
-  {
-    id: 'minimax',
-    displayName: 'MiniMax',
-    description: 'MiniMax Anthropic-compatible API',
-    baseUrl: 'https://api.minimax.io/anthropic',
-    apiFormat: 'anthropic-messages',
-    requestPath: '/v1/messages',
-    modelsPath: '/v1/models',
-    modelsApiKeyHeader: 'X-Api-Key',
-    toolProfile: 'function',
-    group: 'MiniMax',
-    contextWindow: 204_800,
-    webSearchMode: 'disabled',
-    imageGenerationEnabled: false,
-    modelDefaults: {
-      'MiniMax-M2.7': { contextWindow: 204_800 },
-      'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
-      'MiniMax-M2.5': { contextWindow: 204_800 },
-      'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
-      'MiniMax-M2.1': { contextWindow: 204_800 },
-      'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
-      'MiniMax-M2': { contextWindow: 204_800 },
-    },
-  },
+  miniMaxProviderProfile(
+    'minimax',
+    'MiniMax (China mainland)',
+    'workbench.local_model_provider_minimax_cn',
+    'https://api.minimaxi.com/anthropic'
+  ),
+  miniMaxProviderProfile(
+    'minimax-global',
+    'MiniMax (Global)',
+    'workbench.local_model_provider_minimax_global',
+    'https://api.minimax.io/anthropic'
+  ),
   {
     id: 'custom',
     displayName: 'Custom',

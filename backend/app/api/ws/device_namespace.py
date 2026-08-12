@@ -34,6 +34,7 @@ from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlsplit
 
 import socketio
+from prometheus_client import Counter
 from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -106,6 +107,12 @@ from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
+
+DEVICE_WS_AUTH_FAILURES_TOTAL = Counter(
+    "device_ws_auth_failures_total",
+    "Device WebSocket authentication rejections",
+    ["reason"],
+)
 CODEX_RUNTIME = "codex"
 DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
 DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
@@ -1041,11 +1048,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Check auth token
         if not auth or not isinstance(auth, dict):
             logger.warning(f"[Device WS] Missing auth data sid={sid}")
+            DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="missing_token").inc()
             raise ConnectionRefusedError("Missing authentication token")
 
         token = auth.get("token")
         if not token:
             logger.warning(f"[Device WS] Missing token in auth sid={sid}")
+            DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="missing_token").inc()
             raise ConnectionRefusedError("Missing authentication token")
 
         # Determine auth type and verify token
@@ -1071,6 +1080,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 logger.warning(
                     f"[Device WS] Invalid API key sid={sid}, key={key_preview}"
                 )
+                DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="invalid_api_key").inc()
                 raise ConnectionRefusedError("Invalid or expired API key")
             user_id, user_name = user_info
             # API Key has no expiry (token_exp stays None)
@@ -1081,6 +1091,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             user = verify_jwt_token(token)
             if not user:
                 logger.warning(f"[Device WS] Invalid JWT token sid={sid}")
+                DEVICE_WS_AUTH_FAILURES_TOTAL.labels(reason="invalid_jwt").inc()
                 raise ConnectionRefusedError("Invalid or expired token")
             user_id = user.id
             user_name = user.user_name

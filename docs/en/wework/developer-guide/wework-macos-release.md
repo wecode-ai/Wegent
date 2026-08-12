@@ -104,6 +104,18 @@ Transparent window edges are composed differently across macOS versions and
 graphics environments, which can expose the desktop or appear as translucent
 or gray borders.
 
+The root shell in the main React WebView must fill the current WebView through
+CSS viewport constraints such as `fixed inset-0`. Do not listen for native
+Tauri resize events and write asynchronously read and converted `innerSize` and
+`scaleFactor` values back as inline root-shell dimensions. Native events, scale
+factors, and WebView layout commits can arrive out of order, allowing a stale
+inline size to override the current viewport and leave an unfilled region after
+a resize. Native window dimensions are for window creation, restoration, and
+system-level window management, not as a source for the React root layout.
+On Linux, embedded browser child WebViews must live in an absolute host built
+from `GtkOverlay` and `GtkFixed`; adding them directly to the main window's
+`GtkBox` lets them participate in layout and compress the main React WebView.
+
 The system drag panel and Popout Window are separate lightweight overlays and
 are not covered by this rule. Changes to ordinary window backgrounds, title
 bars, or creation options must verify both the main window and detached
@@ -140,7 +152,7 @@ The workflow can only be started manually from GitHub Actions and does not respo
 
 For example, when the latest stable version is `1.2.3`, the first Beta is `1.2.4-beta.1`, followed by `1.2.4-beta.2` and `1.2.4-beta.3`. After publishing stable `1.2.4`, the next automatic Beta is `1.2.5-beta.1`.
 
-A formal run creates or updates a `wework-v<version>` draft release. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
+A formal run creates or updates a `wework-v<version>` draft release. The Release changelog collects commits under `wework/` and `executor/`: a stable release uses the previous stable tag as its baseline, while a Beta release uses the highest lower-SemVer stable or Beta tag visible to Beta users. When no eligible baseline tag exists, the first release includes all matching history reachable from the release commit. Squash-merged PR entries include the PR number and `@contributor`; direct commits retain their short commit SHA and include `@contributor` when GitHub can identify the author's account. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
 
 After publishing the versioned Release, the workflow updates rolling manifests in the fixed `wework-updater` Release:
 
@@ -149,6 +161,8 @@ After publishing the versioned Release, the workflow updates rolling manifests i
 - A release only replaces a rolling manifest when its SemVer is higher; historical or lower releases cannot downgrade users.
 
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
+
+The updater manifest's `notes` field is persisted as the installed version's changelog during installation. On the first launch of the new version, Wework does not open the changelog automatically. Instead, it shows a fixed announcement at the bottom of the desktop sidebar above the account area. Clicking the announcement opens the Markdown release notes. Closing the details keeps the announcement available; only the announcement card's close button dismisses it, and that dismissal survives an app reload. The saved version must match the running app version, otherwise the client discards the stale record.
 
 Configure these repository secrets in GitHub Actions:
 

@@ -22,7 +22,7 @@ import type { KnowledgeBase } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import { cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
 
 interface BindKnowledgeBaseDialogProps {
   open: boolean
@@ -171,7 +171,7 @@ export default function BindKnowledgeBaseDialog({
                   selectedKb?.id === kb.id ||
                   (selectedKb?.name === kb.name && selectedKb?.namespace === kb.namespace)
                 const documentCount = kb.document_count || 0
-                const documentText = formatDocumentCount(documentCount, t)
+                const documentText = formatCompactKnowledgeScope(0, documentCount, t)
 
                 return (
                   <div

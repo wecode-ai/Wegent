@@ -4,12 +4,23 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
 The context indicator beside the task composer shows the current model's context usage. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
+
+The permission-mode control appears as the current mode's icon immediately before the context
+indicator. Hover to see the active mode, or click to choose **Read only**, **Workspace**, or
+**Full access**. After selecting a project space, the composer chip shows only the board name;
+its hover text still explains that sending creates a task on that board.
+
+Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
+**Agent**. This device-local preference activates the matching top-level tab when the Wework main
+window opens or reloads at the root page. If every tab of that type has been closed, Wework creates
+one again. Explicit links to Settings, Plugins, or a specific workspace route take precedence and
+are not replaced by the default tab.
 
 ## View app information
 
@@ -30,6 +41,75 @@ Common macOS shortcuts include:
 | Back / Forward         | `Command+[` / `Command+]` |
 | Select model           | `Control+Shift+M`         |
 | Appshot                | `Command+Shift+2`         |
+
+## Local harnesses
+
+The desktop app can launch an installed OpenCode, Claude Code, or Kimi Code executable as a local coding
+harness. Under **Settings → Connections → Harnesses**, you can:
+
+- Enable or hide each harness. Only enabled harnesses that are detected successfully appear in
+  the new-conversation runtime selector.
+- Leave the executable field empty to search the desktop process `PATH` and the tool's common
+  install locations, or provide an absolute path.
+- Enter default arguments one per line. Wework passes them without shell parsing and appends the
+  current prompt according to the selected harness protocol.
+- Enter launch environment variables as one `NAME=VALUE` per line. These settings remain on the
+  current device.
+- Choose Claude Code's default, plan, or bypass permission mode. Bypass mode passes
+  `--dangerously-skip-permissions` and should be used only in a controlled environment where its
+  risks are understood.
+
+After entering a task in a local project or development worktree, open the runtime selector in
+the composer to launch a harness. Wework passes the complete prompt according to the selected
+tool's CLI protocol and runs the process in the current workspace through a local PTY. The
+interactive terminal appears in the center while the title bar, right workspace, and bottom panel
+remain available. The right and bottom panels can create additional harness sessions for the same
+workspace through a picker instead of exposing every installed tool inline. The primary session
+can be switched but not closed from a panel; additional sessions can be closed explicitly. A
+session created from the right workspace opens directly as a right-side tab without replacing the
+central primary session. A session created from the bottom panel keeps the central additional-session
+behavior. The creation dialog selects both the harness and the model for that session and starts it
+only after **Create session** is confirmed.
+
+Kimi Code starts as an interactive TUI. When the terminal attaches, Wework injects the first task
+through bracketed paste instead of using the one-shot `--prompt` mode, so the same terminal remains
+available for follow-up messages after the first turn completes.
+
+Session metadata, selected model, plugin sources, workspace, and native harness session identity
+remain on the current device. Reloading the main WebView or restarting Wework keeps sessions under
+their project. Reopening one uses the native continue or resume mechanism of OpenCode, Claude Code,
+or Kimi Code and restores bounded terminal scrollback. Explicitly closing a session terminates its
+process and removes the persisted record.
+
+Wework resumes a session only in the original workspace recorded when it was created. If that
+directory or temporary worktree has been removed, Wework reports that the original workspace is
+missing instead of launching the session in another directory. Restore the original workspace or
+create a new harness session in the current workspace.
+
+After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by
+the harness model picker. Its default is **Don't specify a model**: Wework does not pass a
+`--model` argument, model proxy endpoint, or model credential, so the tool reads its own native
+configuration. You can instead explicitly select a local model interface from
+**Settings → Models** or a public, personal, or group model available through the connected Wegent
+account. That choice is persisted for the harness and replaces any `--model` or `-m` value from its
+default arguments. When an additional session is created from the right or bottom panel, the dialog
+starts with that persisted default, but changing the model there applies only to the new session and
+does not overwrite the harness default.
+
+Only an explicitly selected Wework model connects the harness to the Anthropic
+Messages-compatible loopback route exposed by the executor. The child process then receives a
+fixed local model alias and non-privileged placeholder credentials. Provider keys, cloud login
+tokens, model resource identity, and the configured local HTTP/SOCKS proxy remain inside the
+executor. The executor converts Messages requests as peer adapters to Anthropic Messages, OpenAI
+Responses, or OpenAI Chat Completions according to the selected model. Native Anthropic upstream
+requests and responses preserve their original fields. Closing or exiting a harness unregisters
+its route; abandoned routes expire after an idle timeout.
+
+Harnesses are experimental; Codex itself is not marked experimental. OpenCode, Claude Code, and
+Kimi Code load Agent Plugins-standard Skills and MCP servers from the Wework plugins selected for
+the task. They also connect automatically to the `wework_browser` MCP server so they can operate
+the Wework built-in browser through controlled tools. Plugin data is isolated by plugin and reused
+when a session resumes. Codex-only side-conversation flows are not exposed in harness sessions.
 
 ## Model availability
 
@@ -57,7 +137,7 @@ board items receive the updated title.
 
 ## Custom Codex models
 
-In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, GLM, and MiniMax. After entering the corresponding platform API key, Wework discovers available models through the provider's model-list endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint, while MiniMax uses its recommended Anthropic-compatible API and the `X-Api-Key` header for model discovery. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, GLM, and MiniMax. After entering the corresponding platform API key, Wework discovers available models through the provider's model-list endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. MiniMax has separate **China mainland** and **Global** entries, and the selected region must match the platform that issued the Token Plan key. Both entries use the recommended Anthropic-compatible API and the `X-Api-Key` header for model discovery. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
 The DeepSeek profile uses the native Responses API and exposes `deepseek-v4-flash` and `deepseek-v4-pro`, the models currently available for Codex. Both use a 1,048,576-token context window, `high` default reasoning effort, live Web Search, and freeform `apply_patch`. The connection test also requires a real `apply_patch` custom-tool call. Existing Wework-managed DeepSeek Chat Completions configurations are migrated to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
 

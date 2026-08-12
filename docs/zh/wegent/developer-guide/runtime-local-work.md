@@ -70,6 +70,19 @@ Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search
 
 前端搜索框打开结果里的运行时地址，随后仍通过最新 runtime work 列表恢复工作区上下文。搜索框只在内存中保留最近查询结果，用于避免同一会话内重复输入触发相同 RPC；缓存结果不写入 Backend，也不替代 executor 侧的 transcript 读取。
 
+## 云设备附件传输
+
+Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或回滚编辑时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
+
+云 executor 收到运行请求后，会在启动 Codex turn 前通过已认证的 Backend executor-download 接口下载缺少 `local_path` 的附件，并把设备侧路径合并回 execution request。已经有设备侧路径的附件不会重复下载；下载失败会沿用现有失败附件处理，不允许退回桌面端路径。
+
+图片进入模型后的处理取决于所选模型能力：
+
+- 原生多模态模型接收下载后的图片输入。
+- 文本主模型配置视觉旁路模型时，旁路模型接收图片并生成描述，主模型只接收描述。相同图片可以命中 executor 侧视觉描述缓存。
+
+桌面 E2E 的 cloud vision 场景使用真实远程项目和设备 RPC，同时覆盖旁路模型首发、旁路缓存命中和原生多模态输入，避免把本地 executor 流程误当作云设备验证。
+
 ## 打开和继续任务
 
 打开 LocalTask 时，Wework 调用 Backend：
@@ -130,6 +143,8 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 Codex 原生任务的持久消息只以 `thread/turns/list` 和 `thread/items/list` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存并入 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或分页读取主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 provider 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由分页 transcript 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
+同一 turn 的实时流和 Provider 快照可能用不同结构表达同一条 assistant 文本，例如实时事件产生 `block:text`，而恢复旧会话时的快照返回 `assistant_text`。前端合并 turn 时必须把内容完全相同、类型为这两种互补表示的 item 视为同一消息，并以快照表示替换实时表示；不能只按 item id 合并，否则旧会话追问时会把同一段流式文本渲染两次。相同类型的同文 item 仍按各自 id 保留，避免删除模型确实连续输出的重复消息。该边界由 `runtimeConversationTurns` 单元测试和 `streaming-text` 真实 Tauri E2E 覆盖。
+
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
 ```text
@@ -168,13 +183,13 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 `cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。
 
-如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会调用设备级 `runtime.worktrees.delete`。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
+如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会使用 LocalTask 自己的 `workspacePath` 调用设备级 `runtime.worktrees.delete`；即使侧栏把任务分组在 Project 主目录下，也不能把分组目录作为删除目标。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree，并删除已经为空的 `<worktreeId>` 外层目录。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
 
 ### Worktree 设置与生命周期
 
 Worktree 设置是设备级状态，持久化在 `$WEGENT_EXECUTOR_HOME/runtime-work/worktrees.json`，不能写入浏览器偏好或 Backend 用户设置。默认根目录为空值，解析到当前 Executor workspace 下的 `worktrees`；自动清理默认开启，默认保留 15 个。修改根目录只影响后续创建，旧根目录会保留在 `knownRoots` 中，以便继续列出、恢复和安全清理已有 worktree。
 
-Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
+Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。归档残留清理使用 Worktree Manager 的当前根目录和 `knownRoots` 做路径安全校验，不依赖固定的历史目录名；扫描已知根目录时会顺带删除旧版本遗留的空 `<worktreeId>` 目录。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 

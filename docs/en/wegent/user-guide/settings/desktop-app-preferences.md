@@ -65,6 +65,8 @@ The first release does not import project lists, Claude Code plugins, or convers
 
 The first time you close the main window, Wework explains that tasks can continue after the window is closed. You can keep the window open or confirm that the app should move to the background. After confirmation, this explanation is not shown on every close.
 
+After you select **Move to background**, the confirmation closes immediately and the main window then moves to the system tray. If the native window cannot close, the confirmation appears again so you can retry.
+
 When Wework moves to the background, it destroys the main window WebView to release resources used by the UI. The task executor is not stopped. Reopening from the tray creates a new main window and restores the current task state.
 
 When no conversation is open, the newly created main window keeps the task launcher within the window bounds. The message area scrolls as needed only after a conversation is opened.
@@ -74,6 +76,8 @@ When no conversation is open, the newly created main window keeps the task launc
 **Prevent sleep while tasks are running** is enabled by default. While at least one task is running, Wework prevents the computer from entering idle system sleep. This inhibition remains active when the main window is closed and Wework continues from the system tray.
 
 After every task completes, fails, or is interrupted, Wework immediately releases the inhibition and restores the operating system's normal sleep policy. Wework does not force the computer to sleep and does not change the configured system sleep timeout.
+
+On macOS, Wework prevents sleep with a system power assertion tied to the application process instead of starting a persistent `caffeinate` process. If Wework exits unexpectedly, macOS automatically releases the assertion, so no background process remains to keep blocking idle sleep.
 
 To keep Wework from controlling sleep, disable this option under **Settings → General**. Disabling it immediately releases any current sleep inhibition. If it is enabled again while a task is still running, Wework resumes preventing idle sleep.
 

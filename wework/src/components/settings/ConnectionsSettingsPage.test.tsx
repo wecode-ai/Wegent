@@ -36,6 +36,11 @@ const cloudDesktopExtensionMock = vi.hoisted(() => ({
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
@@ -193,6 +198,7 @@ describe('ConnectionsSettingsPage', () => {
   }
 
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -333,6 +339,10 @@ describe('ConnectionsSettingsPage', () => {
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
+    const harnessesNav = screen.getByTestId('settings-nav-harnesses')
+    expect(screen.getByTestId('settings-nav-harnesses-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
     expect(personalCategory).toHaveClass('mt-2')
@@ -344,10 +354,13 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(worktreesNav)
+    expect(codingCategory.parentElement).toContainElement(harnessesNav)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -357,6 +370,18 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(window.location.pathname).toBe('/settings/worktrees')
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
+  })
+
+  test('hides harness settings and redirects direct routes while experimental features are off', async () => {
+    experimentalFeatures.enabled = false
+    window.history.pushState({}, '', '/settings/harnesses')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-harnesses')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('harness-settings-page')).not.toBeInTheDocument()
   })
 
   test('settings page fills its container instead of the full viewport', async () => {
@@ -625,7 +650,14 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-model-input-modality-image'))
     await userEvent.click(screen.getByTestId('local-model-image-generation-checkbox'))
     await userEvent.click(screen.getByTestId('local-model-reasoning-level-high'))
-    await userEvent.selectOptions(screen.getByTestId('local-model-default-reasoning-input'), 'high')
+    const defaultReasoningSelect = screen.getByTestId('local-model-default-reasoning-input')
+    expect(
+      within(defaultReasoningSelect).getByRole('option', {
+        name: '高',
+      })
+    ).toHaveAttribute('value', 'high')
+    expect(within(defaultReasoningSelect).queryByRole('option', { name: 'high' })).toBeNull()
+    await userEvent.selectOptions(defaultReasoningSelect, 'high')
     await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
     await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
     await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
@@ -756,59 +788,70 @@ describe('ConnectionsSettingsPage', () => {
     }
   })
 
-  test('configures MiniMax through the managed Anthropic-compatible profile', async () => {
-    api.getAllDevices.mockResolvedValue([localDevice()])
-    const originalFetch = globalThis.fetch
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    )
-    Object.defineProperty(globalThis, 'fetch', {
-      configurable: true,
-      value: fetchMock,
-    })
-
-    try {
-      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
-      await screen.findByTestId('model-settings-page')
-      await userEvent.click(screen.getByTestId('local-model-add-button'))
-      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'minimax')
-      expect(screen.getByTestId('local-model-group-input')).toHaveValue('MiniMax')
-      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
-      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
-      await waitFor(() =>
-        expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue('MiniMax-M2.7')
+  test.each([
+    ['minimax', 'https://api.minimaxi.com/anthropic'],
+    ['minimax-global', 'https://api.minimax.io/anthropic'],
+  ] as const)(
+    'configures %s through the managed Anthropic-compatible profile',
+    async (providerProfileId, baseUrl) => {
+      api.getAllDevices.mockResolvedValue([localDevice()])
+      const originalFetch = globalThis.fetch
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
       )
-      await userEvent.click(screen.getByTestId('local-model-save-button'))
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://api.minimax.io/anthropic/v1/models',
-        expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
-      )
-      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
-      expect(stored[0]).toMatchObject({
-        providerProfileId: 'minimax',
-        group: 'MiniMax',
-        modelId: 'MiniMax-M2.7',
-        baseUrl: 'https://api.minimax.io/anthropic',
-        apiFormat: 'anthropic-messages',
-        requestPath: '/v1/messages',
-        toolProfile: 'function',
-        contextWindow: 204_800,
-        catalogReady: true,
-      })
-      expect(requestLocalExecutor).not.toHaveBeenCalled()
-    } finally {
       Object.defineProperty(globalThis, 'fetch', {
         configurable: true,
-        value: originalFetch,
+        value: fetchMock,
       })
+
+      try {
+        render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+        await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+        await screen.findByTestId('model-settings-page')
+        await userEvent.click(screen.getByTestId('local-model-add-button'))
+        await userEvent.selectOptions(
+          screen.getByTestId('local-model-provider-select'),
+          providerProfileId
+        )
+        expect(screen.getByTestId('local-model-group-input')).toHaveValue('MiniMax')
+        await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
+        await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+        await waitFor(() =>
+          expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue(
+            'MiniMax-M2.7'
+          )
+        )
+        await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          `${baseUrl}/v1/models`,
+          expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
+        )
+        const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+        expect(stored[0]).toMatchObject({
+          providerProfileId,
+          group: 'MiniMax',
+          modelId: 'MiniMax-M2.7',
+          baseUrl,
+          apiFormat: 'anthropic-messages',
+          requestPath: '/v1/messages',
+          toolProfile: 'function',
+          contextWindow: 204_800,
+          catalogReady: true,
+        })
+        expect(requestLocalExecutor).not.toHaveBeenCalled()
+      } finally {
+        Object.defineProperty(globalThis, 'fetch', {
+          configurable: true,
+          value: originalFetch,
+        })
+      }
     }
-  })
+  )
 
   test('tests a model before saving it', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])

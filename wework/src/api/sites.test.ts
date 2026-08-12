@@ -32,7 +32,7 @@ describe('createSitesApi', () => {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -49,7 +49,7 @@ describe('createSitesApi', () => {
           app_type: 'web',
           enabled: true,
           order: 10,
-          capabilities: ['create', 'publish', 'delete'],
+          capabilities: ['create', 'publish', 'edit', 'delete'],
           create: {
             plugin_name: 'wegent-sites',
             marketplace_name: 'wegent',
@@ -154,6 +154,37 @@ describe('createSitesApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/network', {
       method: 'PUT',
       body: JSON.stringify({ network: 'inner' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer wegent-secret',
+      },
+    })
+  })
+
+  test('updates editable site metadata through Wegent Backend', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        siteid: 'site/1',
+        name: 'Docs Site',
+        custom_domain_prefix: 'docs',
+      }),
+    })
+
+    const api = createSitesApi('/api/')
+    const site = await api.updateSite('site/1', {
+      title: 'Docs Site',
+      customDomainPrefix: 'docs',
+    })
+
+    expect(site.name).toBe('Docs Site')
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        title: 'Docs Site',
+        custom_domain_prefix: 'docs',
+      }),
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',

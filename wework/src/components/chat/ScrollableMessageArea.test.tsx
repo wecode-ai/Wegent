@@ -163,6 +163,33 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.lastElementChild).toBe(footer)
   })
 
+  test('renders an optional content footer directly after the message list', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'Create a worktree',
+            status: 'done',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+        contentFooterClassName="content-footer-shell"
+        contentFooter={<div data-testid="creation-status">Creating worktree</div>}
+      />
+    )
+
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const messageList = screen.getByTestId('message-user').parentElement
+    const footer = screen.getByTestId('chat-message-scroll-area-content-footer')
+
+    expect(footer).toHaveClass('content-footer-shell')
+    expect(footer).toContainElement(screen.getByTestId('creation-status'))
+    expect(content.lastElementChild).toBe(footer)
+    expect(messageList?.nextElementSibling).toBe(footer)
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
@@ -181,6 +208,84 @@ describe('ScrollableMessageArea', () => {
 
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
+  })
+
+  test('preserves distance from the bottom when older transcript messages are prepended', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const onLoadMoreBefore = vi.fn()
+    const currentMessages = [
+      {
+        id: 'current',
+        role: 'assistant' as const,
+        content: 'Current page',
+        status: 'done' as const,
+        createdAt: '2026-08-10T00:00:01.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="paginated-scroll"
+        hasMoreBefore
+        messages={currentMessages}
+        onLoadMoreBefore={onLoadMoreBefore}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    let scrollHeight = 1_000
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    flushScheduledTimers()
+    scroller.scrollTop = 300
+    fireEvent.wheel(scroller)
+    fireEvent.scroll(scroller)
+
+    fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
+    expect(onLoadMoreBefore).toHaveBeenCalledOnce()
+
+    scrollHeight = 1_600
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="paginated-scroll"
+        messages={[
+          {
+            id: 'older',
+            role: 'user',
+            content: 'Older page',
+            status: 'done',
+            createdAt: '2026-08-10T00:00:00.000Z',
+          },
+          ...currentMessages,
+        ]}
+        onLoadMoreBefore={onLoadMoreBefore}
+      />
+    )
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(900)
   })
 
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
@@ -699,6 +804,18 @@ describe('ScrollableMessageArea', () => {
               '<application_context>',
               '[wework.terminal.current]',
               'Wework terminal context',
+              '[referencedConversations]',
+              JSON.stringify([
+                {
+                  role: 'user',
+                  content:
+                    '<application_context>\\n[source]\\nstate\\n</application_context>\\n\\nReferenced question',
+                },
+                {
+                  role: 'assistant',
+                  content: 'Referenced answer that must stay hidden',
+                },
+              ]),
               '</application_context>',
               '',
               '第二条用户需求',
@@ -785,6 +902,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
     expect(screen.getAllByText('第二条用户需求')).toHaveLength(2)
     expect(screen.queryByText(/application_context/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Referenced answer that must stay hidden/)).not.toBeInTheDocument()
   })
 
   test('renders message navigation in an overlay outside the external scroller', () => {

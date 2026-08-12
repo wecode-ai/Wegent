@@ -106,10 +106,9 @@ mod home;
 mod plugin_skills;
 
 use diagnostics::{json_scalar_field, json_string_field};
-pub(crate) use home::select_wework_codex_user_instructions;
-pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
+pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 
@@ -1262,7 +1261,6 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1271,12 +1269,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         initial_thread_name,
         initial_thread_goal,
         notifications,
-        cancellation,
+        mut cancellation,
         request_user_input_answers,
         thread_started,
         active_turn_started,
         active_turn_finished,
     } = options;
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
@@ -1373,6 +1372,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let wait_for_goal_continuation = state.goal_is_active();
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1382,6 +1382,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
             let turn_input = turn_input(&request.prompt);
             turn_fields.push(("input_items", turn_input.len().to_string()));
             log_executor_event("codex shared turn request started", &turn_fields);
@@ -1434,6 +1435,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 active_turn_started,
                 active_turn_finished,
+                wait_for_goal_continuation,
             },
         )
         .await;
@@ -1483,7 +1485,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1496,6 +1497,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         ..
     } = options;
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
@@ -1625,6 +1627,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
+        ensure_codex_turn_not_cancelled(&mut cancellation)?;
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
@@ -1700,6 +1703,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    wait_for_goal_continuation: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -1859,6 +1863,20 @@ async fn read_shared_turn_notifications(
         if message
             .get("method")
             .and_then(Value::as_str)
+            .is_some_and(is_codex_approval_request_method)
+        {
+            spawn_shared_approval_response(
+                client,
+                &message,
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
+            continue;
+        }
+
+        if message
+            .get("method")
+            .and_then(Value::as_str)
             .is_some_and(|method| method == "mcpServer/elicitation/request")
         {
             spawn_shared_mcp_server_elicitation_response(
@@ -1875,7 +1893,11 @@ async fn read_shared_turn_notifications(
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
             }
-            if !should_wait_for_goal_continuation(&outcome, state) {
+            if !should_wait_for_goal_continuation(
+                &outcome,
+                state,
+                options.wait_for_goal_continuation,
+            ) {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
@@ -1884,8 +1906,14 @@ async fn read_shared_turn_notifications(
     }
 }
 
-fn should_wait_for_goal_continuation(outcome: &ExecutionOutcome, state: &CodexRunState) -> bool {
-    matches!(outcome, ExecutionOutcome::Completed { .. }) && state.goal_is_active()
+fn should_wait_for_goal_continuation(
+    outcome: &ExecutionOutcome,
+    state: &CodexRunState,
+    goal_was_active_at_turn_start: bool,
+) -> bool {
+    goal_was_active_at_turn_start
+        && matches!(outcome, ExecutionOutcome::Completed { .. })
+        && state.goal_is_active()
 }
 
 async fn recover_stalled_shared_turn(
@@ -2006,6 +2034,192 @@ fn spawn_shared_request_user_input_response(
         }
     });
     Ok(())
+}
+
+fn is_codex_approval_request_method(method: &str) -> bool {
+    matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+    )
+}
+
+fn spawn_shared_approval_response(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
+    let correlation_key = request_user_input_answers
+        .as_ref()
+        .map(|_| {
+            interaction_value_key(&request_id)
+                .ok_or_else(|| "approval request has invalid JSON-RPC id".to_owned())
+        })
+        .transpose()?;
+    let client = client.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let response = if let (Some(receiver), Some(correlation_key)) =
+                (request_user_input_answers, correlation_key)
+            {
+                receiver
+                    .receive(correlation_key)
+                    .await?
+                    .unwrap_or_else(|| json!({}))
+            } else {
+                json!({})
+            };
+            let result = codex_approval_result(&message, &response)?;
+            client.send_response(request_id, result).await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
+}
+
+const CODEX_APPROVAL_QUESTION_ID: &str = "__codex_approval";
+
+fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, String> {
+    let answer = response
+        .get("answers")
+        .and_then(|answers| answers.get(CODEX_APPROVAL_QUESTION_ID))
+        .and_then(|answer| answer.get("answers"))
+        .and_then(Value::as_array)
+        .and_then(|answers| answers.first())
+        .and_then(Value::as_str)
+        .unwrap_or("decline");
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "approval request is missing method".to_owned())?;
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => Ok(json!({
+            "decision": codex_command_approval_decision(message, answer)
+        })),
+        "item/permissions/requestApproval" => {
+            if !matches!(
+                answer,
+                "allow_once" | "allow_turn_strict_review" | "allow_session"
+            ) {
+                return Ok(json!({
+                    "permissions": {},
+                    "scope": "turn",
+                    "strictAutoReview": false,
+                }));
+            }
+            let permissions = message_params(message)
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            Ok(json!({
+                "permissions": permissions,
+                "scope": if answer == "allow_session" { "session" } else { "turn" },
+                "strictAutoReview": answer == "allow_turn_strict_review",
+            }))
+        }
+        _ => Err(format!("unsupported approval request method: {method}")),
+    }
+}
+
+fn codex_command_approval_decision(message: &Value, answer: &str) -> Value {
+    match answer {
+        "allow_once" => json!("accept"),
+        "allow_session" => json!("acceptForSession"),
+        _ if answer == "allow_execpolicy" || answer.starts_with("allow_execpolicy:") => {
+            codex_execpolicy_approval_decision(message, answer)
+        }
+        "cancel" => json!("cancel"),
+        _ if answer.starts_with("apply_network_policy:") => {
+            codex_network_policy_approval_decision(message, answer)
+        }
+        _ => json!("decline"),
+    }
+}
+
+fn codex_execpolicy_approval_decision(message: &Value, answer: &str) -> Value {
+    let params = message_params(message);
+    if let Some(available) = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array)
+    {
+        let Some(index) = answer
+            .strip_prefix("allow_execpolicy:")
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            return json!("decline");
+        };
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("acceptWithExecpolicyAmendment")
+                    .or_else(|| decision.get("accept_with_execpolicy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"acceptWithExecpolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedExecpolicyAmendment")
+        .or_else(|| params.get("proposed_execpolicy_amendment"))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
+}
+
+fn codex_network_policy_approval_decision(message: &Value, answer: &str) -> Value {
+    let Some(index) = answer
+        .strip_prefix("apply_network_policy:")
+        .and_then(|index| index.parse::<usize>().ok())
+    else {
+        return json!("decline");
+    };
+    let params = message_params(message);
+    let available = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array);
+    if let Some(available) = available {
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("applyNetworkPolicyAmendment")
+                    .or_else(|| decision.get("apply_network_policy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"applyNetworkPolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedNetworkPolicyAmendments")
+        .or_else(|| params.get("proposed_network_policy_amendments"))
+        .and_then(Value::as_array)
+        .and_then(|amendments| amendments.get(index))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
 }
 
 fn spawn_shared_mcp_server_elicitation_response(
@@ -2401,14 +2615,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 project_id.as_deref(),
             ));
         }
-    } else if let (Some(base_url), Some(api_key)) = (
-        non_empty_config(&request.model_config, "base_url"),
-        api_key(&request.model_config),
-    ) {
+    } else if let Some(upstream) =
+        local_model_proxy::upstream_from_model_config(&request.model_config)
+    {
         configure_codex_router(
             &mut launch_config,
             &request.task_id,
-            explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            upstream,
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
@@ -2543,45 +2756,27 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
     }))
 }
 
-fn explicit_codex_upstream(
-    model_config: &Value,
-    base_url: &str,
-    api_key: &str,
-) -> LocalModelProxyUpstream {
-    LocalModelProxyUpstream {
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: non_empty_config(model_config, "responses_url")
-            .or_else(|| non_empty_config(model_config, "responsesUrl")),
-        api_format: non_empty_config(model_config, "upstream_api_format")
-            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-        convert_custom_tools: non_empty_config(model_config, "tool_profile")
-            .or_else(|| non_empty_config(model_config, "toolProfile"))
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
-        native_tool_search: bool_value(model_config.get("native_tool_search"))
-            .or_else(|| bool_value(model_config.get("nativeToolSearch")))
-            .unwrap_or(false),
-        native_namespace_tools: bool_value(model_config.get("native_namespace_tools"))
-            .or_else(|| bool_value(model_config.get("nativeNamespaceTools")))
-            .unwrap_or(false),
-        api_key: api_key.to_owned(),
-        default_headers: parse_header_map(model_config.get("default_headers")),
-        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
-        model_id: non_empty_config(model_config, "model_id"),
-        routing_model_id: None,
-        max_output_tokens: model_config
-            .get("max_output_tokens")
-            .or_else(|| model_config.get("maxOutputTokens"))
-            .and_then(value_u64)
-            .filter(|value| *value > 0),
-    }
-}
-
 fn shell_path_config_override() -> String {
     let path = process_environment::normalized_process_path(
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+#[cfg(test)]
+fn explicit_codex_upstream(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> LocalModelProxyUpstream {
+    let mut config = model_config.clone();
+    let object = config
+        .as_object_mut()
+        .expect("test model config should be an object");
+    object.insert("base_url".to_owned(), Value::String(base_url.to_owned()));
+    object.insert("api_key".to_owned(), Value::String(api_key.to_owned()));
+    local_model_proxy::upstream_from_model_config(&config)
+        .expect("explicit model config should produce an upstream")
 }
 
 fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
@@ -3349,13 +3544,25 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
     overrides
 }
 
-fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCodexExecutionRequest {
+async fn prepare_codex_execution_request(
+    request: ExecutionRequest,
+    cancellation: Option<&mut oneshot::Receiver<()>>,
+) -> Result<PreparedCodexExecutionRequest, String> {
+    let mut request = if let Some(cancellation) = cancellation {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            request = super::runtime_capabilities::prepare_runtime_attachments(request) => request,
+        }
+    } else {
+        super::runtime_capabilities::prepare_runtime_attachments(request).await
+    };
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
-        return PreparedCodexExecutionRequest {
+        return Ok(PreparedCodexExecutionRequest {
             request,
             generated_files: Vec::new(),
-        };
+        });
     }
     log_executor_event(
         "codex attachment payload received",
@@ -3450,9 +3657,23 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
 
-    PreparedCodexExecutionRequest {
+    Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
+    })
+}
+
+fn ensure_codex_turn_not_cancelled(
+    cancellation: &mut Option<oneshot::Receiver<()>>,
+) -> Result<(), String> {
+    let Some(cancellation) = cancellation.as_mut() else {
+        return Ok(());
+    };
+    match cancellation.try_recv() {
+        Ok(()) | Err(oneshot::error::TryRecvError::Closed) => {
+            Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned())
+        }
+        Err(oneshot::error::TryRecvError::Empty) => Ok(()),
     }
 }
 
@@ -3876,43 +4097,34 @@ fn parse_config_override_value(value: &str) -> Value {
     Value::String(value.to_owned())
 }
 
-fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-}
-
 fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
-const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
-const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
-pub(crate) fn codex_runtime_approval_policy() -> Value {
-    json!({
-        "granular": {
-            "sandbox_approval": false,
-            "rules": false,
-            "skill_approval": false,
-            "request_permissions": false,
-            "mcp_elicitations": true,
-        }
-    })
+pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
+    match codex_runtime_permission_profile(request) {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => Value::String("never".to_owned()),
+        _ => Value::String("on-request".to_owned()),
+    }
 }
 
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
-    if request
+    match request
         .extra
         .get("runtime_permission_profile")
         .or_else(|| request.extra.get("runtimePermissionProfile"))
         .and_then(Value::as_str)
-        == Some(CODEX_READ_ONLY_PERMISSION_PROFILE)
     {
-        CODEX_READ_ONLY_PERMISSION_PROFILE
-    } else {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
+        Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
+        Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        }
+        _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
     }
 }
 
@@ -3986,7 +4198,10 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -4015,7 +4230,10 @@ fn thread_fork_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -4077,7 +4295,10 @@ fn thread_resume_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
 }
@@ -4158,7 +4379,10 @@ fn turn_start_params(
             Value::String(client_user_message_id.to_owned()),
         );
     }
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));

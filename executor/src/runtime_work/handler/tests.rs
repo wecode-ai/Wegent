@@ -107,6 +107,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/started",
             "params": {
                 "turnId": "turn-1",
+                "startedAtMs": 1_780_000_001_250_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -123,6 +124,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/completed",
             "params": {
                 "turnId": "turn-1",
+                "completedAtMs": 1_780_000_004_750_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -156,6 +158,14 @@ fn active_codex_items_replace_stale_paginated_items() {
     assert_eq!(
         thread["turns"][0]["items"][0]["changes"][0]["path"],
         Value::String("/tmp/result.txt".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["createdAt"],
+        1_780_000_001_250_i64
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["completedAt"],
+        1_780_000_004_750_i64
     );
     let messages = transcript_messages(&thread, "device-1");
     assert_eq!(messages.len(), 1);
@@ -1109,6 +1119,7 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_i
 fn transcript_restores_a_missing_supervisor_generated_user_message() {
     let mut provider_messages = vec![json!({
         "id": "assistant-1",
+        "turnId": "turn-1",
         "role": "assistant",
         "content": "Corrected",
         "createdAt": 200
@@ -1129,7 +1140,135 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
 
     assert_eq!(provider_messages[0]["role"], "user");
     assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
     assert_eq!(provider_messages[1]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(turns[0]["items"][0]["message"]["content"], "Use Japanese");
+}
+
+#[test]
+fn transcript_restores_a_missing_user_message_before_an_equal_timestamp_response() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "turnId": "turn-1",
+        "role": "assistant",
+        "content": "Done",
+        "createdAt": 1_780_000_000_000_i64
+    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "First instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+        json!({
+            "clientUserMessageId": "client-user-2",
+            "content": "Second instruction",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+            "references": []
+        }),
+    ];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "First instruction");
+    assert_eq!(provider_messages[0]["turnId"], "turn-1");
+    assert_eq!(provider_messages[0]["subtaskId"], "turn-1");
+    assert_eq!(provider_messages[1]["role"], "user");
+    assert_eq!(provider_messages[1]["content"], "Second instruction");
+    assert_eq!(provider_messages[2]["role"], "assistant");
+
+    let turns =
+        transcript_canonical_turns(&provider_messages, TranscriptTurnItemSource::CodexItems);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["items"][0]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][0]["message"]["content"],
+        "First instruction"
+    );
+    assert_eq!(turns[0]["items"][1]["type"], "user_message");
+    assert_eq!(
+        turns[0]["items"][1]["message"]["content"],
+        "Second instruction"
+    );
+}
+
+#[test]
+fn paginated_transcript_does_not_restore_a_presentation_from_a_newer_page() {
+    let page_messages = vec![json!({
+        "id": "assistant-old",
+        "turnId": "turn-old",
+        "role": "assistant",
+        "content": "Old response",
+        "createdAt": 100
+    })];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-new",
+        "content": "New instruction",
+        "createdAt": 300,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        false,
+        true,
+    );
+
+    assert_eq!(provider_messages, page_messages);
+}
+
+#[test]
+fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page() {
+    let page_messages = vec![
+        json!({
+            "id": "assistant-first",
+            "turnId": "turn-first",
+            "role": "assistant",
+            "content": "First response",
+            "createdAt": 100
+        }),
+        json!({
+            "id": "assistant-last",
+            "turnId": "turn-last",
+            "role": "assistant",
+            "content": "Last response",
+            "createdAt": 300
+        }),
+    ];
+    let mut provider_messages = page_messages.clone();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-middle",
+        "content": "Middle instruction",
+        "createdAt": 200,
+        "ensureVisible": true,
+        "references": []
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &page_messages,
+        true,
+        true,
+    );
+
+    assert_eq!(provider_messages.len(), 3);
+    assert_eq!(provider_messages[1]["content"], "Middle instruction");
+    assert_eq!(provider_messages[1]["turnId"], "turn-last");
 }
 
 #[test]
@@ -1617,7 +1756,14 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                 "initialSupervisor": {
                     "mode": "auto",
                     "instructions": "Keep the task focused",
-                    "modelId": "supervisor-model",
+                    "modelSelection": {
+                        "modelName": "supervisor-model",
+                        "modelType": "public",
+                        "options": {
+                            "weworkCloudModelNamespace": "default",
+                            "weworkCloudModelResourceUserId": "0"
+                        }
+                    },
                     "intervalSeconds": 10
                 },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
@@ -1656,10 +1802,63 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
         .expect("initial supervisor should be stored with the task");
     assert_eq!(supervisor.mode, "auto");
     assert_eq!(supervisor.instructions, "Keep the task focused");
-    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(
+        supervisor.model_selection,
+        Some(json!({
+            "modelName": "supervisor-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0"
+            }
+        }))
+    );
     assert_eq!(supervisor.interval_seconds, 10);
     assert_eq!(supervisor.status, "active");
     assert!(supervisor.last_error.is_none());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
+    let index_path = temp_runtime_work_index_path("create-board-comment-task");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "board-comment-task-1",
+                "workspacePath": "/tmp/project",
+                "title": "Board task",
+                "cloudProjectId": "project-1",
+                "origin": {
+                    "type": "board_comment",
+                    "cloudProjectId": "project-1",
+                    "loopItemId": "item-1",
+                    "rootCommentId": "comment-1"
+                },
+                "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+            }
+        }))
+        .await
+        .expect("board comment runtime task should be created");
+
+    let reloaded = RuntimeWorkStore::new(index_path.clone())
+        .get_task("board-comment-task-1")
+        .expect("board comment runtime task should survive store reload");
+    assert!(!reloaded.ephemeral);
+    assert_eq!(
+        reloaded.runtime_handle["origin"],
+        json!({
+            "type": "board_comment",
+            "cloudProjectId": "project-1",
+            "loopItemId": "item-1",
+            "rootCommentId": "comment-1"
+        })
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -1939,9 +2138,20 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 
 #[test]
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
+    let managed_root = root.join("workspace/worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree_path = managed_root.join("task-1/Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
-        "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+        worktree_path.display().to_string(),
         "Task".to_owned(),
     );
     link.runtime_handle = json!({
@@ -1956,17 +2166,17 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         ]
     });
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
         .collect::<Vec<_>>();
 
-    assert!(target_paths
-        .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+    assert!(target_paths.contains(&worktree_path.display().to_string()));
     assert!(target_paths.contains(
         &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
     ));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2034,13 +2244,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
         "Task".to_owned(),
     );
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
@@ -2049,6 +2262,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let _ = fs::remove_dir_all(root);
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {

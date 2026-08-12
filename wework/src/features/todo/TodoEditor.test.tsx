@@ -67,6 +67,23 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('shows the automation provenance on a generated task', () => {
+    render(
+      editorElement({
+        ...baseItem,
+        automation: {
+          rule_id: 'rule-1',
+          run_id: 'run-1',
+          trigger: 'scheduled',
+        },
+      })
+    )
+
+    expect(screen.getByTestId('cloud-todo-automation-source')).toHaveTextContent(
+      '自动化 · 定时触发'
+    )
+  })
+
   it('adopts an external version update in place instead of remounting', () => {
     const view = render(editorElement(baseItem))
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('in_progress')

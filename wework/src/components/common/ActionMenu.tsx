@@ -34,7 +34,7 @@ function formatActionMenuShortcut(shortcut: string): string {
 }
 
 export interface ActionMenuItem {
-  label: string
+  label: ReactNode
   icon?: ComponentType<{ className?: string }>
   onSelect?: () => void | Promise<void>
   testId: string
@@ -56,6 +56,7 @@ interface ActionMenuProps {
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
   onContextMenuClose?: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 export interface MenuPosition {
@@ -75,6 +76,7 @@ export function ActionMenu({
   placement = 'side',
   contextMenuPosition,
   onContextMenuClose,
+  onOpenChange,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -84,9 +86,47 @@ export function ActionMenu({
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const submenuItemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const pointerSelectionRef = useRef(false)
+  const submenuCloseTimeoutRef = useRef<number | null>(null)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null)
   const [submenuPosition, setSubmenuPosition] = useState<MenuPosition | null>(null)
+
+  const openSubmenu = useCallback((item: ActionMenuItem) => {
+    if (item.disabled || !item.children?.length) return
+    setOpenSubmenuId(item.testId)
+    setSubmenuPosition(null)
+  }, [])
+
+  const closeSubmenu = useCallback(() => {
+    setOpenSubmenuId(null)
+    setSubmenuPosition(null)
+  }, [])
+
+  const toggleSubmenu = useCallback(
+    (item: ActionMenuItem) => {
+      if (item.disabled || !item.children?.length) return
+      if (openSubmenuId === item.testId) {
+        closeSubmenu()
+      } else {
+        openSubmenu(item)
+      }
+    },
+    [openSubmenuId, closeSubmenu, openSubmenu]
+  )
+
+  const cancelSubmenuClose = useCallback(() => {
+    if (submenuCloseTimeoutRef.current) {
+      window.clearTimeout(submenuCloseTimeoutRef.current)
+      submenuCloseTimeoutRef.current = null
+    }
+  }, [])
+
+  const scheduleSubmenuClose = useCallback(() => {
+    cancelSubmenuClose()
+    submenuCloseTimeoutRef.current = window.setTimeout(() => {
+      closeSubmenu()
+    }, 100)
+  }, [cancelSubmenuClose, closeSubmenu])
 
   const closeMenu = useCallback(
     (restoreFocus = false) => {
@@ -94,12 +134,14 @@ export function ActionMenu({
       setMenuPosition(null)
       setOpenSubmenuId(null)
       setSubmenuPosition(null)
+      cancelSubmenuClose()
       onContextMenuClose?.()
+      onOpenChange?.(false)
       if (restoreFocus) {
         window.requestAnimationFrame(() => triggerRef.current?.focus())
       }
     },
-    [onContextMenuClose]
+    [cancelSubmenuClose, onContextMenuClose, onOpenChange]
   )
   const menuOpen = open || Boolean(contextMenuPosition)
   const openSubmenuItem = items.find(item => item.testId === openSubmenuId)
@@ -114,6 +156,7 @@ export function ActionMenu({
       closeMenu()
     } else {
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 
@@ -124,6 +167,7 @@ export function ActionMenu({
     if (!menuOpen) {
       setMenuPosition(null)
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 
@@ -132,12 +176,6 @@ export function ActionMenu({
     closeMenu()
     await item.onSelect()
   }
-
-  const openSubmenu = useCallback((item: ActionMenuItem) => {
-    if (item.disabled || !item.children?.length) return
-    setOpenSubmenuId(item.testId)
-    setSubmenuPosition(null)
-  }, [])
 
   const focusAdjacentItem = (
     menuItems: ActionMenuItem[],
@@ -402,14 +440,20 @@ export function ActionMenu({
                   disabled={item.disabled}
                   aria-haspopup={item.children?.length ? 'menu' : undefined}
                   aria-expanded={item.children?.length ? openSubmenuId === item.testId : undefined}
-                  onPointerEnter={() => openSubmenu(item)}
+                  onPointerEnter={() => {
+                    cancelSubmenuClose()
+                    openSubmenu(item)
+                  }}
+                  onPointerLeave={() => {
+                    scheduleSubmenuClose()
+                  }}
                   onPointerDown={event => {
                     if (item.disabled) return
                     event.preventDefault()
                     event.stopPropagation()
                     pointerSelectionRef.current = true
                     if (item.children?.length) {
-                      openSubmenu(item)
+                      toggleSubmenu(item)
                     } else {
                       void handleItemSelect(item)
                     }
@@ -420,7 +464,7 @@ export function ActionMenu({
                       return
                     }
                     if (item.children?.length) {
-                      openSubmenu(item)
+                      toggleSubmenu(item)
                     } else {
                       void handleItemSelect(item)
                     }
@@ -435,7 +479,9 @@ export function ActionMenu({
                   ].join(' ')}
                 >
                   {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                    {item.label}
+                  </span>
                   {item.shortcut ? (
                     <KeyboardShortcut
                       value={formatActionMenuShortcut(item.shortcut)}
@@ -456,12 +502,14 @@ export function ActionMenu({
               role="menu"
               data-testid={`${openSubmenuItem.testId}-submenu`}
               data-embedded-browser-occlusion
+              onPointerEnter={cancelSubmenuClose}
+              onPointerLeave={scheduleSubmenuClose}
               style={{
                 left: submenuPosition?.left ?? 0,
                 top: submenuPosition?.top ?? 0,
                 visibility: submenuPosition ? 'visible' : 'hidden',
               }}
-              className="fixed z-[71] min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
+              className="fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
             >
               {openSubmenuItem.children.map(item => {
                 const ItemIcon = item.icon
@@ -499,7 +547,9 @@ export function ActionMenu({
                     ].join(' ')}
                   >
                     {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                    <span className="truncate">{item.label}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                      {item.label}
+                    </span>
                     {item.shortcut ? (
                       <KeyboardShortcut
                         value={formatActionMenuShortcut(item.shortcut)}

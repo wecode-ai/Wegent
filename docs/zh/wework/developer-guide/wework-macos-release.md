@@ -100,6 +100,14 @@ Wework 主窗口和独立工作区窗口必须使用不透明的 Tauri 窗口，
 或原生 vibrancy 材质；不同 macOS 版本和图形环境对透明窗口边缘的合成结果不一致，
 可能显示为透出桌面、半透明描边或灰色边框。
 
+主 React WebView 的根壳必须直接使用 CSS viewport 约束（例如 `fixed inset-0`）
+填满当前 WebView。不要监听 Tauri 原生 resize 事件，再把异步读取和换算后的
+`innerSize`、`scaleFactor` 写成根壳的内联宽高；原生事件、缩放因子和 WebView
+布局提交可能乱序，旧的内联尺寸会覆盖当前 viewport，并在窗口调整后留下未填充区域。
+原生窗口尺寸只用于窗口创建、恢复和系统级窗口管理，不作为 React 根布局的尺寸来源。
+Linux 上的内置浏览器子 WebView 必须放在 `GtkOverlay` 和 `GtkFixed` 组成的绝对定位
+宿主中，不能直接加入主窗口的 `GtkBox` 参与布局，否则会挤压主 React WebView。
+
 系统拖拽面板和 Popout Window 是独立的轻量浮层，不受该约束。修改普通窗口的背景、
 标题栏或创建参数时，需要同时验证主窗口和独立工作区窗口，并保留自动化断言，确保
 两者不会重新启用原生透明效果。
@@ -134,7 +142,7 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 
 例如最新正式版是 `1.2.3` 时，第一次 Beta 发布得到 `1.2.4-beta.1`，后续依次得到 `1.2.4-beta.2`、`1.2.4-beta.3`。正式发布 `1.2.4` 后，下一个自动 Beta 是 `1.2.5-beta.1`。
 
-正式发布会创建或更新 `wework-v<version>` draft release。构建完成后，workflow 生成该版本自己的 `latest.json` 并上传到同一个 Release，再发布 Release。正式版设置为 GitHub latest；Beta 设置为 prerelease，不改变 GitHub latest。禁止 tag push 自动触发可以避免 workflow 创建 tag 时再次启动同版本构建并覆盖已签名产物。
+正式发布会创建或更新 `wework-v<version>` draft release。Release changelog 会收集 `wework/` 和 `executor/` 下的提交：正式版以上一个正式版 tag 为基准，Beta 版则以上一个对 Beta 用户可见且 SemVer 更低的正式版或 Beta tag 为基准；首次发布没有可用基准 tag 时，会收集当前发布提交可达的全部匹配历史。通过 squash PR 合入的条目会包含 PR 编号和 `@贡献者`，直接提交则保留短 commit SHA，并在 GitHub 能识别作者账号时包含 `@贡献者`。构建完成后，workflow 生成该版本自己的 `latest.json` 并上传到同一个 Release，再发布 Release。正式版设置为 GitHub latest；Beta 设置为 prerelease，不改变 GitHub latest。禁止 tag push 自动触发可以避免 workflow 创建 tag 时再次启动同版本构建并覆盖已签名产物。
 
 发布完成后，workflow 更新固定 `wework-updater` Release 中的滚动 manifest：
 
@@ -143,6 +151,8 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 - 新版本只有在 SemVer 高于当前渠道版本时才覆盖滚动 manifest，历史发布或较低版本不会让用户降级。
 
 用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
+
+updater manifest 中的 `notes` 会作为该版本的更新日志随安装流程保存。新版本第一次启动后，Wework 不会自动弹出更新日志，而是在桌面侧边栏底部、账户区域上方显示固定提示。用户点击提示后可以查看 Markdown 格式的更新内容；关闭详情不会移除提示，只有点击提示卡上的关闭按钮才会清除，并且清除状态在应用重载后保持。保存的版本号必须与当前运行版本一致，否则客户端会丢弃这份过期记录。
 
 GitHub Actions 需要配置这些 repository secrets：
 

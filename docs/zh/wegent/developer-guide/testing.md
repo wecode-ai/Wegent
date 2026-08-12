@@ -227,6 +227,19 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 桌面云设备测试
+
+从仓库根目录运行云设备功能 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+该场景会启动真实后端、Redis、云设备 executor 和 Tauri 应用，验证云项目任务、
+Goal 自动续跑与未读状态、忙碌任务转 Goal，以及本地与云端模型协议矩阵。失败时应
+使用命令输出中的 `wework/test-results/desktop-e2e/<run-id>/` 目录，对照前端、
+后端和 executor 日志定位主链路问题。
+
 ## 持续集成
 
 ### GitHub Actions 工作流
@@ -252,6 +265,21 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
 不会导致汇总任务误报失败。
+
+CI 稳定性依赖以下约束：
+
+- 平台 E2E 的 MySQL 服务必须为首次初始化保留启动宽限。健康检查的
+  `start-period` 应覆盖共享 runner 上的冷启动，再通过检查间隔和重试次数判断失败；
+  不要依赖重跑掩盖初始化超时。
+- `pull_request_target` 触发的 Repository Policy 必须从受信任的 base checkout
+  运行策略脚本，但扫描目标应按 PR head 仓库和不可变的 head SHA 检出。不要依赖
+  `refs/pull/<number>/merge`，因为 PR 同步提交时这个短生命周期引用可能被替换或删除；
+  策略任务也不得执行 PR 提供的代码。
+- 桌面 E2E 遇到异步独立渲染的最终文本和附属控件时，必须分别等待目标元素出现后再
+  读取属性或断言状态。看到最终文本不代表折叠控件、时间线等关联 UI 已完成挂载。
+- Wework 发布说明查询 GitHub 提交作者时会对瞬时 API 或 TLS 故障进行有限次数的
+  指数退避重试。重试耗尽后发布任务仍必须失败，不能静默省略作者信息或生成不完整的
+  发布说明。
 
 ### CI 缓存所有权
 

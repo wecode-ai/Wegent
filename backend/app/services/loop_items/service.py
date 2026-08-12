@@ -151,18 +151,25 @@ class LoopItemService:
             agent = db.get(ProjectChatAgent, item.assignee_agent_id)
             values["assignee_agent_name"] = agent.name if agent else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        automation = metadata.get("automation")
+        values["automation"] = automation if isinstance(automation, dict) else None
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         values["ai_state"] = ai_state if isinstance(ai_state, dict) else None
         assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
         values["assignment_history"] = (
             assignment_history if isinstance(assignment_history, list) else []
         )
-        execution = loop_item_execution_service.active_for_item(db, item_id=item.id)
+        # Surface the newest run even after it ends, so a terminal failure is
+        # visible to the UI instead of silently disappearing from the task.
+        execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
         values["execution_id"] = execution.id if execution else None
         values["execution_state"] = execution.status if execution else None
         values["queued_at"] = execution.queued_at if execution else None
         values["execution_note"] = (
             execution.execution_note or None if execution else None
+        )
+        values["execution_error"] = (
+            execution.error_message or None if execution else None
         )
         values["can_approve"] = self._can_approve_run(
             db, item=item, execution=execution, user_id=user_id
@@ -273,6 +280,8 @@ class LoopItemService:
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
             return False
+        if self._execution_keeps_task_ai_state_alive(db, ai_state):
+            return False
         raw_expires_at = ai_state.get("lease_expires_at")
         if not isinstance(raw_expires_at, str):
             return False
@@ -337,6 +346,41 @@ class LoopItemService:
             raw_expires_at,
         )
         return True
+
+    @staticmethod
+    def _execution_keeps_task_ai_state_alive(
+        db: Session, ai_state: dict[str, object]
+    ) -> bool:
+        """Decide whether the owning execution is still genuinely alive.
+
+        The execution row's lease is refreshed by the transport heartbeat (the
+        App puller beats every minute), while the projected task AI state only
+        extends its own lease on runtime output. A long, silent model run must
+        not be marked interrupted just because no output delta arrived.
+        """
+
+        runtime_device_id = ai_state.get("runtime_device_id")
+        runtime_task_id = ai_state.get("runtime_task_id")
+        if not isinstance(runtime_device_id, str) or not isinstance(
+            runtime_task_id, str
+        ):
+            return False
+        if not runtime_device_id or not runtime_task_id:
+            return False
+        from app.models.loop_item_execution import LoopItemExecution
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_task_id == runtime_task_id,
+                LoopItemExecution.status == "running",
+            )
+            .first()
+        )
+        if execution is None or execution.lease_expires_at is None:
+            return False
+        return execution.lease_expires_at >= LoopItemService._now()
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:
@@ -479,6 +523,8 @@ class LoopItemService:
         cloud_project_id: int,
         user_id: int,
         values: LoopItemCreate,
+        *,
+        commit: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -577,8 +623,11 @@ class LoopItemService:
                     ),
                     priority=item.priority,
                 )
-        db.commit()
-        db.refresh(item)
+        if commit:
+            db.commit()
+            db.refresh(item)
+        else:
+            db.flush()
         return item
 
     def list(

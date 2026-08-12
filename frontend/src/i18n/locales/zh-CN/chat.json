@@ -420,6 +420,7 @@
     "attachment": "附件",
     "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
     "image_tooltip": "支持的文件类型: 图片 (JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n上传参考图片用于生成",
+    "model_material_tooltip": "当前模型支持的素材格式：{{formats}}\n选择后将校验素材数量、大小、分辨率和时长",
     "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
@@ -662,11 +663,47 @@
   },
   "generate": {
     "mode_selector": "生成类型",
-    "max_attachments": "最多可上传 {{count}} 个附件作为参考图",
-    "attachment_limit_reached": "已达到附件数量上限"
+    "max_attachments": "最多可上传 {{count}} 个参考素材",
+    "max_material_type": "此类参考素材最多可上传 {{count}} 个",
+    "attachment_limit_reached": "已达到素材数量上限",
+    "material_errors": {
+      "mode_image_only": "首尾帧模式仅支持图片素材",
+      "mode_video": "当前生成模式不支持参考视频",
+      "mode_audio": "当前生成模式不支持参考音频",
+      "model_image": "当前模型不支持参考图片",
+      "model_video": "当前模型不支持参考视频",
+      "model_audio": "当前模型不支持参考音频",
+      "material_type": "当前模型仅支持图片、视频或音频素材",
+      "format": "不支持 {{format}} 格式，请上传 {{formats}} 格式的素材",
+      "max_size": "文件大小为 {{current}} MB，超过当前模型 {{max}} MB 限制",
+      "image_metadata_unreadable": "无法读取图片尺寸信息",
+      "image_dimension": "图片宽高需在 {{min}}～{{max}} 像素之间（当前 {{width}}×{{height}}）",
+      "image_aspect_ratio": "图片宽高比需在 {{min}}～{{max}} 之间（当前 {{width}}×{{height}}）",
+      "video_metadata_unreadable": "无法读取视频尺寸或帧率信息",
+      "video_dimension": "视频宽高需在 {{min}}～{{max}} 像素之间（当前 {{width}}×{{height}}）",
+      "duration_unreadable": "无法读取素材时长",
+      "duration_range": "素材时长需在 {{min}}～{{max}} 秒之间（当前 {{current}} 秒）",
+      "video_pixels": "视频总像素需在 {{min}}～{{max}} 之间（当前 {{width}}×{{height}}，{{current}}）",
+      "video_aspect_ratio": "视频宽高比需在 {{min}}～{{max}} 之间（当前 {{width}}×{{height}}）",
+      "video_fps_unreadable": "无法读取视频帧率",
+      "video_fps": "视频帧率需在 {{min}}～{{max}} FPS 之间（当前 {{current}} FPS）",
+      "mode_switch": "现有素材不符合所选生成模式，请先移除多余素材",
+      "model_switch": "现有素材不符合所选模型，请先移除不兼容素材",
+      "model_required": "请先选择生成模型",
+      "attachment_uploading": "素材仍在上传或处理中，请稍后再试",
+      "first_frame_required": "首尾帧模式必须上传首帧图片",
+      "reference_image_required": "当前模式必须上传参考图片",
+      "reference_material_required": "当前模式必须上传至少一个参考素材",
+      "unlimited": "不限"
+    }
   },
   "video": {
     "title": "视频生成",
+    "first_frame": "首帧",
+    "remove_frame": "移除{{frame}}",
+    "swap_frames": "调换首尾帧",
+    "last_frame": "尾帧",
+    "upload_frame": "上传{{frame}}",
     "model_selector": "选择视频模型",
     "search_model": "搜索视频模型...",
     "resolution_selector": "选择分辨率",
@@ -692,13 +729,19 @@
     "failed": "视频生成失败",
     "download": "下载视频",
     "reference_image": "参考图片（可选）",
-    "no_models": "暂无可用的视频模型"
+    "no_models": "暂无可用的视频模型",
+    "ratio_section": "比例",
+    "duration_section": "时长",
+    "resolution_section": "分辨率"
   },
   "image": {
     "title": "图片生成",
     "model_selector": "选择图片模型",
     "search_model": "搜索图片模型...",
     "size_selector": "选择尺寸",
+    "ratio_section": "比例",
+    "resolution_section": "分辨率",
+    "size_section": "尺寸",
     "size": {
       "1024x1024": "1K (1024×1024)",
       "2048x2048": "2K (2048×2048)",
@@ -793,7 +836,7 @@
     "wikispaceSync": "同步",
     "wikispaceSyncing": "同步中...",
     "wikispaceEmpty": "暂无知识库内容",
-    "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+    "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
     "wikispaceLastSynced": "上次同步: {{time}}",
     "wikispaceNeverSynced": "从未同步"
   }

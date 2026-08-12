@@ -138,9 +138,6 @@ export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: { workspacePath?: string | null }
 ): string {
-  if (workspace.workspaceKind === 'worktree' || workspace.worktreeId) {
-    return workspace.workspacePath
-  }
   return task.workspacePath || workspace.workspacePath
 }
 
@@ -151,6 +148,7 @@ function runtimeTaskAddressFromWorkspace(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.threadId ? { threadId: task.threadId } : {}),
@@ -201,6 +199,43 @@ export function removeRuntimeTasks(
       projects.reduce((total, project) => total + (project.totalTasks ?? 0), 0) +
       chats.reduce((total, workspace) => total + workspace.tasks.length, 0),
   }
+}
+
+export function updateRuntimeWorkTask(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  updates: Partial<RuntimeTaskSummary>
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    if (workspace.deviceId !== address.deviceId && workspace.remoteHostId !== address.deviceId) {
+      return workspace
+    }
+
+    const tasks = workspace.tasks.map(task =>
+      task.taskId === address.taskId ? { ...task, ...updates } : task
+    )
+    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
+    return { ...workspace, tasks }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
+export function updateRuntimeWorkTaskTitle(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  title: string
+): RuntimeWorkListResponse | null {
+  return updateRuntimeWorkTask(runtimeWork, address, { title })
 }
 
 export function runtimeWorkContainsTask(

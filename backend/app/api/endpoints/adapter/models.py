@@ -574,6 +574,19 @@ def _test_llm_connection(
         return _test_embedding_connection(
             provider_type, model_id, api_key, base_url, custom_headers
         )
+    elif model_category_type == "image" and provider_type == "gpt-image":
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url.rstrip("/") if base_url else None,
+            default_headers=custom_headers or None,
+        )
+        client.models.retrieve(model_id)
+        return {
+            "success": True,
+            "message": f"Successfully connected to GPT Image model {model_id}",
+        }
     elif model_category_type == "tts":
         return {
             "success": True,

@@ -81,6 +81,8 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 
 目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
 
+如果用户在普通回合仍运行时创建目标，Wework 会保留该目标请求，等待当前回合明确结束后以 `initialGoal` 启动新的目标回合。active goal 会让任务继续显示为运行中，但不能阻止这次已排队的目标接力；普通排队消息仍然只能在任务真正空闲时发送。executor 只在目标已经于回合开始前处于 active 状态时等待 Codex 自动续轮；若目标是在普通回合中途创建，当前执行必须先正常收敛，让 Wework 能够启动排队的目标回合。该边界避免前端等待任务空闲、executor 同时等待并不存在的自动续轮所形成的死锁。
+
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 
 前端运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要本地执行仍活跃或 provider 仍返回 `inProgress` turn，两轮之间和页面重载后都保持任务运行中；回合没有流式内容时可以为 `idle`，因此不显示“正在思考”也不产生未读。只有未读完成提醒会持久化，且不能反向推断运行状态。
@@ -98,6 +100,8 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
 
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
+
+实时发送响应中的回合 ID 可能是 executor 在 provider 回合出现前分配的临时 ID，而随后 transcript 会返回 Codex 的规范回合 ID。Wework 合并实时会话和 transcript 时必须先按规范回合 ID 对账；两者不同时，再按稳定的 `clientUserMessageId` 合并为同一个回合，并采用 transcript 的规范回合 ID。不能因为本地回合已经有非空 ID 就跳过客户端消息 ID 对账，否则 Goal 自动续轮等竞态会把同一轮用户消息和后续输出重复渲染。
 
 Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 transcript 时，executor 先用 `thread/read(includeTurns=false)` 读取线程元数据，再用 `thread/turns/list` 按时间倒序读取回合，并对每个回合调用 `thread/items/list` 按正序加载完整 item。分页游标是 Codex 生成的不透明值，前后端不得解析或改写为本地 offset；普通页面只读取一页，搜索、Supervisor 和其他完整历史消费者会沿 `nextCursor` 读取到末尾。executor 会拒绝重复游标、缺失回合 ID、跨回合 item 等无效响应，避免静默产生缺失或错序的历史。
 

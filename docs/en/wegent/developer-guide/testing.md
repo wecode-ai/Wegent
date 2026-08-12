@@ -227,6 +227,20 @@ frontend/src/__tests__/
 └── components/              # Component tests
 ```
 
+## Wework Desktop Cloud Device Tests
+
+Run the cloud-device feature E2E from the repository root:
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+This scenario starts a real backend, Redis, cloud-device executor, and Tauri
+application. It verifies cloud project tasks, Goal auto-continuation and unread
+state, busy-turn Goal handoff, and the local/cloud model protocol matrix. On
+failure, use the reported `wework/test-results/desktop-e2e/<run-id>/` directory
+to correlate frontend, backend, and executor logs before changing behavior.
+
 ## Continuous Integration
 
 ### GitHub Actions Workflow
@@ -257,6 +271,26 @@ validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`
 always appear and verify that every selected job actually succeeded. Skipped,
 unrelated modules do not make the summary fail.
+
+CI reliability depends on these invariants:
+
+- The platform E2E MySQL service must allow enough startup grace for its first
+  initialization. Its health-check `start-period` should cover a cold start on
+  a shared runner before the interval and retry count determine failure; reruns
+  must not hide initialization timeouts.
+- Repository Policy jobs triggered by `pull_request_target` must run policy
+  scripts from the trusted base checkout, while checking out the scan target by
+  the PR head repository and immutable head SHA. Do not depend on
+  `refs/pull/<number>/merge`, which can be replaced or removed while a PR is
+  synchronized, and never execute code supplied by the PR in the policy job.
+- When final text and related controls render independently in desktop E2E,
+  wait for each target element before reading attributes or asserting state.
+  Visible final text does not imply that associated disclosure controls or
+  timelines have mounted.
+- Wework release-note lookups for GitHub commit authors retry transient API or
+  TLS failures a limited number of times with exponential backoff. The release
+  job must still fail after retries are exhausted instead of silently omitting
+  attribution or publishing incomplete notes.
 
 ### CI Cache Ownership
 

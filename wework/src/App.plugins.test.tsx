@@ -32,6 +32,7 @@ vi.mock('@tauri-apps/api/window', () => ({
     }),
     scaleFactor: vi.fn().mockResolvedValue(1),
     onResized: vi.fn().mockResolvedValue(vi.fn()),
+    onScaleChanged: vi.fn().mockResolvedValue(vi.fn()),
   }),
 }))
 
@@ -447,7 +448,7 @@ function applicationTypesResponse() {
         app_type: 'web',
         enabled: true,
         order: 10,
-        capabilities: ['create', 'publish', 'delete'],
+        capabilities: ['create', 'publish', 'edit', 'delete'],
         create: {
           plugin_name: 'wegent-sites',
           marketplace_name: 'wegent',
@@ -911,7 +912,8 @@ describe('App plugins route', () => {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
     }
-    vi.mocked(fetch).mockResolvedValue({
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue({
       ok: false,
       status: 500,
       text: () => Promise.resolve('Internal server error'),
@@ -923,7 +925,9 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '应用功能尚未推出'
     )
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/sites'))).toBe(
+      false
+    )
     expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
   })
 
@@ -1113,6 +1117,7 @@ describe('App plugins route', () => {
         input:
           '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
         pluginName: '站点',
+        openInNewChat: true,
       }
     )
   })
@@ -1176,6 +1181,7 @@ describe('App plugins route', () => {
         input:
           '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
         pluginName: '微博小程序开发助手',
+        openInNewChat: true,
       }
     )
   })
@@ -1736,6 +1742,9 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('macos-traffic-light-spacer')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
     expect(screen.getByTestId('plugins-page-content').style.paddingLeft).toBe('')
+    expect(screen.getByTestId('app-shell')).toHaveClass('fixed', 'inset-0')
+    expect(screen.getByTestId('app-shell').style.width).toBe('')
+    expect(screen.getByTestId('app-shell').style.height).toBe('')
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {

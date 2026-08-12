@@ -128,7 +128,7 @@ export function MarkdownCodeBlock({
       data-testid="markdown-code-block"
       data-scroll-anchor
       className={[
-        'max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
+        'markdown-code-block max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
         compact ? 'mb-1.5' : 'mb-3 mt-2',
       ].join(' ')}
     >

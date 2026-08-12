@@ -519,7 +519,28 @@ fn attach_legacy_thread_preview(
     messages.insert(0, synthetic);
 }
 
-fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: Vec<Value>) {
+#[cfg(test)]
+fn attach_user_message_presentations(
+    messages: &mut Vec<Value>,
+    presentations: Vec<Value>,
+) {
+    let page_messages = messages.clone();
+    attach_user_message_presentations_for_page(
+        messages,
+        presentations,
+        &page_messages,
+        false,
+        false,
+    );
+}
+
+fn attach_user_message_presentations_for_page(
+    messages: &mut Vec<Value>,
+    presentations: Vec<Value>,
+    page_messages: &[Value],
+    has_more_before: bool,
+    has_more_after: bool,
+) {
     for presentation in presentations {
         let Some(client_user_message_id) = string_field(&presentation, "clientUserMessageId")
             .or_else(|| string_field(&presentation, "client_user_message_id"))
@@ -534,14 +555,43 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
         });
         let message_index = match message_index {
             Some(index) => index,
-            None if bool_field(&presentation, "ensureVisible") == Some(true) => {
+            None
+                if bool_field(&presentation, "ensureVisible") == Some(true)
+                    && presentation_belongs_to_transcript_page(
+                        &presentation,
+                        page_messages,
+                        has_more_before,
+                        has_more_after,
+                    ) =>
+            {
                 let content = string_field(&presentation, "content").unwrap_or_default();
                 if content.trim().is_empty() {
                     continue;
                 }
                 let created_at =
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
-                let synthetic = json!({
+                let index = messages
+                    .iter()
+                    .position(|message| {
+                        timestamp_ms_field(message, "createdAt")
+                            .is_some_and(|message_at| {
+                                message_at > created_at
+                                    || (message_at == created_at
+                                        && string_field(message, "role").as_deref() != Some("user"))
+                            })
+                    })
+                    .unwrap_or(messages.len());
+                let turn_id = string_field(&presentation, "turnId")
+                    .or_else(|| string_field(&presentation, "turn_id"))
+                    .or_else(|| {
+                        messages[index..].iter().find_map(|message| {
+                            string_field(message, "turnId")
+                                .or_else(|| string_field(message, "turn_id"))
+                                .or_else(|| string_field(message, "subtaskId"))
+                                .or_else(|| string_field(message, "subtask_id"))
+                        })
+                    });
+                let mut synthetic = json!({
                     "id": client_user_message_id,
                     "clientUserMessageId": client_user_message_id,
                     "role": "user",
@@ -550,13 +600,10 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
                     "createdAt": created_at,
                     "source": presentation.get("source").cloned(),
                 });
-                let index = messages
-                    .iter()
-                    .position(|message| {
-                        timestamp_ms_field(message, "createdAt")
-                            .is_some_and(|message_at| message_at > created_at)
-                    })
-                    .unwrap_or(messages.len());
+                if let Some(turn_id) = turn_id {
+                    synthetic["turnId"] = Value::String(turn_id.clone());
+                    synthetic["subtaskId"] = Value::String(turn_id);
+                }
                 messages.insert(index, synthetic);
                 index
             }
@@ -581,6 +628,48 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
             }
         }
     }
+}
+
+fn presentation_belongs_to_transcript_page(
+    presentation: &Value,
+    page_messages: &[Value],
+    has_more_before: bool,
+    has_more_after: bool,
+) -> bool {
+    if !has_more_before && !has_more_after {
+        return true;
+    }
+
+    let presentation_turn_id = string_field(presentation, "turnId")
+        .or_else(|| string_field(presentation, "turn_id"));
+    if presentation_turn_id.is_some_and(|presentation_turn_id| {
+        page_messages.iter().any(|message| {
+            string_field(message, "turnId")
+                .or_else(|| string_field(message, "turn_id"))
+                .or_else(|| string_field(message, "subtaskId"))
+                .or_else(|| string_field(message, "subtask_id"))
+                .as_deref()
+                == Some(presentation_turn_id.as_str())
+        })
+    }) {
+        return true;
+    }
+
+    let Some(created_at) = timestamp_ms_field(presentation, "createdAt") else {
+        return false;
+    };
+    let mut page_timestamps = page_messages
+        .iter()
+        .filter_map(|message| timestamp_ms_field(message, "createdAt"));
+    let Some(first_timestamp) = page_timestamps.next() else {
+        return false;
+    };
+    let (page_start, page_end) = page_timestamps.fold(
+        (first_timestamp, first_timestamp),
+        |(minimum, maximum), timestamp| (minimum.min(timestamp), maximum.max(timestamp)),
+    );
+
+    (!has_more_before || created_at >= page_start) && (!has_more_after || created_at <= page_end)
 }
 
 fn local_presentation_reference_descriptors(content: &str) -> Vec<Value> {
