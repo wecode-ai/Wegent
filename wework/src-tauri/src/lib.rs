@@ -908,6 +908,12 @@ struct MainWindowLifecycleState {
 
 #[cfg(desktop)]
 #[derive(Default)]
+struct AppPreferencesWriteState {
+    guard: Mutex<()>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
 struct NativeTelemetryState {
     guard: Mutex<Option<sentry::ClientInitGuard>>,
 }
@@ -1427,8 +1433,13 @@ fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> 
 fn update_app_preferences(
     app: tauri::AppHandle,
     patch: AppPreferencesPatch,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
     telemetry: tauri::State<NativeTelemetryState>,
 ) -> Result<AppPreferences, String> {
+    let _guard = preferences_write
+        .guard
+        .lock()
+        .map_err(|_| "Failed to lock app preferences for update".to_string())?;
     let mut preferences = read_app_preferences_impl(&app);
     let telemetry_was_enabled =
         preferences.telemetry_consent_asked && preferences.telemetry_enabled;
@@ -3243,10 +3254,25 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+fn close_main_window_to_tray(
+    app: tauri::AppHandle,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
+) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    match preferences_write.guard.lock() {
+        Ok(_guard) => {
+            let mut preferences = read_app_preferences_impl(&app);
+            if !preferences.close_to_tray_hint_seen {
+                preferences.close_to_tray_hint_seen = true;
+                if let Err(error) = write_app_preferences_impl(&app, &preferences) {
+                    log::warn!("Failed to persist close-to-tray hint acknowledgement: {error}");
+                }
+            }
+        }
+        Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
+    }
     let state = app.state::<MainWindowLifecycleState>();
     state
         .destroy_to_tray_in_progress
@@ -4929,6 +4955,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
