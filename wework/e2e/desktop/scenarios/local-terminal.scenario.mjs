@@ -179,7 +179,7 @@ async function waitForSnapshot(control, validate, message, timeoutMs) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    lastSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    lastSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
     if (validate(lastSnapshot)) return lastSnapshot
     await new Promise(resolve => setTimeout(resolve, 50))
   }
@@ -405,10 +405,14 @@ async function startHarness({
   if (presentation === 'terminal') {
     await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
   } else {
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: 'Claude Code ordinary conversation reply',
-      timeoutMs,
-    })
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      {
+        text: 'Claude Code ordinary conversation reply',
+        timeoutMs,
+      }
+    )
   }
 }
 
@@ -686,16 +690,16 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      await waitForSnapshot(
+      const claudeConversationSnapshot = await waitForSnapshot(
         control,
         snapshot =>
+          snapshot.testIds.includes('message-assistant') &&
           !snapshot.testIds.includes('pause-response-button') &&
           !snapshot.testIds.includes('thinking-indicator'),
         'Claude Code ordinary turn did not settle before the follow-up',
         uiTimeoutMs
       )
       await captureWorkbench(control, 'local-harness-13-claude-code-conversation.png')
-      const claudeConversationSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         !claudeConversationSnapshot.testIds.includes('central-harness-terminal'),
         'Claude Code still replaced the ordinary conversation with a terminal'
@@ -781,7 +785,9 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      const claudeGoalSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const claudeGoalSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
       assert.ok(
         claudeGoalSnapshot.testIds.includes('user-message-goal-badge'),
         'Claude Goal request was not presented as a Goal message'
@@ -915,7 +921,9 @@ export async function createDesktopScenario({
         text: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
       })
-      const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const multiSessionSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
       assert.ok(
         multiSessionSnapshot.testIds.filter(testId =>
           testId.startsWith('local-harness-session-row-local-harness-')
@@ -945,7 +953,9 @@ export async function createDesktopScenario({
         text: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
       })
-      const closedSidebarSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const closedSidebarSessionSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
       assert.ok(
         !closedSidebarSessionSnapshot.testIds.some(testId =>
           testId.startsWith('right-workspace-harness-tab-local-harness-')
