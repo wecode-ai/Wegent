@@ -12,17 +12,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import DeviceType
-from app.services.device.local_provider import local_device_provider
-from wecode.service.nevis_client import nevis_client
+from wecode.service.cloud_device_ip_index import (
+    get_indexed_nevis_ip,
+)
 
 logger = logging.getLogger(__name__)
 
 CloudDeviceRow = Tuple[Kind, User]
+POD_LOOKUP_TIMEOUT_SECONDS = 3.0
 
 
 def _same_ip(candidate: Any, expected: str) -> bool:
@@ -66,33 +67,6 @@ class IpUserLookupService:
             "status": kind.json.get("status", {}).get("state"),
         }
 
-    @staticmethod
-    async def _find_nevis_matches(
-        rows: List[CloudDeviceRow], ip_address: str
-    ) -> Tuple[List[CloudDeviceRow], int]:
-        semaphore = asyncio.Semaphore(10)
-
-        async def matches(row: CloudDeviceRow) -> Tuple[CloudDeviceRow, bool, bool]:
-            kind, _ = row
-            cloud_config = kind.json.get("spec", {}).get("cloudConfig") or {}
-            sandbox_id = cloud_config.get("sandboxId")
-            if not sandbox_id:
-                return row, False, False
-            try:
-                async with semaphore:
-                    sandbox = await nevis_client.get_sandbox(sandbox_id)
-            except Exception as exc:
-                logger.debug("Failed to query Nevis sandbox %s: %s", sandbox_id, exc)
-                return row, False, True
-            nevis_ip = (sandbox.get("details") or {}).get("urls")
-            return row, _same_ip(nevis_ip, ip_address), False
-
-        results = await asyncio.gather(*(matches(row) for row in rows))
-        return (
-            [row for row, is_match, _ in results if is_match],
-            sum(1 for _, _, failed in results if failed),
-        )
-
     async def _find_cloud_device_matches(
         self, db: Session, ip_address: str
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
@@ -100,45 +74,23 @@ class IpUserLookupService:
         matched_rows = [
             row
             for row in rows
-            if any(
-                _same_ip(candidate, ip_address)
-                for candidate in (
-                    row[0].json.get("spec", {}).get("clientIp"),
-                    row[0].json.get("spec", {}).get("runtimeTransferHost"),
-                )
+            if _same_ip(
+                get_indexed_nevis_ip(
+                    row[0].json.get("spec", {}).get("cloudConfig") or {}
+                ),
+                ip_address,
             )
         ]
-        remaining = [row for row in rows if row not in matched_rows]
-
-        redis_keys = [
-            local_device_provider.generate_online_key(kind.user_id, kind.name)
-            for kind, _ in remaining
-        ]
-        try:
-            online_map = await cache_manager.mget(redis_keys) if redis_keys else {}
-        except Exception as exc:
-            logger.debug("Failed to query cloud device online IPs: %s", exc)
-            online_map = {}
-
-        unresolved = []
-        for row, redis_key in zip(remaining, redis_keys):
-            online_info = online_map.get(redis_key) or {}
-            online_ips = (
-                online_info.get("client_ip"),
-                online_info.get("runtime_transfer_host"),
-            )
-            if any(_same_ip(candidate, ip_address) for candidate in online_ips):
-                matched_rows.append(row)
-            else:
-                unresolved.append(row)
-
-        nevis_rows, failed_count = await self._find_nevis_matches(
-            unresolved, ip_address
+        incomplete_count = sum(
+            get_indexed_nevis_ip(kind.json.get("spec", {}).get("cloudConfig") or {})
+            is None
+            for kind, _ in rows
         )
-        matched_rows.extend(nevis_rows)
-        error = None
-        if failed_count:
-            error = f"Failed to query {failed_count} cloud device IPs"
+        error = (
+            f"Nevis IP index is missing for {incomplete_count} active cloud devices"
+            if incomplete_count
+            else None
+        )
         return [self._build_cloud_device_match(*row) for row in matched_rows], error
 
     @staticmethod
@@ -175,7 +127,7 @@ class IpUserLookupService:
             "/executor-manager/executor/pod-owners"
         )
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=POD_LOOKUP_TIMEOUT_SECONDS) as client:
                 response = await client.get(url, params={"ip_address": ip_address})
                 response.raise_for_status()
                 payload = response.json()

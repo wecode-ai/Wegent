@@ -136,7 +136,11 @@ class NevisClient:
                 logger.error(f"Nevis API request error: {str(e)}")
                 raise NevisClientError(f"Failed to connect to Nevis API: {str(e)}")
 
-    async def get_sandbox(self, sandbox_id: str) -> Dict[str, Any]:
+    async def get_sandbox(
+        self,
+        sandbox_id: str,
+        http_client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
         """Get sandbox status and information.
 
         Args:
@@ -154,29 +158,37 @@ class NevisClient:
         url = self._get_sandboxes_url(sandbox_id)
         logger.debug(f"Querying Nevis sandbox: {sandbox_id}")
 
+        if http_client is not None:
+            return await self._get_sandbox(http_client, url, sandbox_id)
         async with httpx.AsyncClient(timeout=NEVIS_TIMEOUT) as client:
-            try:
-                response = await client.get(url, headers=self._get_headers())
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    logger.warning(f"Nevis sandbox not found: {sandbox_id}")
-                    raise NevisClientError(
-                        f"Sandbox not found: {sandbox_id}",
-                        status_code=404,
-                    )
-                logger.error(
-                    f"Nevis API error: status={e.response.status_code}, "
-                    f"body={e.response.text}"
-                )
+            return await self._get_sandbox(client, url, sandbox_id)
+
+    async def _get_sandbox(
+        self, client: httpx.AsyncClient, url: str, sandbox_id: str
+    ) -> Dict[str, Any]:
+        """Execute one sandbox status request with a caller-owned client."""
+        try:
+            response = await client.get(url, headers=self._get_headers())
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"Nevis sandbox not found: {sandbox_id}")
                 raise NevisClientError(
-                    f"Failed to get sandbox: {e.response.text}",
-                    status_code=e.response.status_code,
+                    f"Sandbox not found: {sandbox_id}",
+                    status_code=404,
                 )
-            except httpx.RequestError as e:
-                logger.error(f"Nevis API request error: {str(e)}")
-                raise NevisClientError(f"Failed to connect to Nevis API: {str(e)}")
+            logger.error(
+                f"Nevis API error: status={e.response.status_code}, "
+                f"body={e.response.text}"
+            )
+            raise NevisClientError(
+                f"Failed to get sandbox: {e.response.text}",
+                status_code=e.response.status_code,
+            )
+        except httpx.RequestError as e:
+            logger.error(f"Nevis API request error: {str(e)}")
+            raise NevisClientError(f"Failed to connect to Nevis API: {str(e)}")
 
     async def restart_sandbox(self, sandbox_id: str) -> Dict[str, Any]:
         """Restart a sandbox VM.

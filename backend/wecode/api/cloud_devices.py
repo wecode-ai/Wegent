@@ -15,7 +15,16 @@ from typing import Any
 
 import httpx
 import websockets
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    status,
+)
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from websockets.exceptions import InvalidStatus
@@ -32,6 +41,11 @@ from wecode.schemas.cloud_device import (
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
     VncConfigResponse,
+)
+from wecode.service.cloud_device_ip_index import (
+    CloudDeviceIpTarget,
+    cloud_device_ip_index_service,
+    normalize_nevis_ip,
 )
 from wecode.service.cloud_device_provider import cloud_device_provider
 from wecode.service.get_user_gitinfo import get_user_gitinfo
@@ -172,6 +186,7 @@ async def _is_files_service_available(files_url: str | None) -> bool:
 @router.post("", response_model=CloudDeviceResponse)
 async def create_cloud_device(
     request: Request,
+    background_tasks: BackgroundTasks,
     body: CreateCloudDeviceRequest = Body(default=CreateCloudDeviceRequest()),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -217,6 +232,11 @@ async def create_cloud_device(
             git_tokens=await _get_current_user_git_tokens(current_user.user_name),
             mail_email=body.mail_email or "",
             mail_password=body.mail_password or "",
+        )
+        background_tasks.add_task(
+            cloud_device_ip_index_service.sync_device,
+            current_user.id,
+            result["device_id"],
         )
 
         return CloudDeviceResponse(**result)
@@ -307,6 +327,7 @@ async def delete_cloud_device(
 @router.post("/{device_id}/restart")
 async def restart_cloud_device(
     device_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -328,6 +349,11 @@ async def restart_cloud_device(
             db=db,
             user_id=current_user.id,
             device_id=device_id,
+        )
+        background_tasks.add_task(
+            cloud_device_ip_index_service.sync_device,
+            current_user.id,
+            restart_result["device_id"],
         )
         return {
             "message": "Restart command sent successfully",
@@ -392,9 +418,32 @@ async def get_cloud_device_nevis_status(
         user_id,
     )
     sandbox_id = _resolve_sandbox_id(device_id, device_status)
+    resolved_user_id = _resolve_target_user_id(current_user, user_id)
 
     try:
         nevis_status = await cloud_device_provider.get_vm_status(sandbox_id)
+        nevis_ip = normalize_nevis_ip(nevis_status.get("ip_address"))
+        if nevis_ip:
+            target = CloudDeviceIpTarget(
+                user_id=resolved_user_id,
+                device_name=device_status["device_id"],
+                sandbox_id=sandbox_id,
+            )
+            try:
+                if cloud_device_ip_index_service.persist_observation(
+                    db, target, nevis_ip
+                ):
+                    db.commit()
+            except Exception:
+                db.rollback()
+                logger.warning(
+                    "Failed to persist Nevis IP observation: user_id=%s, "
+                    "device_id=%s, sandbox_id=%s",
+                    resolved_user_id,
+                    device_status["device_id"],
+                    sandbox_id,
+                    exc_info=True,
+                )
         return NevisSandboxStatus(**nevis_status)
 
     except NevisClientError as e:
