@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 SKILL_MARKET_BASE_URL = os.environ.get(
     "SKILL_MARKET_BASE_URL", "http://mcp.intra.weibo.com"
 )
+SKILL_MARKET_WEB_URL = os.environ.get(
+    "SKILL_MARKET_WEB_URL", "https://mcp.intra.weibo.com/pages/skills"
+)
 
 
 def get_mcp_token() -> str:
@@ -46,12 +49,16 @@ class WeiboSkillMarketProvider(ISkillMarketProvider):
     """
 
     @property
+    def key(self) -> str:
+        return "weibo"
+
+    @property
     def name(self) -> str:
-        return "微博技能市场"
+        return "SkillHub"
 
     @property
     def market_url(self) -> str:
-        return f"{SKILL_MARKET_BASE_URL}/pages/skills"
+        return SKILL_MARKET_WEB_URL
 
     async def search(self, params: SearchParams) -> SearchResult:
         """
@@ -69,6 +76,7 @@ class WeiboSkillMarketProvider(ISkillMarketProvider):
         query_params: Dict[str, Any] = {
             "page": params.page,
             "pageSize": params.pageSize,
+            "sortBy": "download_count",
         }
         if params.keyword:
             query_params["keyword"] = params.keyword

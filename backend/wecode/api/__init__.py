@@ -28,6 +28,14 @@ from wecode.service.skill_market import weibo_skill_market_provider
 
 skill_market_registry.register(weibo_skill_market_provider)
 
+# Register Weibo System Skill Provider
+from app.services.system_skill_providers.core.registry import (
+    system_skill_provider_registry,
+)
+from wecode.service.system_skill_providers import weibo_system_skill_provider
+
+system_skill_provider_registry.register(weibo_system_skill_provider)
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_monitor_patch  # noqa: F401  register internal admin restart handler
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
