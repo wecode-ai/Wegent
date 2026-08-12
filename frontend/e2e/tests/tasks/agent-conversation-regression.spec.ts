@@ -54,6 +54,20 @@ type CapturedModelRequest = {
   body: unknown
 }
 
+type SkillRefMeta = {
+  skill_id: number
+  namespace: string
+  is_public: boolean
+  content_hash?: string
+}
+
+type InteractiveToolResponse = {
+  id: string
+  nameIncludes: string
+  input: Record<string, unknown>
+  text?: string
+}
+
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
 
 test.describe('Agent conversation regression', () => {
@@ -149,6 +163,224 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('ClaudeCode clarification submits the selected option to the resumed model turn', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `CLARIFICATION_DEFER_${makeContextToken('clarification')}`
+    const toolUseId = `tool_${makeContextToken('clarification_tool').toLowerCase()}`
+    const questionId = 'implementation_scope'
+    const selectedValue = 'complete'
+
+    await configureInteractiveFormRule(request, prompt, {
+      id: toolUseId,
+      nameIncludes: 'interactive_form_question',
+      input: {
+        questions: [
+          {
+            id: questionId,
+            question: 'Which implementation scope should be used?',
+            input_type: 'choice',
+            options: [
+              {
+                label: 'Minimal',
+                value: 'minimal',
+                description: 'Make the smallest focused change.',
+              },
+              {
+                label: 'Complete',
+                value: selectedValue,
+                description: 'Cover the full interaction flow.',
+                recommended: true,
+              },
+            ],
+            required: true,
+            multi_select: false,
+          },
+        ],
+      },
+    })
+    await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+
+    const initialRequest = await waitForCapturedModelRequest(
+      request,
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt),
+      `ClaudeCode model request containing ${prompt}`
+    )
+    expect(requestOffersTool(initialRequest.body, 'interactive_form_question')).toBe(true)
+
+    const form = page.getByTestId('ask-user-form')
+    await expect(form).toContainText('Which implementation scope should be used?', {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await page.getByTestId(`ask-user-option-${questionId}-1`).click()
+    await page.getByTestId('ask-user-submit').click()
+
+    const resumedRequest = await waitForCapturedModelRequest(
+      request,
+      capture => {
+        return (
+          isAnthropicMessagesRequest(capture) &&
+          containsInteractiveFormAnswer(capture.body, toolUseId, questionId, selectedValue)
+        )
+      },
+      `ClaudeCode resumed request containing selected clarification option ${selectedValue}`
+    )
+    expect(
+      containsInteractiveFormAnswer(resumedRequest.body, toolUseId, questionId, selectedValue)
+    ).toBe(true)
+    await waitForBackendTerminal(request, taskId)
+
+    const captures = await loadCapturedModelRequests(request)
+    const clarificationRequests = captures.filter(
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt)
+    )
+    expect(clarificationRequests).toHaveLength(2)
+    expect(
+      containsInteractiveFormAnswer(
+        clarificationRequests.at(-1)?.body,
+        toolUseId,
+        questionId,
+        selectedValue
+      )
+    ).toBe(true)
+  })
+
+  test('ClaudeCode preserves a new clarification after answering the previous form', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `CONSECUTIVE_CLARIFICATION_${makeContextToken('consecutive_clarification')}`
+    const firstToolUseId = `tool_${makeContextToken('first_clarification').toLowerCase()}`
+    const secondToolUseId = `tool_${makeContextToken('second_clarification').toLowerCase()}`
+    const firstQuestionId = 'implementation_scope'
+    const secondQuestionId = 'verification_scope'
+
+    await configureInteractiveFormRule(request, prompt, [
+      {
+        id: firstToolUseId,
+        nameIncludes: 'interactive_form_question',
+        input: {
+          questions: [
+            {
+              id: firstQuestionId,
+              question: 'Which implementation scope should be used?',
+              input_type: 'choice',
+              options: [
+                {
+                  label: 'Minimal',
+                  value: 'minimal',
+                  description: 'Make the smallest focused change.',
+                },
+                {
+                  label: 'Complete',
+                  value: 'complete',
+                  description: 'Cover the full interaction flow.',
+                },
+              ],
+              required: true,
+              multi_select: false,
+            },
+          ],
+        },
+      },
+      {
+        id: secondToolUseId,
+        nameIncludes: 'interactive_form_question',
+        text: 'The implementation scope is clear; one verification decision remains.',
+        input: {
+          questions: [
+            {
+              id: secondQuestionId,
+              question: 'Which verification scope should be used?',
+              input_type: 'choice',
+              options: [
+                {
+                  label: 'Focused',
+                  value: 'focused',
+                  description: 'Run only the focused regression.',
+                },
+                {
+                  label: 'Full',
+                  value: 'full',
+                  description: 'Run the complete verification suite.',
+                },
+              ],
+              required: true,
+              multi_select: false,
+            },
+          ],
+        },
+      },
+    ])
+    await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+
+    const firstForm = page
+      .getByTestId('ask-user-form')
+      .filter({ hasText: 'Which implementation scope should be used?' })
+    await expect(firstForm).toBeVisible({
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await page.getByTestId(`ask-user-option-${firstQuestionId}-1`).click()
+    await firstForm.getByTestId('ask-user-submit').click()
+
+    await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) &&
+        containsInteractiveFormAnswer(capture.body, firstToolUseId, firstQuestionId, 'complete'),
+      'ClaudeCode request containing the first clarification answer'
+    )
+
+    const secondForm = page
+      .getByTestId('ask-user-form')
+      .filter({ hasText: 'Which verification scope should be used?' })
+    await expect(secondForm).toBeVisible({
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await page.getByTestId(`ask-user-option-${secondQuestionId}-1`).click()
+    await secondForm.getByTestId('ask-user-submit').click()
+
+    await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) &&
+        containsInteractiveFormAnswer(capture.body, secondToolUseId, secondQuestionId, 'full'),
+      'ClaudeCode request containing the second clarification answer'
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const captures = await loadCapturedModelRequests(request)
+    const clarificationRequests = captures.filter(
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt)
+    )
+    expect(clarificationRequests).toHaveLength(3)
+    expect(
+      containsInteractiveFormAnswer(
+        clarificationRequests[1]?.body,
+        firstToolUseId,
+        firstQuestionId,
+        'complete'
+      )
+    ).toBe(true)
+    expect(
+      containsInteractiveFormAnswer(
+        clarificationRequests[2]?.body,
+        secondToolUseId,
+        secondQuestionId,
+        'full'
+      )
+    ).toBe(true)
   })
 
   test('coding mode ClaudeCode supports dialogue and follow-up', async ({ page, request }) => {
@@ -392,6 +624,7 @@ test.describe('Agent conversation regression', () => {
 
     await createClaudeShell(request)
 
+    const interactiveSkillRef = await resolveSkillRef(request, 'interactive')
     chatShellTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-chat-shell-team`,
       botName: `${TEST_PREFIX}-chat-shell-bot`,
@@ -405,6 +638,10 @@ test.describe('Agent conversation regression', () => {
       shellName: CLAUDE_SHELL_NAME,
       bindMode: ['chat'],
       modelName: CLAUDE_MODEL_NAME,
+      skills: ['interactive'],
+      skillRefs: { interactive: interactiveSkillRef },
+      preloadSkills: ['interactive'],
+      preloadSkillRefs: { interactive: interactiveSkillRef },
     })
     codeTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-code-team`,
@@ -465,6 +702,10 @@ test.describe('Agent conversation regression', () => {
       shellName: string
       bindMode: string[]
       modelName: string
+      skills?: string[]
+      skillRefs?: Record<string, SkillRefMeta>
+      preloadSkills?: string[]
+      preloadSkillRefs?: Record<string, SkillRefMeta>
     }
   ): Promise<CreatedTeam> {
     const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
@@ -477,6 +718,10 @@ test.describe('Agent conversation regression', () => {
           bind_model_type: 'user',
         },
         system_prompt: 'You are a deterministic E2E regression assistant.',
+        skills: options.skills,
+        skill_refs: options.skillRefs,
+        preload_skills: options.preloadSkills,
+        preload_skill_refs: options.preloadSkillRefs,
         namespace: 'default',
         is_active: true,
       },
@@ -511,6 +756,43 @@ test.describe('Agent conversation regression', () => {
       name: options.teamName,
       id: teamBody.id!,
       botName: options.botName,
+    }
+  }
+
+  async function resolveSkillRef(
+    request: APIRequestContext,
+    skillName: string
+  ): Promise<SkillRefMeta> {
+    const response = await request.get(
+      `${API_BASE_URL}/api/v1/kinds/skills?name=${encodeURIComponent(skillName)}&namespace=default&exact_match=false`,
+      { headers: authHeaders() }
+    )
+    expect(response.status()).toBe(200)
+
+    const body = (await response.json()) as {
+      items?: Array<{
+        metadata?: {
+          namespace?: string
+          labels?: Record<string, string>
+        }
+        status?: {
+          fileHash?: string
+        }
+      }>
+    }
+    const skill = body.items?.[0]
+    const skillId = Number(skill?.metadata?.labels?.id)
+    expect(
+      skillId,
+      `Skill ${skillName} should expose a numeric metadata.labels.id`
+    ).toBeGreaterThan(0)
+
+    const fileHash = skill?.status?.fileHash
+    return {
+      skill_id: skillId,
+      namespace: skill?.metadata?.namespace || 'default',
+      is_public: skill?.metadata?.labels?.user_id === '0',
+      content_hash: fileHash ? `sha256:${fileHash}` : undefined,
     }
   }
 
@@ -690,6 +972,95 @@ test.describe('Agent conversation regression', () => {
     expect(response.status()).toBe(200)
   }
 
+  async function configureInteractiveFormRule(
+    request: APIRequestContext,
+    matchText: string,
+    responseTool: InteractiveToolResponse | InteractiveToolResponse[]
+  ): Promise<void> {
+    streamRuleMatchTexts.add(matchText)
+    const response = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
+      ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
+      data: {
+        matchText,
+        ...(Array.isArray(responseTool) ? { responseTools: responseTool } : { responseTool }),
+      },
+    })
+    expect(response.status()).toBe(200)
+  }
+
+  function containsInteractiveFormAnswer(
+    value: unknown,
+    toolUseId: string,
+    questionId: string,
+    selectedValue: string
+  ): boolean {
+    if (Array.isArray(value)) {
+      return value.some(item =>
+        containsInteractiveFormAnswer(item, toolUseId, questionId, selectedValue)
+      )
+    }
+    if (!value || typeof value !== 'object') {
+      return false
+    }
+
+    const record = value as Record<string, unknown>
+    if (
+      record.type === 'tool_result' &&
+      record.tool_use_id === toolUseId &&
+      answerPayloadContainsSelection(record.content, questionId, selectedValue)
+    ) {
+      return true
+    }
+    return Object.values(record).some(item =>
+      containsInteractiveFormAnswer(item, toolUseId, questionId, selectedValue)
+    )
+  }
+
+  function requestOffersTool(value: unknown, nameIncludes: string): boolean {
+    if (!value || typeof value !== 'object') {
+      return false
+    }
+    const tools = (value as { tools?: unknown }).tools
+    if (!Array.isArray(tools)) {
+      return false
+    }
+    return tools.some(tool => {
+      if (!tool || typeof tool !== 'object') {
+        return false
+      }
+      const name = (tool as { name?: unknown }).name
+      return typeof name === 'string' && name.includes(nameIncludes)
+    })
+  }
+
+  function answerPayloadContainsSelection(
+    value: unknown,
+    questionId: string,
+    selectedValue: string
+  ): boolean {
+    if (typeof value === 'string') {
+      try {
+        return answerPayloadContainsSelection(JSON.parse(value), questionId, selectedValue)
+      } catch {
+        return false
+      }
+    }
+    if (Array.isArray(value)) {
+      return value.some(item => answerPayloadContainsSelection(item, questionId, selectedValue))
+    }
+    if (!value || typeof value !== 'object') {
+      return false
+    }
+
+    const record = value as Record<string, unknown>
+    if (record[questionId] === selectedValue) {
+      return true
+    }
+    return Object.values(record).some(item =>
+      answerPayloadContainsSelection(item, questionId, selectedValue)
+    )
+  }
+
   async function cleanupStreamRules(request: APIRequestContext): Promise<void> {
     const rules = [...streamRuleMatchTexts]
     streamRuleMatchTexts.clear()
@@ -809,17 +1180,21 @@ test.describe('Agent conversation regression', () => {
         : predicateOrText
 
     return waitForCapturedRequest<CapturedModelRequest>(
-      async () => {
-        const response = await request.get(
-          `${MOCK_MODEL_SERVER_URL}/captured-requests`,
-          MOCK_MODEL_CONTROL_REQUEST_OPTIONS
-        )
-        expect(response.status()).toBe(200)
-        return (await response.json()) as CapturedModelRequest[]
-      },
+      () => loadCapturedModelRequests(request),
       predicate,
       label || `mock model request containing ${predicateOrText}`
     )
+  }
+
+  async function loadCapturedModelRequests(
+    request: APIRequestContext
+  ): Promise<CapturedModelRequest[]> {
+    const response = await request.get(
+      `${MOCK_MODEL_SERVER_URL}/captured-requests`,
+      MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+    )
+    expect(response.status()).toBe(200)
+    return (await response.json()) as CapturedModelRequest[]
   }
 
   async function waitForCapturedRequest<T>(

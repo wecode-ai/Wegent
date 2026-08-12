@@ -180,6 +180,40 @@ describe('MixedContentView', () => {
     }
   })
 
+  it('continues estimated image generation progress from the placeholder timestamp', () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-08-07T00:01:00Z'))
+
+    try {
+      render(
+        <MixedContentView
+          thinking={null}
+          content=""
+          taskStatus="RUNNING"
+          theme="light"
+          blocks={[
+            {
+              id: 'image-placeholder',
+              type: 'image',
+              status: 'streaming',
+              is_placeholder: true,
+              image_urls: [],
+              image_count: 0,
+              image_size: '1512x648',
+              timestamp: new Date('2026-08-07T00:00:00Z').getTime(),
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+        'image.generating 49%'
+      )
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('hides a stale image placeholder after the task fails', () => {
     render(
       <MixedContentView

@@ -134,6 +134,12 @@ Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `it
 
 Wework 展示层兼容 Responses API 的 snake_case 动作名（如 `open_page`、`find_in_page`）和 Codex app-server 的 camelCase 动作名（如 `openPage`、`findInPage`）。动作名差异只能在工具详情解析边界处理，不能通过 UI 占位内容或状态兜底掩盖缺失的完成事件。
 
+### 工具调用时长
+
+工具调用的开始时间、完成时间和时长来自 executor 转发的 Codex item 生命周期，是实时 stream 和历史 transcript 的共同权威来源。executor 必须在 started/completed 事件和 transcript 投影中保留毫秒精度的 `createdAt`、`completedAt` 与 `durationMs`，并把同一调用的 function call、command execution 和 output 合并为一个 block。
+
+pane 缓存和 React 组件只负责恢复与展示这些时间字段。运行中的本地计时器可以临时锚定首次渲染的开始时间，避免增量更新导致跳动；一旦收到 executor 的完成时间或时长，完成态必须按当前 block 的权威字段计算。切换 pane、刷新 transcript 或复用组件都不能继续使用旧 pane 的本地完成时间或开始锚点。
+
 ### 工具活动预览滚动
 
 折叠的工具活动预览最多显示三行，并在用户没有展开工具详情时跟随最新活动。自动滚动必须同时响应工具行数量变化和底部“正在思考”行的出现或消失；工具完成后即使行数不变，“正在思考”也必须保持在内层滚动区域的可见范围内。展开详情时预览解除高度限制，不能用强制滚动覆盖用户阅读位置。
@@ -258,12 +264,13 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
 - 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。
+- `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
-修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，确认主 composer 始终没有继承右栏附件，并验证运行中的临时聊天 follow-up 通过 guidance 进入同一个活跃 turn；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

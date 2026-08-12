@@ -469,9 +469,11 @@ describe('emitResponseApiEvent', () => {
         data: {
           block_id: 'call-1',
           updates: {
-            status: 'streaming',
+            status: 'done',
             tool_output_delta: 'line 1\n',
             tool_output_truncated: false,
+            completed_at: 1_780_000_004_750,
+            duration_ms: 3_500,
           },
         },
       },
@@ -483,9 +485,11 @@ describe('emitResponseApiEvent', () => {
       subtaskId: '2',
       deviceId: 'device-1',
       blockId: 'call-1',
-      status: 'streaming',
+      status: 'done',
       toolOutputDelta: 'line 1\n',
       toolOutputTruncated: false,
+      completedAt: 1_780_000_004_750,
+      durationMs: 3_500,
     })
   })
 

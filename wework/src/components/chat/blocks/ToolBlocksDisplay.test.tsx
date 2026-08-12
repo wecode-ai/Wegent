@@ -1188,6 +1188,39 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('3.0s')).toBeInTheDocument()
   })
 
+  test('uses restored timestamps after a completed tool block is reused', () => {
+    const { rerender } = render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedCommandBlock,
+            createdAt: 1786459157500,
+            completedAt: 1786459172000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+    expect(screen.getByText('14.5s')).toBeInTheDocument()
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedCommandBlock,
+            createdAt: 1786459157131,
+            completedAt: 1786459172000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    expect(screen.getByText('14.9s')).toBeInTheDocument()
+  })
+
   test('shows thinking without an aggregate timer after all tool blocks are done', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))

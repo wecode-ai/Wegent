@@ -72,6 +72,19 @@ Search results are merged by `updatedAt` descending and capped by the request `l
 
 The frontend search dialog opens the runtime address from the result, then restores workspace context from the latest runtime work list. The dialog only keeps recent query results in memory to avoid repeating the same RPC while the dialog is open; cached results are not written to Backend and do not replace executor-side transcript reads.
 
+## Cloud Device Attachment Transport
+
+Wework cannot pass a desktop-local file path directly to a cloud device. When creating a task, continuing a conversation, guiding, interrupting and sending, or editing through rollback, Wework first uploads local files through the Backend attachment API when the target is a cloud/remote device. It then places the positive attachment IDs and attachment metadata without local paths in the device RPC. Local/app devices continue to use host paths directly and do not perform this cloud promotion.
+
+Before starting a Codex turn, the cloud executor downloads attachments that do not have a `local_path` through the authenticated Backend executor-download endpoint and merges the device-local paths back into the execution request. Attachments that already have device-local paths are not downloaded again. Download failures use the existing failed-attachment handling and never fall back to desktop paths.
+
+Image handling after download depends on the selected model:
+
+- Native multimodal models receive the downloaded image input.
+- When a text-only primary model has a vision sidecar, the sidecar receives the image and produces a description, while the primary model receives only that description. Repeated images may use the executor-side vision-description cache.
+
+The desktop cloud-vision E2E scenario uses a real remote Project and device RPC. It covers the first sidecar request, a sidecar cache hit, and native multimodal image input so a local-executor flow cannot be mistaken for cloud-device validation.
+
 ## Open And Continue
 
 When a user opens a LocalTask, Wework calls Backend:
