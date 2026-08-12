@@ -814,7 +814,9 @@ async function verifyCloudProjectFlow(
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   const replacementProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'The duplicate regression cloud project was not created'
   )
   const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
@@ -839,7 +841,9 @@ async function verifyCloudProjectFlow(
   await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
   await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Creating a local project while cloud work was connected exposed duplicate projects',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -848,7 +852,9 @@ async function verifyCloudProjectFlow(
   await restartDesktopApp()
   const restartedProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
   )
