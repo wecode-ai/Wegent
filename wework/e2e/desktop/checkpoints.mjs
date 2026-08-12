@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'conversation-state',
   'workspace-attachments',
   'rendering-extensions',
+  'change-request-status',
   'local-harness',
   'browser-multi-tabs',
   'embedded-browser',

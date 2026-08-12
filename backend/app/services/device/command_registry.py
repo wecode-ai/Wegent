@@ -1534,6 +1534,20 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="git status --porcelain"
     ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_github_pull_requests": LocalDeviceCommandDefinition(
+        command=(
+            "gh pr list --state all --limit 20 "
+            "--json number,url,title,state,isDraft,statusCheckRollup --head"
+        ),
+        post_processor="json",
+    ),
+    "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
+        command=(
+            "glab mr list --all --per-page 20 --order updated_at --sort desc "
+            "--output json --source-branch"
+        ),
+        post_processor="json",
+    ),
     "git_commit_available": LocalDeviceCommandDefinition(
         command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
     ),

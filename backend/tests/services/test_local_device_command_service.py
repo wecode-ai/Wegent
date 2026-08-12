@@ -432,6 +432,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_remote_url_definition = resolve_local_device_command(
         "git_remote_url", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_github_pull_requests_definition = resolve_local_device_command(
+        "git_github_pull_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_gitlab_merge_requests_definition = resolve_local_device_command(
+        "git_gitlab_merge_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_add_all_definition = resolve_local_device_command(
         "git_add_all", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -541,6 +547,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_remote_url_definition is not None
     assert git_remote_url_definition.command == "git remote get-url origin"
     assert git_remote_url_definition.post_processor is None
+    assert git_github_pull_requests_definition is not None
+    assert "gh pr list --state all" in git_github_pull_requests_definition.command
+    assert git_github_pull_requests_definition.post_processor == "json"
+    assert git_gitlab_merge_requests_definition is not None
+    assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
+    assert git_gitlab_merge_requests_definition.post_processor == "json"
     assert git_add_all_definition is not None
     assert git_add_all_definition.command == "git add --all"
     assert git_add_all_definition.post_processor is None
