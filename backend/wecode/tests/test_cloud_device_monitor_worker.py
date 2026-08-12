@@ -5,7 +5,7 @@
 """Tests for cloud-device monitor worker orchestration."""
 
 from contextlib import nullcontext
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -20,6 +20,52 @@ from wecode.service.cloud_device_ip_index import (
 class _FakeRedis:
     async def aclose(self) -> None:
         return None
+
+
+def test_worker_delays_nevis_ip_sync_until_one_hour(monkeypatch):
+    stop_event = MagicMock()
+    stop_event.is_set.side_effect = [False, False, True]
+    run_monitor_check = MagicMock(return_value=object())
+    run_async = MagicMock()
+
+    monkeypatch.setattr(
+        cloud_device_monitor_worker.time,
+        "monotonic",
+        MagicMock(side_effect=[0, 0, 3600, 3600]),
+    )
+    monkeypatch.setattr(
+        cloud_device_monitor_worker,
+        "_run_monitor_check",
+        run_monitor_check,
+    )
+    monkeypatch.setattr(cloud_device_monitor_worker.asyncio, "run", run_async)
+
+    cloud_device_monitor_worker.cloud_device_monitor_worker(stop_event)
+
+    assert run_monitor_check.call_args_list == [
+        call(run_nevis_ip_sync=False),
+        call(run_nevis_ip_sync=True),
+    ]
+    assert stop_event.wait.call_args_list == [
+        call(timeout=cloud_device_monitor_worker.MONITOR_INTERVAL_SECONDS),
+        call(timeout=cloud_device_monitor_worker.MONITOR_INTERVAL_SECONDS),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nevis_ip_sync_window_is_one_hour():
+    redis_client = AsyncMock()
+    redis_client.set.return_value = True
+
+    claimed = await cloud_device_monitor_worker.claim_nevis_ip_sync_window(redis_client)
+
+    assert claimed is True
+    redis_client.set.assert_awaited_once_with(
+        cloud_device_monitor_worker.NEVIS_IP_SYNC_WINDOW_KEY,
+        "1",
+        nx=True,
+        ex=3600,
+    )
 
 
 @pytest.mark.asyncio
@@ -51,6 +97,11 @@ async def test_ip_index_refresh_runs_when_offline_alert_is_disabled(monkeypatch)
         AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
+        cloud_device_monitor_worker,
+        "claim_nevis_ip_sync_window",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
         cloud_device_ip_index_service,
         "sync_missing",
         sync_missing,
@@ -62,10 +113,52 @@ async def test_ip_index_refresh_runs_when_offline_alert_is_disabled(monkeypatch)
     )
     monkeypatch.setattr(settings, "CLOUD_DEVICE_OFFLINE_ALERT_ENABLED", False)
 
-    await cloud_device_monitor_worker._run_monitor_check()
+    await cloud_device_monitor_worker._run_monitor_check(run_nevis_ip_sync=True)
 
     sync_missing.assert_awaited_once_with(db, redis_client)
     monitor_check.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ip_index_refresh_does_not_depend_on_offline_monitor_lock(monkeypatch):
+    redis_client = _FakeRedis()
+    db = MagicMock()
+    sync_missing = AsyncMock(
+        return_value=CloudDeviceIpSyncSummary(
+            total=0,
+            persisted=0,
+            missing_ip=0,
+            failed=0,
+        )
+    )
+
+    monkeypatch.setattr(
+        "redis.asyncio.Redis.from_url",
+        lambda *_args, **_kwargs: redis_client,
+    )
+    monkeypatch.setattr(
+        "app.db.session.get_db_session",
+        lambda: nullcontext(db),
+    )
+    monkeypatch.setattr(
+        cloud_device_monitor_worker,
+        "claim_nevis_ip_sync_window",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        cloud_device_monitor_worker,
+        "acquire_monitor_lock",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        cloud_device_ip_index_service,
+        "sync_missing",
+        sync_missing,
+    )
+
+    await cloud_device_monitor_worker._run_monitor_check(run_nevis_ip_sync=True)
+
+    sync_missing.assert_awaited_once_with(db, redis_client)
 
 
 @pytest.mark.asyncio
@@ -100,6 +193,11 @@ async def test_ip_index_failure_does_not_block_offline_monitoring(monkeypatch):
         AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
+        cloud_device_monitor_worker,
+        "claim_nevis_ip_sync_window",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
         cloud_device_ip_index_service,
         "sync_missing",
         sync_missing,
@@ -116,7 +214,7 @@ async def test_ip_index_failure_does_not_block_offline_monitoring(monkeypatch):
     )
     monkeypatch.setattr(settings, "CLOUD_DEVICE_OFFLINE_ALERT_ENABLED", True)
 
-    await cloud_device_monitor_worker._run_monitor_check()
+    await cloud_device_monitor_worker._run_monitor_check(run_nevis_ip_sync=True)
 
     sync_missing.assert_awaited_once_with(db, redis_client)
     monitor_check.assert_awaited_once_with(db, redis_client)

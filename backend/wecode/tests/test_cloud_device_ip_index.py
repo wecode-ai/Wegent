@@ -10,6 +10,7 @@ from contextlib import nullcontext
 from typing import Any, Dict, Optional
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -216,6 +217,45 @@ async def test_sync_missing_queries_shared_sandbox_once_and_skips_openclaw(
     assert summary.total == 1
     assert summary.persisted == 1
     assert [sandbox_id for sandbox_id, _ in client.calls] == ["sandbox-1"]
+
+
+@pytest.mark.asyncio
+async def test_sync_missing_commits_each_device_in_separate_transaction(
+    test_db: Session,
+):
+    _create_cloud_device(
+        test_db,
+        user_id=7,
+        device_name="device-1",
+        sandbox_id="sandbox-1",
+    )
+    _create_cloud_device(
+        test_db,
+        user_id=8,
+        device_name="device-2",
+        sandbox_id="sandbox-2",
+    )
+    client = FakeNevisClient(
+        {
+            "sandbox-1": {"details": {"urls": "10.84.30.133"}},
+            "sandbox-2": {"details": {"urls": "10.84.30.134"}},
+        }
+    )
+    service = CloudDeviceIpIndexService(client=client)
+    commit_count = 0
+
+    def record_commit(_session: Session) -> None:
+        nonlocal commit_count
+        commit_count += 1
+
+    event.listen(test_db, "after_commit", record_commit)
+    try:
+        summary = await service.sync_missing(test_db, FakeRedis())
+    finally:
+        event.remove(test_db, "after_commit", record_commit)
+
+    assert summary.persisted == 2
+    assert commit_count == 2
 
 
 @pytest.mark.asyncio

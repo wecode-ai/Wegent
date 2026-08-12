@@ -290,6 +290,31 @@ class CloudDeviceIpIndexService:
             await asyncio.gather(*(fetch(sandbox_id) for sandbox_id in sandbox_ids))
         return ips, missing_ip, failed
 
+    @classmethod
+    def _persist_observations(
+        cls,
+        db: Session,
+        targets: List[CloudDeviceIpTarget],
+        ips: Dict[str, str],
+        observed_at: str,
+    ) -> int:
+        """Persist devices separately to limit row-lock duration."""
+        persisted = 0
+        for target in targets:
+            nevis_ip = ips.get(target.sandbox_id)
+            if nevis_ip is None:
+                continue
+            with db.begin():
+                if cls.persist_observation(
+                    db,
+                    target,
+                    nevis_ip,
+                    observed_at,
+                    only_if_missing=True,
+                ):
+                    persisted += 1
+        return persisted
+
     @trace_async(
         span_name="wecode.cloud_device_ip_index.sync_missing",
         tracer_name="backend.wecode",
@@ -324,24 +349,20 @@ class CloudDeviceIpIndexService:
                     skip_reason="lock_not_acquired",
                 )
             targets = self._list_missing_targets(db)
+            # End the read transaction before waiting on Nevis. Each subsequent
+            # device update owns a short, independent write transaction.
+            db.rollback()
             if not targets:
                 return CloudDeviceIpSyncSummary(0, 0, 0, 0)
 
             ips, missing_ip, failed = await self._fetch_ips(targets)
             observed_at = datetime.now(timezone.utc).isoformat()
-            persisted = sum(
-                self.persist_observation(
-                    db,
-                    target,
-                    ips[target.sandbox_id],
-                    observed_at,
-                    only_if_missing=True,
-                )
-                for target in targets
-                if target.sandbox_id in ips
+            persisted = self._persist_observations(
+                db,
+                targets,
+                ips,
+                observed_at,
             )
-            if persisted:
-                db.commit()
             return CloudDeviceIpSyncSummary(
                 total=len(targets),
                 persisted=persisted,
