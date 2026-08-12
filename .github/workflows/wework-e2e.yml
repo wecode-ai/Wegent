@@ -310,11 +310,15 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .github/claude-code-cli/node_modules
-          key: ${{ runner.os }}-node-24-local-harness-clis-v1-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
+          key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
       - name: Install local harness CLIs
         if: matrix.segment == 'local-harness' && steps.local-harness-clis-cache.outputs.cache-hit != 'true'
-        run: npm ci --prefix .github/claude-code-cli
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
+
+      - name: Verify local harness CLIs
+        if: matrix.segment == 'local-harness'
+        run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
         uses: actions/download-artifact@v4
