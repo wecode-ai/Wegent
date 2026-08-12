@@ -4,6 +4,7 @@
 
 """Resolve and synchronize task Skills before a sandbox becomes usable."""
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -41,6 +42,25 @@ class ResolvedTaskSkills:
     def needs_sync(self) -> bool:
         """Return whether the executor must receive a Skill sync request."""
         return bool(self.skills or self.preload_skills or self.required_skills)
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a stable fingerprint for the resolved Skill deployment plan."""
+        payload = {
+            "team_namespace": self.team_namespace,
+            "skills": sorted(self.skills),
+            "preload_skills": sorted(self.preload_skills),
+            "skill_refs": self.skill_refs,
+            "preload_skill_refs": self.preload_skill_refs,
+            "required_skills": sorted(self.required_skills),
+        }
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
     def apply_to_task(self, task: Dict[str, Any]) -> None:
         """Populate an executor task with resolved Skill fields."""
