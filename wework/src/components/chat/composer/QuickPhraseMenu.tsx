@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
+import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
@@ -12,7 +14,6 @@ import { useOutsideClick } from './useOutsideClick'
 interface QuickPhraseMenuProps {
   disabled?: boolean
   compact?: boolean
-  iconOnly?: boolean
   onSelect: (phrase: QuickPhrase) => void
 }
 
@@ -152,7 +153,7 @@ function StashPreview({ phrase }: { phrase: QuickPhrase }) {
   )
 }
 
-export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: QuickPhraseMenuProps) {
+export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenuProps) {
   const { t } = useTranslation('common')
   const phrases = useQuickPhrases()
   const [open, setOpen] = useState(false)
@@ -188,6 +189,7 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
 
   const choose = (phrase: QuickPhrase) => {
     onSelect(phrase)
+    track('quick_phrase_used', { mode: phrase.mode })
     setOpen(false)
     setQuery('')
     setSelectedIndex(0)
@@ -219,27 +221,28 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
 
   return (
     <div ref={rootRef} className="relative shrink-0">
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid="quick-phrase-button"
-        disabled={disabled}
-        onClick={() => setOpen(value => !value)}
-        className={
-          compact
-            ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
-            : iconOnly
-              ? 'flex h-8 w-8 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
-              : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-normal text-text-primary hover:bg-muted disabled:opacity-40'
-        }
-        aria-label={t('workbench.quick_phrases', '快捷短语')}
-        aria-expanded={open}
+      <Tooltip
+        label={t('workbench.quick_phrases', '快捷短语')}
+        align="start"
+        testId="composer-quick-phrase-tooltip"
       >
-        <MessageSquareText className="h-4 w-4 text-text-primary" strokeWidth={1.5} />
-        {!compact && !iconOnly && (
-          <span className="text-text-primary">{t('workbench.quick_phrases', '快捷短语')}</span>
-        )}
-      </button>
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid="quick-phrase-button"
+          disabled={disabled}
+          onClick={() => setOpen(value => !value)}
+          className={
+            compact
+              ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
+              : 'flex h-8 w-8 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
+          }
+          aria-label={t('workbench.quick_phrases', '快捷短语')}
+          aria-expanded={open}
+        >
+          <MessageSquareText className="h-4 w-4 text-text-primary" strokeWidth={1.5} />
+        </button>
+      </Tooltip>
       {open &&
         typeof document !== 'undefined' &&
         createPortal(

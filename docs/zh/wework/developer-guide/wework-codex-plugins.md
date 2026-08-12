@@ -25,13 +25,34 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。本机 Codex app-server 中用于承载云端插件的 `wegent` 内部市场继续参与插件注册和运行时解析，但不会作为设备侧市场标签显示。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
 
-`wegent-sites` 和 `wegent-mini-program` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 会按插件配置将外部插件复制到忽略提交的 `backend/init_data/plugins/<plugin-name>` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流分别从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建。Backend 随后以系统所有者 `user_id=0` 将已 staging 的插件幂等发布为公开、推荐的 Wegent 云端市场条目。
+### 安装期本地授权
 
-应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=site` 和 `app_type=mini_program`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
+插件可以在 `connectors[].localAuth` 中声明设备侧授权。`local_qr` 用于二维码登录；`browser_oauth` 用于需要本机 CLI 打开浏览器的 OAuth。两种模式都必须提供相对插件根目录的 `health` 和 `start` 命令，二维码模式还必须提供非阻塞的 `poll` 命令。`authPolicy: on_install` 会在插件包完成本机同步后检查登录状态，未登录时由 Wework 显示授权界面；取消或失败会终止本次安装。首次使用和运行中授权检查继续作为凭据失效后的恢复入口。
 
-新增应用类型时，在 Backend 增加响应模型和 `ApplicationTypeHandler`，注册到 `APPLICATION_TYPE_HANDLERS`；在 Wework 的 `applicationTypeDefinitions.tsx` 增加对应 Definition，集中声明图标、文案、列、行渲染和创建策略（包括 `pluginName`）。若使用新的内置插件，同时在 Backend 内置插件注册表和 `builtin-plugin-staging.mjs` 增加插件定义。列表工作区和创建流程不应再增加按类型分支。服务端可独立调整类型顺序、开关和能力，但未知类型会被旧版客户端安全忽略。
+发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。
 
-创建站点调用 `POST /api/plugins/builtin/wegent-sites/ensure-installed`，创建小程序调用 `POST /api/plugins/builtin/wegent-mini-program/ensure-installed`，请求体都必须携带目标 `device_id`。该接口只允许安装系统所有者发布的公开插件，重复调用会复用并重新启用对应插件的已有安装记录，然后以 `merge` 模式只同步本次请求的插件，并校验设备回执中的安装 ID、插件名和 `synced` 状态。其他历史 skill 或插件的同步错误不会阻塞应用创建对话；目标设备不存在、离线或本次请求的插件同步失败时，前端不会创建对话。确认成功后，前端分别使用稳定的 `plugin://wegent-sites@wegent` 和 `plugin://wegent-mini-program@wegent` 引用打开新任务；小程序入口还会带入对应创建提示。点击 mention 时，插件页直接加载相应的云端插件详情。
+`browser_oauth` 使用异步授权会话，状态依次为 `preparing`、`waiting_browser`、`verifying` 和 `ok/error`。关闭界面会调用 Executor 的 `cancel` RPC 并终止登录子进程。CLI 输出必须是单个状态 JSON，不得包含 token、cookie 或其他凭据。
+
+本地授权工具支持两种来源：
+
+- `bundled` 使用客户端随包提供的 sidecar。DingTalk 插件使用 Wework 内置 DWS，不重复下载插件仓库中的旧版本。
+- `managed` 由 Executor 按操作系统和 CPU 架构选择固定版本制品，校验声明的 SHA-256 后原子安装到 Executor home。当前只允许官方 GitLab CLI 发布地址，并由三个内部 GitLab 插件共享同一份 `glab`。
+
+插件安装是用户级状态，CLI 凭据是设备级状态。因此安装期只保证当前设备完成授权；其他设备需要独立检查和授权。`logoutOnUninstall` 默认为二维码连接器启用、浏览器 OAuth 关闭，避免卸载一个插件时清除由其他插件或 profile 共享的凭据。
+
+`wegent-sites` 和 `weibo-miniapp-h5-develop-agent` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 会按插件配置将外部插件复制到忽略提交的 `backend/init_data/plugins/<plugin-name>` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流分别从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建。Backend 随后以系统所有者 `user_id=0` 将已 staging 的插件幂等发布为组织范围、推荐的 Wegent 云端市场条目。
+
+内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 仍是普通插件的合法可见性；只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
+
+应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
+
+连接 Wegent 云端时，Wework 会调用 `POST /api/users/me/wegent-runtime-token` 获取本地应用 Skill 访问 Backend runtime API 的 token，并把它作为 `WEGENT_RUNTIME_AUTH_TOKEN` 写入本机 Codex shell 环境配置；该 token 会按响应中的 `expires_in` 提前刷新。`AUTH_TOKEN` 仍表示单次任务的原有 bearer token，`WEGENT_AUTH_TOKEN` 仍保留给 executor 设备连接使用，三者不能混用。
+
+新增应用类型时，在 Backend 增加响应模型和 `ApplicationTypeHandler`，注册到 `APPLICATION_TYPE_HANDLERS`；在 Wework 的 `applicationTypeDefinitions.tsx` 增加对应 Definition，只声明图标、文案、列和行渲染。创建插件身份由 `GET /api/sites/app-types` 的 `create.plugin_name` 和 `create.marketplace_name` 下发，Wework 会缓存最近一次成功的 app-types descriptor，并在云端短暂不可用时复用缓存。读取缓存时必须先验证 `items` 中每个 descriptor 都是对象，且可选的 `create.plugin_name`、`create.marketplace_name` 在存在时是字符串；缓存不满足契约时返回空缓存并回到服务端发现或默认 Definition。若使用新的内置插件，同时在 Backend 内置插件注册表和 `builtin-plugin-staging.mjs` 增加插件定义。列表工作区和创建流程不应再增加按类型分支。服务端可独立调整类型顺序、开关、能力和创建插件，但未知类型会被旧版客户端安全忽略。
+
+创建入口会先调用 `GET /api/plugins/installed?device_id=<target>` 检查目标设备的本地插件安装态；如果对应插件在该设备上的 `currentDeviceInstallation` / `status.devices` 已是 `installed`，前端直接使用插件的 `displayName` 和默认提示词打开新任务，不再重复安装。未安装时，创建站点调用 `POST /api/plugins/builtin/wegent-sites/ensure-installed`，创建小程序调用 `POST /api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed`，请求体都必须携带目标 `device_id`。该接口只允许安装系统所有者发布的内置插件；内置应用插件使用 `visibility=workspace`，因此 Backend 下发的 `create.marketplace_name` 和安装记录中的 `source.marketplace` 都是 `wegent`。不同 visibility 对应不同插件市场名：`personal` 使用 `wework-personal`，`workspace` 使用 `wegent`，`public` 使用 `wework`，前端不应写死某一个市场名，而应复用共享的 marketplace 身份工具。重复调用会复用并重新启用对应插件的已有安装记录；后端可能先执行全量 `replace` 同步，并在目标设备缺少该插件时再执行单插件 `merge`。前端只以目标设备回执为准，要求本次应用插件的安装 ID 或插件名返回 `synced`；如果旧响应没有 `sync.results`，则按没有目标设备专属结果处理，并继续使用顶层 `sync.plugins` 回退校验。其他设备或历史能力的同步错误不会阻塞应用创建对话。目标设备不存在、离线或本次请求的插件未能同步到目标设备时，前端不会创建对话。确认成功后，前端分别使用稳定的 `plugin://wegent-sites@wegent` 和 `plugin://weibo-miniapp-h5-develop-agent@wegent` 引用打开新任务；小程序入口还会带入插件提供的默认创建提示。插件安装和同步期间，应用页会显示“正在安装应用插件，完成后将进入会话...”的状态提示。点击 mention 时，插件页直接加载相应的云端插件详情。
+
+正常卸载会删除账号安装意图、设备期望状态、Codex app-server 安装记录，并按连接器策略清理本机登录态；它不主动删除 Codex 或 Claude `plugins/cache` 里的可复用包缓存。缓存目录由运行时负责复用和回收，若需要释放磁盘空间，应通过独立的缓存清理或垃圾回收流程处理未被任何安装记录引用的版本。
 
 ## 独立 Codex Home
 
@@ -55,6 +76,20 @@ executor 在启动 Codex app-server 前会解析并规范化 Wework Codex home �
 
 交互风格也以同一份 `config.toml` 为唯一来源。设置页修改 Friendly 或 Pragmatic 时通过 `config/batchWrite` 更新 personality，不再把 personality 保存在 localStorage，也不再在每个 thread/turn 请求中重复覆盖。
 
+## 运行时权限模式
+
+Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“工作区”，不会再隐式获得完整磁盘访问：
+
+| 权限模式 | Codex permission profile | Approval policy | 行为                                                                   |
+| -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
+| 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
+| 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
+| 完整访问 | `:danger-full-access`    | `never`         | 不经审批访问文件、终端和网络；启用前必须经过显式风险确认               |
+
+前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
+
+Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval` 和 `item/permissions/requestApproval` 请求会映射为 Wework 的 `request_user_input` 卡片。卡片保持 `availableDecisions` 的顺序，只展示协议实际提供的决定，并使用稳定协议值回传。Executor 支持单次批准 `accept`、会话批准 `acceptForSession`、命令规则 `acceptWithExecpolicyAmendment`、网络 host 规则 `applyNetworkPolicyAmendment`、拒绝 `decline` 和停止 `cancel`；结构化规则直接使用 Codex 请求携带的 amendment，缺失或不匹配时安全拒绝，不会根据显示文本自行扩大授权。权限请求可以按 turn 或 session scope 授权，也可以在当前 turn 启用 `strictAutoReview`，逐一审查之后的命令；拒绝时不授予任何额外权限。
+
 ## 模型列表
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。
@@ -64,6 +99,8 @@ Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模�
 Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型直接接收原始图片；Codex provider、本地模型接口和云端模型属于非官方模型，executor 在发送图片前会生成临时的模型输入文件，并把图片短边等比缩小到最多 `720px`。长边不设上限，因此超长截图会保留完整长边比例，而不会被强制塞入固定的 `1280×720` 边界。短边本来不超过 `720px` 的图片保持原样；原始附件、聊天记录和预览地址都不会被改写。临时输入文件只在当前 turn 使用，并在 turn 结束后清理。
 
 ## 对话运行时
+
+新对话的 Composer 会展开显示插件入口和最多三个可用插件预览；进入会话后，插件入口折叠为单个图标以减少工具栏占用，但点击图标仍会打开完整插件选择器。窄工具栏同样使用图标形态。
 
 用户在输入框中选择 skill、app 或插件时，编辑器插入不可拆分的行内 mention。光标只能停在 mention 前后；复制或提交时，编辑器会把 mention 序列化为 Codex app-server 支持的 markdown 输入：
 
@@ -80,3 +117,5 @@ Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型�
 ## Backend 市场与上传
 
 Backend 同时接受 Codex 与 Claude Code 插件包，支持上传、云端市场发布、安装与设备同步，并为每个存储包标准化生成两个运行时的清单。Wegent 云端市场以 Backend 的安装记录为准；本地自定义市场和 OpenAI 官方市场仍以本机 Codex app-server 为准。
+
+Backend 重建或迁移市场目录后，会核对已安装 Kind 的 `pluginId`、`releaseId`、`source.catalogItemId` 和 `source.marketplace`。即使插件和 Release ID 都没有变化，只要 `source.marketplace` 与插件当前 visibility 推导出的市场名不一致，也必须更新安装记录并重置失败的设备安装状态。这样 visibility 从 `public` 调整到 `workspace` 时，已安装记录会从 `wework` 修复到 `wegent`，不会因为其他引用字段相同而被误判为 no-op。

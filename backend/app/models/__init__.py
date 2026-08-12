@@ -25,15 +25,23 @@ from app.models.delivery import (
     LoopItemCollaborator,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
-from app.models.feedback_submission import FeedbackSubmission
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.plugin_marketplace import (
+    Plugin,
+    PluginDeviceInstallation,
+    PluginRelease,
+    PluginSubmission,
+    PluginUpstream,
+)
 from app.models.project import Project
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
@@ -72,7 +80,6 @@ __all__ = [
     "LoopItemCollaborator",
     "Delivery",
     "DeliveryAsset",
-    "FeedbackSubmission",
     "User",
     "Kind",
     "IMPrivateSession",
@@ -89,6 +96,12 @@ __all__ = [
     "KnowledgeDocument",
     "KnowledgeArtifactRecord",
     "Project",
+    "ProjectChatMessage",
+    "Plugin",
+    "PluginRelease",
+    "PluginUpstream",
+    "PluginSubmission",
+    "PluginDeviceInstallation",
     "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

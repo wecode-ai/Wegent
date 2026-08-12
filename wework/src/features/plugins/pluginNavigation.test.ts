@@ -42,6 +42,7 @@ describe('pluginNavigation', () => {
 
   test('recognizes stable Wegent cloud marketplace aliases', () => {
     expect(isWegentCloudMarketplace('wegent')).toBe(true)
+    expect(isWegentCloudMarketplace('wework')).toBe(true)
     expect(isWegentCloudMarketplace('wegent-marketplace')).toBe(true)
     expect(isWegentCloudMarketplace('default')).toBe(true)
     expect(isWegentCloudMarketplace('wegent-bundled')).toBe(false)

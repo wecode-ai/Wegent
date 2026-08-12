@@ -91,11 +91,13 @@ def _format_forwarded_headers_for_log(headers) -> str:
 
 def _get_mcp_lifespan_servers():
     from app.mcp_server.server import (
+        image_mcp_server,
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
         prompt_optimization_mcp_server,
         subscription_mcp_server,
         system_mcp_server,
+        video_mcp_server,
     )
 
     servers = [
@@ -104,6 +106,8 @@ def _get_mcp_lifespan_servers():
         ("interactive_form_question", interactive_form_question_mcp_server),
         ("Prompt optimization", prompt_optimization_mcp_server),
         ("Subscription", subscription_mcp_server),
+        ("Image", image_mcp_server),
+        ("Video", video_mcp_server),
     ]
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
         from app.mcp_server.server import external_knowledge_mcp_server
@@ -309,6 +313,11 @@ async def lifespan(app: FastAPI):
     # Load system initialization state once per process after startup data exists.
     _load_system_initialization_state(logger)
 
+    from app.services.task_run_metric_hooks import task_run_metric_hooks
+
+    task_run_metric_hooks.register()
+    logger.info("✓ Task run metric transaction hooks registered")
+
     # Start background jobs
     logger.info("Starting background jobs...")
     start_background_jobs(app)
@@ -335,8 +344,15 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
+    from app.services.loop_item_executions.wake import bind_socketio_loop
 
     sio = get_sio()
+    try:
+        import asyncio
+
+        bind_socketio_loop(asyncio.get_running_loop())
+    except RuntimeError:
+        pass
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
@@ -363,6 +379,15 @@ async def lifespan(app: FastAPI):
 
     event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
     logger.info("✓ IM channel task completion handler registered")
+
+    # Register code wiki run completion handler. A version's outcome is normally
+    # reported by the agent itself; this covers the agent never getting to speak,
+    # where the version would otherwise stay RUNNING until the staleness sweep looks
+    # at it — which only happens when the next run starts.
+    from app.services.knowledge.code_wiki.task_completion import conclude_code_wiki_run
+
+    event_bus.subscribe(TaskCompletedEvent, conclude_code_wiki_run)
+    logger.info("✓ Code wiki run completion handler registered")
 
     # Register inbox auto-process handler
     from app.core.events import QueueMessageCreatedEvent
@@ -407,6 +432,21 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    logger.info("Recovering in-progress video jobs...")
+    try:
+        from app.services.execution.agents.video.recovery import (
+            recover_video_jobs,
+            recover_video_jobs_after_stale_delay,
+        )
+
+        recovered_count = await recover_video_jobs()
+        logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
+        app.state.video_recovery_task = asyncio.create_task(
+            recover_video_jobs_after_stale_delay()
+        )
+    except Exception as e:
+        logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -424,6 +464,14 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 60)
         logger.info("Graceful shutdown initiated...")
         logger.info("=" * 60)
+
+        video_recovery_task = getattr(app.state, "video_recovery_task", None)
+        if video_recovery_task and not video_recovery_task.done():
+            video_recovery_task.cancel()
+            try:
+                await video_recovery_task
+            except asyncio.CancelledError:
+                pass
 
         # Step 1: Initiate graceful shutdown (mark as shutting down)
         await shutdown_manager.initiate_shutdown()
@@ -466,7 +514,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
 
         # Step 4: Stop background jobs
-        stop_background_jobs(app)
+        await stop_background_jobs(app)
+        task_run_metric_hooks.unregister()
         logger.info("✓ Background jobs stopped")
 
         # Step 5: Stop scheduler backend

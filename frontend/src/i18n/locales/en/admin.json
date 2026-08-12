@@ -12,11 +12,45 @@
     "public_shells": "Public Shells",
     "templates": "Templates",
     "api_keys": "API Keys",
+    "marketplace": "Marketplace",
     "system_config": "System Config",
     "im_channels": "IM Channels",
     "connector_apps": "Apps",
+    "task_runs": "Task Run Monitor",
     "monitor": "Subscription Monitor",
     "device_monitor": "Device Monitor"
+  },
+  "marketplace_management": {
+    "title": "Marketplace Management",
+    "description": "Manage Featured recommendations in the Agent and Skill marketplaces",
+    "agent_tab": "Agent Marketplace",
+    "skill_tab": "Skill Marketplace",
+    "system_source": "System",
+    "user_source": "User Published",
+    "publisher": "Publisher: {{name}}",
+    "recommendation_score_value": "Score {{score}}",
+    "edit_recommendation_score": "Set recommendation score",
+    "recommendation_score": "Recommendation score",
+    "recommendation_score_description": "Higher scores rank earlier in the marketplace.",
+    "recommendation_score_hint": "0 is not recommended, 80–89 is Featured, and 90–100 is Premium.",
+    "score_none": "None 0",
+    "score_featured": "Featured 80",
+    "score_premium": "Premium 90",
+    "recommendation_score_saved": "Recommendation score saved",
+    "recommendation_score_save_failed": "Failed to save recommendation score",
+    "resource_count": "{{count}} resources",
+    "configure_example_conversations": "Configure examples",
+    "example_conversations_configured": "{{count}} examples configured",
+    "edit_example_conversations": "Manage example conversations",
+    "example_conversation_description": "Administrators maintain examples for system Agents; publishers maintain their own Agent examples.",
+    "save_example_conversation": "Save URL",
+    "example_conversation_saved": "Example conversation URL saved",
+    "example_conversation_save_failed": "Failed to save example conversation URL",
+    "load_failed": "Failed to load marketplace resources",
+    "empty": "No marketplace resources",
+    "previous": "Previous",
+    "next": "Next",
+    "pagination": "Page {{page}} of {{totalPages}}"
   },
   "stats": {
     "total_users": "Total Users",
@@ -549,6 +583,41 @@
       "signing_key_name_required": "SigningKey name is required",
       "audience_required": "Audience is required",
       "invalid_ttl": "TTL configuration is invalid"
+    }
+  },
+  "task_run_monitor": {
+    "title": "Task Run Monitor",
+    "description": "Track total assistant runs and current failure details across all users",
+    "refresh": "Refresh task run statistics",
+    "time_range": {
+      "1": "Last hour",
+      "6": "Last 6 hours",
+      "24": "Last 24 hours",
+      "72": "Last 3 days",
+      "168": "Last 7 days",
+      "720": "Last 30 days"
+    },
+    "stats": {
+      "total": "Total runs",
+      "failed": "Failed",
+      "approximate": "Approximate distinct count"
+    },
+    "failure_reasons": {
+      "title": "Top failure reasons",
+      "description": "Identical error messages are grouped; percentages use all failed runs",
+      "empty": "No failed runs in this time range",
+      "unknown": "No failure reason recorded"
+    },
+    "recent_failures": {
+      "title": "Recent failures",
+      "description": "Task, user, source, and original error details for investigation",
+      "empty": "No recent failures",
+      "user": "User",
+      "subtask": "Run"
+    },
+    "rate_note": "Total runs use Redis HyperLogLog and are approximate. Failed runs are the current failed state among runs created in the selected time range.",
+    "errors": {
+      "load_failed": "Failed to load task run statistics"
     }
   },
   "monitor": {
@@ -1090,7 +1159,9 @@
     "connections": "{{count}} user connections",
     "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
     "auth": {
-      "none": "No user auth"
+      "none": "No user auth",
+      "oauth2": "OAuth 2.0 user authorization",
+      "bearer": "User bearer token"
     },
     "visibility": {
       "all": "All users",

@@ -34,6 +34,7 @@ import {
   localModelSupportsImageInput,
   LOCAL_MODEL_PROVIDER_PROFILES,
   type DiscoveredLocalModel,
+  type LocalModelProviderProfile,
   type LocalModelProviderProfileId,
 } from '@/features/model-settings/localModelProviders'
 import {
@@ -59,6 +60,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
@@ -734,6 +736,8 @@ function LocalModelSettingsSection({
       ),
     [editingId, models]
   )
+  const providerDisplayName = (profile: LocalModelProviderProfile) =>
+    profile.displayNameKey ? t(profile.displayNameKey, profile.displayName) : profile.displayName
 
   const resetForm = () => {
     setEditingId(null)
@@ -992,8 +996,10 @@ function LocalModelSettingsSection({
           setCatalogRestartConfirmation(writtenCatalogSnapshot)
         }
       }
+      track('feature_action_completed', { domain: 'model', action: 'configure' })
       resetForm()
     } catch (saveError) {
+      track('operation_failed', { operation: 'model_action' })
       setError(getErrorMessage(saveError, t('workbench.local_model_save_failed', '保存模型失败')))
     }
   }
@@ -1067,7 +1073,9 @@ function LocalModelSettingsSection({
         kind: 'success',
         message: t('workbench.local_model_test_success', '模型连接正常'),
       })
+      track('feature_action_completed', { domain: 'model', action: 'test' })
     } catch (testError) {
+      track('operation_failed', { operation: 'model_action' })
       const message = getErrorMessage(
         testError,
         t('workbench.local_model_test_failed', '模型测试失败')
@@ -1089,7 +1097,9 @@ function LocalModelSettingsSection({
     try {
       deleteLocalModelConfig(model.id)
       if (editingId === model.id) resetForm()
+      track('feature_action_completed', { domain: 'model', action: 'delete' })
     } catch (deleteError) {
+      track('operation_failed', { operation: 'model_action' })
       setError(
         getErrorMessage(deleteError, t('workbench.local_model_delete_failed', '删除模型失败'))
       )
@@ -1147,7 +1157,7 @@ function LocalModelSettingsSection({
                   <option key={profile.id} value={profile.id}>
                     {profile.id === 'custom'
                       ? t('workbench.local_model_provider_custom')
-                      : profile.displayName}
+                      : providerDisplayName(profile)}
                   </option>
                 ))}
               </select>
@@ -1157,7 +1167,7 @@ function LocalModelSettingsSection({
               <div className="grid gap-4 border-t border-border pt-4">
                 <div>
                   <div className="text-sm font-medium text-text-primary">
-                    {findLocalModelProviderProfile(form.providerProfileId).displayName}
+                    {providerDisplayName(findLocalModelProviderProfile(form.providerProfileId))}
                   </div>
                   <p className="mt-1 text-xs leading-5 text-text-muted">
                     {t('workbench.local_model_provider_managed_hint')}
@@ -2378,7 +2388,6 @@ export function ModelSettingsPage({
           onOpenCloudSettings={onOpenCloudSettings}
         />
       </div>
-
       <div className="mt-8">
         <CodexAuthSettingsSection isConnected>
           {loading ? (

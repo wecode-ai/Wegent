@@ -23,8 +23,11 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
-import type { TeamModeFilter } from '../selector/team-selector-utils'
-import { useMultiAttachment } from '@/hooks/useMultiAttachment'
+import {
+  findDefaultTeamForMode as findConfiguredDefaultTeamForMode,
+  type TeamModeFilter,
+} from '../selector/team-selector-utils'
+import { useMultiAttachment, type AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
@@ -84,6 +87,8 @@ export interface UseChatAreaStateOptions {
    * Falls back to 1 if not provided.
    */
   maxAttachments?: number
+  maxAttachmentsByType?: AttachmentTypeLimits
+  validateAttachmentFile?: (file: File) => Promise<string | null>
 }
 
 export interface ChatAreaState {
@@ -95,7 +100,7 @@ export interface ChatAreaState {
   // Default team state
   defaultTeam: Team | null
   isUsingDefaultTeam: boolean
-  restoreDefaultTeam: () => void
+  restoreDefaultTeam: (team?: Team | null) => void
 
   // Repository state
   selectedRepo: GitRepoInfo | null
@@ -145,6 +150,7 @@ export interface ChatAreaState {
   attachmentState: MultiAttachmentUploadState
   handleFileSelect: (files: File | File[]) => Promise<void>
   handleAttachmentRemove: (attachmentId: number) => Promise<void>
+  swapAttachments: (firstAttachmentId: number, secondAttachmentId: number) => void
   /** Add an already-uploaded attachment as reference (e.g., from ImageGallery follow-up) */
   addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   resetAttachment: () => void
@@ -208,6 +214,8 @@ export function useChatAreaState({
   selectedTeamForNewTask,
   initialKnowledgeBase,
   maxAttachments: externalMaxAttachments,
+  maxAttachmentsByType,
+  validateAttachmentFile,
 }: UseChatAreaStateOptions): ChatAreaState {
   // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
   // because it's automatically bound to the task on creation
@@ -289,15 +297,15 @@ export function useChatAreaState({
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)')
 
-  // Compute effective maxAttachments for image/video modes
-  // Priority: external value (from model config) -> default (2 for image/video, undefined otherwise)
+  // Compute effective maxAttachments for image/video modes.
+  // The model configuration is the source of truth. While it is still loading,
+  // leave the limit unset instead of applying a misleading fallback.
   const effectiveMaxAttachments = useMemo(() => {
     if (taskType === 'image' || taskType === 'video') {
-      // Normalize and clamp external value from model config
       if (typeof externalMaxAttachments === 'number' && Number.isFinite(externalMaxAttachments)) {
-        return Math.min(10, Math.max(1, Math.floor(externalMaxAttachments)))
+        return Math.max(0, Math.floor(externalMaxAttachments))
       }
-      return 2 // Default to 2 for image/video modes when not configured
+      return undefined
     }
     return undefined
   }, [taskType, externalMaxAttachments])
@@ -308,11 +316,14 @@ export function useChatAreaState({
     handleFileSelect,
     addExistingAttachment,
     handleRemove: handleAttachmentRemove,
+    swapAttachments,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
   } = useMultiAttachment({
     maxAttachments: effectiveMaxAttachments,
+    maxByType: maxAttachmentsByType,
+    validateFile: validateAttachmentFile,
   })
 
   // Refs for random indices (stable across taskType changes)
@@ -416,22 +427,7 @@ export function useChatAreaState({
   // Returns null if no default team is configured for the mode
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
-      if (teams.length === 0) return null
-
-      // Find teams that have the current taskType in their default_for_modes array
-      const matchedTeams = teams.filter(
-        team => team.default_for_modes && team.default_for_modes.includes(taskType)
-      )
-
-      if (matchedTeams.length === 0) {
-        // No default configured for this mode, return null
-        // This allows all teams to be shown in QuickAccessCards
-        return null
-      }
-
-      // Prioritize public team (user_id === 0) over personal team
-      const publicTeam = matchedTeams.find(team => team.user_id === 0)
-      return publicTeam || matchedTeams[0]
+      return findConfiguredDefaultTeamForMode(teams, taskType)
     },
     [taskType]
   )
@@ -442,15 +438,18 @@ export function useChatAreaState({
   }, [findDefaultTeamForMode, compatibleTeams])
 
   // Restore to default team
-  const restoreDefaultTeam = useCallback(() => {
-    if (defaultTeam) {
-      setSelectedTeam(defaultTeam)
-      setIsUsingDefaultTeam(true)
-      // Reset external API params when restoring
-      setExternalApiParams({})
-      setAppMode(undefined)
-    }
-  }, [defaultTeam])
+  const restoreDefaultTeam = useCallback(
+    (team: Team | null = defaultTeam) => {
+      if (team) {
+        setSelectedTeam(team)
+        setIsUsingDefaultTeam(true)
+        // Reset external API params when restoring
+        setExternalApiParams({})
+        setAppMode(undefined)
+      }
+    },
+    [defaultTeam]
+  )
 
   // Handle team change - marks user as not using default team
   // Also clears repository if the new team doesn't require a workspace
@@ -627,6 +626,7 @@ export function useChatAreaState({
     handleFileSelect,
     addExistingAttachment,
     handleAttachmentRemove,
+    swapAttachments,
     resetAttachment,
     isAttachmentReadyToSend,
     isUploading,

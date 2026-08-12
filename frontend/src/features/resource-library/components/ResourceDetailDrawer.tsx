@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Plus, Sparkles } from 'lucide-react'
+import { ChatBubbleLeftEllipsisIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
+import { ExternalLink, MessageSquareText, Plus } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -48,21 +49,31 @@ export function ResourceDetailDrawer({
   const title = listing ? getListingTitle(listing) : ''
   const isAgent = listing?.resource_type === 'agent'
   const isSkill = listing?.resource_type === 'skill'
+  const isCodeOnlyAgent =
+    isAgent && listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
   const isDirectlyUsableSystemCapability =
     !!listing &&
     ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
     listing.publisher_user_id === 0
   const isPersonalTarget = targetNamespace === 'default'
   const installDisabled =
-    !listing || isLoading || (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
+    !listing ||
+    (!isAgent && isLoading) ||
+    (!isAgent && listing.is_installed && isPersonalTarget) ||
+    isInstalling
   const actionLabel = isAgent
     ? isPersonalTarget
-      ? t('actions.use_now')
+      ? t(isCodeOnlyAgent ? 'actions.open_code' : 'actions.open_chat')
       : t('actions.add')
     : listing?.is_installed && isPersonalTarget
       ? t('actions.added')
       : t(isSkill ? 'actions.install' : 'actions.add')
-  const ActionIcon = isAgent && isPersonalTarget ? Sparkles : Plus
+  const ActionIcon =
+    isAgent && isPersonalTarget
+      ? isCodeOnlyAgent
+        ? CodeBracketIcon
+        : ChatBubbleLeftEllipsisIcon
+      : Plus
   const publisher = listing
     ? listing.publisher_user_id === 0
       ? t('fields.official_publisher')
@@ -76,7 +87,7 @@ export function ResourceDetailDrawer({
         data-testid="resource-detail-dialog"
       >
         <DialogHeader className="border-b border-border px-6 py-5 text-left">
-          <div className={cn('min-w-0 pr-8', isSkill && 'md:pr-32')}>
+          <div className={cn('min-w-0 pr-8', !isDirectlyUsableSystemCapability && 'md:pr-44')}>
             <DialogTitle className="truncate text-xl">{title || t('actions.details')}</DialogTitle>
             {listing && (
               <DialogDescription className="mt-2 flex flex-wrap items-center gap-2">
@@ -107,6 +118,46 @@ export function ResourceDetailDrawer({
                 {listing.description || listing.name}
               </p>
 
+              {isAgent && Boolean(listing.example_conversations?.length) && (
+                <div className="rounded-xl border border-border bg-base p-4">
+                  <div className="flex items-start gap-3">
+                    <MessageSquareText
+                      className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                      aria-hidden
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">
+                        {t('fields.example_conversation')}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-text-muted">
+                        {t('fields.example_conversation_description')}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {listing.example_conversations?.map((example, index) => (
+                      <Button
+                        key={`${example.url}-${index}`}
+                        type="button"
+                        variant="outline"
+                        className="h-auto min-h-10 justify-between whitespace-normal py-2 text-left"
+                        asChild
+                      >
+                        <a
+                          href={example.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`resource-detail-example-conversation-${index}`}
+                        >
+                          <span>{example.title}</span>
+                          <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
+                        </a>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {(listing.tags.length > 0 || Boolean(listing.feature_tags?.length)) && (
                 <div className="flex flex-wrap gap-2">
                   {(listing.tags.length > 0 ? listing.tags : listing.feature_tags || []).map(
@@ -135,16 +186,13 @@ export function ResourceDetailDrawer({
 
         {!isDirectlyUsableSystemCapability && (
           <DialogFooter
-            className={cn(
-              'border-t border-border px-6 py-4',
-              isSkill && 'md:absolute md:right-12 md:top-4 md:z-10 md:border-0 md:p-0'
-            )}
+            className="border-t border-border px-6 py-4 md:absolute md:right-12 md:top-4 md:z-10 md:border-0 md:p-0"
             data-testid="resource-detail-actions"
           >
             <Button
               type="button"
               variant={installDisabled ? 'secondary' : 'primary'}
-              className={cn('h-11 min-w-[44px]', isSkill && 'md:h-9')}
+              className="h-11 w-full min-w-[44px] md:h-9 md:w-auto"
               disabled={installDisabled}
               onClick={() => listing && onInstall(listing)}
               aria-label={`${actionLabel} ${title}`}

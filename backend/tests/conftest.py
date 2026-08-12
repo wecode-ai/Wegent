@@ -10,13 +10,14 @@ from datetime import datetime, timedelta
 from typing import Any, Generator, Tuple
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import create_access_token, get_password_hash, pwd_context
 from app.db.base import Base
 
 # Import all models to ensure they are registered with same Base instance
@@ -28,6 +29,16 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+
+
+@pytest.fixture(scope="session", autouse=True)
+def use_fast_test_password_hashing() -> Generator[None, None, None]:
+    """Use the minimum bcrypt work factor while exercising password behavior."""
+
+    original_rounds = pwd_context.handler("bcrypt").default_rounds
+    pwd_context.update(bcrypt__rounds=4)
+    yield
+    pwd_context.update(bcrypt__rounds=original_rounds)
 
 
 class FakeIMSessionRedisClient:
@@ -59,6 +70,20 @@ class FakeIMSessionRedisClient:
                 removed += 1
                 del zset[member]
         return removed
+
+    async def zremrangebyscore(
+        self,
+        key: str,
+        minimum: str | float,
+        maximum: str | float,
+    ) -> int:
+        lower = float("-inf") if minimum == "-inf" else float(minimum)
+        upper = float("inf") if maximum == "+inf" else float(maximum)
+        zset = self._cache.zsets.get(key, {})
+        expired = [member for member, score in zset.items() if lower <= score <= upper]
+        for member in expired:
+            del zset[member]
+        return len(expired)
 
     async def aclose(self) -> None:
         return None
@@ -366,12 +391,10 @@ def test_task_token(test_user: User) -> str:
     )
 
 
-@pytest.fixture(scope="function")
-def test_client(test_db: Session) -> TestClient:
-    """
-    Create a test client with database dependency override.
-    """
-    from app.api.dependencies import get_db
+@pytest.fixture(scope="session")
+def test_app() -> FastAPI:
+    """Create the API application once per test worker."""
+
     from app.core.rate_limit import limiter
     from app.main import create_app
 
@@ -381,6 +404,18 @@ def test_client(test_db: Session) -> TestClient:
     # The limiter is initialized at module load time and may have Redis enabled
     # but Redis connections can become stale during parallel test runs
     limiter.enabled = False
+
+    return app
+
+
+@pytest.fixture(scope="function")
+def test_client(
+    test_app: FastAPI,
+    test_db: Session,
+) -> Generator[TestClient, None, None]:
+    """Create an isolated client for the worker's shared application."""
+
+    from app.api.dependencies import get_db
 
     # Override database dependency to always return the same test_db session
     def override_get_db():
@@ -392,9 +427,13 @@ def test_client(test_db: Session) -> TestClient:
             test_db.rollback()
             raise
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    return TestClient(app)
+    original_overrides = test_app.dependency_overrides.copy()
+    test_app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(test_app)
+    yield client
+    client.close()
+    test_app.dependency_overrides.clear()
+    test_app.dependency_overrides.update(original_overrides)
 
 
 @pytest.fixture(scope="function")

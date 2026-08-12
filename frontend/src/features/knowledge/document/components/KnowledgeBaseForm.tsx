@@ -26,12 +26,16 @@ import type {
   SummaryModelRef,
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
-import { SummaryModelSelector } from './SummaryModelSelector'
+import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 interface KnowledgeBaseFormProps {
   typeSection?: ReactNode
+  /** False for a code wiki: left blank, the repository's own name is used. */
+  nameRequired?: boolean
+  /** Overrides the placeholder, to say what a blank name will be filled in with. */
+  namePlaceholder?: string
   name: string
   description: string
   onNameChange: (value: string) => void
@@ -62,6 +66,8 @@ interface KnowledgeBaseFormProps {
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
+  /** Extra rows for this kind of knowledge base, shown inside advanced settings. */
+  advancedExtras?: React.ReactNode
   retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
@@ -136,6 +142,8 @@ function FormSection({
 
 export function KnowledgeBaseForm({
   typeSection,
+  nameRequired = true,
+  namePlaceholder,
   name,
   description,
   onNameChange,
@@ -162,6 +170,7 @@ export function KnowledgeBaseForm({
   onCallLimitsChange,
   advancedOpen,
   onAdvancedOpenChange,
+  advancedExtras,
   retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
@@ -214,6 +223,10 @@ export function KnowledgeBaseForm({
 
   const advancedContent = (
     <SimpleConfigGroup>
+      {/* Rendered first so a code wiki's own settings are not buried under the call
+          limits every knowledge base has. Passed in rather than branched on here:
+          this form knows nothing about repositories and should not start to. */}
+      {advancedExtras}
       <SimpleConfigRow
         label={t('knowledge:document.callLimits.title')}
         description={t('knowledge:document.callLimits.description')}
@@ -305,7 +318,8 @@ export function KnowledgeBaseForm({
           <SimpleConfigRow
             label={
               <>
-                {t('knowledge:document.knowledgeBase.name')} <span className="text-red-400">*</span>
+                {t('knowledge:document.knowledgeBase.name')}
+                {nameRequired && <span className="text-red-400"> *</span>}
               </>
             }
           >
@@ -313,7 +327,7 @@ export function KnowledgeBaseForm({
               id="knowledge-name"
               value={name}
               onChange={e => onNameChange(e.target.value)}
-              placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
+              placeholder={namePlaceholder ?? t('knowledge:document.knowledgeBase.namePlaceholder')}
               maxLength={100}
               data-testid="kb-name-input"
               className="bg-base"
@@ -355,12 +369,15 @@ export function KnowledgeBaseForm({
 
           {summaryEnabled && (
             <SimpleConfigRow label={t('knowledge:document.summary.selectModel')}>
-              <SummaryModelSelector
+              <ModelRefSelector
                 value={summaryModelRef}
                 onChange={onSummaryModelChange}
                 error={summaryModelError}
+                placeholder={t('knowledge:document.summary.selectModel')}
                 knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                 bindModel={bindModel}
+                preferenceScope="summary"
+                dataTestId="summary-model-select"
               />
             </SimpleConfigRow>
           )}

@@ -20,7 +20,6 @@ import {
   updateMyDefaultSkillBindingExceptions,
   updateSkillFromGit,
 } from '@/apis/skills'
-import { checkSkillMarketAvailable } from '@/apis/skillMarket'
 import { getGroup } from '@/apis/groups'
 import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -41,10 +40,6 @@ jest.mock('@/apis/skills', () => ({
   removeSkillReferences: jest.fn(),
   updateMyDefaultSkillBindingExceptions: jest.fn(),
   updateSkillFromGit: jest.fn(),
-}))
-
-jest.mock('@/apis/skillMarket', () => ({
-  checkSkillMarketAvailable: jest.fn(),
 }))
 
 jest.mock('@/apis/groups', () => ({
@@ -105,14 +100,6 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => {
   }
 
   return MockSkillUploadModal
-})
-
-jest.mock('@/features/settings/components/skills/SkillSearchModal', () => {
-  function MockSkillSearchModal() {
-    return null
-  }
-
-  return MockSkillSearchModal
 })
 
 jest.mock('@/features/settings/components/skills/SkillReferenceConflictDialog', () => ({
@@ -213,7 +200,6 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockedFetchUnifiedSkillsList = fetchUnifiedSkillsList as jest.Mock
-const mockedCheckSkillMarketAvailable = checkSkillMarketAvailable as jest.Mock
 const mockedAddSkillToMyDefault = addSkillToMyDefault as jest.Mock
 const mockedRemoveSkillFromMyDefault = removeSkillFromMyDefault as jest.Mock
 const mockedFetchMyDefaultSkillBindings = fetchMyDefaultSkillBindings as jest.Mock
@@ -279,7 +265,6 @@ describe('SkillListWithScope default enabled skills', () => {
         }),
       ]
     })
-    mockedCheckSkillMarketAvailable.mockResolvedValue({ available: false })
     mockedRemoveSkillFromMyDefault.mockResolvedValue(undefined)
     mockedAddSkillToMyDefault.mockImplementation(async skillId => ({
       id: 90,
@@ -812,7 +797,7 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).queryByText('Personal Skill')).not.toBeInTheDocument()
   })
 
-  it('keeps personal, group, and installed skills in mine while excluding system skills', async () => {
+  it('keeps my personal and group skills in mine while excluding other creators and system skills', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       buildSkill({
         id: 10,
@@ -834,6 +819,12 @@ describe('SkillListWithScope default enabled skills', () => {
       }),
       buildSkill({
         id: 13,
+        user_id: 2,
+        name: 'other-user-skill',
+        displayName: 'Other User Skill',
+      }),
+      buildSkill({
+        id: 14,
         name: 'system-skill',
         displayName: 'System Skill',
         user_id: 0,
@@ -841,14 +832,16 @@ describe('SkillListWithScope default enabled skills', () => {
       }),
     ])
 
-    render(<SkillListWithScope scope="all" sourceFilter="mine" compact />)
+    render(
+      <SkillListWithScope scope="all" sourceFilter="mine" compact showAutoEnabledSkills={false} />
+    )
 
     const librarySection = await screen.findByTestId('skill-library-section')
 
     expect(within(librarySection).getByText('Personal Mine Skill')).toBeInTheDocument()
     expect(within(librarySection).getByText('Group Mine Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByText('Installed Mine Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByTestId('installed-skill-card-12')).toBeInTheDocument()
+    expect(within(librarySection).queryByText('Installed Mine Skill')).not.toBeInTheDocument()
+    expect(within(librarySection).queryByText('Other User Skill')).not.toBeInTheDocument()
     expect(within(librarySection).queryByText('System Skill')).not.toBeInTheDocument()
   })
 

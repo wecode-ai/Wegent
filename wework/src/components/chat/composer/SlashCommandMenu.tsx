@@ -62,6 +62,7 @@ export function SlashCommandMenu({
               commandIndex += 1
               const enabled = command.enabled !== false
               const Icon = command.Icon
+              const TrailingIcon = command.trailingIcon
 
               return (
                 <button
@@ -86,7 +87,20 @@ export function SlashCommandMenu({
                     index === selectedIndex ? 'bg-muted' : '',
                   ].join(' ')}
                 >
-                  <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
+                  {command.iconUrl ? (
+                    <span
+                      className={[
+                        'plugin-icon-slot h-6 w-6 rounded-md',
+                        command.iconContrastPad ? 'plugin-icon-slot--contrast-pad' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <img src={command.iconUrl} alt="" />
+                    </span>
+                  ) : (
+                    <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
+                  )}
                   <span className="flex min-w-0 flex-1 items-baseline gap-2">
                     <span className="shrink-0 truncate text-sm font-normal leading-5 text-text-primary">
                       {command.title}
@@ -102,6 +116,7 @@ export function SlashCommandMenu({
                       {command.metaLabel}
                     </span>
                   )}
+                  {TrailingIcon && <TrailingIcon className="h-4 w-4 shrink-0 text-text-muted" />}
                 </button>
               )
             })}

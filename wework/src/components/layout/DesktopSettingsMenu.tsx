@@ -252,12 +252,6 @@ export function DesktopSettingsMenu({
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
       />
-      <SettingsMenuItem
-        testId="about-menu-button"
-        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.settings_nav_about', '关于')}
-        onClick={onOpenAbout}
-      />
       {downloadMessage ? (
         <div
           data-testid="app-update-download-progress"
@@ -286,6 +280,12 @@ export function DesktopSettingsMenu({
           </span>
         </div>
       ) : null}
+      <SettingsMenuItem
+        testId="about-menu-button"
+        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
+        label={t('workbench.settings_nav_about', '关于')}
+        onClick={onOpenAbout}
+      />
       <div className="mx-2 my-1 border-t border-border/70" />
       <SettingsMenuItem
         testId="usage-menu-button"
@@ -363,14 +363,14 @@ export function DesktopSettingsMenu({
           ) : null}
           {!wegentQuotaLoading && !wegentQuotaError ? (
             wegentUsage.status === 'available' ? (
-              <div className="space-y-0.5 text-xs leading-5 text-text-secondary">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0 whitespace-nowrap">{wegentUsage.sourceText}</span>
-                  <span className="shrink-0 whitespace-nowrap font-semibold text-text-primary">
+              <div className="space-y-1 text-xs leading-5 text-text-secondary">
+                <div className="min-w-0">
+                  <div>{wegentUsage.sourceText}</div>
+                  <div className="break-words font-semibold text-text-primary">
                     {wegentUsage.value}
-                  </span>
+                  </div>
                 </div>
-                <div className="text-text-muted">{wegentUsage.detail}</div>
+                <div className="break-words text-text-muted">{wegentUsage.detail}</div>
               </div>
             ) : (
               <div className="py-1 text-sm leading-[18px] text-text-secondary">

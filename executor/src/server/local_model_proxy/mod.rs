@@ -12,6 +12,7 @@
 mod anthropic;
 mod chat;
 mod fork;
+mod harness_protocol;
 mod history;
 mod vision;
 
@@ -30,6 +31,7 @@ use axum::{
     routing::{post, MethodRouter},
 };
 use futures_util::{Stream, StreamExt};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -41,6 +43,7 @@ use fork::{codex_forked_from_thread_id, prepare_fork_request};
 pub(crate) const API_KEY: &str = "wework-local-router";
 pub(crate) const ROUTE: &str = "/v1/codex-router/responses";
 pub(crate) const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
+pub(crate) const HARNESS_MESSAGES_ROUTE: &str = "/v1/harness-router/{token}/v1/messages";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -53,6 +56,7 @@ const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
 ];
 const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
 const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
+const LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -68,18 +72,83 @@ where
     post(handle_token_route).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
 }
 
-#[derive(Debug, Clone)]
+pub(crate) fn harness_messages_route<S>() -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    post(handle_harness_messages).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct LocalModelProxyUpstream {
     pub base_url: String,
     pub request_url: Option<String>,
     pub api_format: String,
     pub convert_custom_tools: bool,
+    pub native_tool_search: bool,
+    pub native_namespace_tools: bool,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
     pub model_id: Option<String>,
     pub routing_model_id: Option<String>,
     pub max_output_tokens: Option<u64>,
+}
+
+pub(crate) fn register_harness(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let token = registry
+        .tokens_by_scope
+        .get(route_scope)
+        .cloned()
+        .unwrap_or_else(|| {
+            let token = generate_registration_token(&registry);
+            registry
+                .tokens_by_scope
+                .insert(route_scope.to_owned(), token.clone());
+            token
+        });
+    registry.routes.insert(
+        token.clone(),
+        RegisteredUpstream {
+            upstream,
+            vision_sidecar: None,
+            history: Default::default(),
+            thread_ids: HashSet::new(),
+            last_routed_model: None,
+            pending_model_switch_cleanup: false,
+            last_used: Instant::now(),
+            active_references: 1,
+        },
+    );
+    log_executor_event(
+        "harness model proxy registered",
+        &[
+            ("active_registrations", registry.routes.len().to_string()),
+            ("route_scope", route_scope.to_owned()),
+        ],
+    );
+    token
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResponsesToolCapabilities {
+    convert_custom_tools: bool,
+    native_tool_search: bool,
+    native_namespace_tools: bool,
+}
+
+impl LocalModelProxyUpstream {
+    fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
+        ResponsesToolCapabilities {
+            convert_custom_tools: self.convert_custom_tools,
+            native_tool_search: self.native_tool_search,
+            native_namespace_tools: self.native_namespace_tools,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +316,21 @@ pub(crate) fn unregister(token: &str) {
     );
 }
 
+pub(crate) fn unregister_harness(token: &str) {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let removed = registry.routes.remove(token).is_some();
+    registry.tokens_by_scope.retain(|_, value| value != token);
+    log_executor_event(
+        "harness model proxy unregistered",
+        &[
+            ("removed", removed.to_string()),
+            ("active_registrations", registry.routes.len().to_string()),
+        ],
+    );
+}
+
 fn generate_registration_token(registry: &LocalModelProxyRegistry) -> String {
     loop {
         let mut bytes = [0_u8; 24];
@@ -304,6 +388,129 @@ pub(super) async fn handle_token_route(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     handle_for_token(token, headers, body).await
+}
+
+async fn handle_harness_messages(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    let request_started_at = Instant::now();
+    let upstream = {
+        let mut registry = registry()
+            .lock()
+            .expect("local model proxy registry should not be poisoned");
+        prune_registry(&mut registry);
+        let registered = registry.routes.get_mut(&token).ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "unknown or expired harness model route".to_owned(),
+        })?;
+        registered.last_used = Instant::now();
+        registered.upstream.clone()
+    };
+    let request_url = upstream
+        .request_url
+        .clone()
+        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_body = harness_protocol::adapt_messages_request(
+        &body,
+        &upstream.api_format,
+        upstream.model_id.as_deref(),
+    )?;
+    log_executor_event(
+        "harness model proxy request started",
+        &[
+            ("api_format", upstream.api_format.clone()),
+            ("upstream", safe_url(&request_url)),
+            ("body_bytes", request_body.len().to_string()),
+        ],
+    );
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok());
+    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let upstream_response = send_upstream_request_with_rate_limit_retry(
+        &client,
+        &upstream,
+        &request_url,
+        &request_body,
+        user_agent,
+    )
+    .await?;
+    let status = upstream_response.status();
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    log_executor_event(
+        "harness model proxy upstream headers received",
+        &[
+            ("api_format", upstream.api_format.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                request_started_at.elapsed().as_millis().to_string(),
+            ),
+        ],
+    );
+    if !status.is_success() {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read harness model error response: {error}"),
+        })?;
+        let mut response = Response::new(Body::from(response_body));
+        *response.status_mut() = status;
+        if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::CONTENT_TYPE, value);
+        }
+        return Ok(response);
+    }
+    if upstream.api_format == "anthropic-messages" {
+        let mut response = Response::new(Body::from_stream(upstream_response.bytes_stream()));
+        *response.status_mut() = status;
+        if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::CONTENT_TYPE, value);
+        }
+        return Ok(response);
+    }
+    if !content_type
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read harness model response: {error}"),
+        })?;
+        let value = serde_json::from_slice::<Value>(&response_body).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Harness upstream returned invalid JSON: {error}"),
+        })?;
+        let converted =
+            harness_protocol::adapt_upstream_json_response(&upstream.api_format, &value)?;
+        let mut response = Response::new(Body::from(converted.to_string()));
+        *response.status_mut() = status;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        return Ok(response);
+    }
+    let stream = diagnostic_upstream_stream(
+        upstream_response.bytes_stream(),
+        upstream.api_format.clone(),
+        request_started_at,
+    );
+    let mut response = Response::new(Body::from_stream(harness_protocol::adapt_upstream_sse(
+        upstream.api_format,
+        stream,
+    )));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    Ok(response)
 }
 
 async fn handle_bound_thread(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
@@ -387,7 +594,7 @@ async fn handle_for_token(
         vision::replace_images_with_descriptions(vision_sidecar.as_ref(), &request_body).await?;
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
-        upstream.convert_custom_tools,
+        upstream.responses_tool_capabilities(),
         upstream.max_output_tokens,
         upstream.routing_model_id.as_deref(),
         &request_body,
@@ -907,7 +1114,7 @@ where
 
 async fn prepare_request_with_history(
     api_format: &str,
-    convert_custom_tools: bool,
+    tool_capabilities: ResponsesToolCapabilities,
     max_output_tokens: Option<u64>,
     model_hint: Option<&str>,
     body: &[u8],
@@ -937,7 +1144,7 @@ async fn prepare_request_with_history(
         })?;
         return prepare_request_with_model_hint(
             api_format,
-            convert_custom_tools,
+            tool_capabilities,
             max_output_tokens,
             model_hint,
             &body,
@@ -963,7 +1170,7 @@ async fn prepare_request_with_history(
     })?;
     prepare_request_with_model_hint(
         api_format,
-        convert_custom_tools,
+        tool_capabilities,
         max_output_tokens,
         model_hint,
         &enriched,
@@ -972,6 +1179,7 @@ async fn prepare_request_with_history(
 
 #[allow(clippy::type_complexity)]
 #[cfg(test)]
+// Test helper for native Codex Responses models, which support both App tool primitives.
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
@@ -980,7 +1188,11 @@ fn prepare_request(
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     prepare_request_with_model_hint(
         api_format,
-        convert_custom_tools,
+        ResponsesToolCapabilities {
+            convert_custom_tools,
+            native_tool_search: true,
+            native_namespace_tools: true,
+        },
         max_output_tokens,
         None,
         body,
@@ -990,7 +1202,7 @@ fn prepare_request(
 #[allow(clippy::type_complexity)]
 fn prepare_request_with_model_hint(
     api_format: &str,
-    convert_custom_tools: bool,
+    tool_capabilities: ResponsesToolCapabilities,
     max_output_tokens: Option<u64>,
     model_hint: Option<&str>,
     body: &[u8],
@@ -1003,21 +1215,19 @@ fn prepare_request_with_model_hint(
     apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
 
     if api_format == "openai-responses" {
-        let conversion = if convert_custom_tools {
-            let (converted, context) =
-                chat::responses_to_responses(&responses_body).map_err(|error| HttpError {
-                    status: StatusCode::BAD_REQUEST,
-                    detail: format!("Failed to convert local model request: {error}"),
-                })?;
-            responses_body = converted;
-            Some(Conversion::Responses(context))
-        } else {
-            None
-        };
-        let expanded_browser_tools =
-            codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
-                &mut responses_body,
-            );
+        let (converted, context) = chat::responses_to_responses(
+            &responses_body,
+            tool_capabilities.convert_custom_tools,
+            tool_capabilities.native_tool_search,
+            tool_capabilities.native_namespace_tools,
+        )
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Failed to convert local model request: {error}"),
+        })?;
+        responses_body = converted;
+        let conversion = (!context.is_empty()).then_some(Conversion::Responses(context));
+        let expanded_browser_tools = HashSet::new();
         let body = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),
@@ -1149,7 +1359,25 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    proxy_client_builder(proxy_url)?
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return reqwest::Client::builder()
+            .timeout(Duration::from_secs(
+                LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+            ))
+            .build()
+            .map_err(|error| HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Failed to configure local model proxy client: {error}"),
+            });
+    };
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(
+            LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+        ))
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Invalid local model proxy URL: {error}"),
+        })?)
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -1737,7 +1965,7 @@ mod tests {
 
     use axum::{body::to_bytes, routing::post, Json, Router};
     use serde_json::json;
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot};
 
     #[test]
     fn detects_known_upstream_error_codes_in_priority_order() {
@@ -1838,6 +2066,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1894,6 +2124,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: true,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -1933,6 +2165,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: true,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -1990,6 +2224,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2032,6 +2268,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2065,6 +2303,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2096,6 +2336,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2200,13 +2442,26 @@ mod tests {
         let body = serde_json::to_vec(&json!({
             "model": "cloud-model-resource-name",
             "reasoning": {"effort": "low"},
-            "input": "hello"
+            "input": "hello",
+            "tools": [{
+                "type": "function",
+                "name": "update_site_metadata",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}},
+                    "anyOf": [{"type": "object", "required": ["title"]}]
+                }
+            }]
         }))
         .expect("request body");
 
         let (prepared, conversion, _) = prepare_request_with_model_hint(
             "openai-chat-completions",
-            false,
+            ResponsesToolCapabilities {
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+            },
             None,
             Some("wework-kimi-k3"),
             &body,
@@ -2217,6 +2472,14 @@ mod tests {
         assert_eq!(prepared["model"], "cloud-model-resource-name");
         assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
         assert!(prepared.get("reasoning_effort").is_none());
+        assert_eq!(
+            prepared["tools"][0]["function"]["parameters"]["type"],
+            "object"
+        );
+        assert_eq!(
+            prepared["tools"][0]["function"]["parameters"]["allOf"][0]["anyOf"][0]["type"],
+            "object"
+        );
         assert!(matches!(conversion, Some(Conversion::Chat(_))));
     }
 
@@ -2472,6 +2735,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "luna-secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2493,6 +2758,8 @@ mod tests {
             request_url: Some("https://sol.example.com/v1/responses".to_owned()),
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "sol-secret".to_owned(),
             default_headers: vec![("x-route".to_owned(), "sol".to_owned())],
             proxy_url: None,
@@ -2545,6 +2812,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2585,6 +2854,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "luna-secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2618,6 +2889,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "sol-secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2660,6 +2933,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2681,6 +2956,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2704,6 +2981,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2745,6 +3024,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2783,6 +3064,8 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            native_tool_search: false,
+            native_namespace_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2813,6 +3096,8 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2877,6 +3162,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2951,6 +3238,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3011,6 +3300,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3070,6 +3361,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3093,6 +3386,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3168,6 +3463,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3255,6 +3552,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3293,6 +3592,687 @@ mod tests {
         assert!(response_body.contains("response.output_text.delta"));
         assert!(response_body.contains("\"type\":\"function_call\""));
         assert!(response_body.contains("\"name\":\"exec_command\""));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_completion_bridge_keeps_first_turn_compact_and_loads_apps_on_demand_end_to_end() {
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/chat/completions",
+                    post(move |Json(body): Json<Value>| {
+                        let request_tx = request_tx.clone();
+                        async move {
+                            let loaded_app = body["tools"].as_array().is_some_and(|tools| {
+                                tools.iter().any(|tool| {
+                                    tool.pointer("/function/name").and_then(Value::as_str)
+                                        == Some("github__create_issue")
+                                })
+                            });
+                            request_tx.send(body).expect("request receiver");
+                            let response = if loaded_app {
+                                concat!(
+                                    "data: {\"id\":\"chatcmpl-app\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"app_1\",\"type\":\"function\",\"function\":{\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                    "data: [DONE]\n\n"
+                                )
+                            } else {
+                                concat!(
+                                    "data: {\"id\":\"chatcmpl-search\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                    "data: [DONE]\n\n"
+                                )
+                            };
+                            (
+                                [(
+                                    header::CONTENT_TYPE,
+                                    HeaderValue::from_static("text/event-stream"),
+                                )],
+                                response,
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(
+            "chat-app-tool-search-e2e",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let first_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(false)).expect("first request body"),
+            ),
+        )
+        .await
+        .expect("first proxy response");
+        let first_response = to_bytes(first_response.into_body(), usize::MAX)
+            .await
+            .expect("first response body");
+        let first_upstream = request_rx.recv().await.expect("first upstream request");
+        let first_tools = first_upstream["tools"].as_array().expect("first tools");
+        let first_tools_bytes =
+            serde_json::to_vec(first_tools).expect("serialize first-turn tools");
+
+        assert_eq!(first_tools.len(), 1);
+        assert_eq!(first_tools[0]["function"]["name"], "tool_search");
+        assert!(
+            first_tools_bytes.len() < 1_024,
+            "deferred App discovery must keep the first-turn tool payload compact: {} bytes",
+            first_tools_bytes.len()
+        );
+        assert!(
+            first_tools
+                .iter()
+                .all(|tool| tool.get("type").and_then(Value::as_str) != Some("namespace")),
+            "App namespace schemas must not be injected before tool search"
+        );
+        assert!(
+            !first_upstream.to_string().contains("github__create_issue"),
+            "App schema must not be injected before search"
+        );
+        let first_response = String::from_utf8_lossy(&first_response);
+        assert!(
+            first_response.contains("\"type\":\"tool_search_call\""),
+            "{first_response}"
+        );
+        assert!(
+            first_response.contains("\"arguments\":{\"query\":\"GitHub create issue\"}"),
+            "{first_response}"
+        );
+
+        let second_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(true)).expect("second request body"),
+            ),
+        )
+        .await
+        .expect("second proxy response");
+        let second_response = to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .expect("second response body");
+        let second_upstream = request_rx.recv().await.expect("second upstream request");
+        let second_tools = second_upstream["tools"].as_array().expect("second tools");
+
+        assert_eq!(second_tools.len(), 2);
+        assert!(second_tools.iter().any(|tool| {
+            tool.pointer("/function/name").and_then(Value::as_str) == Some("tool_search")
+        }));
+        assert!(second_tools.iter().any(|tool| {
+            tool.pointer("/function/name").and_then(Value::as_str) == Some("github__create_issue")
+        }));
+        assert_eq!(
+            second_tools
+                .iter()
+                .filter(|tool| {
+                    tool.pointer("/function/name").and_then(Value::as_str)
+                        == Some("github__create_issue")
+                })
+                .count(),
+            1,
+            "only the App tool selected by tool_search should be expanded"
+        );
+        assert!(second_upstream["messages"]
+            .as_array()
+            .is_some_and(|messages| messages.iter().any(|message| {
+                message.get("role").and_then(Value::as_str) == Some("tool")
+                    && message
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| content.contains("\"tools\""))
+            })));
+        let second_response = String::from_utf8_lossy(&second_response);
+        assert!(
+            second_response.contains("\"namespace\":\"github\""),
+            "{second_response}"
+        );
+        assert!(
+            second_response.contains("\"name\":\"create_issue\""),
+            "{second_response}"
+        );
+        assert!(
+            !second_response.contains("\"name\":\"github__create_issue\""),
+            "{second_response}"
+        );
+
+        let third_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_result_request()).expect("third request body"),
+            ),
+        )
+        .await
+        .expect("third proxy response");
+        let _third_response = to_bytes(third_response.into_body(), usize::MAX)
+            .await
+            .expect("third response body");
+        let third_upstream = request_rx.recv().await.expect("third upstream request");
+        let app_result = third_upstream["messages"]
+            .as_array()
+            .expect("third request messages")
+            .iter()
+            .find(|message| {
+                message.get("role").and_then(Value::as_str) == Some("tool")
+                    && message.get("tool_call_id").and_then(Value::as_str) == Some("app_1")
+            })
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .expect("structured App result");
+        assert_eq!(
+            serde_json::from_str::<Value>(app_result).expect("App result JSON"),
+            json!({"id": 42, "url": "https://github.example/issues/42"})
+        );
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn responses_bridge_loads_apps_on_demand_and_preserves_results_end_to_end() {
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let request_tx = request_tx.clone();
+                        async move {
+                            let has_app_result = body["input"].as_array().is_some_and(|items| {
+                                items.iter().any(|item| {
+                                    item.get("call_id").and_then(Value::as_str) == Some("app_1")
+                                        && item.get("type").and_then(Value::as_str)
+                                            == Some("function_call_output")
+                                })
+                            });
+                            let loaded_app = body["tools"].as_array().is_some_and(|tools| {
+                                tools.iter().any(|tool| {
+                                    tool.get("name").and_then(Value::as_str)
+                                        == Some("github__create_issue")
+                                })
+                            });
+                            request_tx.send(body).expect("request receiver");
+                            let response = if has_app_result {
+                                concat!(
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Created\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            } else if loaded_app {
+                                concat!(
+                                    "event: response.output_item.done\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"app_1\",\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}}\n\n",
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_app\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"app_1\",\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            } else {
+                                concat!(
+                                    "event: response.output_item.done\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            };
+                            (
+                                [(
+                                    header::CONTENT_TYPE,
+                                    HeaderValue::from_static("text/event-stream"),
+                                )],
+                                response,
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(
+            "responses-app-tool-search-e2e",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let first_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(false)).expect("first request body"),
+            ),
+        )
+        .await
+        .expect("first proxy response");
+        let first_response = to_bytes(first_response.into_body(), usize::MAX)
+            .await
+            .expect("first response body");
+        let first_upstream = request_rx.recv().await.expect("first upstream request");
+        assert_compact_bridged_app_tools(&first_upstream, "/name");
+        assert!(String::from_utf8_lossy(&first_response).contains("\"type\":\"tool_search_call\""));
+
+        let second_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(true)).expect("second request body"),
+            ),
+        )
+        .await
+        .expect("second proxy response");
+        let second_response = to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .expect("second response body");
+        let second_upstream = request_rx.recv().await.expect("second upstream request");
+        assert_single_loaded_app_tool(&second_upstream, "/name", "github__create_issue");
+        let second_response = String::from_utf8_lossy(&second_response);
+        assert!(second_response.contains("\"namespace\":\"github\""));
+        assert!(second_response.contains("\"name\":\"create_issue\""));
+
+        let third_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_result_request()).expect("third request body"),
+            ),
+        )
+        .await
+        .expect("third proxy response");
+        let _third_response = to_bytes(third_response.into_body(), usize::MAX)
+            .await
+            .expect("third response body");
+        let third_upstream = request_rx.recv().await.expect("third upstream request");
+        assert_eq!(
+            third_upstream["input"]
+                .as_array()
+                .expect("third input")
+                .iter()
+                .find(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                        && item.get("call_id").and_then(Value::as_str) == Some("app_1")
+                })
+                .expect("App result")["output"]["structuredContent"],
+            json!({"id": 42, "url": "https://github.example/issues/42"})
+        );
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn native_responses_tool_search_passes_through_end_to_end() {
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let request_tx = request_tx.clone();
+                        async move {
+                            let has_app_result = body["input"].as_array().is_some_and(|items| {
+                                items.iter().any(|item| {
+                                    item.get("type").and_then(Value::as_str)
+                                        == Some("function_call_output")
+                                        && item.get("call_id").and_then(Value::as_str)
+                                            == Some("app_1")
+                                })
+                            });
+                            let loaded_app = body["input"].as_array().is_some_and(|items| {
+                                items.iter().any(|item| {
+                                    item.get("type").and_then(Value::as_str)
+                                        == Some("tool_search_output")
+                                })
+                            });
+                            request_tx.send(body).expect("request receiver");
+                            let response = if has_app_result {
+                                concat!(
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Created\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            } else if loaded_app {
+                                concat!(
+                                    "event: response.output_item.done\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"app_1\",\"namespace\":\"github\",\"name\":\"create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}}\n\n",
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_app\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"app_1\",\"namespace\":\"github\",\"name\":\"create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            } else {
+                                concat!(
+                                    "event: response.output_item.done\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ts_1\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"execution\":\"client\",\"arguments\":{\"query\":\"GitHub create issue\"}}}\n\n",
+                                    "event: response.completed\n",
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"ts_1\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"execution\":\"client\",\"arguments\":{\"query\":\"GitHub create issue\"}}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                )
+                            };
+                            (
+                                [(
+                                    header::CONTENT_TYPE,
+                                    HeaderValue::from_static("text/event-stream"),
+                                )],
+                                response,
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(
+            "native-responses-tool-search-e2e",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: true,
+                native_namespace_tools: true,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&app_tool_search_request(false)).expect("request body")),
+        )
+        .await
+        .expect("proxy response");
+        let response = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let upstream_request = request_rx.recv().await.expect("captured upstream request");
+
+        assert_eq!(upstream_request["tools"][0]["type"], "tool_search");
+        assert_eq!(upstream_request["tools"][0]["execution"], "client");
+        assert!(upstream_request["tools"][0].get("name").is_none());
+        assert!(
+            serde_json::to_vec(upstream_request["tools"].as_array().expect("tools"))
+                .expect("serialize tools")
+                .len()
+                < 1_024
+        );
+        let response = String::from_utf8_lossy(&response);
+        assert!(
+            response.contains("\"type\":\"tool_search_call\""),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"arguments\":{\"query\":\"GitHub create issue\"}"),
+            "{response}"
+        );
+
+        let second_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(true)).expect("second request body"),
+            ),
+        )
+        .await
+        .expect("second proxy response");
+        let second_response = to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .expect("second response body");
+        let second_upstream = request_rx.recv().await.expect("second upstream request");
+        assert_eq!(
+            second_upstream["tools"]
+                .as_array()
+                .expect("second tools")
+                .len(),
+            1
+        );
+        assert_eq!(second_upstream["tools"][0]["type"], "tool_search");
+        let second_response = String::from_utf8_lossy(&second_response);
+        assert!(second_response.contains("\"namespace\":\"github\""));
+        assert!(second_response.contains("\"name\":\"create_issue\""));
+
+        let third_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_result_request()).expect("third request body"),
+            ),
+        )
+        .await
+        .expect("third proxy response");
+        let _third_response = to_bytes(third_response.into_body(), usize::MAX)
+            .await
+            .expect("third response body");
+        let third_upstream = request_rx.recv().await.expect("third upstream request");
+        assert_eq!(
+            third_upstream["input"]
+                .as_array()
+                .expect("third input")
+                .iter()
+                .find(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                        && item.get("call_id").and_then(Value::as_str) == Some("app_1")
+                })
+                .expect("App result")["output"]["structuredContent"],
+            json!({"id": 42, "url": "https://github.example/issues/42"})
+        );
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn anthropic_bridge_loads_apps_on_demand_and_preserves_results_end_to_end() {
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/messages",
+                    post(move |Json(body): Json<Value>| {
+                        let request_tx = request_tx.clone();
+                        async move {
+                            let has_app_result =
+                                body["messages"].as_array().is_some_and(|messages| {
+                                    messages.iter().any(|message| {
+                                        message["content"].as_array().is_some_and(|content| {
+                                            content.iter().any(|block| {
+                                                block.get("type").and_then(Value::as_str)
+                                                    == Some("tool_result")
+                                                    && block
+                                                        .get("tool_use_id")
+                                                        .and_then(Value::as_str)
+                                                        == Some("app_1")
+                                            })
+                                        })
+                                    })
+                                });
+                            let loaded_app = body["tools"].as_array().is_some_and(|tools| {
+                                tools.iter().any(|tool| {
+                                    tool.get("name").and_then(Value::as_str) == Some("create_issue")
+                                })
+                            });
+                            request_tx.send(body).expect("request receiver");
+                            let response = if has_app_result {
+                                concat!(
+                                    "event: message_start\n",
+                                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_done\",\"model\":\"kimi-k3\",\"usage\":{\"input_tokens\":1}}}\n\n",
+                                    "event: content_block_start\n",
+                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                                    "event: content_block_delta\n",
+                                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Created\"}}\n\n",
+                                    "event: content_block_stop\n",
+                                    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                                    "event: message_delta\n",
+                                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n",
+                                    "event: message_stop\n",
+                                    "data: {\"type\":\"message_stop\"}\n\n"
+                                )
+                            } else if loaded_app {
+                                concat!(
+                                    "event: message_start\n",
+                                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_app\",\"model\":\"kimi-k3\",\"usage\":{\"input_tokens\":1}}}\n\n",
+                                    "event: content_block_start\n",
+                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"app_1\",\"name\":\"create_issue\",\"input\":{}}}\n\n",
+                                    "event: content_block_delta\n",
+                                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"title\\\":\\\"Bug\\\"}\"}}\n\n",
+                                    "event: content_block_stop\n",
+                                    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                                    "event: message_delta\n",
+                                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n",
+                                    "event: message_stop\n",
+                                    "data: {\"type\":\"message_stop\"}\n\n"
+                                )
+                            } else {
+                                concat!(
+                                    "event: message_start\n",
+                                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_search\",\"model\":\"kimi-k3\",\"usage\":{\"input_tokens\":1}}}\n\n",
+                                    "event: content_block_start\n",
+                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"search_1\",\"name\":\"tool_search\",\"input\":{}}}\n\n",
+                                    "event: content_block_delta\n",
+                                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
+                                    "event: content_block_stop\n",
+                                    "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                                    "event: message_delta\n",
+                                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":1}}\n\n",
+                                    "event: message_stop\n",
+                                    "data: {\"type\":\"message_stop\"}\n\n"
+                                )
+                            };
+                            (
+                                [(
+                                    header::CONTENT_TYPE,
+                                    HeaderValue::from_static("text/event-stream"),
+                                )],
+                                response,
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(
+            "anthropic-app-tool-search-e2e",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/messages")),
+                api_format: "anthropic-messages".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let first_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(false)).expect("first request body"),
+            ),
+        )
+        .await
+        .expect("first proxy response");
+        let first_response = to_bytes(first_response.into_body(), usize::MAX)
+            .await
+            .expect("first response body");
+        let first_upstream = request_rx.recv().await.expect("first upstream request");
+        assert_compact_bridged_app_tools(&first_upstream, "/name");
+        assert!(String::from_utf8_lossy(&first_response).contains("\"type\":\"tool_search_call\""));
+
+        let second_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_search_request(true)).expect("second request body"),
+            ),
+        )
+        .await
+        .expect("second proxy response");
+        let second_response = to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .expect("second response body");
+        let second_upstream = request_rx.recv().await.expect("second upstream request");
+        assert_single_loaded_app_tool(&second_upstream, "/name", "create_issue");
+        let second_response = String::from_utf8_lossy(&second_response);
+        assert!(second_response.contains("\"namespace\":\"github\""));
+        assert!(second_response.contains("\"name\":\"create_issue\""));
+
+        let third_response = handle(
+            proxy_headers(&token),
+            Bytes::from(
+                serde_json::to_vec(&app_tool_result_request()).expect("third request body"),
+            ),
+        )
+        .await
+        .expect("third proxy response");
+        let _third_response = to_bytes(third_response.into_body(), usize::MAX)
+            .await
+            .expect("third response body");
+        let third_upstream = request_rx.recv().await.expect("third upstream request");
+        let app_result = third_upstream["messages"]
+            .as_array()
+            .expect("third messages")
+            .iter()
+            .flat_map(|message| message["content"].as_array().into_iter().flatten())
+            .find(|block| {
+                block.get("type").and_then(Value::as_str) == Some("tool_result")
+                    && block.get("tool_use_id").and_then(Value::as_str) == Some("app_1")
+            })
+            .and_then(|block| block.get("content"))
+            .and_then(Value::as_str)
+            .expect("structured App result");
+        assert_eq!(
+            serde_json::from_str::<Value>(app_result).expect("App result JSON"),
+            json!({"id": 42, "url": "https://github.example/issues/42"})
+        );
 
         unregister(&token);
         server.abort();
@@ -3364,6 +4344,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/messages")),
                 api_format: "anthropic-messages".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3416,6 +4398,45 @@ mod tests {
         server.abort();
     }
 
+    fn assert_compact_bridged_app_tools(request: &Value, tool_name_pointer: &str) {
+        let tools = request["tools"].as_array().expect("request tools");
+        let tool_bytes = serde_json::to_vec(tools).expect("serialize tools");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].pointer(tool_name_pointer).and_then(Value::as_str),
+            Some("tool_search")
+        );
+        assert!(
+            tool_bytes.len() < 1_024,
+            "first-turn tools must stay compact: {} bytes",
+            tool_bytes.len()
+        );
+        assert!(
+            !request.to_string().contains("github__create_issue"),
+            "App schema must not be injected before tool search"
+        );
+    }
+
+    fn assert_single_loaded_app_tool(
+        request: &Value,
+        tool_name_pointer: &str,
+        expected_app_name: &str,
+    ) {
+        let tools = request["tools"].as_array().expect("request tools");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| {
+                    tool.pointer(tool_name_pointer).and_then(Value::as_str)
+                        == Some(expected_app_name)
+                })
+                .count(),
+            1,
+            "only the App tool selected by tool_search should be expanded"
+        );
+    }
+
     fn proxy_headers(token: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3446,6 +4467,93 @@ mod tests {
                 }
             }]
         })
+    }
+
+    fn app_tool_search_request(include_loaded_app: bool) -> Value {
+        let tools = vec![json!({
+            "type": "tool_search",
+            "execution": "client",
+            "description": "Search available Apps",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": false
+            }
+        })];
+        let mut input = vec![json!({
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Create a GitHub issue"}]
+        })];
+        if include_loaded_app {
+            input.extend([
+                json!({
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "GitHub create issue"}
+                }),
+                json!({
+                    "type": "tool_search_output",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "status": "completed",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "github",
+                        "description": "GitHub App",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_issue",
+                            "description": "Create a GitHub issue",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"title": {"type": "string"}},
+                                "required": ["title"]
+                            }
+                        }]
+                    }]
+                }),
+            ]);
+        }
+        json!({
+            "model": "third-party-chat",
+            "stream": true,
+            "input": input,
+            "tools": tools
+        })
+    }
+
+    fn app_tool_result_request() -> Value {
+        let mut request = app_tool_search_request(true);
+        request["input"]
+            .as_array_mut()
+            .expect("request input")
+            .extend([
+                json!({
+                    "type": "function_call",
+                    "call_id": "app_1",
+                    "namespace": "github",
+                    "name": "create_issue",
+                    "arguments": "{\"title\":\"Bug\"}"
+                }),
+                json!({
+                    "type": "function_call_output",
+                    "call_id": "app_1",
+                    "output": {
+                        "_meta": null,
+                        "content": [{
+                            "type": "text",
+                            "text": "GitHub tool completed successfully."
+                        }],
+                        "structuredContent": {
+                            "id": 42,
+                            "url": "https://github.example/issues/42"
+                        }
+                    }
+                }),
+            ]);
+        request
     }
 
     #[tokio::test]
@@ -3489,6 +4597,8 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3549,6 +4659,8 @@ mod tests {
                 request_url: Some(request_url),
                 api_format,
                 convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
                 api_key,
                 default_headers: Vec::new(),
                 proxy_url: None,

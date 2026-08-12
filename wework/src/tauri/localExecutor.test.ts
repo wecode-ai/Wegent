@@ -40,7 +40,7 @@ describe('localExecutor', () => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({
           id: 'wework-personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           pluginCount: 0,
         })
       }
@@ -71,7 +71,7 @@ describe('localExecutor', () => {
     })
     expect(getInitializedBundledPluginMarketplace()).toEqual({
       id: 'wework-personal',
-      path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+      path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       pluginCount: 0,
     })
     expect(invokeMock.mock.calls).toEqual([
@@ -86,7 +86,7 @@ describe('localExecutor', () => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({
           id: 'wework-personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           pluginCount: 0,
         })
       }
@@ -109,7 +109,7 @@ describe('localExecutor', () => {
   })
 
   test('keeps an initialized bundled marketplace without adding it again', async () => {
-    const path = '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal'
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({ id: 'wework-personal', path, pluginCount: 0 })
@@ -137,8 +137,7 @@ describe('localExecutor', () => {
   })
 
   test('does not start bundled marketplace registration before reporting ready', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-background'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-background'
     let finishMarketplaceRegistration: (value: { marketplaceName: string }) => void = () =>
       undefined
     const marketplaceRegistration = new Promise<{ marketplaceName: string }>(resolve => {
@@ -193,9 +192,8 @@ describe('localExecutor', () => {
     await registration
   })
 
-  test('repairs a stale bundled marketplace using local-only discovery', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-repaired'
+  test('repairs a stale marketplace source even when discovery reports the requested path', async () => {
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-repaired'
     let addAttempts = 0
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
@@ -231,7 +229,7 @@ describe('localExecutor', () => {
         }
         if (request?.params?.method === 'plugin/list') {
           return Promise.resolve({
-            marketplaces: [{ name: 'wework-personal', path: '/Users/test/old-marketplace' }],
+            marketplaces: [{ name: 'wework-personal', path }],
           })
         }
         if (request?.params?.method === 'marketplace/remove') {
@@ -259,8 +257,7 @@ describe('localExecutor', () => {
   })
 
   test('defers bundled marketplace registration until it is explicitly requested', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-deferred'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-deferred'
     let shouldPromptMigration = true
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
@@ -341,6 +338,7 @@ describe('localExecutor', () => {
         backendUrl: 'https://cloud.example.com',
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'wg-token',
+        runtimeAuthToken: 'task-token',
       })
     ).resolves.toEqual({
       running: true,
@@ -351,6 +349,7 @@ describe('localExecutor', () => {
       backendUrl: 'https://cloud.example.com',
       socketUrl: 'wss://socket.example.com',
       authToken: 'wg-token',
+      runtimeAuthToken: 'task-token',
     })
   })
 

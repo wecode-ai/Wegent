@@ -5,8 +5,10 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 
 import { listGroups } from '@/apis/groups'
+import { listSkillMarketProviders } from '@/apis/skillMarketplace'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
 
 const mockReplace = jest.fn()
@@ -29,6 +31,28 @@ jest.mock('@/apis/groups', () => ({
       },
     ],
   }),
+}))
+
+jest.mock('@/apis/skillMarketplace', () => ({
+  listSkillMarketProviders: jest.fn(),
+}))
+
+jest.mock('@/features/resource-library/components/SkillMarketplaceSearch', () => ({
+  SkillMarketplaceSearch: ({
+    provider,
+    namespace,
+  }: {
+    provider: { key: string; name: string }
+    namespace: string
+  }) => (
+    <div data-testid={`external-skill-marketplace-${provider.key}`} data-namespace={namespace}>
+      {provider.name}
+    </div>
+  ),
+}))
+
+jest.mock('@/features/resource-library/components/McpMarketplace', () => ({
+  McpMarketplace: () => <div data-testid="mcp-marketplace">MCP 市场</div>,
 }))
 
 jest.mock('@/features/resource-library/components/MyResources', () => ({
@@ -85,18 +109,49 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
   DiscoverResources: ({
     resourceType,
     targetNamespace,
+    systemOnly,
+    externalMarketplaces,
+    activeExternalMarketplaceKey,
+    onExternalMarketplaceChange,
   }: {
     resourceType: string
     targetNamespace?: string
+    systemOnly?: boolean
+    externalMarketplaces?: Array<{
+      key: string
+      label: string
+      content: ReactNode
+    }>
+    activeExternalMarketplaceKey?: string | null
+    onExternalMarketplaceChange?: (key: string | null) => void
   }) => (
     <div
       data-testid="discover-resources"
       data-type={resourceType}
       data-target-namespace={targetNamespace ?? ''}
+      data-system-only={String(Boolean(systemOnly))}
     >
       发现能力
+      {externalMarketplaces?.map(marketplace => (
+        <button
+          key={marketplace.key}
+          type="button"
+          data-testid={`marketplace-external-source-${marketplace.key}`}
+          onClick={() => onExternalMarketplaceChange?.(marketplace.key)}
+        >
+          {marketplace.label}
+        </button>
+      ))}
+      {
+        externalMarketplaces?.find(marketplace => marketplace.key === activeExternalMarketplaceKey)
+          ?.content
+      }
     </div>
   ),
+}))
+
+jest.mock('@/features/resource-library/components/FeaturedScenarios', () => ({
+  FeaturedScenarios: () => <div data-testid="featured-scenarios">系统智能体</div>,
 }))
 
 jest.mock('@/features/resource-library/components/InstalledResources', () => ({
@@ -120,6 +175,24 @@ jest.mock('@/features/resource-library/components/InstalledResources', () => ({
   ),
 }))
 
+jest.mock('@/features/settings/components/SkillListWithScope', () => ({
+  SkillListWithScope: ({
+    selectedGroup,
+    searchQuery,
+  }: {
+    selectedGroup?: string | null
+    searchQuery?: string
+  }) => (
+    <div
+      data-testid="group-skill-management"
+      data-selected-group={selectedGroup ?? ''}
+      data-search-query={searchQuery ?? ''}
+    >
+      团队技能管理
+    </div>
+  ),
+}))
+
 jest.mock('@/features/resource-library/components/PublishedResources', () => ({
   PublishedResources: () => <div data-testid="published-resources">我的发布</div>,
 }))
@@ -136,10 +209,12 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.skill': '技能',
         'market_filters.agent': '智能体市场',
         'market_filters.skill': '技能市场',
+        'market_filters.mcp': 'MCP 市场',
         'filters.model': '模型',
         'filters.shell': '执行器',
         'filters.retriever': '检索器',
         'sources.all': '全部',
+        'sources.mine': '我创建的',
         'sources.personal': '我创建的',
         'sources.group': '团队共享',
         'sources.installed': '已添加',
@@ -159,6 +234,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.view_capabilities': '查看当前能力',
         'actions.add_capability': '从资源库添加',
         'actions.retry': '重试',
+        'external_skill_market.providers_load_failed': '技能市场加载失败',
         'fields.type': '类型',
         'fields.source': '来源',
         'fields.team_scope': '团队范围',
@@ -179,30 +255,92 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockedListGroups = listGroups as jest.MockedFunction<typeof listGroups>
+const mockedListSkillMarketProviders = listSkillMarketProviders as jest.MockedFunction<
+  typeof listSkillMarketProviders
+>
 
 describe('ResourceLibraryPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockSearchParams = new URLSearchParams()
+    mockedListSkillMarketProviders.mockResolvedValue([])
   })
 
-  it('shows a focused discovery view with only agents and skills', () => {
+  it('shows system-only agent and skill marketplaces', () => {
     render(<ResourceLibraryPage />)
 
     expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
     expect(screen.getByTestId('resource-library-view-toggle')).toHaveTextContent('我的能力')
     expect(screen.getByRole('tab', { name: '智能体市场' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('tab', { name: '技能市场' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'MCP 市场' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '模型' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-source-select')).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
-      'placeholder',
-      '搜索智能体或描述'
-    )
+    expect(screen.queryByTestId('resource-library-header-search')).not.toBeInTheDocument()
+    expect(screen.getByTestId('featured-scenarios')).toBeInTheDocument()
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'agent')
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
     expect(screen.getByTestId('resource-type-navigation')).toHaveClass(
       'rounded-none',
       'bg-transparent'
+    )
+  })
+
+  it('opens the MCP marketplace as a top-level market', () => {
+    mockSearchParams = new URLSearchParams('type=mcp')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByRole('tab', { name: 'MCP 市场' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('mcp-marketplace')).toBeInTheDocument()
+    expect(screen.queryByTestId('discover-resources')).not.toBeInTheDocument()
+  })
+
+  it('shows only system resources in the skill marketplace', () => {
+    mockSearchParams = new URLSearchParams('type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.queryByTestId('featured-scenarios')).not.toBeInTheDocument()
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'skill')
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('opens any registered skill market provider from the skill marketplace', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders.mockResolvedValue([
+      { key: 'community', name: 'Community Hub' },
+      { key: 'partner', name: 'Partner Skills' },
+    ])
+    mockSearchParams = new URLSearchParams('type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
+    )
+    await user.click(screen.getByTestId('marketplace-external-source-partner'))
+
+    expect(screen.getByTestId('external-skill-marketplace-partner')).toHaveAttribute(
+      'data-namespace',
+      'default'
+    )
+  })
+
+  it('shows and retries skill marketplace provider discovery errors', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders
+      .mockRejectedValueOnce(new Error('service unavailable'))
+      .mockResolvedValueOnce([{ key: 'community', name: 'Community Hub' }])
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('skill-marketplace-providers-error')).toHaveTextContent(
+      'service unavailable'
+    )
+    await user.click(screen.getByTestId('skill-marketplace-providers-retry'))
+
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
     )
   })
 
@@ -227,7 +365,7 @@ describe('ResourceLibraryPage', () => {
       'aria-pressed',
       'false'
     )
-    expect(screen.getByTestId('resource-library-source-personal-button')).toHaveAttribute(
+    expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
@@ -249,7 +387,7 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-header-search-input')).not.toHaveClass('lg:h-10')
     expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
       'data-fixed-source',
-      'personal'
+      'mine'
     )
   })
 
@@ -264,6 +402,20 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
       'placeholder',
       placeholder
+    )
+  })
+
+  it('uses created-by-me filtering for skills', () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'mine'
     )
   })
 
@@ -334,12 +486,11 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=agent')
     render(<ResourceLibraryPage />)
 
-    await user.click(screen.getByTestId('resource-library-source-personal-button'))
+    await user.click(screen.getByTestId('resource-library-source-mine-button'))
 
-    expect(mockReplace).toHaveBeenCalledWith(
-      '/resource-library?tab=mine&type=agent&source=personal',
-      { scroll: false }
-    )
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=mine', {
+      scroll: false,
+    })
   })
 
   it('normalizes unsupported system filters for agents and skills', async () => {
@@ -348,11 +499,11 @@ describe('ResourceLibraryPage', () => {
 
     expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
       'data-fixed-source',
-      'personal'
+      'mine'
     )
     await waitFor(() =>
       expect(mockReplace).toHaveBeenCalledWith(
-        '/resource-library?tab=mine&type=agent&source=personal',
+        '/resource-library?tab=mine&type=agent&source=mine',
         {
           scroll: false,
         }
@@ -374,6 +525,17 @@ describe('ResourceLibraryPage', () => {
         'platform'
       )
     )
+  })
+
+  it('shows native team agents with the editable resource manager', async () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=agent&source=group&group=platform')
+    render(<ResourceLibraryPage />)
+
+    const manager = screen.getByTestId('my-resource-management')
+    expect(manager).toHaveAttribute('data-fixed-source', 'group')
+    expect(manager).toHaveAttribute('data-fixed-group', 'platform')
+    expect(manager).toHaveAttribute('data-types', 'agent')
+    expect(screen.queryByTestId('installed-resources')).not.toBeInTheDocument()
   })
 
   it('truncates a long selected team name and exposes the full name as a tooltip', async () => {
@@ -486,19 +648,22 @@ describe('ResourceLibraryPage', () => {
 
   it('persists the applied search and clears it from the compact search control', async () => {
     const user = userEvent.setup()
+    mockSearchParams = new URLSearchParams('tab=mine')
     render(<ResourceLibraryPage />)
 
     fireEvent.change(screen.getByTestId('resource-library-header-search-input'), {
       target: { value: '  chat  ' },
     })
     fireEvent.submit(screen.getByTestId('resource-library-header-search'))
-    expect(mockReplace).toHaveBeenCalledWith('/resource-library?keyword=chat', { scroll: false })
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&keyword=chat', {
+      scroll: false,
+    })
 
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveClass('pr-12')
     const clearButton = screen.getByTestId('resource-library-header-search-clear')
     expect(clearButton).toHaveClass('h-11', 'w-11')
     await user.click(clearButton)
-    expect(mockReplace).toHaveBeenLastCalledWith('/resource-library', { scroll: false })
+    expect(mockReplace).toHaveBeenLastCalledWith('/resource-library?tab=mine', { scroll: false })
   })
 
   it('keeps common creation types visible and foundation resources under Advanced', async () => {

@@ -392,6 +392,8 @@ may reveal on hover/focus but must remain keyboard accessible.
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Keep the sidebar base surface stable when the application window gains or
+  loses focus. Window focus must not darken the task or work-items sidebar.
 - Sortable sidebar rows must keep the sortable container separate from the
   pointer activator. Only the primary icon-and-label or label region may start
   pointer sorting, after at least `6px` of movement; trailing actions, metadata,
@@ -466,8 +468,16 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
+- The compact turn-navigation rail reflects every conversation turn intersecting
+  the viewport. A turn includes its user messages and assistant responses, so
+  assistant-only viewport content still activates the corresponding marker and
+  multiple markers may be active when content from multiple turns is visible.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- Runtime stream lifecycle events update only the affected task's in-memory
+  status. They must not refresh the whole sidebar work list. A generated task
+  title is authoritative over older list requests already in flight until the
+  local executor confirms the same title.
 - When opening, closing, or resizing a side panel reflows conversation content,
   preserve the reader's visible message or content anchor. Continue following
   the bottom only when the reader was already at the bottom before the reflow.
@@ -522,6 +532,8 @@ recipe closely:
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
+- selecting a model is a terminal menu action and closes the model selector;
+  reasoning and speed adjustments keep it open for consecutive changes;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -593,6 +605,8 @@ a preferred shape.
 Dialogs use:
 
 - a centered elevated surface with `20px` radius;
+- semantic theme surfaces such as `bg-background` or `bg-popover`; never
+  hardcode a light-only background for a theme-aware dialog;
 - `0.5px` semantic ring, light `lg` shadow, and subtle translucent blur;
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;
@@ -617,6 +631,13 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- Use the shared `Tooltip` component for compact controls instead of the native
+  HTML `title` attribute. Icon-only controls must keep a localized
+  `aria-label`; controls that currently have neither a visible label nor a
+  tooltip must add both where applicable.
+- Tooltips inside clipped sidebars, cards, tables, and panels must render
+  through the shared portal-based layer so ancestor `overflow` rules cannot
+  hide them.
 
 ### 6.7 Cards and empty states
 
@@ -683,6 +704,12 @@ semantics for all three.
   terminal should be fitted and resized; after activation, window focus, or
   document visibility restoration, refresh the buffered xterm rows so the
   existing session remains visible.
+- PTY output must not be streamed before the renderer is ready to receive it.
+  A terminal session starts reading from the PTY only after the embedded
+  terminal registers its output listeners and explicitly attaches via
+  `attach_local_terminal`; the embedded component reuses the underlying xterm
+  resource while the session stays mounted and defers disposal so re-mounts do
+  not drop early shell output.
 - Workspace IDEs and native editors launch only from the titlebar “Open
   location” control, including its local-editor picker and remote code-server
   behavior.

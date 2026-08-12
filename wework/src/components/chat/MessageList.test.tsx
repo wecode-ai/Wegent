@@ -304,6 +304,42 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
+  test('does not render viewed images as final message artifacts', () => {
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-view-image',
+            role: 'assistant',
+            content: 'The screenshot is visible in the tool details.',
+            status: 'done',
+            createdAt: '2026-08-08T10:00:01Z',
+            blocks: [
+              {
+                id: 'view-image-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'view_image',
+                toolInput: { path: '/tmp/screenshot.png' },
+                toolOutput: { image_url: imageUrl },
+                renderPayload: {
+                  dataUrl: imageUrl,
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('generated-image-gallery')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('generated-image')).not.toBeInTheDocument()
+  })
+
   test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
@@ -2400,9 +2436,7 @@ describe('MessageList', () => {
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
 
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
-      'asset://localhost/Users/dev/workspace/trend.html'
-    )
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith('/Users/dev/workspace/trend.html')
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
@@ -2445,9 +2479,7 @@ describe('MessageList', () => {
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
 
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
-      'asset://localhost/Users/dev/workspace/trend.html'
-    )
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith('/Users/dev/workspace/trend.html')
   })
 
   test('removes angle brackets from assistant file link destinations', () => {
@@ -3150,7 +3182,7 @@ describe('MessageList', () => {
       status: 'ready',
       file_extension: '.png',
       created_at: '2026-06-26T15:33:00.000+08:00',
-      local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png',
+      local_path: '/Users/me/.wework/workspace/attachments/draft/42/historical.png',
     }
 
     render(
@@ -3170,7 +3202,7 @@ describe('MessageList', () => {
 
     expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png'
+      'asset://localhost/Users/me/.wework/workspace/attachments/draft/42/historical.png'
     )
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -3273,7 +3305,7 @@ describe('MessageList', () => {
             content: [
               '# Files mentioned by the user:',
               '',
-              '## image.png: /Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png',
+              '## image.png: /Users/yunpeng7/.wework/workspace/attachments/10406026969952/0/image.png',
               '',
               '## My request for Codex:',
               '分析下这个图片',
@@ -3287,11 +3319,42 @@ describe('MessageList', () => {
 
     expect(await screen.findByTestId('message-local-image-preview')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
+      'asset://localhost/Users/yunpeng7/.wework/workspace/attachments/10406026969952/0/image.png'
     )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
+  test('copies only the visible request from Codex user messages with file mentions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-copy',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/me/.wework/workspace/attachments/draft/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    expect(writeText).toHaveBeenCalledWith('分析下这个图片')
   })
 
   test('renders Codex local non-image file mentions as compact file chips', () => {
@@ -3375,7 +3438,7 @@ describe('MessageList', () => {
             content: [
               '# Files mentioned by the user:',
               '',
-              '## image.png: /Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png',
+              '## image.png: /Users/yunpeng7/.wework/workspace/attachments/10406026969952/0/image.png',
               '',
               '## My request for Codex:',
               '分析下这个图片',
@@ -3771,7 +3834,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:09:00.000+08:00',
       text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
       local_path:
-        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
+        '/Users/me/.wework/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
     }
 
     render(
@@ -3805,7 +3868,7 @@ describe('MessageList', () => {
 
     await waitFor(() =>
       expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt'
+        '/Users/me/.wework/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt'
       )
     )
   })
@@ -5162,6 +5225,11 @@ describe('MessageList', () => {
       '/plugins?plugin=documents&marketplace=openai-primary-runtime'
     )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('sent-plugin-icon-Documents').tagName).toBe('IMG')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toHaveAttribute(
+      'src',
+      '/plugin-icons/wework.svg'
+    )
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
     )

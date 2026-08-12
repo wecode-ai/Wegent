@@ -404,8 +404,9 @@ impl RuntimeWorkRpcHandler {
 
         self.store.delete_task(&link.local_task_id);
         let cleanup_link = link.clone();
+        let worktrees = self.worktrees.clone();
         let cleanup = tokio::task::spawn_blocking(move || {
-            cleanup_task_files_response(&cleanup_link, true, false)
+            cleanup_task_files_response(&worktrees, &cleanup_link, true, false)
         })
         .await
         .unwrap_or_else(|error| {
@@ -486,11 +487,16 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
         let previews = stream::iter(links)
-            .map(|link| async move {
-                let fallback = link.clone();
-                tokio::task::spawn_blocking(move || cleanup_task_files_preview(&link))
+            .map(|link| {
+                let worktrees = self.worktrees.clone();
+                async move {
+                    let fallback = link.clone();
+                    tokio::task::spawn_blocking(move || {
+                        cleanup_task_files_preview(&worktrees, &link)
+                    })
                     .await
                     .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+                }
             })
             .buffer_unordered(8)
             .collect::<Vec<_>>();
@@ -504,11 +510,16 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
         let results = stream::iter(links)
-            .map(|link| async move {
-                let fallback = link.clone();
-                tokio::task::spawn_blocking(move || cleanup_task_files_response(&link, true, false))
+            .map(|link| {
+                let worktrees = self.worktrees.clone();
+                async move {
+                    let fallback = link.clone();
+                    tokio::task::spawn_blocking(move || {
+                        cleanup_task_files_response(&worktrees, &link, true, false)
+                    })
                     .await
                     .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+                }
             })
             .buffer_unordered(8)
             .collect::<Vec<_>>();

@@ -22,14 +22,14 @@ async fn fetch_task_skills_returns_ref_metadata() {
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
         .route(
-            "/api/v1/tasks/123/skills",
+            "/api/tasks/123/skills",
             get({
                 let log = log.clone();
                 move |headers: HeaderMap| async move {
                     log.paths
                         .lock()
                         .unwrap()
-                        .push("/api/v1/tasks/123/skills".to_owned());
+                        .push("/api/tasks/123/skills".to_owned());
                     log.auth_headers.lock().unwrap().push(
                         headers
                             .get("authorization")
@@ -70,7 +70,7 @@ async fn fetch_task_skills_returns_ref_metadata() {
 
     assert_eq!(
         log.paths.lock().unwrap().as_slice(),
-        ["/api/v1/tasks/123/skills"]
+        ["/api/tasks/123/skills"]
     );
     assert_eq!(
         log.auth_headers.lock().unwrap().as_slice(),

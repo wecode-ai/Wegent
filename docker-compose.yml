@@ -89,6 +89,11 @@ services:
       DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
       CHECK_SYSTEM_INITIALIZATION_STATUS: "${CHECK_SYSTEM_INITIALIZATION_STATUS:-True}"
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+      # Read from os.environ by shared.utils.crypto, not from backend/.env: they are
+      # not Settings fields, so the dotenv file this service does load never reaches
+      # them. Without the IV every git token bind fails outright.
+      GIT_TOKEN_AES_KEY: ${GIT_TOKEN_AES_KEY:-}
+      GIT_TOKEN_AES_IV: ${GIT_TOKEN_AES_IV:-}
       EXECUTOR_CANCEL_TASK_URL: ${EXECUTOR_CANCEL_TASK_URL:-http://executor_manager:8001/executor-manager/tasks/cancel}
       EXECUTOR_DELETE_TASK_URL: ${EXECUTOR_DELETE_TASK_URL:-http://executor_manager:8001/executor-manager/executor/delete}
       EXECUTOR_MANAGER_URL: ${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
@@ -107,10 +112,13 @@ services:
       BUILTIN_PLUGINS_DIR: ${BACKEND_BUILTIN_PLUGINS_DIR:-/app/init_data/plugins}
       MAX_UPLOAD_FILE_SIZE_MB: ${BACKEND_MAX_UPLOAD_FILE_SIZE_MB:-50}
       MAX_EXTRACTED_TEXT_LENGTH: ${BACKEND_MAX_EXTRACTED_TEXT_LENGTH:-1000000}
+      DEFAULT_IMAGE_GENERATION_MODEL: ${BACKEND_DEFAULT_IMAGE_GENERATION_MODEL:-}
+      DEFAULT_VIDEO_GENERATION_MODEL: ${BACKEND_DEFAULT_VIDEO_GENERATION_MODEL:-}
       TEAM_SHARE_BASE_URL: ${TEAM_SHARE_BASE_URL:-http://localhost:3000/chat}
       TASK_SHARE_BASE_URL: ${TASK_SHARE_BASE_URL:-http://localhost:3000}
       TEAM_SHARE_QUERY_PARAM: ${TEAM_SHARE_QUERY_PARAM:-teamShare}
       WEGENT_SOCKET_URL: ${WEGENT_SOCKET_URL:-http://localhost:8000}
+      ATTACHMENT_PUBLIC_BASE_URL: ${ATTACHMENT_PUBLIC_BASE_URL:-}
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
@@ -252,6 +260,11 @@ services:
       - TASK_DISPATCH_MODE=${TASK_DISPATCH_MODE:-push}
       # Service pool name for this instance (used for queue isolation)
       - SERVICE_POOL=${SERVICE_POOL:-default}
+      # Keys the executor needs to read the git token the backend hands it. The
+      # backend sends it as stored, which is encrypted; without these the executor
+      # drops the credential and git falls back to prompting for a username.
+      - GIT_TOKEN_AES_KEY=${GIT_TOKEN_AES_KEY:-}
+      - GIT_TOKEN_AES_IV=${GIT_TOKEN_AES_IV:-}
       # JWT secret for verifying backend tokens (must match backend SECRET_KEY)
       - JWT_SECRET_KEY=${BACKEND_SECRET_KEY:-your-secret-key-here}
       - JWT_ALGORITHM=${BACKEND_ALGORITHM:-HS256}

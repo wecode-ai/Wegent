@@ -5,6 +5,102 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn begin_active_codex_transcript(&self, local_task_id: &str, turn_id: &str) {
+        let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
+            return;
+        };
+        active_items.insert(
+            local_task_id.to_owned(),
+            ActiveCodexTranscriptItems {
+                turn_id: turn_id.to_owned(),
+                items: Vec::new(),
+            },
+        );
+    }
+
+    pub(super) fn clear_active_codex_transcript(&self, local_task_id: &str) {
+        if let Ok(mut active_items) = self.active_codex_transcript_items.lock() {
+            active_items.remove(local_task_id);
+        }
+    }
+
+    pub(super) fn record_active_codex_transcript_item(
+        &self,
+        local_task_id: &str,
+        turn_id: &str,
+        message: &Value,
+    ) {
+        let notification = codex_notification(message);
+        if !matches!(
+            notification.method.as_str(),
+            "item/started" | "item/completed"
+        ) {
+            return;
+        }
+        let item = notification_item(notification.params);
+        if !item.is_object() {
+            return;
+        }
+        let Some(item_id) = string_field(&item, "id") else {
+            return;
+        };
+        let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
+            return;
+        };
+        let Some(transcript) = active_items.get_mut(local_task_id) else {
+            return;
+        };
+        if transcript.turn_id != turn_id {
+            transcript.turn_id = turn_id.to_owned();
+            transcript.items.clear();
+        }
+        if let Some(existing) = transcript
+            .items
+            .iter_mut()
+            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
+        {
+            let created_at = existing
+                .get("createdAt")
+                .or_else(|| existing.get("created_at"))
+                .cloned();
+            *existing = item;
+            if existing.get("createdAt").is_none() && existing.get("created_at").is_none() {
+                if let (Some(object), Some(created_at)) = (existing.as_object_mut(), created_at) {
+                    object.insert("createdAt".to_owned(), created_at);
+                }
+            }
+        } else {
+            transcript.items.push(item);
+        }
+    }
+
+    pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
+        let active = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| items.get(local_task_id).cloned());
+        let Some(active) = active.filter(|active| !active.items.is_empty()) else {
+            return;
+        };
+        let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
+            return;
+        };
+        if let Some(turn) = turns
+            .iter_mut()
+            .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
+        {
+            merge_codex_turn_items(turn, active.items);
+            return;
+        }
+        turns.push(json!({
+            "id": active.turn_id,
+            "items": active.items,
+            "itemsView": "full",
+            "status": "inProgress",
+        }));
+    }
+
     pub(super) async fn ensure_notification_router(&self) {
         if self
             .notification_router
@@ -340,4 +436,34 @@ impl RuntimeWorkRpcHandler {
             }
         }
     }
+}
+
+fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
+    let Some(turn_object) = turn.as_object_mut() else {
+        return;
+    };
+    let items = turn_object
+        .entry("items".to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !items.is_array() {
+        *items = Value::Array(Vec::new());
+    }
+    let items = items
+        .as_array_mut()
+        .expect("turn items were normalized to an array");
+    for active_item in active_items {
+        let Some(item_id) = string_field(&active_item, "id") else {
+            continue;
+        };
+        if let Some(existing) = items
+            .iter_mut()
+            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
+        {
+            *existing = active_item;
+        } else {
+            items.push(active_item);
+        }
+    }
+    turn_object.insert("itemsView".to_owned(), Value::String("full".to_owned()));
+    turn_object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
 }

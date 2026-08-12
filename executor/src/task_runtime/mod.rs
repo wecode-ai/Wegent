@@ -12,10 +12,11 @@ mod router;
 mod store;
 
 pub use model::{
-    BinaryInput, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment, LoopItem,
-    ProjectCreate, ProjectDescriptor, ProjectFile, ProjectStoreKind, ProjectUpdate,
-    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskSearch, TaskUpdate,
+    BinaryInput, ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset,
+    DeliveryCreate, DeliveryDetail, IssueComment, LocalComment, LocalCommentCreate, LocalExecution,
+    LocalExecutionClaim, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectStoreKind,
+    ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind,
+    TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
 pub use store::{LocalTaskStore, TaskRuntimeError};

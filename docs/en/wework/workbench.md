@@ -12,9 +12,15 @@ The first main window starts with three default tabs: Task, Project spaces, and 
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
+The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
+
 ## Move between project-space tasks and runtime tasks
 
 When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+
+## Use the project sidebar
+
+Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
 ## Start a new task
 
@@ -31,6 +37,10 @@ Local file and directory links in an AI response open in the Files tab. File lin
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
 
 Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
+
+When diagnosing a terminal that does not repaint after a task switch, frontend logs record the terminal type, task and session identifiers, activation phase, xterm row and column count, container dimensions, and hidden state. They never record terminal output, commands, or workspace paths.
+
+To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, `Tauri local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
 
 ## Expand the right workspace
 

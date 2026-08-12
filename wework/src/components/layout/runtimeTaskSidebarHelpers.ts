@@ -94,20 +94,10 @@ export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) 
   return `${deviceLabel} ${workspace.workspacePath}`
 }
 
-function isRuntimeWorktreeWorkspace(workspace: RuntimeDeviceWorkspace) {
-  return (
-    workspace.workspaceKind === 'worktree' ||
-    Boolean(workspace.worktreeId) ||
-    Boolean(getWorktreeIdFromPath(workspace.workspacePath))
-  )
-}
-
 export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ) {
-  if (!isRuntimeWorktreeTask(task) && task.workspacePath) return task.workspacePath
-  if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
 }
 
@@ -142,16 +132,9 @@ function isRuntimeChatPath(path: string) {
     if (parts[index] !== 'workspace' || parts[index + 1] !== 'chats') continue
     const previous = parts[index - 1]
     if (!previous) return true
-    return previous === 'wegent-executor' || previous === '.wegent-executor'
+    return previous === '.wework'
   }
   return parts[0] === 'workspace' && parts[1] === 'chats'
-}
-
-function getWorktreeIdFromPath(path: string) {
-  const parts = path.split('/').filter(Boolean)
-  const index = parts.indexOf('worktrees')
-  if (index < 0 || index + 1 >= parts.length) return null
-  return parts[index + 1] || null
 }
 
 function partitionRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {

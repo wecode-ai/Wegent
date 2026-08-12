@@ -4,11 +4,14 @@ import {
 } from './localModelCatalog'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
+export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
 export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
 export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
+export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
+export const DEEPSEEK_V4_PRO_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
@@ -181,10 +184,15 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
+  const providerProfileId =
+    legacyConfig.providerProfileId === 'minimax' &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.minimax.io/anthropic'
+      ? 'minimax-global'
+      : legacyConfig.providerProfileId
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
-    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID &&
+    deepSeekCatalogModelIdFor(legacyConfig.modelId) !== undefined &&
     legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
     storedApiFormat === 'openai-chat-completions' &&
     normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
@@ -200,7 +208,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           baseUrl: legacyConfig.baseUrl,
           requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
-  const isCustomProvider = (legacyConfig.providerProfileId ?? 'custom') === 'custom'
+  const isCustomProvider = (providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
     legacyConfig.catalogEntry ??
     (isCustomProvider
@@ -212,8 +220,10 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
         })
       : undefined)
   const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
-  const kimiCatalogModelId =
-    legacyConfig.providerProfileId === 'kimi-coding'
+  const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
+  const kimiCatalogModelId = isKimiOpenPlatformK3
+    ? KIMI_K3_CATALOG_MODEL_ID
+    : providerProfileId === 'kimi-coding'
       ? legacyConfig.modelId === 'k3'
         ? KIMI_K3_CATALOG_MODEL_ID
         : legacyConfig.modelId === 'kimi-for-coding' ||
@@ -222,16 +232,11 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           : undefined
       : undefined
   const deepSeekCatalogModelId =
-    legacyConfig.providerProfileId === 'deepseek' &&
-    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID
-      ? DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
-      : undefined
+    providerProfileId === 'deepseek' ? deepSeekCatalogModelIdFor(legacyConfig.modelId) : undefined
   const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
-    ...(legacyConfig.providerProfileId
-      ? { providerProfileId: legacyConfig.providerProfileId }
-      : {}),
+    ...(providerProfileId ? { providerProfileId } : {}),
     displayName: legacyConfig.displayName,
     ...(legacyConfig.group ? { group: legacyConfig.group } : {}),
     modelId: legacyConfig.modelId,
@@ -245,7 +250,9 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     ...(providerCatalogModelId
       ? {
           contextWindow: kimiCatalogModelId
-            ? KIMI_CODING_CONTEXT_WINDOW
+            ? isKimiOpenPlatformK3
+              ? KIMI_K3_CONTEXT_WINDOW
+              : KIMI_CODING_CONTEXT_WINDOW
             : DEEPSEEK_V4_CONTEXT_WINDOW,
         }
       : legacyConfig.contextWindow
@@ -283,6 +290,16 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     baseUrl: splitUrl.baseUrl,
     requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat),
   }
+}
+
+export function deepSeekCatalogModelIdFor(modelId: string): string | undefined {
+  if (modelId === DEEPSEEK_V4_FLASH_MODEL_ID) {
+    return DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+  }
+  if (modelId === DEEPSEEK_V4_PRO_MODEL_ID) {
+    return DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
+  }
+  return undefined
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
@@ -611,6 +628,12 @@ export function findLocalModelConfigByModelName(
   modelName?: string | null
 ): LocalModelConfig | null {
   const id = localModelIdFromModelName(modelName)
-  if (!id) return null
-  return readStoredConfigs().find(config => config.id === id) ?? null
+  const configs = readStoredConfigs()
+  if (id) return configs.find(config => config.id === id) ?? null
+  if (!modelName) return null
+  return (
+    configs.find(
+      config => config.codexCatalogModelId === modelName || config.catalogEntry?.slug === modelName
+    ) ?? null
+  )
 }

@@ -5,6 +5,9 @@ set -euo pipefail
 core_segments=(
   workspace-tabs
   priority-filter
+  automation-lifecycle
+  model-routing
+  permission-modes
   core-task-flow
   window-lifecycle
   goal-lifecycle
@@ -13,11 +16,30 @@ core_segments=(
   conversation-state
   workspace-attachments
   rendering-extensions
+  local-harness
+  embedded-browser
 )
 plugin_segments=(
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
+)
+cloud_segments=(
+  workspace-tabs
+  priority-filter
+  telemetry-consent
+  automation-lifecycle
+  model-routing
+  core-task-flow
+  window-lifecycle
+  goal-lifecycle
+  supervisor-lifecycle
+  resilience
+  conversation-state
+  workspace-attachments
+  rendering-extensions
+  browser-multi-tabs
+  embedded-browser
 )
 
 declare -A selected=()
@@ -99,6 +121,13 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
+    wework/src/pages/AutomationsPage* | \
+      wework/src/features/automations/* | \
+      wework/src/features/todo/ProjectAutomationView.tsx | \
+      wework/src/types/automation.ts)
+      select_target "core:automation-lifecycle"
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -155,6 +184,29 @@ classify_wework_path() {
       return
       ;;
 
+    # The embedded browser has a dedicated agent scenario checkpoint.
+    wework/src-tauri/src/embedded_browser* | \
+      wework/src/lib/embedded-browser* | \
+      wework/src/lib/browser-url* | \
+      wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      select_target "core:embedded-browser"
+      return
+      ;;
+
+    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    wework/src-tauri/src/local_terminal* | \
+      wework/src/lib/local-harness* | \
+      wework/src/lib/local-terminal* | \
+      wework/src/components/layout/CentralHarnessTerminal* | \
+      wework/src/components/layout/WorkbenchHarnessSelector* | \
+      wework/src/components/layout/localHarnessWorkbench* | \
+      wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:local-harness"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
@@ -170,6 +222,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:model-routing"
       return
       ;;
 
@@ -251,7 +304,13 @@ build_matrix() {
   fi
 
   if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    append_matrix_entry cloud Cloud e2e:desktop:cloud
+    for segment in "${cloud_segments[@]}"; do
+      append_matrix_entry \
+        "cloud-$segment" \
+        "Cloud / $segment" \
+        e2e:desktop:cloud \
+        "$segment"
+    done
   fi
 }
 

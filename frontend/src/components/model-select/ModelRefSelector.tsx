@@ -1,0 +1,329 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client'
+
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { Badge } from '@/components/ui/badge'
+import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
+import { modelApis, UnifiedModel } from '@/apis/models'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  getGlobalModelPreference,
+  saveGlobalModelPreference,
+  type ModelPreferenceScope,
+} from '@/utils/modelPreferences'
+/** What a caller stores: enough to name one model among every scope. */
+export interface ModelRef {
+  name: string
+  namespace: string
+  type: 'public' | 'user' | 'group' | 'runtime'
+}
+
+interface ModelRefSelectorProps {
+  value?: ModelRef | null
+  onChange: (value: ModelRef | null) => void
+  disabled?: boolean
+  error?: string
+  /** Shown when nothing is selected yet. Each caller names its own purpose. */
+  placeholder: string
+  /** Optional team ID to read cached model preference from localStorage */
+  knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
+  /**
+   * What this choice is for. Summaries and wiki generation want different models,
+   * so they remember separately rather than overwriting one another. Omitted, the
+   * choice shares the conversation's slot.
+   */
+  preferenceScope?: ModelPreferenceScope
+  /**
+   * Whether to fill the box in when nothing is selected. On by default, which is
+   * what a create form wants. Off where an empty box is a fact rather than a gap:
+   * an existing knowledge base with no model of its own runs on its team's, and
+   * showing a model there would misreport that -- and, if the form then saved,
+   * would turn the guess into a stored choice nobody made.
+   */
+  autoSelect?: boolean
+  dataTestId: string
+}
+
+export function ModelRefSelector({
+  value,
+  onChange,
+  disabled = false,
+  error,
+  placeholder,
+  knowledgeDefaultTeamId,
+  bindModel,
+  preferenceScope,
+  autoSelect = true,
+  dataTestId,
+}: ModelRefSelectorProps) {
+  const { t } = useTranslation('common')
+  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [loading, setLoading] = useState(false)
+  // Track the last team ID for which we attempted preselection
+  // This allows re-attempting when the team ID changes or dialog reopens
+  // ATTEMPTED_WITHOUT_TEAM (-1) is a sentinel value indicating we attempted
+  // preselection before team info was loaded, allowing re-attempt when team info arrives
+  const ATTEMPTED_WITHOUT_TEAM = -1
+  const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
+  // Whether the current value is this effect's own guess rather than a real choice.
+  // A guess made before the team id arrived could not consult the cache, so it has
+  // to stay replaceable -- otherwise the re-attempt below can never happen and the
+  // remembered model loses to whatever sorted first.
+  const guessedRef = useRef(false)
+
+  // Fetch models on mount
+  useEffect(() => {
+    const fetchModels = async () => {
+      setLoading(true)
+      try {
+        // Fetch LLM models (all scopes)
+        const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+        // Sort by displayName
+        const sortedModels = (response.data || []).sort((a, b) => {
+          const nameA = a.displayName || a.name
+          const nameB = b.displayName || b.name
+          return nameA.localeCompare(nameB)
+        })
+        setModels(sortedModels)
+      } catch (err) {
+        console.error('Failed to fetch models:', err)
+        setModels([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchModels()
+  }, [])
+
+  // Auto-preselect model with priority:
+  // 1. Cached preference from localStorage
+  // 2. Team's bind_model from bot config
+  // 3. First available model in the list
+  //
+  // Conditions:
+  // - Models are loaded
+  // - No value is currently selected
+  // - Valid knowledgeDefaultTeamId is provided (for cache and tracking)
+  // - Haven't attempted preselection for this team ID yet
+  useEffect(() => {
+    if (!autoSelect || loading || models.length === 0) {
+      return
+    }
+    // A value the caller loaded or the user picked is never second-guessed. One this
+    // effect guessed is provisional until the team id has had its turn.
+    if (value && !guessedRef.current) {
+      return
+    }
+
+    // Determine if we should attempt preselection
+    // - First attempt: attemptedTeamIdRef.current is null
+    // - Re-attempt: previously attempted without team info (-1), now have teamId
+    // - Re-attempt: teamId changed to a different value
+    const shouldAttempt = () => {
+      if (attemptedTeamIdRef.current === null) return true
+      if (attemptedTeamIdRef.current === ATTEMPTED_WITHOUT_TEAM && knowledgeDefaultTeamId)
+        return true
+      if (knowledgeDefaultTeamId && attemptedTeamIdRef.current !== knowledgeDefaultTeamId)
+        return true
+      return false
+    }
+
+    if (!shouldAttempt()) return
+
+    // Mark this team ID as attempted
+    // Use sentinel value (-1) when team info is not yet loaded, so we can re-attempt when it arrives
+    attemptedTeamIdRef.current = knowledgeDefaultTeamId ?? ATTEMPTED_WITHOUT_TEAM
+
+    // Priority 1: Try cached preference from localStorage
+    if (knowledgeDefaultTeamId) {
+      // Always an llm here -- this selector only ever fetches those -- so the
+      // category slot stays empty and the scope is what tells these keys apart.
+      const cachedPreference = getGlobalModelPreference(
+        knowledgeDefaultTeamId,
+        undefined,
+        preferenceScope
+      )
+
+      if (cachedPreference?.modelName) {
+        const matchedModel = models.find(model => {
+          if (model.name !== cachedPreference.modelName) {
+            return false
+          }
+          if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
+            return false
+          }
+          return true
+        })
+
+        if (matchedModel) {
+          // Remembered, so no longer a guess: this is what was chosen last time.
+          guessedRef.current = false
+          onChange({
+            name: matchedModel.name,
+            namespace: matchedModel.namespace || 'default',
+            type: matchedModel.type,
+          })
+          return
+        }
+      }
+    }
+
+    // Priority 2: Try team's bind_model from bot config
+    if (bindModel) {
+      const matchedModel = models.find(
+        model => model.name === bindModel || model.displayName === bindModel
+      )
+      if (matchedModel) {
+        guessedRef.current = true
+        onChange({
+          name: matchedModel.name,
+          namespace: matchedModel.namespace || 'default',
+          type: matchedModel.type,
+        })
+        return
+      }
+    }
+
+    // Priority 3: Select the first available model
+    const firstModel = models[0]
+    if (firstModel) {
+      guessedRef.current = true
+      onChange({
+        name: firstModel.name,
+        namespace: firstModel.namespace || 'default',
+        type: firstModel.type,
+      })
+    }
+  }, [
+    models,
+    value,
+    loading,
+    autoSelect,
+    knowledgeDefaultTeamId,
+    bindModel,
+    preferenceScope,
+    onChange,
+  ])
+
+  // Find selected model
+  const selectedModel = useMemo(() => {
+    if (!value) return null
+    return models.find(
+      m => m.name === value.name && m.namespace === value.namespace && m.type === value.type
+    )
+  }, [models, value])
+
+  const selectedDisplayModel = useMemo(() => {
+    if (selectedModel) return selectedModel
+    if (!value) return null
+    return {
+      name: value.name,
+      namespace: value.namespace,
+      type: value.type,
+    } as UnifiedModel
+  }, [selectedModel, value])
+
+  // Get display value
+  const displayValue = useMemo(() => {
+    if (selectedModel) {
+      return selectedModel.displayName || selectedModel.name
+    }
+    if (value) {
+      // Model not found in list but value exists
+      return value.name
+    }
+    return placeholder
+  }, [selectedModel, value, placeholder])
+
+  const handleSelect = (model: UnifiedModel) => {
+    // Picked deliberately, so nothing may overwrite it.
+    guessedRef.current = false
+    // Remembered here rather than when the form is submitted, which is what the
+    // chat does. Saving on submit only meant a dialog closed without submitting
+    // forgot the choice, and the next one opened on the fallback again.
+    //
+    // Only a deliberate pick is remembered: the preselect above must not write
+    // back its own guess, or the first model in the list would install itself as
+    // the preference simply by being shown.
+    if (knowledgeDefaultTeamId) {
+      saveGlobalModelPreference(
+        knowledgeDefaultTeamId,
+        {
+          modelName: model.name,
+          modelType: model.type,
+          forceOverride: true,
+          updatedAt: Date.now(),
+        },
+        undefined,
+        preferenceScope
+      )
+    }
+    onChange({
+      name: model.name,
+      namespace: model.namespace || 'default',
+      type: model.type,
+    })
+  }
+
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'public':
+        return t('common:models.public')
+      case 'user':
+        return t('common:models.my_models')
+      case 'group':
+        return t('common:models.group')
+      default:
+        return type
+    }
+  }
+
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: loading
+        ? t('common:loading', 'Loading...')
+        : t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [loading, t]
+  )
+
+  return (
+    <div className="flex flex-col gap-1">
+      <GroupedModelSelect
+        models={models}
+        selectedModel={selectedDisplayModel}
+        labels={cascadeLabels}
+        onSelectModel={handleSelect}
+        placeholder={loading ? t('common:loading', 'Loading...') : displayValue}
+        disabled={disabled || loading}
+        dataTestId={dataTestId}
+        triggerClassName={error ? 'border-red-500' : undefined}
+        getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
+        renderModelBadges={model => (
+          <Badge variant="secondary" size="sm" className="shrink-0">
+            {getTypeLabel(model.type)}
+          </Badge>
+        )}
+        renderModelMeta={model =>
+          model.modelId ? (
+            <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
+          ) : null
+        }
+      />
+      {error && <span className="text-xs text-red-500">{error}</span>}
+    </div>
+  )
+}

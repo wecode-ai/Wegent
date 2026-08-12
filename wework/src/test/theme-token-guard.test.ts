@@ -65,6 +65,16 @@ describe('theme token guard', () => {
     expect(source).toContain("darkMode: 'class'")
   })
 
+  test('titlebar and window frame use the same opaque surface colors', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source.match(/--color-bg-surface: 247 247 248;/g)).toHaveLength(1)
+    expect(source.match(/--color-titlebar: 247 247 248;/g)).toHaveLength(1)
+    expect(source.match(/--color-bg-surface: 28 31 36;/g)).toHaveLength(1)
+    expect(source.match(/--color-titlebar: 28 31 36;/g)).toHaveLength(1)
+  })
+
   test('tailwind exposes semantic z-index layers', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8')

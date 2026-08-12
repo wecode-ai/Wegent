@@ -145,8 +145,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=backend-amd64
-          cache-to: type=gha,mode=max,scope=backend-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-backend:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-backend:buildcache-amd64,mode=max
 
   build-backend-arm64:
     needs: prepare-release
@@ -187,8 +187,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=backend-arm64
-          cache-to: type=gha,mode=max,scope=backend-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-backend:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-backend:buildcache-arm64,mode=max
 
   # ============================================================================
   # Executor Image Build (parallel AMD64 + ARM64)
@@ -222,8 +222,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=executor-amd64
-          cache-to: type=gha,mode=max,scope=executor-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor:buildcache-amd64,mode=max
 
   build-executor-arm64:
     needs: prepare-release
@@ -254,8 +254,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=executor-arm64
-          cache-to: type=gha,mode=max,scope=executor-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor:buildcache-arm64,mode=max
 
   # ============================================================================
   # Executor Manager Image Build (parallel AMD64 + ARM64)
@@ -289,8 +289,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=executor-manager-amd64
-          cache-to: type=gha,mode=max,scope=executor-manager-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor-manager:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor-manager:buildcache-amd64,mode=max
 
   build-executor-manager-arm64:
     needs: prepare-release
@@ -321,8 +321,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=executor-manager-arm64
-          cache-to: type=gha,mode=max,scope=executor-manager-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor-manager:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-executor-manager:buildcache-arm64,mode=max
 
   # ============================================================================
   # Device Image Build (parallel AMD64 + ARM64)
@@ -358,8 +358,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=device-amd64
-          cache-to: type=gha,mode=max,scope=device-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-amd64,mode=max
 
   build-device-arm64:
     needs: prepare-release
@@ -391,8 +391,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=device-arm64
-          cache-to: type=gha,mode=max,scope=device-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-arm64,mode=max
 
   # ============================================================================
   # Device Multi-arch Manifest
@@ -467,8 +467,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=frontend-amd64
-          cache-to: type=gha,mode=max,scope=frontend-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-web:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-web:buildcache-amd64,mode=max
           build-args: |
             NEXT_TELEMETRY_DISABLED=1
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
@@ -502,8 +502,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=frontend-arm64
-          cache-to: type=gha,mode=max,scope=frontend-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-web:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-web:buildcache-arm64,mode=max
           build-args: |
             NEXT_TELEMETRY_DISABLED=1
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
@@ -540,8 +540,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=chat-shell-amd64
-          cache-to: type=gha,mode=max,scope=chat-shell-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-chat-shell:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-chat-shell:buildcache-amd64,mode=max
 
   build-chat-shell-arm64:
     needs: prepare-release
@@ -572,8 +572,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=chat-shell-arm64
-          cache-to: type=gha,mode=max,scope=chat-shell-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-chat-shell:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-chat-shell:buildcache-arm64,mode=max
 
   # ============================================================================
   # Knowledge Runtime Image Build (parallel AMD64 + ARM64)
@@ -607,8 +607,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=knowledge-runtime-amd64
-          cache-to: type=gha,mode=max,scope=knowledge-runtime-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:buildcache-amd64,mode=max
 
   build-knowledge-runtime-arm64:
     needs: prepare-release
@@ -639,8 +639,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=knowledge-runtime-arm64
-          cache-to: type=gha,mode=max,scope=knowledge-runtime-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:buildcache-arm64,mode=max
 
   # ============================================================================
   # Knowledge Document Converter Image Build (parallel AMD64 + ARM64)
@@ -674,8 +674,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=knowledge-doc-converter-amd64
-          cache-to: type=gha,mode=max,scope=knowledge-doc-converter-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:buildcache-amd64,mode=max
 
   build-knowledge-doc-converter-arm64:
     needs: prepare-release
@@ -706,8 +706,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=knowledge-doc-converter-arm64
-          cache-to: type=gha,mode=max,scope=knowledge-doc-converter-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:buildcache-arm64,mode=max
 
   # ============================================================================
   # Standalone Image Build (parallel AMD64 + ARM64)
@@ -742,8 +742,8 @@ jobs:
           load: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
-          cache-from: type=gha,scope=standalone-amd64
-          cache-to: type=gha,mode=max,scope=standalone-amd64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-amd64,mode=max
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
@@ -787,8 +787,8 @@ jobs:
           load: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
-          cache-from: type=gha,scope=standalone-arm64
-          cache-to: type=gha,mode=max,scope=standalone-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-arm64,mode=max
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
@@ -819,6 +819,9 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
 
       - name: Install dependencies and build
         working-directory: executor
@@ -865,6 +868,9 @@ jobs:
         with:
           targets: x86_64-apple-darwin
 
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
+
       - name: Install dependencies and build (x86_64)
         working-directory: executor
         env:
@@ -907,8 +913,11 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
+
       - name: Install executor Rust system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
 
       - name: Install dependencies and build
         working-directory: executor
@@ -946,8 +955,11 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
+
       - name: Install executor Rust system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
 
       - name: Install dependencies and build
         working-directory: executor
@@ -988,6 +1000,9 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up executor Rust cache
+        uses: ./.github/actions/setup-executor-rust-cache
 
       - name: Install dependencies and build
         working-directory: executor
@@ -1170,6 +1185,7 @@ jobs:
           body: ${{ steps.release-notes.outputs.body }}
           draft: false
           prerelease: false
+          make_latest: false
           files: |
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64

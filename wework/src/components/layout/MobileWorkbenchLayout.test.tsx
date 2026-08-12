@@ -931,6 +931,70 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
+  test('shows the sent message with status while an optimistic worktree is being created', () => {
+    const runtimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-worktree-creating',
+    }
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: runtimeTask,
+          isSending: true,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device-1',
+                    workspacePath: '/workspace/project-alpha',
+                    workspaceKind: 'worktree',
+                    available: true,
+                    mapped: true,
+                    tasks: [
+                      {
+                        taskId: runtimeTask.taskId,
+                        workspacePath: runtimeTask.workspacePath,
+                        workspaceKind: 'worktree',
+                        title: 'Create isolated workspace',
+                        runtime: 'codex',
+                        status: 'creating',
+                        optimistic: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 1,
+          },
+        }}
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Implement the feature',
+            status: 'complete',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const creationStatus = screen.getByTestId('worktree-creation-status')
+    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(screen.getByTestId('chat-message-scroll-area-content')).toContainElement(creationStatus)
+    expect(screen.queryByTestId('chat-message-scroll-area-sticky-footer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-chat-input-dock')).not.toBeInTheDocument()
+    expect(screen.getByText('Implement the feature')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+  })
+
   test('shows worktree branch selection in the mobile empty project controls', async () => {
     const currentProject = {
       ...baseState.projects[0],
@@ -1478,7 +1542,7 @@ describe('MobileWorkbenchLayout', () => {
 
   test('renders chat runtime tasks as conversations in the mobile drawer', async () => {
     const onOpenRuntimeTask = vi.fn()
-    const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-06-20/hi-1'
 
     render(
       <MobileWorkbenchLayout

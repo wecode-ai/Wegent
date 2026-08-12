@@ -3,11 +3,27 @@ import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import {
   automationDraftFromAutomation,
+  automationWorkspaceTarget,
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   emptyAutomationDraft,
+  initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
+
+describe('automationWorkspaceTarget', () => {
+  test('uses a selected project workspace', () => {
+    expect(automationWorkspaceTarget(' /repo/wework ')).toEqual({
+      workspacePath: '/repo/wework',
+    })
+  })
+
+  test('creates an independent chat workspace when no project is selected', () => {
+    expect(automationWorkspaceTarget('')).toEqual({
+      standaloneChatWorkspace: true,
+    })
+  })
+})
 
 function project(name: string, roots: string[], workspacePaths: string[]): RuntimeProjectWork {
   return {
@@ -163,6 +179,54 @@ describe('automation schedule draft conversion', () => {
       type: 'interval',
       value: 3,
       unit: 'hours',
+    })
+  })
+})
+
+describe('automation goal draft conversion', () => {
+  test('builds an active runtime goal when goal mode is enabled', () => {
+    const draft = emptyAutomationDraft('local')
+    draft.goalEnabled = true
+    draft.prompt = '  Keep CI green  '
+
+    expect(initialGoalFromAutomationDraft(draft)).toEqual({
+      objective: 'Keep CI green',
+      status: 'active',
+      tokenBudget: null,
+    })
+  })
+
+  test('round trips a persisted automation goal', () => {
+    const automation: Automation = {
+      id: 'local:goal',
+      version: 1,
+      source: 'local',
+      name: 'CI caretaker',
+      description: '',
+      prompt: 'Inspect CI and fix failures',
+      schedule: { type: 'cron', expression: '0 9 * * 1-5' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskPayload: {
+        initialGoal: {
+          objective: 'Keep CI green',
+          status: 'active',
+          tokenBudget: null,
+        },
+      },
+      createdAt: '2026-08-12T00:00:00Z',
+      updatedAt: '2026-08-12T00:00:00Z',
+    }
+
+    const draft = automationDraftFromAutomation(automation)
+
+    expect(draft.goalEnabled).toBe(true)
+    expect(initialGoalFromAutomationDraft(draft)).toEqual({
+      objective: 'Inspect CI and fix failures',
+      status: 'active',
+      tokenBudget: null,
     })
   })
 })

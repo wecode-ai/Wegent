@@ -56,6 +56,14 @@ impl CodexRunState {
             .is_some_and(|status| status.eq_ignore_ascii_case("active"))
     }
 
+    pub(super) fn response_item_id(&self) -> Option<&str> {
+        if self.final_text.is_empty() {
+            self.pending_message_id.as_deref()
+        } else {
+            self.final_message_id.as_deref()
+        }
+    }
+
     pub(super) fn reset_turn_output(&mut self) {
         self.final_text.clear();
         self.final_message_id = None;
@@ -154,47 +162,19 @@ impl CodexRunState {
     }
 
     fn append_delta(&mut self, params: &Value) {
-        let text = params.get("delta").and_then(Value::as_str).unwrap_or("");
         let phase = self.agent_message_phases.phase_for_delta(params);
-        if codex_phase_is_process(phase.as_deref()) {
-            log_codex_run_state_text(
-                "delta",
-                "skip_process",
-                phase.as_deref(),
-                params,
-                params,
-                text,
-            );
-            return;
-        }
-        if !codex_phase_is_final(phase.as_deref()) {
-            if let Some(delta) = params.get("delta").and_then(Value::as_str) {
-                self.begin_pending_message(codex_item_id(params), true);
-                log_codex_run_state_text(
-                    "delta",
-                    "append_pending",
-                    phase.as_deref(),
-                    params,
-                    params,
-                    delta,
-                );
-                self.pending_text.push_str(delta);
-                self.pending_message_saw_delta = true;
-            }
-            return;
-        }
         if let Some(delta) = params.get("delta").and_then(Value::as_str) {
-            self.begin_final_message(codex_item_id(params), true);
+            self.begin_pending_message(codex_item_id(params), true);
             log_codex_run_state_text(
                 "delta",
-                "append_final",
+                "append_pending",
                 phase.as_deref(),
                 params,
                 params,
                 delta,
             );
-            self.final_text.push_str(delta);
-            self.final_message_saw_delta = true;
+            self.pending_text.push_str(delta);
+            self.pending_message_saw_delta = true;
         }
     }
 
@@ -225,15 +205,17 @@ impl CodexRunState {
         }
         if codex_phase_is_process(phase.as_deref()) {
             let text = extract_text(item).unwrap_or_default();
-            self.clear_reclassified_final_message(codex_item_id(params));
+            self.begin_pending_message(codex_item_id(params), false);
             log_codex_run_state_text(
                 "completed",
-                "skip_process",
+                "set_pending",
                 phase.as_deref(),
                 params,
                 item,
                 &text,
             );
+            self.pending_text = text;
+            self.pending_message_saw_delta = false;
             return;
         }
         if item
@@ -305,18 +287,6 @@ impl CodexRunState {
             self.final_text = text;
             self.final_message_saw_delta = false;
         }
-    }
-
-    fn clear_reclassified_final_message(&mut self, item_id: Option<&str>) {
-        let Some(item_id) = item_id else {
-            return;
-        };
-        if self.final_message_id.as_deref() != Some(item_id) {
-            return;
-        }
-        self.final_text.clear();
-        self.final_message_id = None;
-        self.final_message_saw_delta = false;
     }
 
     fn begin_final_message(&mut self, item_id: Option<&str>, clear_on_change: bool) {

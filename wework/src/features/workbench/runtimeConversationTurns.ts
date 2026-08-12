@@ -15,25 +15,21 @@ export function mergeRuntimeConversationTurns(
   const localIndexByTurnId = new Map(
     localTurns.flatMap((turn, index) => (turn.id === null ? [] : [[turn.id, index] as const]))
   )
-  const localOptimisticIndexByClientUserMessageId = new Map(
+  const localIndexByClientUserMessageId = new Map(
     localTurns.flatMap((turn, index) =>
-      turn.id === null && turn.clientUserMessageId
-        ? [[turn.clientUserMessageId, index] as const]
-        : []
+      runtimeConversationTurnClientUserMessageIds(turn).map(id => [id, index] as const)
     )
   )
   const emittedLocalIndexes = new Set<number>()
   const snapshotUserMessageIds = new Set(
-    snapshotTurns.flatMap(turn =>
-      turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : []))
-    )
+    snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds)
   )
   const merged = snapshotTurns.map(snapshotTurn => {
     const localIndex =
       (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
-      (snapshotTurn.clientUserMessageId
-        ? localOptimisticIndexByClientUserMessageId.get(snapshotTurn.clientUserMessageId)
-        : undefined)
+      runtimeConversationTurnClientUserMessageIds(snapshotTurn)
+        .map(id => localIndexByClientUserMessageId.get(id))
+        .find((index): index is number => index !== undefined)
     if (localIndex === undefined) return snapshotTurn
     emittedLocalIndexes.add(localIndex)
     return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn)
@@ -42,9 +38,7 @@ export function mergeRuntimeConversationTurns(
   localTurns.forEach((turn, index) => {
     if (emittedLocalIndexes.has(index)) return
     if (
-      turn.id === null &&
-      turn.clientUserMessageId &&
-      snapshotUserMessageIds.has(turn.clientUserMessageId)
+      runtimeConversationTurnClientUserMessageIds(turn).some(id => snapshotUserMessageIds.has(id))
     ) {
       return
     }
@@ -53,6 +47,15 @@ export function mergeRuntimeConversationTurns(
     }
   })
   return orderRuntimeConversationTurns(merged)
+}
+
+function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTurn): string[] {
+  return Array.from(
+    new Set([
+      ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+      ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+    ])
+  )
 }
 
 export function reduceRuntimeConversationTurns(
@@ -102,8 +105,9 @@ export function reduceRuntimeConversationTurns(
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => {
         const items = applyCompletedAssistantContent(
-          upsertBlocks(turn.items, action.blocks),
+          settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
           turn.id,
+          action.itemId,
           action.content
         )
         return {
@@ -320,28 +324,57 @@ function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  const localById = new Map(localItems.map(item => [item.id, item]))
+  const reconciledLocalItems = localItems.filter(
+    localItem =>
+      !snapshotItems.some(snapshotItem =>
+        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
+      )
+  )
+  const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item)
   )
-  if (localItems.length <= snapshotItems.length) return mergedSnapshotItems
-
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
-  const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
-  for (let index = mergedSnapshotItems.length - 1; index >= 0; index -= 1) {
-    const snapshotItem = mergedSnapshotItems[index]
-    if (snapshotItem?.type !== 'assistant_text') continue
-    const localMatch = mergedLocalItems.find(
-      item =>
-        item.type === 'assistant_text' &&
-        (item.id === snapshotItem.id || item.content === snapshotItem.content)
-    )
-    if (!localMatch) return [...mergedLocalItems, snapshotItem]
-    return mergedLocalItems.map(item =>
-      item === localMatch ? { ...snapshotItem, id: localMatch.id } : item
-    )
+  const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
+  for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
+    const snapshotItem = mergedSnapshotItems[snapshotIndex]
+    if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
+      continue
+    }
+
+    const nextSnapshotItem = mergedSnapshotItems
+      .slice(snapshotIndex + 1)
+      .find(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    if (nextSnapshotItem) {
+      const insertionIndex = mergedLocalItems.findIndex(item => item.id === nextSnapshotItem.id)
+      mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+      continue
+    }
+
+    const previousSnapshotItem = mergedSnapshotItems
+      .slice(0, snapshotIndex)
+      .findLast(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    const insertionIndex = previousSnapshotItem
+      ? mergedLocalItems.findIndex(item => item.id === previousSnapshotItem.id) + 1
+      : mergedLocalItems.length
+    mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
   }
   return mergedLocalItems
+}
+
+function isEquivalentAssistantTextRepresentation(
+  local: RuntimeConversationItem,
+  snapshot: RuntimeConversationItem
+): boolean {
+  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  const localContent = assistantTextRepresentationContent(local)
+  const snapshotContent = assistantTextRepresentationContent(snapshot)
+  return localContent !== undefined && localContent === snapshotContent
+}
+
+function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {
+  if (item.type === 'assistant_text') return item.content
+  return item.type === 'block' && item.block.type === 'text' ? item.block.content : undefined
 }
 
 function mergeRuntimeConversationItem(
@@ -349,15 +382,10 @@ function mergeRuntimeConversationItem(
   snapshot: RuntimeConversationItem
 ): RuntimeConversationItem {
   if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
-  const localComplete = local.block.status === 'done' || local.block.status === 'error'
-  const snapshotComplete = snapshot.block.status === 'done' || snapshot.block.status === 'error'
-  if (!localComplete || !snapshotComplete || local.block.completedAt === undefined) {
-    return snapshot
-  }
 
   return {
     ...snapshot,
-    block: preserveCompletedProcessingBlockTiming(local.block, snapshot.block),
+    block: preserveProcessingBlockTiming(local.block, snapshot.block),
   }
 }
 
@@ -519,6 +547,7 @@ function upsertAssistantText(
 function applyCompletedAssistantContent(
   items: RuntimeConversationItem[],
   turnId: string | null,
+  itemId: string | undefined,
   content: string | undefined
 ): RuntimeConversationItem[] {
   if (!content) return items
@@ -527,13 +556,24 @@ function applyCompletedAssistantContent(
     (item, index) => index > lastUserIndex && item.type === 'assistant_text'
   )
   if (hasStreamedAssistantText) return items
+  const matchingProcessTextIndex = items.findLastIndex(
+    item => item.type === 'block' && item.block.type === 'text' && item.block.content === content
+  )
+  if (matchingProcessTextIndex >= 0) {
+    return replaceAt(items, matchingProcessTextIndex, {
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
+      content,
+      createdAt: new Date().toISOString(),
+    })
+  }
   const retained = items.filter(
     (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
   )
   return [
     ...retained,
     {
-      id: `runtime-final:${turnId ?? 'pending'}`,
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
@@ -591,7 +631,7 @@ function upsertBlocks(
       type: 'block',
       block:
         index >= 0 && next[index]?.type === 'block'
-          ? preserveCompletedProcessingBlockTiming(next[index].block, block)
+          ? preserveProcessingBlockTiming(next[index].block, block)
           : block,
     }
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
@@ -641,6 +681,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       fileChanges: isLast ? turn.fileChanges : undefined,
       error: isLast ? turn.error : undefined,
@@ -715,6 +756,22 @@ function processingBlocks(items: RuntimeConversationItem[]): ProcessingBlock[] {
   return items.flatMap(item => (item.type === 'block' ? [item.block] : []))
 }
 
+function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConversationItem[] {
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (item.type !== 'block') return item
+    if (item.block.status === 'done' || item.block.status === 'error') return item
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      } as ProcessingBlock,
+    }
+  })
+}
+
 function assistantTextContent(items: RuntimeConversationItem[]): string {
   return items.flatMap(item => (item.type === 'assistant_text' ? [item.content] : [])).join('\n\n')
 }
@@ -723,7 +780,15 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  let merged = { ...block, ...updates } as ProcessingBlock
+  const { durationMs, ...directUpdates } = updates
+  let merged = {
+    ...block,
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs),
+    }),
+  } as ProcessingBlock
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }
@@ -735,24 +800,31 @@ function mergeProcessingBlockUpdate(
   return merged
 }
 
-function preserveCompletedProcessingBlockTiming(
+function preserveProcessingBlockTiming(
   previous: ProcessingBlock,
   next: ProcessingBlock
 ): ProcessingBlock {
   const previousComplete = previous.status === 'done' || previous.status === 'error'
   const nextComplete = next.status === 'done' || next.status === 'error'
-  if (
-    !previousComplete ||
-    !nextComplete ||
-    previous.completedAt === undefined ||
-    next.completedAt !== undefined
-  ) {
-    return next
+  const createdAt = previousComplete ? next.createdAt : previous.createdAt
+  if (previousComplete && nextComplete && previous.completedAt !== undefined) {
+    if (next.completedAt === undefined) {
+      return {
+        ...next,
+        createdAt: previous.createdAt,
+        completedAt: previous.completedAt,
+        durationMs: next.durationMs ?? previous.durationMs,
+      } as ProcessingBlock
+    }
   }
+  if (createdAt === next.createdAt) return next
   return {
     ...next,
-    createdAt: previous.createdAt,
-    completedAt: previous.completedAt,
+    createdAt,
+    ...(nextComplete &&
+      next.durationMs !== undefined && {
+        completedAt: createdAt + next.durationMs,
+      }),
   } as ProcessingBlock
 }
 

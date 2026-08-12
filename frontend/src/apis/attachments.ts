@@ -146,6 +146,20 @@ export const SUPPORTED_EXTENSIONS = [
   '.gif',
   '.bmp',
   '.webp',
+  '.tif',
+  '.tiff',
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.webm',
+  '.mkv',
+  '.m4v',
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.flac',
 ]
 
 /**
@@ -323,7 +337,7 @@ export function getFileIcon(extension: string): string {
 /**
  * Image file extensions
  */
-export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tif', '.tiff']
 
 /**
  * Video file extensions supported for attachments / media analysis.
@@ -331,6 +345,8 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp
  * isVideoFileName / upload gating / reanalyze all agree with the pipeline.
  */
 export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv', '.webm', '.m4v']
+
+export const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']
 
 /**
  * HTML file extensions
@@ -360,6 +376,45 @@ export function isVideoFileName(filename: string): boolean {
   const dotIndex = filename.lastIndexOf('.')
   if (dotIndex < 0) return false
   return isVideoExtension(filename.slice(dotIndex))
+}
+
+export function isAudioExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return AUDIO_EXTENSIONS.includes(ext)
+}
+
+const FORMAT_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  avi: 'video/x-msvideo',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  m4v: 'video/x-m4v',
+  flv: 'video/x-flv',
+  wmv: 'video/x-ms-wmv',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+}
+
+export function formatsToAcceptString(formats: string[] | undefined, fallback: string): string {
+  if (!formats?.length) return fallback
+  const acceptedTypes = formats.map(format => {
+    const normalized = format.toLowerCase().replace(/^\./, '')
+    return FORMAT_TO_MIME[normalized] ?? `.${normalized}`
+  })
+  return Array.from(new Set(acceptedTypes)).join(',')
 }
 
 /**
@@ -622,15 +677,37 @@ export async function downloadAttachment(
   filename?: string,
   shareToken?: string
 ): Promise<void> {
-  const file = await fetchAttachmentFile(attachmentId, { filename, shareToken })
-  const url = URL.createObjectURL(file)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = file.name
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+  let downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
+
+  if (!shareToken) {
+    const token = getToken()
+    if (!token) {
+      throw new Error('Authentication required')
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download-token`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) {
+      throw new Error(`Failed to create attachment download token (${response.status})`)
+    }
+
+    const data = await response.json()
+    if (!data.download_token || typeof data.download_token !== 'string') {
+      throw new Error('Invalid attachment download token response')
+    }
+    downloadUrl = `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
+  }
+
+  const link = document.createElement('a')
+  link.href = downloadUrl
+  if (filename) {
+    link.download = filename
+  }
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 /**

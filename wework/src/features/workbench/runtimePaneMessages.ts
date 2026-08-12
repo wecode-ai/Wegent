@@ -12,6 +12,7 @@ import type {
   RuntimeGoalEventPayload,
   RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
+  RuntimeTaskTitleUpdatedPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeMessagePresentationReference,
   RuntimeSubagentActivityPayload,
@@ -39,10 +40,12 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
   onAssistantStart?: (turnId: string) => void
+  onAssistantFirstToken?: (turnId: string) => void
+  onAssistantResponseSize?: (turnId: string, responseSizeBytes: number) => void
   onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
-  onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
@@ -55,16 +58,25 @@ export interface RuntimeTaskStreamHandlers {
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
   onAssistantStart?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantFirstToken?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantResponseSize?: (
+    address: RuntimeTaskAddress,
+    turnId: string,
+    responseSizeBytes: number
+  ) => void
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
     turnId: string,
     outcome: 'succeeded' | 'failed' | 'cancelled'
   ) => void
-  onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
   onSubagentActivity?: (
     address: RuntimeTaskAddress,
     payload: RuntimeSubagentActivityPayload
+  ) => void
+  onRuntimeTaskTitleUpdated?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeTaskTitleUpdatedPayload
   ) => void
   onRuntimeGoalUpdated?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
@@ -105,11 +117,14 @@ export function createRuntimeConversationStreamHandlers(
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
       onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantFirstToken: turnId => handlers.onAssistantFirstToken?.(address, turnId),
+      onAssistantResponseSize: (turnId, responseSizeBytes) =>
+        handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
       onAssistantSettled: (turnId, outcome) =>
         handlers.onAssistantSettled?.(address, turnId, outcome),
-      onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
+      onRuntimeTaskTitleUpdated: payload => handlers.onRuntimeTaskTitleUpdated?.(address, payload),
       onRuntimeGoalUpdated: payload => handlers.onRuntimeGoalUpdated?.(address, payload),
       onRuntimeGoalCleared: payload => handlers.onRuntimeGoalCleared?.(address, payload),
       onRuntimeSupervisorUpdated: payload =>
@@ -130,6 +145,7 @@ export function createRuntimeConversationStreamHandlers(
     onBlockCreated: payload => resolve(payload)?.onBlockCreated?.(payload),
     onBlockUpdated: payload => resolve(payload)?.onBlockUpdated?.(payload),
     onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
+    onRuntimeTaskTitleUpdated: payload => resolve(payload)?.onRuntimeTaskTitleUpdated?.(payload),
     onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
     onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
     onRuntimeSupervisorUpdated: payload => resolve(payload)?.onRuntimeSupervisorUpdated?.(payload),
@@ -145,6 +161,7 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
+  const firstTokenSent = new Set<string>()
 
   const streamHandlers: ChatStreamHandlers = {
     scope: {
@@ -181,7 +198,6 @@ export function createRuntimeTaskStreamHandlers(
         clientUserMessageId: payload.clientUserMessageId,
         shellType: payload.shellType,
       })
-      handlers.onRefreshWorkLists?.()
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -213,6 +229,12 @@ export function createRuntimeTaskStreamHandlers(
       }
       if (contextUsage) {
         handlers.onContextUsageUpdated?.(contextUsage)
+      }
+      if (payload.content || reasoningChunk) {
+        if (!firstTokenSent.has(identity.subtaskId)) {
+          firstTokenSent.add(identity.subtaskId)
+          handlers.onAssistantFirstToken?.(identity.subtaskId)
+        }
       }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
@@ -266,13 +288,28 @@ export function createRuntimeTaskStreamHandlers(
             : typeof payload.result.turn_id === 'string'
               ? payload.result.turn_id
               : undefined,
+        itemId:
+          typeof payload.result.itemId === 'string'
+            ? payload.result.itemId
+            : typeof payload.result.item_id === 'string'
+              ? payload.result.item_id
+              : undefined,
         ...(typeof payload.result.value === 'string' &&
           payload.result.value.trim() && { content: payload.result.value }),
         blocks,
         fileChanges,
       })
+      const assistantText =
+        typeof payload.result?.value === 'string' && payload.result.value.trim()
+          ? payload.result.value
+          : undefined
+      if (assistantText) {
+        handlers.onAssistantResponseSize?.(
+          identity.subtaskId,
+          new TextEncoder().encode(assistantText).byteLength
+        )
+      }
       handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
-      handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) {
@@ -316,7 +353,6 @@ export function createRuntimeTaskStreamHandlers(
       }
       handlers.onAssistantSettled?.(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
       streamedFileChanges.delete(identity.subtaskId)
-      handlers.onRefreshWorkLists?.()
     },
     onBlockCreated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -353,7 +389,6 @@ export function createRuntimeTaskStreamHandlers(
           subtaskId: identity.subtaskId,
         })
         handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
-        handlers.onRefreshWorkLists?.()
       }
     },
     onBlockUpdated: payload => {
@@ -376,6 +411,8 @@ export function createRuntimeTaskStreamHandlers(
         hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
         hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
+        hasCompletedAt: payload.completedAt !== undefined,
+        hasDurationMs: payload.durationMs !== undefined,
       })
       const fileChanges = normalizeTurnFileChanges(payload.fileChanges)
       if (fileChanges) {
@@ -407,6 +444,8 @@ export function createRuntimeTaskStreamHandlers(
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
           ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
+          ...(payload.completedAt !== undefined && { completedAt: payload.completedAt }),
+          ...(payload.durationMs !== undefined && { durationMs: payload.durationMs }),
         },
       })
     },
@@ -418,6 +457,10 @@ export function createRuntimeTaskStreamHandlers(
         kind: payload.kind ?? null,
       })
       handlers.onSubagentActivity?.(payload)
+    },
+    onRuntimeTaskTitleUpdated: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeTaskTitleUpdated?.(payload)
     },
     onRuntimeGoalUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -960,10 +1003,28 @@ function normalizeProcessingBlock(
     block.timestamp ?? block.created_at ?? block.createdAt,
     fallbackTimestamp
   )
+  const explicitCompletedAt = block.completedAt ?? block.completed_at
+  const durationMs =
+    typeof block.durationMs === 'number' && Number.isFinite(block.durationMs)
+      ? Math.max(0, block.durationMs)
+      : typeof block.duration_ms === 'number' && Number.isFinite(block.duration_ms)
+        ? Math.max(0, block.duration_ms)
+        : undefined
+  const completedAt =
+    durationMs !== undefined
+      ? timestamp + durationMs
+      : explicitCompletedAt !== undefined
+        ? getBlockTimestamp(explicitCompletedAt, timestamp)
+        : undefined
   const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
-
+  const timing = {
+    status,
+    createdAt: timestamp,
+    completedAt,
+    ...(durationMs !== undefined && { durationMs }),
+  }
   if (block.type === 'tool') {
     const id =
       typeof block.id === 'string'
@@ -1003,8 +1064,7 @@ function normalizeProcessingBlock(
             ? block.tool_output_original_bytes
             : undefined,
       renderPayload: normalizeToolRenderPayload(block),
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1022,8 +1082,7 @@ function normalizeProcessingBlock(
         ...(typeof block.revised_prompt === 'string' && { revisedPrompt: block.revised_prompt }),
         ...(typeof block.saved_path === 'string' && { savedPath: block.saved_path }),
       },
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1047,8 +1106,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1078,8 +1136,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1109,8 +1166,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1124,8 +1180,7 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'file_changes',
       fileChanges,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 

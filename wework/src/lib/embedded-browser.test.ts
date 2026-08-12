@@ -2,9 +2,14 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+  EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+  browserDiagnosticUrl,
+  clearEmbeddedBrowserData,
+  closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPageStateChanges,
   relabelEmbeddedBrowser,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
@@ -37,6 +42,16 @@ describe('embedded-browser', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     eventMocks.listen.mockClear()
+  })
+
+  test('removes query strings and fragments from diagnostic URLs', () => {
+    expect(browserDiagnosticUrl('https://example.test/path?token=secret#details')).toBe(
+      'https://example.test/path'
+    )
+    expect(browserDiagnosticUrl('file:///Users/me/report.html?token=secret#details')).toBe(
+      'file:///Users/me/report.html'
+    )
+    expect(browserDiagnosticUrl('not a URL')).toBe('<invalid-url>')
   })
 
   test('unwraps successful eval result values', async () => {
@@ -78,6 +93,37 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('closes only the expected native browser identity', async () => {
+    invokeMock.mockResolvedValue(undefined)
+
+    await closeEmbeddedBrowser('workspace-browser-task-1', 'embedded-browser-native-7')
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_close', {
+      expectedNativeLabel: 'embedded-browser-native-7',
+      label: 'workspace-browser-task-1',
+    })
+  })
+
+  test('clears selected embedded browser data through Tauri', async () => {
+    invokeMock.mockResolvedValue(1)
+
+    await expect(clearEmbeddedBrowserData(['cookies'])).resolves.toBe(1)
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: ['cookies'],
+    })
+  })
+
+  test('preserves the full-clear call when no data kinds are provided', async () => {
+    invokeMock.mockResolvedValue(0)
+
+    await clearEmbeddedBrowserData()
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: null,
+    })
+  })
+
   test('pauses agent control through Tauri', async () => {
     invokeMock.mockResolvedValue(undefined)
 
@@ -116,22 +162,98 @@ describe('embedded-browser', () => {
     )
   })
 
+  test('listens for embedded browser page state changes', async () => {
+    const handler = vi.fn()
+
+    await listenEmbeddedBrowserPageStateChanges(handler)
+
+    expect(eventMocks.listen).toHaveBeenCalledWith(
+      EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+      expect.any(Function)
+    )
+  })
+
   test('routes frontend open requests to the active embedded browser listener', async () => {
+    invokeMock.mockResolvedValue([])
     const handler = vi.fn()
     const unlisten = listenEmbeddedBrowserOpenRequests(handler)
 
     expect(requestEmbeddedBrowserOpen('http://localhost:3000')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'http://localhost:3000/',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.any(String),
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'http://localhost:3000/',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('asset://localhost/Users/me/workspace/trend.html')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'asset://localhost/Users/me/workspace/trend.html',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'asset://localhost/Users/me/workspace/trend.html',
+      })
+    )
+    expect(requestEmbeddedBrowserOpen('file:///Users/me/workspace/report.html')).toBe(true)
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'file:///Users/me/workspace/report.html',
+      })
+    )
+    expect(requestEmbeddedBrowserOpen('/Users/me/workspace/report.html')).toBe(true)
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'file:///Users/me/workspace/report.html',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('ftp://localhost/resource')).toBe(false)
-    expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler).toHaveBeenCalledTimes(4)
+
+    const release = await unlisten
+    release?.()
+  })
+
+  test('recovers an open request created before the native listener is ready', async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: 'agent-open-42',
+        baseLabel: 'workspace-browser-task-1',
+        source: 'agent',
+        disposition: 'current-tab',
+        targetLabel: 'workspace-browser-task-1',
+        label: 'workspace-browser-task-1',
+        url: 'https://example.test/',
+      },
+    ])
+    const handler = vi.fn()
+
+    const unlisten = listenEmbeddedBrowserOpenRequests(handler)
+
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledWith({
+        id: 'agent-open-42',
+        baseLabel: 'workspace-browser-task-1',
+        source: 'agent',
+        disposition: 'current-tab',
+        targetLabel: 'workspace-browser-task-1',
+        label: 'workspace-browser-task-1',
+        url: 'https://example.test/',
+      })
+    })
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_pending_open_requests')
 
     const release = await unlisten
     release?.()

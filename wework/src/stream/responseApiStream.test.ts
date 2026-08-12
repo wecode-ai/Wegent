@@ -56,6 +56,29 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps friendly task title updates', () => {
+    const onRuntimeTaskTitleUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimeTaskTitleUpdated },
+      'runtime.task.title.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: 'friendly-title-turn',
+        deviceId: 'device-1',
+        data: { title: '测试标题生成功能' },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeTaskTitleUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
+  })
+
   test('maps task supervisor state updates', () => {
     const onRuntimeSupervisorUpdated = vi.fn()
     const supervisor = {
@@ -446,9 +469,11 @@ describe('emitResponseApiEvent', () => {
         data: {
           block_id: 'call-1',
           updates: {
-            status: 'streaming',
+            status: 'done',
             tool_output_delta: 'line 1\n',
             tool_output_truncated: false,
+            completed_at: 1_780_000_004_750,
+            duration_ms: 3_500,
           },
         },
       },
@@ -460,9 +485,11 @@ describe('emitResponseApiEvent', () => {
       subtaskId: '2',
       deviceId: 'device-1',
       blockId: 'call-1',
-      status: 'streaming',
+      status: 'done',
       toolOutputDelta: 'line 1\n',
       toolOutputTruncated: false,
+      completedAt: 1_780_000_004_750,
+      durationMs: 3_500,
     })
   })
 

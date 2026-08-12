@@ -9,21 +9,28 @@ from typing import Annotated, Literal
 
 from pydantic import AnyHttpUrl, BaseModel, Field
 
-SitePublishStatus = Literal["unpublished", "publishing", "published", "failed"]
+SitePublishStatus = Literal[
+    "unpublished",
+    "publishing",
+    "published",
+    "failed",
+    "scanning",
+]
 SiteNetwork = Literal["inner", "outer"]
-SiteAppType = Literal["site", "mini_program"]
+SiteAppType = Literal["web", "miniapp", "site", "mini_program"]
 ApplicationCapability = Literal["create", "publish", "delete", "open_experience"]
 
 
 class SiteResponse(BaseModel):
     """A generated site registered with the Sites service."""
 
-    app_type: Literal["site"] = "site"
+    app_type: Literal["web"] = "web"
     siteid: str
     taskid: str
     username: str
     name: str
     slug: str
+    network: SiteNetwork
     internal_url: AnyHttpUrl
     external_url: AnyHttpUrl | None = None
     publish_status: SitePublishStatus
@@ -37,13 +44,13 @@ class SiteResponse(BaseModel):
 class MiniProgramResponse(BaseModel):
     """A mini program registered with the Sites service."""
 
-    app_type: Literal["mini_program"] = "mini_program"
+    app_type: Literal["miniapp"] = "miniapp"
     siteid: str
     taskid: str
     username: str
     name: str
     slug: str
-    app_id: str
+    app_id: str | None = None
     status: str
     version: str | None = None
     experience_url: AnyHttpUrl | None = None
@@ -68,6 +75,13 @@ class SiteListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class ApplicationCreatePluginResponse(BaseModel):
+    """Plugin configuration used to create one application type."""
+
+    plugin_name: str
+    marketplace_name: str
+
+
 class ApplicationTypeResponse(BaseModel):
     """One application type supported by the current Backend."""
 
@@ -75,6 +89,7 @@ class ApplicationTypeResponse(BaseModel):
     enabled: bool = True
     order: int
     capabilities: list[ApplicationCapability]
+    create: ApplicationCreatePluginResponse | None = None
 
 
 class ApplicationTypeListResponse(BaseModel):

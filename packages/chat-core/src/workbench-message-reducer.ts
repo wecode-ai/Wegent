@@ -23,6 +23,7 @@ export interface BaseWorkbenchProcessingBlock {
   status: WorkbenchToolBlockStatus
   createdAt: number
   completedAt?: number
+  durationMs?: number
   contentTruncated?: boolean
   contentOriginalChars?: number
   contentLoadRef?: WorkbenchContentLoadRef
@@ -116,6 +117,8 @@ type ProcessingBlockUpdate = {
   renderPayload?: unknown
   fileChanges?: unknown
   status?: WorkbenchToolBlockStatus
+  completedAt?: number
+  durationMs?: number
 }
 
 const MAX_LIVE_MESSAGE_CONTENT_CHARS = 200_000
@@ -160,6 +163,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       turnId?: string
+      itemId?: string
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
@@ -518,10 +522,14 @@ function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
-  const { toolOutputDelta, ...directUpdates } = updates
+  const { toolOutputDelta, durationMs, ...directUpdates } = updates
   const nextBlock = withBlockCompletionTime(block, {
     ...block,
-    ...directUpdates
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs)
+    })
   } as WorkbenchProcessingBlock<TFileChanges>)
 
   if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {

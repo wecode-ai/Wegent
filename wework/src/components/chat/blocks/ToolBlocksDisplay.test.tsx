@@ -412,12 +412,15 @@ describe('ToolBlocksDisplay', () => {
 
   test('renders file changes inside completed processing details', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
       configurable: true,
     })
 
-    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+    const { unmount } = render(
+      <ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />
+    )
 
     expect(screen.getByRole('button', { name: /编辑 1 个文件 已处理/ })).toBeInTheDocument()
     expect(screen.getByLabelText('编辑 1')).toBeInTheDocument()
@@ -451,6 +454,80 @@ describe('ToolBlocksDisplay', () => {
     expect(
       await screen.findByTestId('process-file-change-diff-copy-success-icon')
     ).toBeInTheDocument()
+
+    unmount()
+
+    expect(clearTimeoutSpy).toHaveBeenCalled()
+    clearTimeoutSpy.mockRestore()
+  })
+
+  test('restarts the diff copy feedback timer after repeated copies', async () => {
+    vi.useFakeTimers()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+
+    const copyButton = screen.getByTestId('copy-process-file-change-diff-button')
+    fireEvent.click(copyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('process-file-change-diff-copy-success-icon')).toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(1000))
+    fireEvent.click(copyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    act(() => vi.advanceTimersByTime(1499))
+    expect(screen.getByTestId('process-file-change-diff-copy-success-icon')).toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(
+      screen.queryByTestId('process-file-change-diff-copy-success-icon')
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not finish an in-flight diff copy after unmount', async () => {
+    let resolveWriteText: (() => void) | undefined
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveWriteText = resolve
+        })
+    )
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    const { unmount } = render(
+      <ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+    fireEvent.click(screen.getByTestId('copy-process-file-change-diff-button'))
+    expect(writeText).toHaveBeenCalledOnce()
+
+    unmount()
+    const timerCallsBeforeCopyResolved = setTimeoutSpy.mock.calls.length
+
+    await act(async () => {
+      resolveWriteText?.()
+      await Promise.resolve()
+    })
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(timerCallsBeforeCopyResolved)
+    setTimeoutSpy.mockRestore()
   })
 
   test('renders reversed diff lines for a created file as additions', () => {
@@ -1109,6 +1186,39 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByRole('button', { name: '调用 1 个工具 已处理' })).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('processing-summary-toggle'))
     expect(screen.getByText('3.0s')).toBeInTheDocument()
+  })
+
+  test('uses restored timestamps after a completed tool block is reused', () => {
+    const { rerender } = render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedCommandBlock,
+            createdAt: 1786459157500,
+            completedAt: 1786459172000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+    expect(screen.getByText('14.5s')).toBeInTheDocument()
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedCommandBlock,
+            createdAt: 1786459157131,
+            completedAt: 1786459172000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    expect(screen.getByText('14.9s')).toBeInTheDocument()
   })
 
   test('shows thinking without an aggregate timer after all tool blocks are done', () => {

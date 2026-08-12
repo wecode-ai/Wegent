@@ -7,6 +7,7 @@ import type { LocalWorkItem } from '@/features/todo/todoModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/tauri/droppedFiles'
+import { track } from '@/telemetry/client'
 
 interface DeliveryDialogProps {
   item: Omit<LocalWorkItem, 'projectId'>
@@ -88,7 +89,13 @@ export function DeliveryDialog({
       }
       await deliveryApi.finalizeDelivery(delivery.id)
       setCompleted(true)
+      track('delivery_completed', {
+        asset_count:
+          files.length === 0 ? '0' : files.length === 1 ? '1' : files.length <= 5 ? '2-5' : '6+',
+        includes_chat: chatScope !== 'none',
+      })
     } catch (submitError) {
+      track('operation_failed', { operation: 'delivery' })
       if (draftId) {
         try {
           await deliveryApi.discardDraft(draftId)

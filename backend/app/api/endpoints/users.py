@@ -40,7 +40,11 @@ from app.services.admin_password_bootstrap import (
     get_cached_admin_password_setup_required,
     raise_admin_password_setup_required,
 )
-from app.services.auth import extract_token_from_header, verify_task_token
+from app.services.auth import (
+    create_task_token,
+    extract_token_from_header,
+    verify_task_token,
+)
 from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
@@ -53,6 +57,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from shared.telemetry.decorators import trace_async
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
@@ -141,6 +146,14 @@ class WegentRuntimeUserResponse(BaseModel):
     """Encrypted user information for sandbox runtime clients."""
 
     user: str
+
+
+class WegentRuntimeAuthTokenResponse(BaseModel):
+    """Task-token credentials for WeWork skill runtime clients."""
+
+    auth_token: str
+    token_type: str = "bearer"
+    expires_in: int
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -248,6 +261,26 @@ async def read_wegent_runtime_user(
         user=encrypt_sensitive_data_with_embedded_iv(
             json.dumps(payload, ensure_ascii=False)
         )
+    )
+
+
+@router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
+@trace_async("create_wegent_runtime_auth_token", "users.api")
+async def create_wegent_runtime_auth_token(
+    current_user: User = Depends(security.get_current_user),
+) -> WegentRuntimeAuthTokenResponse:
+    """Return a task token that WeWork local Skills can use with Wegent runtime APIs."""
+
+    expires_delta_minutes = 1440
+    return WegentRuntimeAuthTokenResponse(
+        auth_token=create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+            expires_delta_minutes=expires_delta_minutes,
+        ),
+        expires_in=expires_delta_minutes * 60,
     )
 
 
@@ -655,6 +688,22 @@ def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
     return quick_access_config.get("teams", [])
 
 
+def _get_team_recommended_mode(team_data: dict) -> str:
+    spec = team_data.get("spec", {})
+    bind_mode = spec.get("bind_mode")
+    if isinstance(bind_mode, list):
+        has_chat = "chat" in bind_mode
+        has_code = "code" in bind_mode
+        if has_chat and has_code:
+            return "both"
+        if has_code:
+            return "code"
+        return "chat"
+
+    recommended_mode = team_data.get("recommended_mode") or spec.get("recommended_mode")
+    return recommended_mode if recommended_mode in {"chat", "code", "both"} else "both"
+
+
 def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
     team_data = kind_service.get_team_by_id(team_id)
     if not team_data:
@@ -671,7 +720,8 @@ def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
         title=title,
         description=spec.get("description"),
         icon=spec.get("icon"),
-        recommended_mode=spec.get("recommended_mode", "both"),
+        bind_mode=spec.get("bind_mode") or [],
+        recommended_mode=_get_team_recommended_mode(team_data),
         agent_type=team_data.get("agent_type"),
         quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
         input_presets=input_presets_from_phrases(spec.get("quick_phrases")),
@@ -710,7 +760,8 @@ def _build_system_function(
     return QuickLaunchFunctionResponse(
         **function_data,
         name=metadata.get("name", f"team-{config.team_id}"),
-        recommended_mode=team_data.get("recommended_mode") or "both",
+        bind_mode=spec.get("bind_mode") or [],
+        recommended_mode=_get_team_recommended_mode(team_data),
     )
 
 
@@ -844,13 +895,15 @@ async def get_user_quick_access(
 
 @router.get("/recent-teams", response_model=list[QuickAccessTeam])
 async def get_user_recent_teams(
+    is_code: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get five recently used teams, filled by recently updated teams."""
+    """Get five recently used teams for code or non-code tasks."""
     teams = team_kinds_service.get_recent_accessible_teams(
         db,
         user_id=current_user.id,
+        is_code=is_code,
     )
     return [_quick_access_team_from_data(team) for team in teams]
 

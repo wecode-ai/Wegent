@@ -1,38 +1,30 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
   ArrowLeftRight,
+  Bot,
   ChevronRight,
   LayoutDashboard,
+  Loader2,
   MessageCircle,
   MessageSquareWarning,
+  X,
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
-import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { updateAppPreferences } from '@/tauri/appPreferences'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
-import {
-  findProjectSpaceContextForTask,
-  projectSpaceApis,
-  projectSpaceKey,
-  projectSpaceRef,
-  runtimeCloudProjectId,
-} from '@/features/todo/projectSpaceSelection'
-import {
-  hydrateLocalWorkItems,
-  loadLocalWorkItems,
-  saveLocalWorkItems,
-  type LocalWorkItem,
-} from '@/features/todo/todoModel'
-import type { WorkbenchServices, WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
@@ -66,10 +58,14 @@ import {
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
+import { track } from '@/telemetry/client'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
+  type RightWorkspaceBrowserState,
+  type RightWorkspaceBrowserTab,
   type RightWorkspaceChatTab,
+  type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
 } from './workspace-panels/RightWorkspacePanel'
@@ -89,15 +85,46 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
-import { getLocalPathKind } from '@/lib/local-terminal'
-import { navigateTo } from '@/lib/navigation'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import {
+  closeLocalTerminal,
+  getLocalPathKind,
+  isLocalHarnessAvailable,
+  listLocalHarnesses,
+  localPathExists,
+  resolveLocalHarnessPluginRoots,
+  startLocalHarness,
+  type LocalHarnessDescriptor,
+  type LocalHarnessPluginLocation,
+} from '@/lib/local-terminal'
+import {
+  buildLocalHarnessLaunchArgs,
+  defaultLocalHarnessPreferences,
+  localHarnessLabel,
+  localHarnessPluginRootFromSkillPath,
+  type LocalHarnessId,
+  type LocalHarnessPreference,
+} from '@/lib/local-harness'
+import {
+  listLocalHarnessModelOptions,
+  type LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
+import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
+  closeEmbeddedBrowsers,
   listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
+  setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
+import {
+  findBrowserTabByPopupParent,
+  isDuplicateBrowserPopupRequest,
+} from '@/features/browser-tabs/browserPopupRouting'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -129,7 +156,6 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
   SupervisorSuggestionCards,
   TaskSupervisorControl,
@@ -137,16 +163,34 @@ import {
 } from './TaskSupervisorControl'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
-  RuntimeAdditionalContext,
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
+import { CentralHarnessTerminal } from './CentralHarnessTerminal'
+import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
+import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
+import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
-import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
+import {
+  DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
+  DESKTOP_MESSAGE_LIST_CLASS,
+  DESKTOP_MESSAGE_LIST_WIDTH_CLASS,
+} from './desktopChatLayout'
+import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import { isWorktreeCreationPending } from './worktreeCreationState'
+
+let legacyEmbeddedBrowserOpenRequestSequence = 0
 
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
@@ -156,7 +200,7 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
 const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
-  'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
+  'transition-opacity duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
@@ -165,121 +209,6 @@ const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
-
-function cloudLoopItemStatusLabel(
-  status: CloudLoopItem['status'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  switch (status) {
-    case 'inbox':
-      return t('workbench.cloud_todo_status_inbox', '收集箱')
-    case 'pending':
-      return t('workbench.cloud_todo_status_pending', '待处理')
-    case 'in_progress':
-      return t('workbench.cloud_todo_status_in_progress', '进行中')
-    case 'in_review':
-      return t('workbench.cloud_todo_status_in_review', '待评审')
-    case 'completed':
-      return t('workbench.cloud_todo_status_completed', '已完成')
-  }
-  return ''
-}
-
-function cloudItemAsLocalWorkItem(
-  item: CloudLoopItem,
-  runtimeTask: RuntimeTaskAddress
-): Omit<LocalWorkItem, 'projectId'> {
-  return {
-    id: item.id,
-    title: item.title,
-    objective: '',
-    description: item.description,
-    state:
-      item.status === 'completed'
-        ? 'completed'
-        : item.status === 'in_review'
-          ? 'review'
-          : item.status === 'in_progress'
-            ? 'started'
-            : 'backlog',
-    assignee: item.assignee_user_id
-      ? { type: 'human', id: String(item.assignee_user_id) }
-      : { type: 'unassigned' },
-    collaborators: [],
-    blocker: '',
-    nextAction: '',
-    priority: item.priority === 'medium' ? 'normal' : item.priority,
-    attachments: [],
-    runtimeRefs: [runtimeTask],
-    events: [],
-    sortOrder: item.sort_order,
-    createdAt: item.created_at,
-    updatedAt: item.updated_at,
-  }
-}
-
-function cloudProjectAdditionalContext(
-  project: CloudProject | null,
-  item: CloudLoopItem | null
-): RuntimeAdditionalContext | undefined {
-  if (!project) return undefined
-  const projectReference = `cloud://projects/${project.id}`
-  const todoReference = item ? `${projectReference}/todos/${item.id}` : null
-  const scope = item
-    ? [
-        `Current cloud project: ${project.name} (id=${project.id}).`,
-        `Current task: ${item.id} — ${item.title}.`,
-        item.description ? `Task description: ${item.description}` : null,
-        `Current task reference: ${todoReference}.`,
-      ]
-    : [
-        `Current cloud project: ${project.name} (id=${project.id}).`,
-        'No specific task is selected.',
-        `Current project reference: ${projectReference}.`,
-      ]
-  return {
-    cloudCollaboration: {
-      kind: 'application',
-      value: [
-        ...scope.filter((line): line is string => Boolean(line)),
-        'When the user refers to “this project” or “this task”, use this current cloud context.',
-        'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
-      ].join('\n'),
-    },
-  }
-}
-
-interface PendingTodoBinding {
-  project: CloudProject
-  item: CloudLoopItem | null
-  target: RuntimeTaskAddress | null
-  description: string
-}
-
-interface PendingAutoJoinResolution {
-  target: RuntimeTaskAddress | null
-  description: string
-}
-
-let pendingTodoBinding: PendingTodoBinding | null = null
-
-function pendingTodoForTask(address: RuntimeTaskAddress | null) {
-  if (!pendingTodoBinding) return null
-  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.item
-  const target = pendingTodoBinding.target
-  return target?.deviceId === address.deviceId && target.taskId === address.taskId
-    ? pendingTodoBinding.item
-    : null
-}
-
-function pendingProjectForTask(address: RuntimeTaskAddress | null) {
-  if (!pendingTodoBinding) return null
-  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.project
-  const target = pendingTodoBinding.target
-  return target?.deviceId === address.deviceId && target.taskId === address.taskId
-    ? pendingTodoBinding.project
-    : null
-}
 
 const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 1
 interface SelectedAssistantPlan {
@@ -293,6 +222,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
   selectedWorkspaceFile: {
@@ -305,6 +235,7 @@ interface WorkbenchPaneWorkspaceState {
 interface PendingBlankBrowserMigration {
   sourcePaneKey: string
   browserLabel: string
+  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
@@ -342,7 +273,9 @@ function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | nu
 
   const migration = latestBlankBrowserMigration
   latestBlankBrowserMigration = null
-  markEmbeddedBrowserLabelTransferred(migration.browserLabel)
+  Object.values(migration.browserStates).forEach(state => {
+    if (state?.label) markEmbeddedBrowserLabelTransferred(state.label)
+  })
   return migration
 }
 
@@ -372,31 +305,142 @@ function createBottomPanelWorkspaceKey({
   ].join(':')
 }
 
+function rightPanelTabType(
+  tab: RightWorkspacePanelTab
+): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
+  if (tab.startsWith('chat:')) return 'chat'
+  if (isRightWorkspaceBrowserTab(tab)) return 'browser'
+  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
+  if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
+  return 'other'
+}
+
+function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightWorkspaceBrowserTab {
+  return tab.startsWith('browser:')
+}
+
+function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
+  return tab.startsWith('harness:')
+}
+
+function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
+  return tab.slice('harness:'.length)
+}
+
+function logBrowserOpenDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
+  console.info(`[Wework][browser-open] ${stage}`, detail)
+}
+
+function normalizeRightWorkspaceBrowserState(
+  tab: RightWorkspaceBrowserTab,
+  state: Partial<RightWorkspaceBrowserState> | undefined,
+  label: string
+): RightWorkspaceBrowserState {
+  return {
+    label: state?.label ?? label,
+    nativeLabel: state?.nativeLabel ?? null,
+    browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+    title: state?.title ?? null,
+    faviconUrl: state?.faviconUrl ?? null,
+    hasActiveDownload: state?.hasActiveDownload ?? false,
+    openRequest: state?.openRequest ?? null,
+  }
+}
+
+function getRightWorkspaceBrowserLabelSuffix(tab: RightWorkspaceBrowserTab): string {
+  return tab.slice('browser:'.length)
+}
+
+function getRightWorkspaceBrowserNumericSuffix(tab: RightWorkspaceBrowserTab): number {
+  const parsed = Number.parseInt(getRightWorkspaceBrowserLabelSuffix(tab), 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function browserLabelForRightWorkspaceTab(
+  baseLabel: string,
+  tab: RightWorkspaceBrowserTab
+): string {
+  const suffix = getRightWorkspaceBrowserLabelSuffix(tab)
+  return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
+}
+
+function createInitialBrowserWorkspaceState({
+  initialBlankBrowserMigration,
+  initialWorkspaceState,
+  defaultEmbeddedBrowserLabel,
+}: {
+  initialBlankBrowserMigration: PendingBlankBrowserMigration | null
+  initialWorkspaceState?: WorkbenchPaneWorkspaceState
+  defaultEmbeddedBrowserLabel: string
+}): {
+  states: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+  maxSequence: number
+} {
+  const restoredStates =
+    initialBlankBrowserMigration?.browserStates ?? initialWorkspaceState?.browserStates ?? {}
+  const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
+    initialWorkspaceState?.rightPanelTabs ??
+    []) as Array<RightWorkspacePanelTab | 'browser'>
+  const states: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>> = {}
+  let maxSequence = 0
+
+  restoredTabs.forEach((restoredTab, index) => {
+    const tab: RightWorkspaceBrowserTab =
+      restoredTab === 'browser' ? 'browser:1' : (restoredTab as RightWorkspaceBrowserTab)
+    if (!isRightWorkspaceBrowserTab(tab)) return
+    const legacyLabel =
+      restoredTab === 'browser'
+        ? (initialBlankBrowserMigration?.browserLabel ?? defaultEmbeddedBrowserLabel)
+        : browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab)
+    states[tab] = normalizeRightWorkspaceBrowserState(
+      tab,
+      restoredStates[tab] ?? (restoredTab === 'browser' ? restoredStates['browser:1'] : undefined),
+      legacyLabel
+    )
+    maxSequence = Math.max(maxSequence, getRightWorkspaceBrowserNumericSuffix(tab), index + 1)
+  })
+
+  return { states, maxSequence }
+}
+
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  localHarnessSessions?: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId?: string | null
   visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   showComposerProjectMenuAction?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
+  onLocalHarnessSessionStarted?: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
+  onLocalHarnessSessionTitleChange?: (sessionId: string, title: string) => void
+  onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
+  onLocalHarnessSessionExit?: (sessionId: string) => void
 }
 
 const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel({
   panelKey,
   open,
   active,
+  paneVisible,
   context,
   workspaceSessionApi,
   showWorkbenchBackground,
+  workspaceActions,
   onRequestClose,
   onTerminalTabsEmpty,
 }: {
   panelKey: string
   open: boolean
   active: boolean
+  paneVisible: boolean
   context: BottomPanelRenderContext
   workspaceSessionApi?: WorkspaceSessionApi
   showWorkbenchBackground: boolean
+  workspaceActions?: WorkspaceAddMenuItem[]
   onRequestClose: (key: string) => void
   onTerminalTabsEmpty: () => void
 }) {
@@ -405,9 +449,9 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   return (
     <BottomWorkspacePanel
       open={open}
-      active={active}
+      active={active && paneVisible}
       preserveContent
-      testIdsEnabled={active}
+      testIdsEnabled={active && paneVisible}
       currentProject={context.currentProject}
       devices={context.devices}
       workspaceTarget={context.workspaceTarget}
@@ -415,6 +459,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       terminalContextTitle={context.terminalContextTitle}
       workspaceSessionApi={workspaceSessionApi}
       showWorkbenchBackground={showWorkbenchBackground}
+      workspaceActions={workspaceActions}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -424,12 +469,87 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
+  const {
+    onLocalHarnessSessionStarted,
+    onLocalHarnessSessionTitleChange,
+    onLocalHarnessSessionClose,
+    onLocalHarnessSessionExit,
+  } = props
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
+  const [internalHarnessSessions, setInternalHarnessSessions] = useState<
+    LocalHarnessWorkbenchSession[]
+  >([])
+  const [internalActiveHarnessSessionId, setInternalActiveHarnessSessionId] = useState<
+    string | null
+  >(null)
+  const localHarnessSessions = props.localHarnessSessions ?? internalHarnessSessions
+  const activeLocalHarnessSessionId =
+    props.activeLocalHarnessSessionId === undefined
+      ? internalActiveHarnessSessionId
+      : props.activeLocalHarnessSessionId
+  const activeLocalHarnessSession =
+    localHarnessSessions.find(session => session.sessionId === activeLocalHarnessSessionId) ?? null
+  const registerLocalHarnessSession = useCallback(
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
+      if (onLocalHarnessSessionStarted) {
+        onLocalHarnessSessionStarted(session, options)
+        return
+      }
+      setInternalHarnessSessions(current => [
+        session,
+        ...current.filter(candidate => candidate.sessionId !== session.sessionId),
+      ])
+      if (options?.activate !== false) {
+        setInternalActiveHarnessSessionId(session.sessionId)
+      }
+    },
+    [onLocalHarnessSessionStarted]
+  )
+  const removeLocalHarnessSession = useCallback(
+    (sessionId: string) => {
+      if (onLocalHarnessSessionExit) {
+        onLocalHarnessSessionExit(sessionId)
+        return
+      }
+      setInternalHarnessSessions(current =>
+        current.filter(session => session.sessionId !== sessionId)
+      )
+      setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
+    },
+    [onLocalHarnessSessionExit]
+  )
+  const updateHarnessSessionTitle = useCallback(
+    (sessionId: string, title: string) => {
+      if (onLocalHarnessSessionTitleChange) {
+        onLocalHarnessSessionTitleChange(sessionId, title)
+        return
+      }
+      const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
+      if (!normalized) return
+      setInternalHarnessSessions(current =>
+        current.map(session =>
+          session.sessionId === sessionId ? { ...session, title: normalized } : session
+        )
+      )
+    },
+    [onLocalHarnessSessionTitleChange]
+  )
+  const closeHarnessSession = useCallback(
+    async (sessionId: string) => {
+      if (onLocalHarnessSessionClose) {
+        await onLocalHarnessSessionClose(sessionId)
+        return
+      }
+      await closeLocalTerminal(sessionId)
+      removeLocalHarnessSession(sessionId)
+    },
+    [onLocalHarnessSessionClose, removeLocalHarnessSession]
+  )
   const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
     {}
   )
@@ -444,6 +564,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [state.runtimeWork]
   )
   const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
+  const activePaneKey = getWorkbenchPaneKey(props.activePane)
   const prunedPaneKeys = useMemo(
     () =>
       terminalPinnedPaneKeys.filter(
@@ -505,12 +626,24 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onTerminalPanePinChange={setTerminalPanePinned}
           initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
           onWorkspaceStateChange={rememberPaneWorkspaceState}
+          onLocalHarnessSessionStarted={registerLocalHarnessSession}
+          localHarnessSessions={localHarnessSessions}
+          activeLocalHarnessSession={
+            getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
+          }
+          onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
+          onLocalHarnessSessionClose={closeHarnessSession}
+          onLocalHarnessSessionExit={removeLocalHarnessSession}
         />
       )}
     />
   )
 
-  if (!isTauri) return paneStack
+  const mainContent = (
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{paneStack}</div>
+  )
+
+  if (!isTauri) return mainContent
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -522,7 +655,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
         )}
       />
-      {paneStack}
+      {mainContent}
     </div>
   )
 }
@@ -542,6 +675,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinChange,
   initialWorkspaceState,
   onWorkspaceStateChange,
+  onLocalHarnessSessionStarted,
+  localHarnessSessions,
+  activeLocalHarnessSession,
+  onLocalHarnessSessionTitleChange,
+  onLocalHarnessSessionClose,
+  onLocalHarnessSessionExit,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -557,8 +696,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
+  onLocalHarnessSessionStarted: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
+  localHarnessSessions: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSession: LocalHarnessWorkbenchSession | null
+  onLocalHarnessSessionTitleChange: (sessionId: string, title: string) => void
+  onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
+  onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
+  const paneActiveRef = useRef(paneActive)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
@@ -582,8 +731,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     startNewChat,
   } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
-  const workspaceTabs = useOptionalWorkspaceTabs()
   const { t } = useTranslation('common')
+  const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
+    'main' | 'right' | null
+  >(null)
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
@@ -592,26 +743,84 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )?.project
   const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
+  useLayoutEffect(() => {
+    paneActiveRef.current = paneActive
+  }, [paneActive])
   const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
     useState<HTMLDivElement | null>(null)
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(true))
-    return () => cancelAnimationFrame(frame)
-  }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: currentProject,
+  })
   const sendPaneInput = paneSession.send
-  const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
-  const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
-  const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
-  const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
-  const [boundCloudItem, setBoundCloudItem] = useState<CloudLoopItem | null>(null)
-  const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
-  const [todoBindingPickerOpen, setTodoBindingPickerOpen] = useState(false)
-  const [deliverAfterBinding, setDeliverAfterBinding] = useState(false)
+  const paneInput = paneSession.input
+  const setPaneInput = paneSession.setInput
+  const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
+  const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
+    Partial<Record<LocalHarnessId, string | null>>
+  >({})
+  const localHarnessPreferences =
+    appPreferences?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
+  const enabledLocalHarnesses = useMemo(
+    () =>
+      experimentalFeaturesEnabled
+        ? localHarnessPreferences.filter(preference => preference.enabled)
+        : [],
+    [experimentalFeaturesEnabled, localHarnessPreferences]
+  )
+  const executableOverrides = useMemo(
+    () =>
+      Object.fromEntries(
+        localHarnessPreferences.map(preference => [preference.id, preference.executablePath])
+      ) as Partial<Record<LocalHarnessId, string | null>>,
+    [localHarnessPreferences]
+  )
+  const [localHarnesses, setLocalHarnesses] = useState<LocalHarnessDescriptor[]>([])
+  const [localHarnessesLoading, setLocalHarnessesLoading] = useState(
+    () => experimentalFeaturesEnabled && isLocalHarnessAvailable()
+  )
+  const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
+  const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
+  const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const [additionalHarnessError, setAdditionalHarnessError] = useState<string | null>(null)
+  const [harnessResumeLaunchError, setHarnessResumeLaunchError] = useState<{
+    sessionId: string
+    message: string
+  } | null>(null)
+  const centralHarnessRequestIdRef = useRef(0)
+  useEffect(() => {
+    if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
+
+    let cancelled = false
+    void listLocalHarnesses(executableOverrides)
+      .then(harnesses => {
+        if (!cancelled) {
+          setLocalHarnesses(harnesses)
+          setLocalHarnessDetectionFailed(false)
+        }
+      })
+      .catch(error => {
+        console.error('Failed to detect local harnesses:', error)
+        if (!cancelled) {
+          setLocalHarnesses([])
+          setLocalHarnessDetectionFailed(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLocalHarnessesLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [executableOverrides, experimentalFeaturesEnabled])
   const [pendingSupervisorConfig, setPendingSupervisorConfig] =
     useState<TaskSupervisorConfig | null>(null)
   const supervisorTaskKey = currentRuntimeTask
@@ -620,27 +829,67 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogScopeKey = supervisorTaskKey ?? `${paneKey}:new`
   const [supervisorDialogTaskKey, setSupervisorDialogTaskKey] = useState<string | null>(null)
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
-  const [pendingTodoItem, setPendingTodoItemState] = useState<CloudLoopItem | null>(() =>
-    pendingTodoForTask(currentRuntimeTask)
-  )
-  const [pendingCloudProject, setPendingCloudProject] = useState<CloudProject | null>(() =>
-    pendingProjectForTask(currentRuntimeTask)
-  )
-  const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
-  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
-  const [defaultProjectOptionKey, setDefaultProjectOptionKey] = useState<string | null>(null)
-  const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
-    string | null
-  >(null)
-  const [cloudActionNotice, setCloudActionNotice] = useState<string | null>(null)
-  const [cloudMentionState, setCloudMentionState] = useState<{
-    todoId: string
-    candidates: ComposerCloudMentionCandidate[]
-  } | null>(null)
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
+  const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
+  const {
+    activeDeliveryItem,
+    boundCloudItem,
+    boundCloudProject,
+    clearCloudActionNotice,
+    clearPendingProjectContext,
+    clearTodoBindingError,
+    closeDeliveryDialog,
+    closeTodoBindingPicker,
+    cloudActionNotice,
+    cloudProjectMentionCandidates,
+    composerCloudProject,
+    deliveryDialogOpen,
+    finishLocalDelivery,
+    handleSelectCloudProject,
+    handleTodoBound,
+    openDelivery,
+    openTodoManager,
+    pendingCloudProject,
+    pendingTodoItem,
+    prepareSubmission,
+    todoBindingApis,
+    todoBindingError,
+    todoBindingPickerOpen,
+    visibleCloudMentionCandidates,
+  } = useWorkbenchCloudProjectContext({
+    active: paneActive && workbenchVisible,
+    currentRuntimeTask: currentProjectSpaceRuntimeTask,
+    currentProjectId: currentProject?.id,
+    defaultProjectSpace,
+    paneKey,
+    runtimeTaskTitle,
+    services,
+    userId: state.user?.id,
+  })
+  const pendingProjectSpaceContext =
+    !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
+      <ComposerModePill
+        label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
+          name: pendingCloudProject.name,
+        })}
+        icon={LayoutDashboard}
+        testId="project-space-context-pill"
+        cancelTestId="clear-project-space-context-button"
+        cancelLabel={t('workbench.clear_project_space_context', '不加入项目看板')}
+        onCancel={clearPendingProjectContext}
+        title={t(
+          'workbench.project_space_context_pending_title',
+          '发送后会在该项目空间的看板中创建任务'
+        )}
+      />
+    ) : null
   const supervisor = runtimeTaskSummary?.supervisor ?? null
+  const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
+    ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
+    : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
   const currentRuntimeTaskSupportsSupervisor =
     runtimeTaskSummary?.runtime?.toLowerCase() === 'codex'
   const supervisorFeatureAvailable = Boolean(
@@ -650,21 +899,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const supervisorModels = projectChat.models.filter(
     model => model.isActive !== false && !model.compatibilityDisabled
-  )
-  const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
-  const composerTodoItem = currentRuntimeTask ? boundCloudItem : pendingTodoItem
-  const defaultCloudProjectSelectionKey = `${paneKey}:${currentProject?.id ?? 'none'}`
-  const cloudAdditionalContext = useMemo(
-    () => cloudProjectAdditionalContext(composerCloudProject, composerTodoItem),
-    [composerCloudProject, composerTodoItem]
-  )
-  const setPendingCloudContext = useCallback(
-    (project: CloudProject | null, item: CloudLoopItem | null) => {
-      pendingTodoBinding = project ? { project, item, target: null, description: '' } : null
-      setPendingCloudProject(project)
-      setPendingTodoItemState(item)
-    },
-    []
   )
 
   const runtimeWorkApi = services?.runtimeWorkApi
@@ -686,44 +920,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [runtimeWorkApi, t]
   )
 
-  const submitPaneInput = useCallback(
+  const sendPaneInputWithContext = useCallback(
     (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
       const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const submissionProject = currentRuntimeTask ? null : pendingCloudProject
-      const submissionItem =
-        submissionProject?.id === pendingCloudProject?.id ? pendingTodoItem : null
-      if (!currentRuntimeTask) {
-        setPendingCloudContext(submissionProject, submissionItem)
-        pendingAutoJoinResolutionRef.current =
-          !submissionProject &&
-          Boolean(defaultProjectSpace) &&
-          dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
-          projectSpaceApis(services).length > 0
-            ? { target: null, description }
-            : null
-      }
-      if (pendingTodoBinding) {
-        pendingTodoBinding = { ...pendingTodoBinding, description }
-      }
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
-        additionalContext:
-          cloudProjectAdditionalContext(submissionProject, submissionItem) ??
-          cloudAdditionalContext,
-        cloudProjectId: runtimeCloudProjectId(submissionProject),
+        additionalContext: cloudSubmission.additionalContext,
+        cloudProjectId: cloudSubmission.cloudProjectId,
         initialSupervisor: supervisorConfig,
-        onRuntimeTaskCreated: address => {
-          if (pendingTodoBinding) {
-            pendingTodoBinding = { ...pendingTodoBinding, target: address }
-          }
-          if (pendingAutoJoinResolutionRef.current) {
-            pendingAutoJoinResolutionRef.current = {
-              ...pendingAutoJoinResolutionRef.current,
-              target: address,
-            }
-          }
-        },
+        onRuntimeTaskCreated: cloudSubmission.onRuntimeTaskCreated,
         onRuntimeTaskReady: () => {
           if (supervisorConfig) {
             setPendingSupervisorConfig(null)
@@ -732,19 +939,37 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
     },
     [
-      cloudAdditionalContext,
       currentRuntimeTask,
-      defaultProjectSpace,
-      defaultCloudProjectSelectionKey,
-      dismissedDefaultCloudProjectKey,
       paneSession.input,
-      pendingCloudProject,
-      pendingTodoItem,
       pendingSupervisorConfig,
+      prepareSubmission,
       sendPaneInput,
-      services,
-      setPendingCloudContext,
+      setPendingSupervisorConfig,
     ]
+  )
+
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: async input => {
+      await sendPaneInputWithContext(input)
+    },
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+
+  const submitPaneInput = useCallback(
+    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
+          return false
+        }
+      }
+      return sendPaneInputWithContext(value, options)
+    },
+    [connectorAuthGate, paneSession, sendPaneInputWithContext]
   )
 
   const setTaskSupervisor = useCallback(
@@ -766,7 +991,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       return setSupervisorForAddress(currentRuntimeTask, config)
     },
-    [currentRuntimeTask, setSupervisorForAddress]
+    [currentRuntimeTask, setPendingSupervisorConfig, setSupervisorForAddress]
   )
 
   const clearTaskSupervisor = useCallback(async () => {
@@ -781,7 +1006,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!response.accepted) {
       throw new Error(response.error || t('workbench.supervisor_clear_failed'))
     }
-  }, [currentRuntimeTask, runtimeWorkApi, t])
+  }, [currentRuntimeTask, runtimeWorkApi, setPendingSupervisorConfig, t])
 
   const resolveTaskSupervisorSuggestion = useCallback(
     async (suggestion: RuntimeSupervisorSuggestion, status: 'accepted' | 'dismissed') => {
@@ -801,449 +1026,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [currentRuntimeTask, runtimeWorkApi, submitPaneInput, t]
   )
 
-  const projectSpaceApiFor = useCallback(
-    (project: CloudProject): NonNullable<WorkbenchServices['deliveryApi']> | undefined =>
-      project.project_store === 'local' || project.task_provider === 'dingtalk_aitable'
-        ? (services?.projectSpaceApis?.local ?? services?.deliveryApi)
-        : (services?.projectSpaceApis?.cloud ?? services?.deliveryApi),
-    [services?.deliveryApi, services?.projectSpaceApis?.cloud, services?.projectSpaceApis?.local]
-  )
-
-  useEffect(() => {
-    let active = true
-    if (!currentRuntimeTask) {
-      queueMicrotask(() => {
-        if (!active) return
-        setBoundCloudItem(null)
-        setBoundCloudProject(null)
-        setDeliveryItem(null)
-      })
-      return () => {
-        active = false
-      }
-    }
-    const contextApis = projectSpaceApis(services)
-    if (contextApis.length > 0) {
-      void findProjectSpaceContextForTask(contextApis, currentRuntimeTask)
-        .then(context => {
-          if (!active) return
-          setBoundCloudProject(context.project)
-          setBoundCloudItem(context.loop_item)
-          setDeliveryItem(
-            context.loop_item
-              ? cloudItemAsLocalWorkItem(context.loop_item, currentRuntimeTask)
-              : null
-          )
-        })
-        .catch(() => {
-          if (active) {
-            setBoundCloudItem(null)
-            setBoundCloudProject(null)
-            setDeliveryItem(null)
-          }
-        })
-      return () => {
-        active = false
-      }
-    }
-    void hydrateLocalWorkItems(state.user?.id).then(items => {
-      if (!active) return
-      setBoundCloudItem(null)
-      setDeliveryItem(
-        items.find(item =>
-          item.runtimeRefs.some(
-            reference =>
-              reference.taskId === currentRuntimeTask.taskId &&
-              reference.deviceId === currentRuntimeTask.deviceId
-          )
-        ) ?? null
-      )
-    })
-    return () => {
-      active = false
-    }
-  }, [currentRuntimeTask, services, state.user?.id])
-
-  useEffect(() => {
-    const projectToBind = pendingCloudProject ?? pendingTodoBinding?.project ?? null
-    const itemToBind = pendingTodoItem ?? pendingTodoBinding?.item ?? null
-    if (!currentRuntimeTask || !projectToBind) return
-    const pendingBinding = pendingTodoBinding
-    if (
-      pendingBinding?.target &&
-      (pendingBinding.target.deviceId !== currentRuntimeTask.deviceId ||
-        pendingBinding.target.taskId !== currentRuntimeTask.taskId)
-    ) {
-      return
-    }
-    const api = projectSpaceApiFor(projectToBind)
-    if (!api) return
-    const bindingTaskTitle =
-      truncateRuntimeTaskTitle(pendingBinding?.description) ||
-      t('workbench.untitled_task', '未命名任务')
-    let active = true
-    const bindingRequest = itemToBind
-      ? api
-          .bindTask(itemToBind.id, currentRuntimeTask, bindingTaskTitle)
-          .then(() => ({ item: itemToBind }))
-      : api.trackProjectTask(
-          projectToBind.id,
-          currentRuntimeTask,
-          bindingTaskTitle,
-          pendingBinding?.description ?? ''
-        )
-    void bindingRequest
-      .then(({ item }) => {
-        if (!active) return
-        setBoundCloudProject(projectToBind)
-        setBoundCloudItem(item)
-        setDeliveryItem(cloudItemAsLocalWorkItem(item, currentRuntimeTask))
-        pendingTodoBinding = null
-        setPendingCloudContext(null, null)
-      })
-      .catch(cause => {
-        if (!active) return
-        setTodoBindingError(
-          cause instanceof Error
-            ? cause.message
-            : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
-        )
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    currentRuntimeTask,
-    pendingCloudProject,
-    pendingTodoItem,
-    projectSpaceApiFor,
-    setPendingCloudContext,
-    t,
-  ])
-
-  useEffect(() => {
-    let active = true
-    const api = services?.deliveryApi
-    if (!api || !composerCloudProject) {
-      return () => {
-        active = false
-      }
-    }
-    const projectId = composerCloudProject.id
-    void Promise.all([
-      api.listCloudFiles(projectId),
-      api.listLoopItems(projectId),
-      composerTodoItem ? api.listDeliveries(composerTodoItem.id) : Promise.resolve({ items: [] }),
-    ])
-      .then(([files, items, deliveries]) => {
-        if (!active) return
-        const candidate = (
-          key: string,
-          title: string,
-          description: string,
-          reference: string,
-          aliases: string[],
-          statusLabel?: string
-        ): ComposerCloudMentionCandidate => ({
-          kind: 'cloud',
-          key,
-          title,
-          description,
-          metaLabel: t('workbench.mention_cloud_space', '云空间'),
-          testId: key.replace(/[^a-zA-Z0-9_-]/g, '-'),
-          enabled: true,
-          reference,
-          searchAliases: aliases,
-          statusLabel,
-        })
-        setCloudMentionState({
-          todoId: composerTodoItem?.id ?? `project:${projectId}`,
-          candidates: [
-            candidate(
-              `cloud-project:${projectId}`,
-              t('workbench.mention_cloud_whole_space', '整个空间'),
-              t('workbench.mention_cloud_whole_space_description', '共享文件 + 看板全部内容'),
-              `[$${t('workbench.mention_cloud_whole_space', '整个空间')}](cloud://projects/${projectId})`,
-              ['云项目', 'cloud', 'workspace']
-            ),
-            ...items.items.map(item =>
-              candidate(
-                `cloud-todo:${item.id}`,
-                item.id,
-                item.title,
-                `[$${t('workbench.mention_cloud_todo_chip', '任务')}:${item.id}](cloud://projects/${projectId}/todos/${item.id})`,
-                [item.title, item.status, 'TODO', '任务'],
-                cloudLoopItemStatusLabel(item.status, t)
-              )
-            ),
-            ...files.items.map(file =>
-              candidate(
-                `cloud-file:${file.id}`,
-                file.name,
-                file.path,
-                `[$${file.name}](cloud://projects/${projectId}/files/${file.id})`,
-                [file.path, file.kind, '文件', '目录']
-              )
-            ),
-            ...deliveries.items.map(delivery =>
-              candidate(
-                `cloud-delivery:${delivery.id}`,
-                `交付 ${delivery.id.slice(0, 8)}`,
-                delivery.delivered_at ?? delivery.created_at,
-                `[$交付 ${delivery.id.slice(0, 8)}](cloud://projects/${projectId}/deliveries/${delivery.id})`,
-                ['交付', 'delivery', delivery.id]
-              )
-            ),
-          ],
-        })
-      })
-      .catch(() => {
-        if (active) setCloudMentionState(null)
-      })
-    return () => {
-      active = false
-    }
-  }, [composerCloudProject, composerTodoItem, services?.deliveryApi, t])
-  const visibleCloudMentionCandidates =
-    composerCloudProject &&
-    cloudMentionState?.todoId === (composerTodoItem?.id ?? `project:${composerCloudProject.id}`)
-      ? cloudMentionState.candidates
-      : []
-
-  useEffect(() => {
-    let active = true
-    const apis = projectSpaceApis(services)
-    if (!apis.length) {
-      queueMicrotask(() => {
-        if (active) {
-          setCloudProjects([])
-          setDefaultProjectOptionKey(null)
-        }
-      })
-      return () => {
-        active = false
-      }
-    }
-    void Promise.allSettled(
-      apis.map(async api => {
-        const result = await api.listCloudProjects()
-        return result.items
-      })
-    )
-      .then(results => {
-        if (!active) return
-        const candidates = results.flatMap(result =>
-          result.status === 'fulfilled' ? result.value : []
-        )
-        const uniqueProjects = candidates.filter(
-          (candidate, index) =>
-            candidates.findIndex(
-              other => other.id === candidate.id && other.project_store === candidate.project_store
-            ) === index
-        )
-        const defaultProject = defaultProjectSpace
-          ? uniqueProjects.find(
-              project =>
-                projectSpaceKey(projectSpaceRef(project)) === projectSpaceKey(defaultProjectSpace)
-            )
-          : null
-        setCloudProjects(uniqueProjects)
-        setDefaultProjectOptionKey(
-          defaultProject ? projectSpaceKey(projectSpaceRef(defaultProject)) : null
-        )
-        const pendingAutoJoin = pendingAutoJoinResolutionRef.current
-        const pendingTargetMatchesCurrentTask =
-          pendingAutoJoin?.target &&
-          currentRuntimeTask &&
-          pendingAutoJoin.target.deviceId === currentRuntimeTask.deviceId &&
-          pendingAutoJoin.target.taskId === currentRuntimeTask.taskId
-        if (
-          defaultProject &&
-          !pendingCloudProject &&
-          dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
-          (!currentRuntimeTask || pendingTargetMatchesCurrentTask)
-        ) {
-          pendingTodoBinding = {
-            project: defaultProject,
-            item: null,
-            target: pendingAutoJoin?.target ?? null,
-            description: pendingAutoJoin?.description ?? '',
-          }
-          pendingAutoJoinResolutionRef.current = null
-          setPendingCloudProject(defaultProject)
-          setPendingTodoItemState(null)
-        } else if (!defaultProject && pendingAutoJoin) {
-          pendingAutoJoinResolutionRef.current = null
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setCloudProjects([])
-          setDefaultProjectOptionKey(null)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    currentRuntimeTask,
-    defaultProjectSpace,
-    defaultCloudProjectSelectionKey,
-    dismissedDefaultCloudProjectKey,
-    pendingCloudProject,
-    services,
-    setPendingCloudContext,
-  ])
-  const cloudProjectMentionCandidates = useMemo<ComposerCloudMentionCandidate[]>(
-    () =>
-      cloudProjects.map(project => {
-        const spaceLabel = t('workbench.mention_cloud_project_space', '项目空间')
-        return {
-          kind: 'cloud',
-          key: `cloud-project-space:${project.id}`,
-          title: project.name,
-          description: project.description || project.project_key || undefined,
-          statusLabel:
-            projectSpaceKey(projectSpaceRef(project)) === defaultProjectOptionKey
-              ? t('workbench.project_space_auto_join', '自动加入')
-              : undefined,
-          metaLabel: t('workbench.mention_cloud_space', '云空间'),
-          testId: `cloud-project-space-${String(project.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
-          enabled: true,
-          reference: `[$${spaceLabel}:${project.name}](cloud://projects/${project.id})`,
-          searchAliases: [
-            project.name,
-            project.project_key,
-            project.description,
-            spaceLabel,
-            'project space',
-            'project-space',
-            'cloud',
-          ].filter(alias => Boolean(alias)),
-          project,
-        }
-      }),
-    [cloudProjects, defaultProjectOptionKey, t]
-  )
-  const bindComposerCloudProject = useCallback(
-    (project: CloudProject, notice: string) => {
-      setCloudActionNotice(notice)
-      if (!currentRuntimeTask) {
-        setPendingCloudContext(project, null)
-        return
-      }
-      const api = projectSpaceApiFor(project)
-      if (!api) return
-      void api
-        .bindProjectTask(project.id, currentRuntimeTask, runtimeTaskTitle)
-        .then(() => {
-          setBoundCloudProject(project)
-          setBoundCloudItem(null)
-          setDeliveryItem(null)
-        })
-        .catch(cause => {
-          setTodoBindingError(
-            cause instanceof Error
-              ? cause.message
-              : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
-          )
-        })
-    },
-    [currentRuntimeTask, projectSpaceApiFor, runtimeTaskTitle, setPendingCloudContext, t]
-  )
-  const handleSelectCloudProject = useCallback(
-    (project: CloudProject) => {
-      setDismissedDefaultCloudProjectKey(null)
-      bindComposerCloudProject(
-        project,
-        t('workbench.cloud_project_bound_notice', { name: project.name })
-      )
-    },
-    [bindComposerCloudProject, t]
-  )
-  const pendingProjectSpaceContext =
-    !currentRuntimeTask && pendingCloudProject ? (
-      <ComposerModePill
-        label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
-          name: pendingCloudProject.name,
-        })}
-        icon={LayoutDashboard}
-        testId="project-space-context-pill"
-        cancelTestId="clear-project-space-context-button"
-        cancelLabel={t('workbench.clear_project_space_context', '不加入项目看板')}
-        onCancel={() => {
-          setDismissedDefaultCloudProjectKey(defaultCloudProjectSelectionKey)
-          setPendingCloudContext(null, null)
-        }}
-        title={t(
-          'workbench.project_space_context_pending_title',
-          '发送后会在该项目空间的看板中创建任务'
-        )}
-      />
-    ) : null
-
-  const activeDeliveryItem =
-    currentRuntimeTask &&
-    deliveryItem?.runtimeRefs.some(
-      reference =>
-        reference.taskId === currentRuntimeTask.taskId &&
-        reference.deviceId === currentRuntimeTask.deviceId
-    )
-      ? deliveryItem
-      : null
-
-  const openBoundProjectSpaceTask = useCallback(() => {
-    if (!boundCloudProject || !boundCloudItem) return
-    const params = new URLSearchParams()
-    params.set('projectId', String(boundCloudProject.id))
-    params.set('itemId', boundCloudItem.id)
-    const contentRoute = `/todo?${params.toString()}`
-    const boardTab = workspaceTabs?.tabs.find(tab => tab.kind === 'board')
-    if (boardTab && workspaceTabs) {
-      workspaceTabs.selectTab(boardTab.id, {
-        title: boundCloudProject.name,
-        contentRoute,
-      })
-      return
-    }
-    if (workspaceTabs) {
-      workspaceTabs.openTab('board', {
-        title: boundCloudProject.name,
-        contentRoute,
-      })
-      return
-    }
-    navigateTo(contentRoute)
-  }, [boundCloudItem, boundCloudProject, workspaceTabs])
-
-  const finishLocalDelivery = useCallback(async () => {
-    if (!activeDeliveryItem) return
-    const items = await loadLocalWorkItems(state.user?.id)
-    const now = new Date().toISOString()
-    await saveLocalWorkItems(
-      state.user?.id,
-      items.map(item =>
-        item.id === activeDeliveryItem.id
-          ? {
-              ...item,
-              state: 'completed',
-              updatedAt: now,
-              events: [
-                ...item.events,
-                {
-                  id: `delivery-${now}`,
-                  type: 'confirmed' as const,
-                  summary: t('delivery.completed_activity', '任务已交付并完成'),
-                  createdAt: now,
-                },
-              ],
-            }
-          : item
-      )
-    )
-    setDeliveryDialogOpen(false)
-    navigateTo('/todo')
-  }, [activeDeliveryItem, setDeliveryDialogOpen, state.user?.id, t])
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
     enableShellProjectActions: true,
@@ -1284,6 +1066,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ?.workspacePath ?? (matches.length === 1 ? matches[0].workspacePath : null)
     )
   }, [currentRuntimeTask, runtimeWork])
+  const initialBrowserWorkspaceState = createInitialBrowserWorkspaceState({
+    initialBlankBrowserMigration,
+    initialWorkspaceState,
+    defaultEmbeddedBrowserLabel,
+  })
   const [rightPanelOpen, setRightPanelOpen] = useState(
     () =>
       initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
@@ -1294,16 +1081,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       initialWorkspaceState?.rightPanelExpanded ??
       false
   )
-  const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(
-    () =>
+  const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(() => {
+    const restoredView =
       initialBlankBrowserMigration?.rightPanelView ??
       initialWorkspaceState?.rightPanelView ??
       'launcher'
-  )
-  const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(
-    () =>
-      initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
-  )
+    return (restoredView as RightWorkspacePanelView | 'browser') === 'browser'
+      ? 'browser:1'
+      : restoredView
+  })
+  const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(() => {
+    const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
+      initialWorkspaceState?.rightPanelTabs ??
+      []) as Array<RightWorkspacePanelTab | 'browser'>
+    return restoredTabs.map(tab => (tab === 'browser' ? 'browser:1' : tab))
+  })
+  const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1321,12 +1114,82 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     initialWorkspaceState?.reviewState.loading ? initialWorkspaceState.reviewState : null
   )
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
+  const temporaryChatTabSequence = useRef(0)
+  const browserTabSequence = useRef(initialBrowserWorkspaceState.maxSequence)
+  const [browserStates, setBrowserStates] = useState<
+    Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+  >(() => initialBrowserWorkspaceState.states)
+  const browserStatesRef = useRef(browserStates)
+  const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
+  useEffect(() => {
+    browserStatesRef.current = browserStates
+  }, [browserStates])
+  const updateBrowserState = useCallback(
+    (tab: RightWorkspaceBrowserTab, update: Partial<RightWorkspaceBrowserState>) => {
+      setBrowserStates(current => {
+        const currentState = current[tab]
+        if (!currentState) return current
+        return {
+          ...current,
+          [tab]: {
+            ...currentState,
+            ...update,
+          },
+        }
+      })
+    },
+    []
+  )
+  const allocateBrowserTab = useCallback((): RightWorkspaceBrowserTab => {
+    browserTabSequence.current += 1
+    return `browser:${browserTabSequence.current}` as RightWorkspaceBrowserTab
+  }, [])
+  const createBrowserTabState = useCallback(
+    (
+      tab: RightWorkspaceBrowserTab,
+      overrides: Partial<RightWorkspaceBrowserState> = {}
+    ): RightWorkspaceBrowserState => ({
+      label: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
+      browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
+      title: null,
+      faviconUrl: null,
+      hasActiveDownload: false,
+      openRequest: null,
+      ...overrides,
+    }),
+    [defaultEmbeddedBrowserLabel]
+  )
+  const syncActiveEmbeddedBrowserLabel = useCallback(
+    (activeBrowserLabel: string) => {
+      void setEmbeddedBrowserActiveTab(defaultEmbeddedBrowserLabel, activeBrowserLabel).catch(
+        error => {
+          console.error('Failed to synchronize active embedded browser tab:', error)
+        }
+      )
+      if (defaultEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) {
+        void setEmbeddedBrowserActiveTab(DEFAULT_EMBEDDED_BROWSER_LABEL, activeBrowserLabel).catch(
+          error => {
+            console.error('Failed to synchronize default embedded browser tab:', error)
+          }
+        )
+      }
+    },
+    [defaultEmbeddedBrowserLabel]
+  )
+  useEffect(() => {
+    if (!isRightWorkspaceBrowserTab(rightPanelView)) return
+    const activeBrowserLabel = browserStates[rightPanelView]?.label
+    if (!activeBrowserLabel) return
+
+    syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
+  }, [browserStates, rightPanelView, syncActiveEmbeddedBrowserLabel])
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
       rightPanelOpen,
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      browserStates,
       reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
@@ -1338,17 +1201,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    browserStates,
     reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
   ])
-  const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
-    () => initialBlankBrowserMigration?.browserLabel ?? null
-  )
-  const temporaryChatTabSequence = useRef(0)
-  const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
-    (EmbeddedBrowserOpenRequest & { id: number }) | null
-  >(null)
   const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
     id: number
     text: string
@@ -1378,16 +1235,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [])
   useLayoutEffect(() => {
     if (!paneActive) return
+    const workbenchMain = workbenchMainRef.current
+    if (workbenchMain && workbenchMain.scrollLeft !== 0) {
+      workbenchMain.scrollLeft = 0
+    }
     const workbenchScroll = workbenchScrollRef.current
     if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
       workbenchScroll.scrollLeft = 0
     }
-  }, [paneActive])
+  }, [activeLocalHarnessSession?.sessionId, paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const closeRightPanel = useCallback(() => {
+  const closeRightPanel = () => {
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
-  }, [])
+  }
   const onlyTemporaryChatOpen =
     rightPanelTabs.length === 1 &&
     rightPanelTabs[0].startsWith('chat:') &&
@@ -1416,6 +1277,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
     defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
+  const rightPanelTransitionDisabled = rightSplitResizing || rightPanelImmediateLayout
   const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
   const environmentInfoDocked =
@@ -1425,15 +1287,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoOpen = environmentInfoDocked
     ? environmentInfoPinned
     : environmentInfoOverlayOpen
-  const setEnvironmentInfoOpen = environmentInfoDocked
-    ? onEnvironmentInfoPinnedChange
-    : onEnvironmentInfoOverlayOpenChange
+  const setEnvironmentInfoOpen = useCallback(
+    (open: boolean) => {
+      if (environmentInfoDocked) {
+        setEnvironmentInfoTransitionEnabled(true)
+        onEnvironmentInfoPinnedChange(open)
+        return
+      }
+      onEnvironmentInfoOverlayOpenChange(open)
+    },
+    [
+      environmentInfoDocked,
+      onEnvironmentInfoOverlayOpenChange,
+      onEnvironmentInfoPinnedChange,
+      setEnvironmentInfoTransitionEnabled,
+    ]
+  )
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
       onEnvironmentInfoOverlayOpenChange(false)
     }
-  }, [environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, supervisorDialogScopeKey])
+  }, [
+    environmentInfoDocked,
+    onEnvironmentInfoOverlayOpenChange,
+    setSupervisorDialogTaskKey,
+    supervisorDialogScopeKey,
+  ])
 
   useEffect(() => {
     if (currentRuntimeTask && !environmentInfoDocked) return
@@ -1441,40 +1321,58 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
 
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
+  const rightPanelWidth = Math.max(0, workbenchContentWidth - rightSplitChatWidth)
   const rightPanelShellWidth = rightPanelOpen
     ? rightPanelExpanded
       ? '100%'
-      : `calc(100% - ${rightSplitChatWidth}px)`
+      : `${rightPanelWidth}px`
     : '0px'
   const rightPanelTabBarRightOffset = '0px'
   const rightPanelTabBarWidth = rightPanelOpen
-    ? `calc(${rightPanelExpanded ? '100%' : `100% - ${rightSplitChatWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    ? `calc(${rightPanelExpanded ? '100%' : `${rightPanelWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
+  const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
-    const permittedTabs = canBrowseFiles
+    const workspaceTabs = canBrowseFiles
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'files')
-    if (rightPanelView === 'launcher' || (!canBrowseFiles && rightPanelView === 'files')) {
+    const permittedTabs = temporaryChatAvailable
+      ? workspaceTabs
+      : workspaceTabs.filter(tab => !tab.startsWith('chat:'))
+    if (
+      rightPanelView === 'launcher' ||
+      (!canBrowseFiles && rightPanelView === 'files') ||
+      (!temporaryChatAvailable && rightPanelView.startsWith('chat:'))
+    ) {
       return permittedTabs
     }
     return permittedTabs.includes(rightPanelView)
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
-  }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
-  const temporaryChatExpanded = rightPanelExpanded && rightPanelView.startsWith('chat:')
+  }, [
+    openFileRequest?.target,
+    rightPanelTabs,
+    rightPanelView,
+    temporaryChatAvailable,
+    workspaceProject,
+  ])
+  const effectiveRightPanelView =
+    !temporaryChatAvailable && rightPanelView.startsWith('chat:') ? 'launcher' : rightPanelView
+  const temporaryChatExpanded =
+    temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
-    fileWorkspaceDirty || rightPanelTabs.some(tab => tab === 'terminal' || tab === 'browser')
+    fileWorkspaceDirty ||
+    rightPanelTabs.some(
+      tab =>
+        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+    )
   useEffect(() => {
     onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
     return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
   }, [hasPersistentRightPanelResource, onTerminalPanePinChange, paneKey])
   const chatContentResizing = sidebarResizing || rightSplitResizing
-  const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
-    ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
-    : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
-  const embeddedBrowserLabel = migratedEmbeddedBrowserLabel ?? defaultEmbeddedBrowserLabel
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
     getActiveWorkbenchDeviceId({
@@ -1571,22 +1469,582 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       : null
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
-  const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
-    ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
+  const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
+  const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
+    ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
-  const workspaceTargetUsesRemoteDevice = Boolean(
-    workspaceTargetDevice &&
-    (isCloudDevice(workspaceTargetDevice) || isRemoteDevice(workspaceTargetDevice))
+  const centralHarnessUsesRemoteDevice = Boolean(
+    centralHarnessTargetDevice &&
+    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
   )
-  const workspaceTargetUsesRemoteSource = effectiveWorkspaceTarget?.workspaceSource === 'remote'
+  const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
+  const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
   const preferLocalWorkspaceTerminal =
-    paneProjectWork.executionMode === 'current_workspace' &&
-    effectiveWorkspaceTarget?.source !== 'runtime' &&
-    !workspaceTargetUsesRemoteDevice &&
-    !workspaceTargetUsesRemoteSource
+    Boolean(centralHarnessCwd) && !centralHarnessUsesRemoteDevice && !centralHarnessUsesRemoteSource
+  const canPrepareHarnessWorktree = Boolean(
+    paneProjectWork.executionMode !== 'git_worktree' ||
+    (services?.runtimeWorkApi &&
+      centralHarnessCwd &&
+      (composerWorkspaceTarget?.deviceId || centralHarnessTargetDevice?.device_id))
+  )
+  const selectedHarnessPreference =
+    !experimentalFeaturesEnabled || newChatRuntime === 'codex'
+      ? null
+      : (enabledLocalHarnesses.find(preference => preference.id === newChatRuntime) ?? null)
+  const getHarnessModelOptions = useCallback(
+    (harnessId: LocalHarnessId) =>
+      listLocalHarnessModelOptions(
+        harnessId,
+        projectChat.models,
+        projectChat.selectedModel,
+        projectChat.selectedModelOptions
+      ),
+    [projectChat.models, projectChat.selectedModel, projectChat.selectedModelOptions]
+  )
+  const getSelectedHarnessModel = useCallback(
+    (preference: LocalHarnessPreference): LocalHarnessModelOption | null => {
+      const options = getHarnessModelOptions(preference.id)
+      const hasPendingSelection = Object.prototype.hasOwnProperty.call(
+        localHarnessModelKeys,
+        preference.id
+      )
+      const configuredKey = hasPendingSelection
+        ? localHarnessModelKeys[preference.id]
+        : preference.modelKey
+      if (!configuredKey) return null
+      return options.find(option => option.key === configuredKey) ?? null
+    },
+    [getHarnessModelOptions, localHarnessModelKeys]
+  )
+  const getConfiguredHarnessModelKey = useCallback(
+    (preference: LocalHarnessPreference): string | null => {
+      const hasPendingSelection = Object.prototype.hasOwnProperty.call(
+        localHarnessModelKeys,
+        preference.id
+      )
+      return (
+        (hasPendingSelection
+          ? localHarnessModelKeys[preference.id]
+          : preference.modelKey
+        )?.trim() || null
+      )
+    },
+    [localHarnessModelKeys]
+  )
+  const harnessModelOptions = selectedHarnessPreference
+    ? getHarnessModelOptions(selectedHarnessPreference.id)
+    : []
+  const selectedHarnessModel = selectedHarnessPreference
+    ? getSelectedHarnessModel(selectedHarnessPreference)
+    : null
+  const selectedHarnessModelKey = selectedHarnessPreference
+    ? getConfiguredHarnessModelKey(selectedHarnessPreference)
+    : null
+  const selectedHarnessInstalled = Boolean(
+    selectedHarnessPreference &&
+    localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
+  )
+  const selectedHarnessAvailable = Boolean(
+    selectedHarnessInstalled &&
+    isLocalHarnessAvailable() &&
+    preferLocalWorkspaceTerminal &&
+    canPrepareHarnessWorktree &&
+    centralHarnessCwd &&
+    (!selectedHarnessModelKey || (selectedHarnessModel && services?.localHarnessModelApi))
+  )
+  const activeNewChatRuntime =
+    experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
+      ? newChatRuntime
+      : 'codex'
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const resolveHarnessPluginRoots = useCallback(async () => {
+    const [skillsResult, installedResult] = await Promise.allSettled([
+      projectChat.listLocalSkills(),
+      localPluginApi.listInstalledPlugins(),
+    ])
+    if (skillsResult.status === 'rejected') {
+      console.warn('Failed to resolve local skill roots for local Harness:', skillsResult.reason)
+    }
+    if (installedResult.status === 'rejected') {
+      console.warn(
+        'Failed to resolve installed plugin roots for local Harness:',
+        installedResult.reason
+      )
+    }
+    const skills = skillsResult.status === 'fulfilled' ? skillsResult.value : []
+    const installed = installedResult.status === 'fulfilled' ? installedResult.value : { items: [] }
+    const skillRoots = skills.flatMap(skill => {
+      if (!skill.plugin_name) return []
+      const root = localHarnessPluginRootFromSkillPath(skill.path)
+      return root ? [root] : []
+    })
+    const pluginLocations = installed.items.flatMap<LocalHarnessPluginLocation>(plugin => {
+      if (
+        !plugin.spec.enabled ||
+        (plugin.spec.installState !== 'installed' &&
+          plugin.spec.installState !== 'update_available')
+      ) {
+        return []
+      }
+      const sourcePayload = plugin.spec.sourcePayload ?? {}
+      const marketplacePath =
+        typeof sourcePayload.marketplacePath === 'string'
+          ? sourcePayload.marketplacePath.trim()
+          : ''
+      const pluginName =
+        (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
+        plugin.spec.source.pluginKey?.trim() ||
+        ''
+      return marketplacePath && pluginName ? [{ marketplacePath, pluginName }] : []
+    })
+    let resolvedRoots: string[] = []
+    try {
+      resolvedRoots = await resolveLocalHarnessPluginRoots(pluginLocations)
+    } catch (error) {
+      console.warn('Failed to resolve installed Agent Plugin roots for local Harness:', error)
+    }
+    return Array.from(new Set([...skillRoots, ...resolvedRoots]))
+  }, [localPluginApi, projectChat])
 
   useEffect(() => {
-    if (currentRuntimeTask || !rightPanelTabs.includes('browser')) {
+    const resetCentralHarness = () => {
+      centralHarnessRequestIdRef.current += 1
+      setCentralHarnessStarting(false)
+      setCentralHarnessError(null)
+      setNewChatRuntime('codex')
+    }
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
+    }
+  }, [])
+
+  const launchHarnessSession = useCallback(
+    async ({
+      preference,
+      model,
+      prompt,
+      isPrimary,
+      projectId,
+      cwd,
+      resumeSession,
+      activate = true,
+      onError = setCentralHarnessError,
+    }: {
+      preference: LocalHarnessPreference
+      model: LocalHarnessModelOption | null
+      prompt: string
+      isPrimary: boolean
+      projectId: number | null
+      cwd: string
+      resumeSession?: LocalHarnessWorkbenchSession
+      activate?: boolean
+      onError?: (message: string) => void
+    }): Promise<LocalHarnessWorkbenchSession | null> => {
+      setCentralHarnessStarting(true)
+      setCentralHarnessError(null)
+      const requestId = centralHarnessRequestIdRef.current + 1
+      centralHarnessRequestIdRef.current = requestId
+      let proxyToken: string | null = null
+      try {
+        const pluginRoots = resumeSession?.pluginRoots ?? (await resolveHarnessPluginRoots())
+        const modelLaunch = model
+          ? await services?.localHarnessModelApi?.resolveLaunch(preference.id, model)
+          : null
+        if (model && !modelLaunch) {
+          throw new Error(t('workbench.harness_model_required', '请选择可用的 Wework 模型'))
+        }
+        proxyToken = modelLaunch?.proxyToken ?? null
+        const sessionId = await startLocalHarness({
+          harnessId: preference.id,
+          prompt,
+          isPrimary,
+          projectId,
+          cwd,
+          executablePath: preference.executablePath,
+          args: buildLocalHarnessLaunchArgs(preference, modelLaunch?.modelId ?? null),
+          pluginRoots,
+          proxyToken: modelLaunch?.proxyToken,
+          modelKey: model?.key ?? null,
+          resumeSessionId: resumeSession?.sessionId,
+          env: {
+            ...preference.env,
+            ...(modelLaunch?.env ?? {}),
+            WEWORK_EMBEDDED_BROWSER_LABEL: defaultEmbeddedBrowserLabel,
+          },
+        })
+        if (centralHarnessRequestIdRef.current !== requestId) {
+          await closeLocalTerminal(sessionId)
+          if (modelLaunch) {
+            await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
+          }
+          return null
+        }
+        if (!resumeSession) {
+          setPaneInput('')
+        }
+        const session: LocalHarnessWorkbenchSession = {
+          sessionId,
+          harnessId: preference.id,
+          cwd,
+          title:
+            resumeSession?.title ||
+            prompt.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) ||
+            localHarnessLabel(preference.id),
+          createdAt: resumeSession?.createdAt ?? Date.now(),
+          isPrimary,
+          projectId,
+          active: true,
+          modelKey: model?.key ?? null,
+          pluginRoots,
+          proxyToken: modelLaunch?.proxyToken,
+        }
+        onLocalHarnessSessionStarted(session, { activate })
+        return session
+      } catch (error) {
+        console.error('Failed to launch local Harness session:', {
+          harnessId: preference.id,
+          resumeSessionId: resumeSession?.sessionId ?? null,
+          error,
+        })
+        if (proxyToken) {
+          await services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+        }
+        onError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.harness_start_failed', '启动编码工具失败')
+        )
+        return null
+      } finally {
+        setCentralHarnessStarting(false)
+      }
+    },
+    [
+      onLocalHarnessSessionStarted,
+      defaultEmbeddedBrowserLabel,
+      resolveHarnessPluginRoots,
+      services,
+      setCentralHarnessError,
+      setCentralHarnessStarting,
+      setPaneInput,
+      t,
+    ]
+  )
+  const harnessResumeRequestsRef = useRef(new Set<string>())
+  const activeHarnessResumePreference =
+    activeLocalHarnessSession && !activeLocalHarnessSession.active
+      ? (enabledLocalHarnesses.find(
+          candidate => candidate.id === activeLocalHarnessSession.harnessId
+        ) ?? null)
+      : null
+  const activeHarnessResumeModelKey = activeLocalHarnessSession?.modelKey?.trim() || null
+  const harnessModelsReady = projectChat.isModelSelectionReady ?? true
+  const activeHarnessResumeModel =
+    activeLocalHarnessSession && activeHarnessResumePreference
+      ? (getHarnessModelOptions(activeHarnessResumePreference.id).find(
+          option => option.key === activeHarnessResumeModelKey
+        ) ?? null)
+      : null
+  const activeHarnessResumeError =
+    activeLocalHarnessSession && !activeLocalHarnessSession.active
+      ? !activeHarnessResumePreference
+        ? t('workbench.harness_resume_disabled', {
+            name: localHarnessLabel(activeLocalHarnessSession.harnessId),
+            defaultValue: `${localHarnessLabel(activeLocalHarnessSession.harnessId)} 已禁用，无法恢复会话`,
+          })
+        : harnessModelsReady && activeHarnessResumeModelKey && !activeHarnessResumeModel
+          ? t('workbench.harness_model_required', '请选择可用的 Wework 模型')
+          : null
+      : null
+  const activeHarnessDisplayError =
+    activeHarnessResumeError ??
+    (harnessResumeLaunchError &&
+    harnessResumeLaunchError.sessionId === activeLocalHarnessSession?.sessionId
+      ? harnessResumeLaunchError.message
+      : null) ??
+    centralHarnessError
+  useEffect(() => {
+    harnessResumeRequestsRef.current.clear()
+  }, [activeLocalHarnessSession?.sessionId])
+  useEffect(() => {
+    if (!activeLocalHarnessSession || activeLocalHarnessSession.active) return
+    const resumeRequests = harnessResumeRequestsRef.current
+    if (resumeRequests.has(activeLocalHarnessSession.sessionId)) return
+    if (
+      !activeHarnessResumePreference ||
+      (activeHarnessResumeModelKey && !harnessModelsReady) ||
+      (activeHarnessResumeModelKey && !activeHarnessResumeModel)
+    ) {
+      return
+    }
+    const sessionId = activeLocalHarnessSession.sessionId
+    let started = false
+    let cancelled = false
+    resumeRequests.add(sessionId)
+    const timer = window.setTimeout(() => {
+      started = true
+      setHarnessResumeLaunchError(current => (current?.sessionId === sessionId ? null : current))
+      void localPathExists(activeLocalHarnessSession.cwd)
+        .then(exists => {
+          if (cancelled) return
+          if (!exists) {
+            setHarnessResumeLaunchError({
+              sessionId,
+              message: t('workbench.harness_resume_workspace_missing', {
+                path: activeLocalHarnessSession.cwd,
+                defaultValue: `原工作区不存在，无法恢复会话：${activeLocalHarnessSession.cwd}`,
+              }),
+            })
+            return
+          }
+          return launchHarnessSession({
+            preference: activeHarnessResumePreference,
+            model: activeHarnessResumeModel,
+            prompt: '',
+            isPrimary: activeLocalHarnessSession.isPrimary,
+            projectId: activeLocalHarnessSession.projectId,
+            cwd: activeLocalHarnessSession.cwd,
+            resumeSession: activeLocalHarnessSession,
+          })
+        })
+        .catch(error => {
+          if (!cancelled) {
+            setHarnessResumeLaunchError({
+              sessionId,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : t('workbench.harness_start_failed', '启动编码工具失败'),
+            })
+          }
+        })
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      if (!started) {
+        resumeRequests.delete(sessionId)
+      }
+    }
+  }, [
+    activeHarnessResumeModel,
+    activeHarnessResumeModelKey,
+    activeHarnessResumePreference,
+    activeLocalHarnessSession,
+    harnessModelsReady,
+    launchHarnessSession,
+    t,
+  ])
+  const resolvePrimaryHarnessCwd = useCallback(async () => {
+    if (!centralHarnessCwd) {
+      throw new Error(
+        t('workbench.harness_start_unavailable', {
+          name: newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime),
+        })
+      )
+    }
+    if (paneProjectWork.executionMode !== 'git_worktree') return centralHarnessCwd
+
+    const deviceId =
+      composerWorkspaceTarget?.deviceId ?? centralHarnessTargetDevice?.device_id ?? null
+    const runtimeWorkApi = services?.runtimeWorkApi
+    if (!deviceId || !runtimeWorkApi) {
+      throw new Error(t('workbench.create_permanent_worktree_unavailable'))
+    }
+    const branch = paneProjectWork.worktreeBranch?.trim()
+    const prepared = await runtimeWorkApi.prepareWorktree({
+      deviceId,
+      sourcePath: centralHarnessCwd,
+      worktreeId: `harness-${crypto.randomUUID()}`,
+      ...(branch ? { ref: branch } : {}),
+    })
+    return prepared.path ?? prepared.worktree.path
+  }, [
+    centralHarnessCwd,
+    centralHarnessTargetDevice?.device_id,
+    composerWorkspaceTarget?.deviceId,
+    newChatRuntime,
+    paneProjectWork.executionMode,
+    paneProjectWork.worktreeBranch,
+    services?.runtimeWorkApi,
+    t,
+  ])
+
+  const submitWorkbenchInput = async (
+    value?: string,
+    options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }
+  ) => {
+    if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
+      return submitPaneInput(value, options)
+    }
+
+    const prompt = (value ?? paneInput).trim()
+    if (!prompt || centralHarnessStarting) return
+    if (!selectedHarnessAvailable || !centralHarnessCwd || !selectedHarnessPreference) {
+      const harnessName = newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime)
+      setCentralHarnessError(
+        t('workbench.harness_start_unavailable', {
+          name: harnessName,
+          defaultValue: `当前工作区无法启动 ${harnessName}`,
+        })
+      )
+      return
+    }
+
+    try {
+      const cwd = await resolvePrimaryHarnessCwd()
+      await launchHarnessSession({
+        preference: selectedHarnessPreference,
+        model: selectedHarnessModel,
+        prompt,
+        isPrimary: true,
+        projectId: currentProject?.id ?? null,
+        cwd,
+      })
+    } catch (error) {
+      setCentralHarnessError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.harness_start_failed', '启动编码工具失败')
+      )
+    }
+  }
+
+  const startAdditionalHarnessSession = useCallback(
+    async (
+      harnessId: LocalHarnessId,
+      target: 'main' | 'right',
+      model: LocalHarnessModelOption | null
+    ) => {
+      if (centralHarnessStarting) return
+
+      const preference = enabledLocalHarnesses.find(candidate => candidate.id === harnessId)
+      const installed = localHarnesses.some(
+        harness => harness.id === harnessId && harness.installed
+      )
+      if (
+        !preference ||
+        !installed ||
+        !centralHarnessCwd ||
+        !preferLocalWorkspaceTerminal ||
+        !canPrepareHarnessWorktree ||
+        (model && !services?.localHarnessModelApi)
+      ) {
+        setCentralHarnessError(
+          t('workbench.harness_start_unavailable', {
+            name: localHarnessLabel(harnessId),
+            defaultValue: `当前工作区无法启动 ${localHarnessLabel(harnessId)}`,
+          })
+        )
+        return
+      }
+
+      try {
+        setAdditionalHarnessError(null)
+        const cwd = activeLocalHarnessSession?.cwd ?? (await resolvePrimaryHarnessCwd())
+        const session = await launchHarnessSession({
+          preference,
+          model,
+          prompt: '',
+          isPrimary: false,
+          projectId: activeLocalHarnessSession?.projectId ?? currentProject?.id ?? null,
+          cwd,
+          activate: target === 'main',
+          onError: target === 'right' ? setAdditionalHarnessError : setCentralHarnessError,
+        })
+        if (session && target === 'right') {
+          const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
+          setRightPanelOpen(true)
+          setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
+          setRightPanelView(tab)
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : t('workbench.harness_start_failed', '启动编码工具失败')
+        if (target === 'right') {
+          setAdditionalHarnessError(message)
+        } else {
+          setCentralHarnessError(message)
+        }
+      }
+    },
+    [
+      activeLocalHarnessSession,
+      canPrepareHarnessWorktree,
+      centralHarnessCwd,
+      centralHarnessStarting,
+      currentProject,
+      enabledLocalHarnesses,
+      launchHarnessSession,
+      localHarnesses,
+      preferLocalWorkspaceTerminal,
+      resolvePrimaryHarnessCwd,
+      services,
+      setAdditionalHarnessError,
+      setCentralHarnessError,
+      t,
+    ]
+  )
+  const harnessSessionPickerOptions = useMemo(
+    () =>
+      enabledLocalHarnesses.map(preference => ({
+        id: preference.id,
+        disabled: Boolean(
+          centralHarnessStarting ||
+          !localHarnesses.some(harness => harness.id === preference.id && harness.installed) ||
+          !centralHarnessCwd ||
+          !preferLocalWorkspaceTerminal ||
+          !canPrepareHarnessWorktree
+        ),
+        models: services?.localHarnessModelApi ? getHarnessModelOptions(preference.id) : [],
+        selectedModel: services?.localHarnessModelApi ? getSelectedHarnessModel(preference) : null,
+      })),
+    [
+      canPrepareHarnessWorktree,
+      centralHarnessCwd,
+      centralHarnessStarting,
+      enabledLocalHarnesses,
+      getHarnessModelOptions,
+      getSelectedHarnessModel,
+      localHarnesses,
+      preferLocalWorkspaceTerminal,
+      services?.localHarnessModelApi,
+    ]
+  )
+  const createHarnessWorkspaceActions = useCallback(
+    (target: 'main' | 'right'): WorkspaceAddMenuItem[] =>
+      enabledLocalHarnesses.length > 0
+        ? [
+            {
+              id: 'harness',
+              testId: 'workspace-add-harness-option',
+              icon: Bot,
+              label: `${t(
+                'workbench.harness_session_picker_title',
+                '新建编码会话'
+              )} · ${t('workbench.experimental_badge', '实验性')}`,
+              disabled: harnessSessionPickerOptions.every(option => option.disabled),
+              onSelect: () => setHarnessSessionPickerTarget(target),
+            },
+          ]
+        : [],
+    [enabledLocalHarnesses.length, harnessSessionPickerOptions, t]
+  )
+  const rightHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('right'),
+    [createHarnessWorkspaceActions]
+  )
+  const bottomHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('main'),
+    [createHarnessWorkspaceActions]
+  )
+
+  useEffect(() => {
+    const browserTabs = rightPanelTabs.filter(isRightWorkspaceBrowserTab)
+    if (currentRuntimeTask || browserTabs.length === 0) {
       if (latestBlankBrowserMigration?.sourcePaneKey === paneKey) {
         latestBlankBrowserMigration = null
       }
@@ -1595,7 +2053,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
     latestBlankBrowserMigration = {
       sourcePaneKey: paneKey,
-      browserLabel: embeddedBrowserLabel,
+      browserLabel: defaultEmbeddedBrowserLabel,
+      browserStates: Object.fromEntries(
+        browserTabs
+          .map(tab => [tab, browserStates[tab]] as const)
+          .filter(
+            (entry): entry is readonly [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
+              Boolean(entry[1])
+          )
+      ),
       rightPanelOpen,
       rightPanelExpanded,
       rightPanelView,
@@ -1604,7 +2070,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [
     currentRuntimeTask,
-    embeddedBrowserLabel,
+    browserStates,
+    defaultEmbeddedBrowserLabel,
     paneKey,
     rightPanelExpanded,
     rightPanelOpen,
@@ -1614,17 +2081,37 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   useEffect(() => {
     if (!initialBlankBrowserMigration || !currentRuntimeTask) return
-    if (migratedEmbeddedBrowserLabel !== initialBlankBrowserMigration.browserLabel) return
 
     let disposed = false
-    void relabelEmbeddedBrowser(
-      initialBlankBrowserMigration.browserLabel,
-      defaultEmbeddedBrowserLabel
-    )
+    const mappings = Object.entries(initialBlankBrowserMigration.browserStates)
+      .filter((entry): entry is [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
+        Boolean(entry[1]?.label)
+      )
+      .map(([tab, state]) => ({
+        tab,
+        fromLabel: state.label,
+        toLabel: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
+      }))
+
+    void mappings
+      .reduce(async (previous, { fromLabel, toLabel }) => {
+        await previous
+        if (fromLabel === toLabel) return
+        await relabelEmbeddedBrowser(fromLabel, toLabel)
+      }, Promise.resolve())
       .then(() => {
-        if (!disposed) {
-          setMigratedEmbeddedBrowserLabel(null)
-        }
+        if (disposed) return
+        setBrowserStates(current => {
+          let changed = false
+          const next = { ...current }
+          mappings.forEach(({ tab, toLabel }) => {
+            const state = next[tab]
+            if (!state || state.label === toLabel) return
+            next[tab] = { ...state, label: toLabel }
+            changed = true
+          })
+          return changed ? next : current
+        })
       })
       .catch(error => {
         console.error('Failed to migrate embedded browser label:', error)
@@ -1633,40 +2120,49 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       disposed = true
     }
-  }, [
-    currentRuntimeTask,
-    defaultEmbeddedBrowserLabel,
-    initialBlankBrowserMigration,
-    migratedEmbeddedBrowserLabel,
-  ])
+  }, [currentRuntimeTask, defaultEmbeddedBrowserLabel, initialBlankBrowserMigration])
 
-  const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
-    currentRuntimeTask,
-    workspaceProjectId: workspaceProject?.id,
-    workspaceTarget: effectiveWorkspaceTarget,
-    executionMode: paneProjectWork.executionMode,
-    preferLocalTerminal: preferLocalWorkspaceTerminal,
-  })
+  const workspacePanelTarget = useMemo<WorkspaceTarget | null>(() => {
+    if (!activeLocalHarnessSession) return effectiveWorkspaceTarget
+
+    return {
+      deviceId:
+        effectiveWorkspaceTarget?.deviceId ??
+        composerWorkspaceTarget?.deviceId ??
+        centralHarnessTargetDevice?.device_id ??
+        'local',
+      path: activeLocalHarnessSession.cwd,
+      source: 'project',
+      workspaceSource: 'local',
+    }
+  }, [
+    activeLocalHarnessSession,
+    centralHarnessTargetDevice?.device_id,
+    composerWorkspaceTarget?.deviceId,
+    effectiveWorkspaceTarget,
+  ])
+  const workspacePanelPrefersLocalTerminal = activeLocalHarnessSession
+    ? true
+    : preferLocalWorkspaceTerminal
+  const bottomPanelWorkspaceKey = activeLocalHarnessSession
+    ? `harness:${activeLocalHarnessSession.sessionId}`
+    : createBottomPanelWorkspaceKey({
+        currentRuntimeTask,
+        workspaceProjectId: workspaceProject?.id,
+        workspaceTarget: effectiveWorkspaceTarget,
+        executionMode: paneProjectWork.executionMode,
+        preferLocalTerminal: preferLocalWorkspaceTerminal,
+      })
   const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
-  const activeBottomPanelContext = useMemo<BottomPanelRenderContext>(
-    () => ({
-      key: bottomPanelWorkspaceKey,
-      currentProject: workspaceProject,
-      devices,
-      workspaceTarget: effectiveWorkspaceTarget,
-      preferLocalTerminal: preferLocalWorkspaceTerminal,
-      terminalContextTitle: runtimeTaskTitle,
-    }),
-    [
-      bottomPanelWorkspaceKey,
-      devices,
-      effectiveWorkspaceTarget,
-      preferLocalWorkspaceTerminal,
-      runtimeTaskTitle,
-      workspaceProject,
-    ]
-  )
-  const rememberActiveBottomPanelContext = useCallback(() => {
+  const activeBottomPanelContext: BottomPanelRenderContext = {
+    key: bottomPanelWorkspaceKey,
+    currentProject: workspaceProject,
+    devices,
+    workspaceTarget: workspacePanelTarget,
+    preferLocalTerminal: workspacePanelPrefersLocalTerminal,
+    terminalContextTitle: workbenchTitle,
+  }
+  const rememberActiveBottomPanelContext = () => {
     setBottomPanelContexts(current => {
       const existingIndex = current.findIndex(context => context.key === bottomPanelWorkspaceKey)
       if (existingIndex < 0) {
@@ -1679,32 +2175,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       next[existingIndex] = activeBottomPanelContext
       return next
     })
-  }, [activeBottomPanelContext, bottomPanelWorkspaceKey, setBottomPanelContexts])
-  const setCurrentBottomPanelOpen = useCallback(
-    (next: boolean | ((open: boolean) => boolean)) => {
-      rememberActiveBottomPanelContext()
-      onTerminalPanePinChange(paneKey, 'bottom-panel', true)
-      setBottomPanelOpenByKey(current => {
-        const currentOpen = current[bottomPanelWorkspaceKey] ?? false
-        const nextOpen = typeof next === 'function' ? next(currentOpen) : next
-        if (currentOpen === nextOpen) return current
-        return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
-      })
-    },
-    [
-      bottomPanelWorkspaceKey,
-      onTerminalPanePinChange,
-      paneKey,
-      rememberActiveBottomPanelContext,
-      setBottomPanelOpenByKey,
-    ]
+  }
+  const setCurrentBottomPanelOpen = (next: boolean | ((open: boolean) => boolean)) => {
+    rememberActiveBottomPanelContext()
+    onTerminalPanePinChange(paneKey, 'bottom-panel', true)
+    setBottomPanelOpenByKey(current => {
+      const currentOpen = current[bottomPanelWorkspaceKey] ?? false
+      const nextOpen = typeof next === 'function' ? next(currentOpen) : next
+      if (currentOpen === nextOpen) return current
+      return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
+    })
+  }
+  const inactiveBottomPanelContexts = bottomPanelContexts.filter(
+    context => context.key !== bottomPanelWorkspaceKey
   )
-  const bottomPanelContextsToRender = useMemo(() => {
-    const inactiveContexts = bottomPanelContexts.filter(
-      context => context.key !== bottomPanelWorkspaceKey
-    )
-    return [...inactiveContexts, activeBottomPanelContext]
-  }, [activeBottomPanelContext, bottomPanelContexts, bottomPanelWorkspaceKey])
+  const bottomPanelContextsToRender = [...inactiveBottomPanelContexts, activeBottomPanelContext]
   const reviewRequestSequence = useRef(0)
   const previousTurnReviewRef = useRef<{
     loadDiff: () => Promise<string>
@@ -1747,7 +2232,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuOpenSignal, setProjectMenuOpenSignal] = useState(0)
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
-  const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
+  const isCreatingWorktree = isWorktreeCreationPending(
+    runtimeTaskSummary,
+    paneSession.status.sendPhase
+  )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
@@ -1813,8 +2302,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onModelSelectorOpenChange: open => {
         if (!open) pendingModelRetryRef.current = null
       },
+      onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
-    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
+    [
+      modelSelectorOpenSignal,
+      projectChat,
+      refinePluginTrialPrompt,
+      retryFailedMessageAfterModelSelect,
+    ]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
@@ -1831,19 +2326,98 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [paneSession]
   )
   const openRightPanelTab = useCallback(
-    (tab: RightWorkspacePanelTab) => {
+    (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
+      if (options?.immediateLayout) setRightPanelImmediateLayout(true)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  useEffect(() => {
+    if (!rightPanelImmediateLayout || !rightPanelOpen) return
+
+    let secondFrame = 0
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        setRightPanelImmediateLayout(false)
+      })
+    })
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      if (secondFrame) cancelAnimationFrame(secondFrame)
+    }
+  }, [rightPanelImmediateLayout, rightPanelOpen])
+  const openBrowserTab = useCallback(
+    (request?: EmbeddedBrowserOpenRequest | null, targetTab?: RightWorkspaceBrowserTab) => {
+      const tab = targetTab ?? allocateBrowserTab()
+      logBrowserOpenDiagnostic('openBrowserTab', {
+        tab,
+        targetTab: targetTab ?? null,
+        requestId: request?.id ?? null,
+        url: request?.url ?? null,
+        requestLabel: request?.label ?? null,
+        requestTargetLabel: request?.targetLabel ?? null,
+      })
+      const existingState = browserStatesRef.current[tab]
+      const stateLabel =
+        existingState?.label ??
+        request?.targetLabel ??
+        browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab)
+      const normalizedRequest: EmbeddedBrowserOpenRequest | null = request
+        ? {
+            ...request,
+            id: request.id || `legacy-open-request-${++legacyEmbeddedBrowserOpenRequestSequence}`,
+            baseLabel: request.baseLabel || defaultEmbeddedBrowserLabel,
+            source: request.source || 'user',
+            disposition: request.disposition || 'current-tab',
+            label: stateLabel,
+            targetLabel: stateLabel,
+          }
+        : null
+
+      setBrowserStates(current => {
+        const currentState = current[tab]
+        return {
+          ...current,
+          [tab]: currentState
+            ? {
+                ...currentState,
+                openRequest: normalizedRequest ?? currentState.openRequest,
+              }
+            : createBrowserTabState(tab, {
+                label: stateLabel,
+                browserSessionId:
+                  request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+                openRequest: normalizedRequest,
+              }),
+        }
+      })
+      setRightPanelImmediateLayout(true)
+      setRightPanelOpen(true)
+      setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
+      setRightPanelView(tab)
+      syncActiveEmbeddedBrowserLabel(stateLabel)
+      return tab
+    },
+    [
+      allocateBrowserTab,
+      createBrowserTabState,
+      defaultEmbeddedBrowserLabel,
+      syncActiveEmbeddedBrowserLabel,
+      setRightPanelImmediateLayout,
+    ]
+  )
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
       setRightPanelView(tab)
+      if (isRightWorkspaceBrowserTab(tab)) {
+        const activeBrowserLabel = browserStatesRef.current[tab]?.label
+        if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
+      }
     },
-    [setRightPanelOpen, setRightPanelView]
+    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -1878,35 +2452,109 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (selectedText: string) => openTemporaryChatTab(selectedText),
     [openTemporaryChatTab]
   )
-  const embeddedBrowserListenerStateRef = useRef({
-    embeddedBrowserLabel,
-    openRightPanelTab,
-  })
-  useEffect(() => {
-    embeddedBrowserListenerStateRef.current = {
-      embeddedBrowserLabel,
-      openRightPanelTab,
-    }
-  }, [embeddedBrowserLabel, openRightPanelTab])
-  useEffect(() => {
-    if (!paneActive) return
-    const listener = listenEmbeddedBrowserOpenRequests(request => {
-      const current = embeddedBrowserListenerStateRef.current
-      if (request.label && request.label !== current.embeddedBrowserLabel) {
-        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
-        setMigratedEmbeddedBrowserLabel(request.label)
+  const routeEmbeddedBrowserOpenRequest = useCallback(
+    (request: EmbeddedBrowserOpenRequest) => {
+      const states = browserStatesRef.current
+      const targetByLabel = findBrowserTabByPopupParent(
+        states,
+        request.targetLabel ?? request.label
+      )
+      const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
+      const baseLabelMatchesPane =
+        requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
+        requestBaseLabel === defaultEmbeddedBrowserLabel ||
+        Boolean(targetByLabel)
+      if (!baseLabelMatchesPane) {
+        logBrowserOpenDiagnostic('routeRequestDropped', {
+          requestId: request.id,
+          url: request.url,
+          reason: 'baseLabel-mismatch',
+          requestBaseLabel,
+          defaultEmbeddedBrowserLabel,
+        })
+        return
       }
-      setEmbeddedBrowserOpenRequest(previous => ({
+
+      const source = request.source || 'agent'
+      const disposition = request.disposition || 'current-tab'
+      logBrowserOpenDiagnostic('routeRequest', {
+        requestId: request.id,
+        url: request.url,
+        label: request.label ?? null,
+        baseLabel: requestBaseLabel,
+        source,
+        disposition,
+        targetByLabel: targetByLabel ?? null,
+        defaultEmbeddedBrowserLabel,
+      })
+      const normalizedRequest: EmbeddedBrowserOpenRequest = {
         ...request,
-        id: (previous?.id ?? 0) + 1,
-      }))
-      current.openRightPanelTab('browser')
+        id: request.id || `legacy-open-request-${++legacyEmbeddedBrowserOpenRequestSequence}`,
+        baseLabel: requestBaseLabel,
+        source,
+        disposition,
+      }
+      const opensNewBrowserTab =
+        disposition === 'new-tab' || source === 'user' || source === 'popup'
+      const activeBrowserTab = isRightWorkspaceBrowserTab(rightPanelView) ? rightPanelView : null
+
+      openBrowserTab(
+        normalizedRequest,
+        opensNewBrowserTab ? undefined : (targetByLabel ?? activeBrowserTab ?? undefined)
+      )
+    },
+    [defaultEmbeddedBrowserLabel, openBrowserTab, rightPanelView]
+  )
+  useEffect(() => {
+    if (!paneActive) return undefined
+
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
+      if (!paneActiveRef.current) return
+      logBrowserOpenDiagnostic('openRequestReceived', {
+        requestId: request.id,
+        url: request.url,
+        label: request.label ?? null,
+        source: request.source ?? null,
+      })
+      routeEmbeddedBrowserOpenRequest(request)
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [paneActive])
+  }, [paneActive, routeEmbeddedBrowserOpenRequest])
+  useEffect(() => {
+    if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
+    const listener = listenEmbeddedBrowserPopupRequests(request => {
+      const parentTab = findBrowserTabByPopupParent(
+        browserStatesRef.current,
+        request.parentLabel,
+        request.parentNativeLabel
+      )
+      if (!parentTab) return
+      if (
+        isDuplicateBrowserPopupRequest(
+          recentBrowserPopupRequestsRef.current,
+          parentTab,
+          request.url
+        )
+      ) {
+        return
+      }
+      routeEmbeddedBrowserOpenRequest({
+        id: request.popupId,
+        url: request.url,
+        baseLabel: defaultEmbeddedBrowserLabel,
+        source: 'popup',
+        disposition: 'new-tab',
+        parentLabel: request.parentLabel,
+      })
+    })
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [defaultEmbeddedBrowserLabel, paneActive, routeEmbeddedBrowserOpenRequest])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -1918,31 +2566,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [openRightPanelTab, setSelectedAssistantPlan]
   )
-  const closeRightPanelTab = useCallback(
-    (tab: RightWorkspacePanelTab) => {
-      if (tab.startsWith('chat:')) {
-        temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
-      }
-      if (tab === 'files') {
-        setOpenFileRequest(null)
-      }
-      setRightPanelTabs(current => {
-        const currentTabs = current.includes(tab) ? current : [...current, tab]
-        const next = currentTabs.filter(openTab => openTab !== tab)
-        if (next.length === 0) {
-          setRightPanelExpanded(false)
-          setRightPanelOpen(false)
-          setRightPanelView('launcher')
-          return next
-        }
-        if (rightPanelView === tab) {
-          setRightPanelView(next[next.length - 1])
-        }
+  const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
+    if (
+      browserState?.hasActiveDownload &&
+      !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
+    ) {
+      return
+    }
+    track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
+    if (tab.startsWith('chat:')) {
+      temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+    }
+    if (isRightWorkspaceHarnessTab(tab)) {
+      void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
+    }
+    if (tab === 'files') {
+      setOpenFileRequest(null)
+    }
+    if (browserState?.label) {
+      void closeEmbeddedBrowsers([browserState.label]).catch(error => {
+        console.error('Failed to close embedded browser tab:', error)
+      })
+    }
+    if (isRightWorkspaceBrowserTab(tab)) {
+      setBrowserStates(current => {
+        if (!current[tab]) return current
+        const next = { ...current }
+        delete next[tab]
         return next
       })
-    },
-    [rightPanelView, setOpenFileRequest, setRightPanelTabs, setRightPanelView]
-  )
+    }
+    setRightPanelTabs(current => {
+      const currentTabs = current.includes(tab) ? current : [...current, tab]
+      const next = currentTabs.filter(openTab => openTab !== tab)
+      if (next.length === 0) {
+        setRightPanelExpanded(false)
+        setRightPanelOpen(false)
+        setRightPanelView('launcher')
+        return next
+      }
+      if (rightPanelView === tab) {
+        setRightPanelView(next[next.length - 1])
+      }
+      return next
+    })
+  }
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -2077,8 +2746,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [fileWorkspaceTarget]
   )
   const selectBrowserView = useCallback(() => {
-    openRightPanelTab('browser')
-  }, [openRightPanelTab])
+    openBrowserTab()
+  }, [openBrowserTab])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab('terminal')
   }, [openRightPanelTab])
@@ -2249,7 +2918,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? reviewState.sourceSubtaskId
       : null
 
-  const toggleRightPanel = useCallback(() => {
+  const toggleRightPanel = () => {
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -2261,14 +2930,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       return nextOpen
     })
-  }, [effectiveRightPanelTabs, setRightPanelView])
-  const toggleRightPanelExpanded = useCallback(() => {
+  }
+  const toggleRightPanelExpanded = () => {
     setRightPanelExpanded(expanded => !expanded)
-  }, [])
-  const toggleBottomPanel = useCallback(
-    () => setCurrentBottomPanelOpen(open => !open),
-    [setCurrentBottomPanelOpen]
-  )
+  }
+  const toggleBottomPanel = () => setCurrentBottomPanelOpen(open => !open)
   const {
     pauseCurrentResponse: pauseCurrentResponseAction,
     compactContext: compactContextAction,
@@ -2304,9 +2970,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setBottomPanelOpenByKey]
   )
-  const handleTerminalTabsEmpty = useCallback(() => {
+  const handleTerminalTabsEmpty = () => {
     onTerminalPanePinChange(paneKey, 'bottom-panel', false)
-  }, [onTerminalPanePinChange, paneKey])
+  }
 
   useEffect(() => {
     if (!paneActive) return
@@ -2359,14 +3025,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
         experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
-          ? () => {
-              if (activeDeliveryItem) {
-                setDeliveryDialogOpen(true)
-              } else {
-                setDeliverAfterBinding(true)
-                setTodoBindingPickerOpen(true)
-              }
-            }
+          ? openDelivery
           : undefined
       }
       todoLabel={
@@ -2374,12 +3033,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       onManageTodo={
         experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
-          ? boundCloudItem
-            ? openBoundProjectSpaceTask
-            : () => {
-                setDeliverAfterBinding(false)
-                setTodoBindingPickerOpen(true)
-              }
+          ? openTodoManager
           : undefined
       }
       supervisor={supervisorFeatureAvailable ? supervisor : null}
@@ -2399,17 +3053,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const paneTaskTitle =
-    runtimeTaskTitle && !isTauri ? (
+    workbenchTitle && !isTauri ? (
       <div
         data-testid="workbench-pane-task-title"
         className={cn(
           'pointer-events-none absolute left-0 top-0 z-chrome flex h-11 min-w-0 truncate items-center pr-7 text-sm font-medium leading-none text-text-primary',
           sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{ width: paneTitleWidth }}
       >
-        <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
+        <span className="block w-full min-w-0 truncate">{workbenchTitle}</span>
       </div>
     ) : undefined
   const topBarLeftActions = !isTauri ? (
@@ -2469,8 +3123,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageSquareWarning />
     </button>
   ) : undefined
+  const closeHarnessButton =
+    activeLocalHarnessSession?.harnessId === 'opencode' ? (
+      <button
+        type="button"
+        data-testid={
+          activeLocalHarnessSession.isPrimary
+            ? 'central-harness-archive-button'
+            : 'central-harness-close-button'
+        }
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.archive_harness', '归档编码会话')}
+        title={t('workbench.archive_harness', '归档编码会话')}
+        onClick={() => {
+          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+        }}
+      >
+        <Archive />
+      </button>
+    ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
+      <button
+        type="button"
+        data-testid="central-harness-close-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.close_harness', '关闭编码工具')}
+        title={t('workbench.close_harness', '关闭编码工具')}
+        onClick={() => {
+          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+        }}
+      >
+        <X />
+      </button>
+    ) : undefined
   const feedbackInChromeTitlebar = isTauri && getPlatform() === 'mac'
-  const mainHeaderActions = (
+  const mainHeaderActions = activeLocalHarnessSession ? (
+    <>{closeHarnessButton}</>
+  ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
@@ -2481,6 +3169,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const topRightActions = isTauri ? (
     <>{panelChromeActions}</>
+  ) : activeLocalHarnessSession ? (
+    <>
+      {closeHarnessButton}
+      {workspacePanelActions}
+    </>
   ) : (
     <>
       {forkTaskButton}
@@ -2506,15 +3199,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           />
         </div>
       )}
-      {runtimeTaskTitle ? (
+      {workbenchTitle ? (
         <div
           data-testid="workbench-pane-task-title"
           className={cn(
             'pointer-events-none relative z-0 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-sm font-medium leading-none text-text-primary',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
         >
-          <span className="block min-w-0 truncate">{runtimeTaskTitle}</span>
+          <span className="block min-w-0 truncate">{workbenchTitle}</span>
         </div>
       ) : (
         <div className="min-w-0 flex-1" />
@@ -2532,7 +3225,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         aria-hidden="true"
         className={cn(
           'shrink-0',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           width: `calc(${rightPanelTabBarWidth} + ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`,
@@ -2544,7 +3237,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           'pointer-events-none absolute top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
           background.imagePath && background.inTopBar ? 'bg-transparent' : 'bg-background/95',
           rightPanelOpen && !rightPanelExpanded ? 'border-l border-border/60' : undefined,
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           right: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
@@ -2562,7 +3255,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="titlebar-actions"
         className={cn(
           'pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
           right: '0px',
@@ -2615,7 +3308,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {tauriMainHeaderContent && paneActive && workbenchVisible ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
-      {feedbackInChromeTitlebar && paneActive && workbenchVisible ? (
+      {feedbackInChromeTitlebar && !activeLocalHarnessSession && paneActive && workbenchVisible ? (
         <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
@@ -2634,7 +3327,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
               background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
-              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+              rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
@@ -2656,24 +3349,71 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
+          data-embedded-browser-label={defaultEmbeddedBrowserLabel}
           className={cn(
             'relative grid h-full min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
             hasConversation
               ? 'overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
               : 'overflow-hidden',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
           style={{ width: chatColumnWidth }}
         >
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
+          ) : activeLocalHarnessSession ? (
+            <div className="relative flex min-h-0 min-w-0">
+              {activeLocalHarnessSession.active ? (
+                <CentralHarnessTerminal
+                  sessionId={activeLocalHarnessSession.sessionId}
+                  harnessId={activeLocalHarnessSession.harnessId}
+                  title={activeLocalHarnessSession.title}
+                  cwd={activeLocalHarnessSession.cwd}
+                  active={paneActive && workbenchVisible}
+                  showHeader={false}
+                  onClose={
+                    activeLocalHarnessSession.isPrimary
+                      ? undefined
+                      : () => {
+                          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+                        }
+                  }
+                  onTitleChange={title =>
+                    onLocalHarnessSessionTitleChange(activeLocalHarnessSession.sessionId, title)
+                  }
+                  onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
+                />
+              ) : (
+                <div
+                  data-testid="local-harness-session-resuming"
+                  className={cn(
+                    'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
+                    activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
+                  )}
+                >
+                  {activeHarnessDisplayError ? (
+                    activeHarnessDisplayError
+                  ) : (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                      {t('workbench.harness_resuming', {
+                        name: localHarnessLabel(activeLocalHarnessSession.harnessId),
+                        defaultValue: `正在恢复 ${localHarnessLabel(activeLocalHarnessSession.harnessId)} 会话…`,
+                      })}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           ) : hasConversation ? (
             <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
               <ScrollableMessageArea
                 messages={paneMessages}
                 loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
+                isWaitingForAssistant={
+                  !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+                }
                 hasMoreBefore={paneSession.transcriptHasMoreBefore}
                 loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                 turnNavigation={paneSession.turnNavigation}
@@ -2698,6 +3438,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   DESKTOP_MESSAGE_LIST_CLASS,
                   chatContentResizing && 'transition-none'
                 )}
+                contentFooter={
+                  isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                }
+                contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
                 stickyFooterClassName={cn(
                   DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
                   hasMainBackground
@@ -2707,7 +3451,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   rightPanelExpanded && 'z-critical'
                 )}
                 stickyFooter={
-                  temporaryChatExpanded ? null : (
+                  temporaryChatExpanded || isCreatingWorktree ? null : (
                     <>
                       <div
                         className={cn(
@@ -2741,7 +3485,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               <ChevronRight className="h-4 w-4" aria-hidden="true" />
                             </button>
                           )}
-                          {!rightPanelExpanded && (
+                          {connectorAuthGate.pending ? (
+                            <ConnectorAuthCard
+                              target={connectorAuthGate.pending.target}
+                              title={connectorAuthGate.pending.title}
+                              onSuccess={() => {
+                                void connectorAuthGate.completePending()
+                              }}
+                              onCancel={connectorAuthGate.clearPending}
+                            />
+                          ) : !rightPanelExpanded ? (
                             <>
                               {showConversationDeviceBanner ? (
                                 <ConversationDeviceOfflineBanner
@@ -2800,8 +3553,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     insertion={conversationSelectionInsertion}
                                     value={paneSession.input}
                                     onChange={paneSession.setInput}
+                                    onDraftEdit={paneSession.clearError}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled}
+                                    pluginPickerIconOnly={hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
                                     disabledReason={inlineComposerDisabledReason}
@@ -2868,7 +3623,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 </>
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     </>
@@ -2960,11 +3715,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     <BufferedChatInput
                       value={paneSession.input}
                       onChange={paneSession.setInput}
-                      onSubmit={submitPaneInput}
-                      disabled={composerDisabled}
-                      submitDisabled={paneSession.status.isSubmitting}
-                      error={paneSession.error}
-                      disabledReason={inlineComposerDisabledReason}
+                      onDraftEdit={() => {
+                        paneSession.clearError?.()
+                        setCentralHarnessError(null)
+                      }}
+                      onSubmit={submitWorkbenchInput}
+                      disabled={
+                        centralHarnessStarting ||
+                        (activeNewChatRuntime === 'codex' && composerDisabled)
+                      }
+                      submitDisabled={
+                        centralHarnessStarting ||
+                        (activeNewChatRuntime === 'codex' && paneSession.status.isSubmitting)
+                      }
+                      error={centralHarnessError ?? paneSession.error}
+                      disabledReason={
+                        activeNewChatRuntime === 'codex' ? inlineComposerDisabledReason : undefined
+                      }
                       placeholder={
                         showComposerProjectMenuAction
                           ? 'values' in popoutComposerPlaceholder
@@ -2975,6 +3742,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       variant="desktop"
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
+                      projectWorkBarTrailingContext={
+                        experimentalFeaturesEnabled ? (
+                          <WorkbenchHarnessSelector
+                            runtime={activeNewChatRuntime}
+                            harnesses={localHarnesses}
+                            enabledHarnesses={enabledLocalHarnesses.map(
+                              preference => preference.id
+                            )}
+                            loading={localHarnessesLoading}
+                            detectionFailed={localHarnessDetectionFailed}
+                            onRuntimeChange={runtime => {
+                              setCentralHarnessError(null)
+                              setNewChatRuntime(runtime)
+                            }}
+                          />
+                        ) : undefined
+                      }
+                      modelSelectorOverride={
+                        selectedHarnessPreference ? (
+                          <WorkbenchHarnessModelSelector
+                            harnessId={selectedHarnessPreference.id}
+                            models={harnessModelOptions}
+                            selectedModel={selectedHarnessModel}
+                            onModelChange={model => {
+                              setLocalHarnessModelKeys(current => ({
+                                ...current,
+                                [selectedHarnessPreference.id]: model?.key ?? null,
+                              }))
+                              const localHarnesses = localHarnessPreferences.map(preference =>
+                                preference.id === selectedHarnessPreference.id
+                                  ? { ...preference, modelKey: model?.key ?? null }
+                                  : preference
+                              )
+                              void updateAppPreferences({ localHarnesses }).catch(error => {
+                                console.error('Failed to save harness model selection:', error)
+                                setCentralHarnessError(
+                                  t(
+                                    'workbench.harness_model_save_failed',
+                                    '编码工具模型选择保存失败'
+                                  )
+                                )
+                              })
+                            }}
+                          />
+                        ) : undefined
+                      }
                       showWorkspaceMenu={showComposerProjectMenuAction}
                       queuedMessages={paneQueuedMessages}
                       guidanceMessages={paneGuidanceMessages}
@@ -3054,7 +3867,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             aria-controls="right-workspace-panel-shell"
             className={cn(
               'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
-              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
+              rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
             )}
             style={{ left: rightSplitChatWidth }}
             onPointerDown={handleRightSplitResizeStart}
@@ -3071,7 +3884,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               : hasMainBackground
                 ? 'bg-background/20'
                 : 'bg-background',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
               ? cn(
                   'pointer-events-auto opacity-100',
@@ -3087,17 +3900,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               showWorkbenchBackground={hasMainBackground && !rightPanelExpanded}
               visible={paneActive && workbenchVisible && rightPanelOpen}
               expanded={rightPanelExpanded}
-              activeView={rightPanelView}
+              activeView={effectiveRightPanelView}
               openTabs={effectiveRightPanelTabs}
+              allowTemporaryChat={temporaryChatAvailable}
               currentProject={workspaceProject}
               canBrowseFiles={canBrowseFiles}
               currentRuntimeTask={currentRuntimeTask}
               devices={devices}
-              workspaceTarget={effectiveWorkspaceTarget}
+              workspaceTarget={workspacePanelTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
               fileWorkspaceTargets={fileWorkspaceTargets}
-              preferLocalTerminal={preferLocalWorkspaceTerminal}
-              terminalContextTitle={runtimeTaskTitle}
+              preferLocalTerminal={workspacePanelPrefersLocalTerminal}
+              terminalContextTitle={workbenchTitle}
+              workspaceActions={rightHarnessWorkspaceActions}
+              harnessSessions={localHarnessSessions}
               workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
@@ -3105,8 +3921,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
-              embeddedBrowserLabel={embeddedBrowserLabel}
-              embeddedBrowserOpenRequest={embeddedBrowserOpenRequest}
+              browserStates={browserStates}
+              onBrowserStateChange={updateBrowserState}
               codeCommentCount={paneSession.codeCommentContexts.length}
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
@@ -3122,6 +3938,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
+              onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
+              onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
@@ -3137,15 +3955,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             panelKey={context.key}
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
+            paneVisible={paneActive && workbenchVisible}
             context={context}
             workspaceSessionApi={workspaceSessionApi}
             showWorkbenchBackground={hasMainBackground}
+            workspaceActions={bottomHarnessWorkspaceActions}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />
         )
       })}
       <>
+        <HarnessSessionPickerDialog
+          open={harnessSessionPickerTarget !== null}
+          options={harnessSessionPickerOptions}
+          onClose={() => setHarnessSessionPickerTarget(null)}
+          onSelect={(harnessId, model) =>
+            startAdditionalHarnessSession(harnessId, harnessSessionPickerTarget ?? 'main', model)
+          }
+        />
         <TaskForkDialog
           key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
           open={forkDialogOpen}
@@ -3227,11 +4055,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onClear={continueInIm.clearNotice}
         />
         <TransientNotice
-          message={todoBindingError}
+          message={additionalHarnessError}
           tone="error"
-          onClear={() => setTodoBindingError(null)}
+          onClear={() => setAdditionalHarnessError(null)}
         />
-        <TransientNotice message={cloudActionNotice} onClear={() => setCloudActionNotice(null)} />
+        <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
+        <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
         {deliveryDialogOpen &&
           activeDeliveryItem &&
           currentRuntimeTask &&
@@ -3242,34 +4071,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               runtimeTaskTitle={runtimeTaskTitle}
               messages={paneSession.messages}
               deliveryApi={services.deliveryApi}
-              onCancel={() => setDeliveryDialogOpen(false)}
+              onCancel={closeDeliveryDialog}
               onDelivered={() => void finishLocalDelivery()}
             />
           )}
         {todoBindingPickerOpen && todoBindingApis.length > 0 && (
           <TodoBindingPicker
             apis={todoBindingApis}
-            runtimeTask={currentRuntimeTask ?? undefined}
+            runtimeTask={currentProjectSpaceRuntimeTask ?? undefined}
             runtimeTaskTitle={runtimeTaskTitle}
-            currentProject={currentRuntimeTask ? boundCloudProject : pendingCloudProject}
-            currentItem={currentRuntimeTask ? boundCloudItem : pendingTodoItem}
-            onClose={() => {
-              setTodoBindingPickerOpen(false)
-              setDeliverAfterBinding(false)
-            }}
-            onBound={(project, item) => {
-              if (!currentRuntimeTask) {
-                setPendingCloudContext(project, item)
-                setTodoBindingPickerOpen(false)
-                return
-              }
-              setBoundCloudProject(project)
-              setBoundCloudItem(item)
-              setDeliveryItem(item ? cloudItemAsLocalWorkItem(item, currentRuntimeTask) : null)
-              setTodoBindingPickerOpen(false)
-              if (item && deliverAfterBinding) setDeliveryDialogOpen(true)
-              setDeliverAfterBinding(false)
-            }}
+            currentProject={
+              currentProjectSpaceRuntimeTask ? boundCloudProject : pendingCloudProject
+            }
+            currentItem={currentProjectSpaceRuntimeTask ? boundCloudItem : pendingTodoItem}
+            onClose={closeTodoBindingPicker}
+            onBound={handleTodoBound}
           />
         )}
       </>

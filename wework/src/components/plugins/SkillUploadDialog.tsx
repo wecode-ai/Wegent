@@ -2,10 +2,7 @@ import { AlertCircle, FileArchive, Loader2, Upload, X } from 'lucide-react'
 import type { DragEvent } from 'react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  readSkillPackageInfo,
-  type SkillPackageInfo,
-} from './skill-upload-utils'
+import { readSkillPackageInfo, type SkillPackageInfo } from './skill-upload-utils'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 
@@ -30,8 +27,7 @@ export function SkillUploadDialog({
   const { t } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [selectedPackage, setSelectedPackage] =
-    useState<SelectedSkillPackage | null>(null)
+  const [selectedPackage, setSelectedPackage] = useState<SelectedSkillPackage | null>(null)
   const [skillName, setSkillName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -61,7 +57,7 @@ export function SkillUploadDialog({
       setError(
         readError instanceof Error
           ? readError.message
-          : t('workbench.plugins_skill_upload_parse_error', '无法读取技能信息'),
+          : t('workbench.plugins_skill_upload_parse_error', '无法读取技能信息')
       )
     }
   }
@@ -97,22 +93,23 @@ export function SkillUploadDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
+    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-label={t('workbench.plugins_skill_upload_title', '上传技能')}
-        className="w-full max-w-[620px] rounded-2xl bg-background p-5 shadow-xl"
+        data-testid="skill-upload-dialog"
+        className="plugin-dialog-surface w-full max-w-[600px] p-5"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-text-primary">
+            <h2 className="heading-subsection text-text-primary">
               {t('workbench.plugins_skill_upload_title', '上传技能')}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
               {t(
                 'workbench.plugins_skill_upload_description',
-                '拖入技能安装包，确认信息后完成上传。',
+                '拖入技能安装包，确认信息后完成上传。'
               )}
             </p>
           </div>
@@ -130,10 +127,10 @@ export function SkillUploadDialog({
         <div
           data-testid="skill-upload-dropzone"
           className={[
-            'mt-5 flex min-h-[128px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed p-5 text-center transition-colors',
+            'mt-5 flex min-h-[128px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed p-5 text-center transition-colors',
             isDragging
-              ? 'border-primary bg-primary/5'
-              : 'border-border bg-surface hover:border-primary/60',
+              ? 'border-focus/70 bg-focus/5 ring-2 ring-focus/15'
+              : 'border-border/45 bg-surface hover:border-focus/60',
             isUploading ? 'pointer-events-none opacity-60' : '',
           ].join(' ')}
           onClick={() => inputRef.current?.click()}
@@ -149,7 +146,7 @@ export function SkillUploadDialog({
             className="hidden"
             data-testid="skill-upload-file-input"
             disabled={isUploading}
-            onChange={(event) => {
+            onChange={event => {
               const file = event.target.files?.[0]
               event.target.value = ''
               if (file) void selectFile(file)
@@ -157,8 +154,8 @@ export function SkillUploadDialog({
           />
           {selectedPackage ? (
             <>
-              <FileArchive className="h-8 w-8 text-primary" />
-              <p className="mt-2 text-sm font-semibold text-text-primary">
+              <FileArchive className="h-8 w-8 text-text-secondary" />
+              <p className="mt-2 text-sm font-medium text-text-primary">
                 {selectedPackage.file.name}
               </p>
               <p className="mt-1 text-xs text-text-muted">
@@ -168,7 +165,7 @@ export function SkillUploadDialog({
           ) : (
             <>
               <Upload className="h-8 w-8 text-text-muted" />
-              <p className="mt-2 text-sm font-semibold text-text-primary">
+              <p className="mt-2 text-sm font-medium text-text-primary">
                 {t('workbench.plugins_skill_upload_drop_title', '拖入或选择技能安装包')}
               </p>
               <p className="mt-1 text-xs text-text-muted">
@@ -180,14 +177,14 @@ export function SkillUploadDialog({
 
         {selectedPackage && (
           <div className="mt-5 grid grid-cols-2 gap-3">
-            <label className="text-xs font-semibold text-text-secondary">
+            <label className="text-xs font-medium text-text-secondary">
               {t('workbench.plugins_skill_upload_name', '技能名称')}
               <input
                 value={skillName}
                 data-testid="skill-upload-name-input"
-                className="mt-2 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+                className="mt-2 h-10 w-full rounded-lg border border-border/45 bg-background px-3 text-sm text-text-primary outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
                 disabled={isUploading}
-                onChange={(event) => setSkillName(event.target.value)}
+                onChange={event => setSkillName(event.target.value)}
               />
             </label>
             <InfoField
@@ -210,9 +207,7 @@ export function SkillUploadDialog({
             <InfoField
               label={t('workbench.plugins_skill_upload_tags', '标签')}
               value={
-                selectedPackage.info.tags.length > 0
-                  ? selectedPackage.info.tags.join(', ')
-                  : '-'
+                selectedPackage.info.tags.length > 0 ? selectedPackage.info.tags.join(', ') : '-'
               }
             />
           </div>
@@ -228,7 +223,7 @@ export function SkillUploadDialog({
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
-            className="h-9 rounded-xl px-4 text-sm font-semibold text-text-secondary hover:bg-surface"
+            className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"
             onClick={onCancel}
             disabled={isUploading}
           >
@@ -237,7 +232,7 @@ export function SkillUploadDialog({
           <button
             type="button"
             data-testid="skill-upload-confirm-button"
-            className="flex h-9 items-center gap-2 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-60"
+            className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-60"
             onClick={() => void submit()}
             disabled={isUploading || !selectedPackage}
           >
@@ -253,10 +248,8 @@ export function SkillUploadDialog({
 function InfoField({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-xl bg-surface px-3 py-2">
-      <p className="text-xs font-semibold text-text-muted">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold text-text-primary">
-        {value}
-      </p>
+      <p className="text-xs font-medium text-text-muted">{label}</p>
+      <p className="mt-1 truncate text-sm font-medium text-text-primary">{value}</p>
     </div>
   )
 }

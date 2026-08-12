@@ -37,6 +37,7 @@ export interface ProjectWorkPreference {
 export interface Team {
   id: number
   name: string
+  namespace?: string | null
   displayName?: string | null
   is_active: boolean
   default_for_modes?: string[]
@@ -642,6 +643,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
@@ -961,6 +963,16 @@ export interface RuntimeGlobalIMNotificationUpdateRequest {
   sessionKey?: string | null
 }
 
+export interface RuntimeIMNotificationPresenceUpdateRequest {
+  clientId: string
+  away: boolean
+}
+
+export interface RuntimeIMNotificationPresenceResponse {
+  away: boolean
+  ttlSeconds: number
+}
+
 export interface RuntimeTaskIMNotificationSubscriptionRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
@@ -1143,6 +1155,12 @@ export interface RuntimeTaskRenameRequest {
   title: string
 }
 
+export interface RuntimeTaskFriendlyTitleConfig {
+  modelId: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+}
+
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
   taskId?: string
@@ -1155,6 +1173,7 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
@@ -1168,6 +1187,7 @@ export interface RuntimeTaskCreateRequest {
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
   modelSelection?: ModelSelectionConfig | null
+  friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -1175,6 +1195,7 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
+  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
@@ -1328,12 +1349,14 @@ export interface LocalDeviceApp {
   name: string
   description?: string | null
   logoUrl?: string | null
+  logoUrlDark?: string | null
   installUrl?: string | null
   isAccessible?: boolean
   isEnabled?: boolean
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
   skillPath?: string | null
+  trialTemplates?: PluginPathComponent[]
 }
 
 export interface SkillDirectoryMove {
@@ -1583,6 +1606,8 @@ export interface RuntimeContextUsage {
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
+  itemId?: string
+  item_id?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]
@@ -1940,10 +1965,44 @@ export interface InstalledPluginComponents {
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]
   mcps: PluginMCPComponent[]
+  connectors?: Array<{
+    slug: string
+    authPolicy: 'on_install' | 'on_use' | 'optional'
+    localAuth?: PluginLocalAuthDefinition | null
+  }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+}
+
+export interface PluginLocalAuthDefinition {
+  kind?: 'local_qr' | 'browser_oauth'
+  health: string[]
+  start: string[]
+  poll: string[]
+  logout?: string[]
+  tool?: PluginLocalAuthToolDefinition | null
+  qrField?: string
+  statusField?: string
+  okValues?: string[]
+  pollIntervalSeconds?: number
+  timeoutSeconds?: number
+  logoutOnUninstall?: boolean
+}
+
+export interface PluginLocalAuthArtifactDefinition {
+  url: string
+  sha256: string
+  archive: 'tar_gz' | 'zip'
+  binaryPath: string
+}
+
+export interface PluginLocalAuthToolDefinition {
+  id: string
+  source: 'bundled' | 'managed'
+  version?: string | null
+  artifacts?: Record<string, PluginLocalAuthArtifactDefinition>
 }
 
 export interface InstalledPluginSource {
@@ -1984,6 +2043,14 @@ export interface InstalledPlugin {
   metadata: Record<string, unknown>
   spec: {
     source: InstalledPluginSource
+    origin?: 'created' | 'market'
+    pluginId?: number | null
+    releaseId?: number | null
+    desiredVersion?: string | null
+    updatePolicy?: 'manual'
+    sourceProvider?: 'wegent' | 'codex' | 'user'
+    sourceLabel?: string
+    visibility?: 'personal' | 'workspace' | 'public'
     displayName: string
     description: string
     version?: string | null
@@ -1999,6 +2066,17 @@ export interface InstalledPlugin {
   }
   status: {
     state: string
+    devices?: Array<{
+      deviceId: string
+      desiredReleaseId: number
+      actualReleaseId?: number | null
+      state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+      errorCode?: string | null
+      errorMessage?: string | null
+      attemptCount: number
+      lastSyncAt?: string | null
+      updatedAt: string
+    }>
   }
 }
 
@@ -2018,12 +2096,35 @@ export interface PluginMarketplaceItem {
   featured: boolean
   installed: boolean
   installedPluginId?: string | number | null
+  installedLocally?: boolean
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
   components: InstalledPluginComponents
   manifest: Record<string, unknown>
   ownerUserId: number
+  ownerDisplayName?: string
+  accessRole?: 'catalog' | 'owner' | 'recipient'
+  allowCopy?: boolean
+  grantUserCount?: number
+  grantNamespaceCount?: number
+  latestReleaseId?: number | null
+  listingType?: 'plugin' | 'skill'
+  origin?: 'market'
+  sourceProvider?: 'wegent' | 'codex' | 'user'
+  sourceLabel?: string
+  updateAvailable?: boolean
+  currentDeviceInstallation?: {
+    deviceId: string
+    desiredReleaseId: number
+    actualReleaseId?: number | null
+    state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+    errorCode?: string | null
+    errorMessage?: string | null
+    attemptCount: number
+    lastSyncAt?: string | null
+    updatedAt: string
+  } | null
 }
 
 export interface PluginMarketplaceListResponse {
@@ -2070,11 +2171,89 @@ export interface PluginMarketplaceInstallResponse {
   sync?: DeviceCapabilitySyncResponse | null
 }
 
+export interface PluginDeviceSyncResponse {
+  deviceId: string
+  pendingCount: number
+  sync: DeviceCapabilitySyncResponse
+}
+
+export interface PluginMarketplaceCapabilities {
+  canPublish: boolean
+  canSharePersonalPlugins?: boolean
+}
+
 export interface InstalledPluginUpdateRequest {
   enabled?: boolean
   componentStates?: Record<string, boolean>
   displayName?: string
   description?: string
+  releaseId?: number
+}
+
+export interface PluginSubmissionInitRequest {
+  slug: string
+  displayName: string
+  version: string
+  filename: string
+  sha256: string
+  sizeBytes: number
+  listingType?: 'plugin' | 'skill'
+  purpose?: 'marketplace_publish' | 'restricted_share'
+  visibility?: 'personal' | 'workspace' | 'public'
+  targets?: PluginAccessTarget[]
+  allowCopy?: boolean
+}
+
+export interface PluginSubmissionInitResponse {
+  submissionId: number
+  pluginId: number
+  releaseId: number
+  purpose?: 'marketplace_publish' | 'restricted_share'
+  uploadUrl: string
+  expiresAt: string
+}
+
+export interface PluginSubmissionItem {
+  id: number
+  pluginId: number
+  releaseId: number
+  status: 'uploading' | 'scanning' | 'pending' | 'approved' | 'rejected' | 'cancelled'
+  reviewNote: string
+  submittedAt: string
+  reviewedAt?: string | null
+}
+
+export interface PluginSubmissionCompleteResponse {
+  submission: PluginSubmissionItem
+  plugin?: PluginMarketplaceItem | null
+}
+
+export interface PluginAccessTarget {
+  entityType: 'user' | 'namespace'
+  entityId: string
+  displayName: string
+}
+
+export interface PluginAccessUpdateRequest {
+  scope: 'private' | 'restricted'
+  targets: PluginAccessTarget[]
+  allowCopy: boolean
+}
+
+export interface PluginAccessResponse extends PluginAccessUpdateRequest {
+  pluginId: number
+  revocationPendingCount: number
+}
+
+export interface PluginCopyResponse {
+  sourcePluginId: number
+  sourceReleaseId: number
+  sourcePluginName: string
+  sourceDisplayName: string
+  version: string
+  sha256: string
+  downloadUrl: string
+  expiresAt: string
 }
 
 export type ChatBlockType =
@@ -2106,6 +2285,8 @@ export interface ChatBlock {
   timestamp?: number | string | null
   created_at?: number | string | null
   createdAt?: number | string | null
+  completed_at?: number | string | null
+  completedAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -2131,6 +2312,8 @@ export interface ChatBlockUpdatedPayload {
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
+  completedAt?: number
+  durationMs?: number
   deviceId?: string
 }
 
@@ -2154,6 +2337,13 @@ export interface RuntimeGoalEventPayload {
   threadId?: string
   turnId?: string
   goal?: RuntimeGoal | null
+}
+
+export interface RuntimeTaskTitleUpdatedPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  title: string
 }
 
 export type RuntimeGoalContinuationStatus = 'started' | 'settled'

@@ -758,6 +758,36 @@ describe('QuickAccessCards', () => {
     )
   })
 
+  test('shows generation agents in all agents and switches to their mode', async () => {
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 1, name: 'chat-team', bind_mode: ['chat'] }),
+        makeTeam({ id: 2, name: 'image-team', bind_mode: ['image'] }),
+        makeTeam({ id: 3, name: 'video-team', bind_mode: ['video'] }),
+      ],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [],
+      }
+    )
+
+    expect(await screen.findByTestId('quick-launch-cards')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('More'))
+    fireEvent.click(screen.getByTestId('quick-access-view-all-agents'))
+
+    expect(await screen.findByTestId('quick-access-more-team-chat-team')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-access-more-team-image-team')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-access-more-team-video-team')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-access-more-team-image-team'))
+
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=2&mode=image')
+  })
+
   test('opens the simple agent editor from the quick create card', async () => {
     renderQuickAccessCards(
       [makeTeam({ id: 2, name: 'system-team', description: 'System description' })],

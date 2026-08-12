@@ -28,6 +28,24 @@ const DEFAULT_PLUGIN_MARKETPLACE: &str = "wegent";
 const LOCAL_USER_SOURCE: &str = "local_user";
 const WEGENT_SOURCE: &str = "wegent";
 
+fn replace_codex_config(path: &Path, content: &str) -> Result<(), CapabilitySyncError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(content.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions())?;
+    }
+    #[cfg(unix)]
+    if !path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600))?;
+    }
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum CapabilitySyncError {
     #[error("I/O error: {0}")]
@@ -59,6 +77,20 @@ pub trait CapabilityPackageProvider {
         &'a self,
         download_path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>;
+}
+
+pub trait CapabilityPluginRuntime: Send + Sync {
+    fn install_plugin<'a>(
+        &'a self,
+        spec: &'a PluginSyncSpec,
+        marketplace_path: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
+
+    fn uninstall_plugin<'a>(
+        &'a self,
+        name: &'a str,
+        marketplace: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -142,72 +174,13 @@ fn normalize_content_hash(value: &str) -> String {
     }
 }
 
-fn codex_marketplace(spec: &PluginSyncSpec) -> Value {
-    json!({
-        "name": spec.marketplace,
-        "interface": {"displayName": spec.marketplace},
-        "plugins": [codex_marketplace_plugin(spec)],
-    })
-}
-
-fn codex_marketplace_plugin(spec: &PluginSyncSpec) -> Value {
-    json!({
-        "name": spec.name,
-        "source": {
-            "source": "local",
-            "path": format!("./plugins/{}", spec.name),
-        },
-        "policy": {
-            "installation": "AVAILABLE",
-            "authentication": "ON_INSTALL",
-            "products": ["CODEX"],
-        },
-    })
-}
-
-fn claude_marketplace(spec: &PluginSyncSpec) -> Value {
-    json!({
-        "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-        "name": spec.marketplace,
-        "description": "Plugins managed by Wegent.",
-        "owner": {"name": "Wegent Team"},
-        "plugins": [claude_marketplace_plugin(spec)],
-    })
-}
-
-fn claude_marketplace_plugin(spec: &PluginSyncSpec) -> Value {
-    json!({
-        "description": "",
-        "name": spec.name,
-        "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
-        "version": spec.version,
-    })
-}
-
-fn replace_codex_config(path: &Path, content: &str) -> Result<(), CapabilitySyncError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(content.as_bytes())?;
-    temporary.as_file().sync_all()?;
-    if let Ok(metadata) = fs::metadata(path) {
-        fs::set_permissions(temporary.path(), metadata.permissions())?;
-    }
-    #[cfg(unix)]
-    if !path.exists() {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600))?;
-    }
-    temporary.persist(path).map_err(|error| error.error)?;
-    Ok(())
-}
-
 #[derive(Debug, Clone)]
-struct PluginSyncSpec {
-    name: String,
+pub struct PluginSyncSpec {
+    pub name: String,
     key: String,
     installed_plugin_id: Option<i64>,
-    marketplace: String,
+    pub marketplace: String,
+    pub enabled: bool,
     version: String,
     checksum: Option<String>,
     download_path: Option<String>,
@@ -238,6 +211,10 @@ impl PluginSyncSpec {
             key,
             installed_plugin_id,
             marketplace,
+            enabled: value
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             version,
             checksum: value_string(value.get("checksum")),
             download_path: value_string(value.get("download_path")),
@@ -271,6 +248,10 @@ impl PluginSyncSpec {
                         .map(|(_, marketplace)| marketplace.to_owned())
                 })
                 .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned()),
+            enabled: plugin
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             version: value_string(plugin.get("version")).unwrap_or_else(|| "latest".to_owned()),
             checksum: value_string(plugin.get("checksum")),
             download_path: None,
@@ -326,6 +307,7 @@ pub struct GlobalCapabilityStore {
     pub plugins_dir: PathBuf,
     pub codex_plugins_dir: PathBuf,
     pub store_dir: PathBuf,
+    plugin_store_dir_override: Option<PathBuf>,
 }
 
 impl GlobalCapabilityStore {
@@ -338,7 +320,10 @@ impl GlobalCapabilityStore {
             codex_skills_dir: base.join(".codex/skills"),
             plugins_dir: base.join(".claude/plugins"),
             codex_plugins_dir: base.join(".codex/plugins"),
+            // Skills stay on the legacy store root. Plugin packages use plugin_store_dir()
+            // (manifest-adjacent) so marketplace installs follow WEGENT_EXECUTOR_HOME.
             store_dir: base.join(".wegent-executor/capabilities/store"),
+            plugin_store_dir_override: None,
         }
     }
 
@@ -363,7 +348,10 @@ impl GlobalCapabilityStore {
     }
 
     pub fn with_store_dir(mut self, store_dir: impl Into<PathBuf>) -> Self {
-        self.store_dir = store_dir.into();
+        let store_dir = store_dir.into();
+        self.store_dir = store_dir.clone();
+        // Tests isolate both skill and plugin packages under one temp store.
+        self.plugin_store_dir_override = Some(store_dir);
         self
     }
 
@@ -391,22 +379,45 @@ impl GlobalCapabilityStore {
     }
 
     pub fn reconcile_managed_plugins(&self) -> Result<Vec<String>, CapabilitySyncError> {
-        let mut manifest = self.manifest.load()?;
+        let mut manifest = self.load_manifest_with_plugin_store_migration()?;
         let mut restored = Vec::new();
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
         for (key, plugin) in plugins {
             if plugin.get("managed").and_then(Value::as_bool) != Some(true) {
                 continue;
             }
-            let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
+            let spec = PluginSyncSpec {
+                name: value_string(plugin.get("name"))
+                    .or_else(|| key.split_once('@').map(|(name, _)| name.to_owned()))
+                    .unwrap_or_else(|| key.clone()),
+                key: key.clone(),
+                installed_plugin_id: value_i64(plugin.get("installed_plugin_id")),
+                marketplace: value_string(plugin.get("marketplace"))
+                    .or_else(|| {
+                        key.split_once('@')
+                            .map(|(_, marketplace)| marketplace.to_owned())
+                    })
+                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned()),
+                enabled: plugin
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                version: value_string(plugin.get("version")).unwrap_or_else(|| "latest".to_owned()),
+                checksum: value_string(plugin.get("checksum")),
+                download_path: None,
+                component_states: plugin
+                    .get("component_states")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new())),
+            };
             let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) else {
                 continue;
             };
             if !store_path.is_dir() {
                 continue;
             }
-            ensure_dual_plugin_manifests(&store_path)?;
             self.install_plugin_runtime_metadata(&spec, &store_path, &mut manifest)?;
+            self.install_marketplace_metadata(&spec, &store_path)?;
             restored.push(key);
         }
         self.manifest.save_with_revision_bump(manifest)?;
@@ -414,7 +425,7 @@ impl GlobalCapabilityStore {
     }
 
     pub fn reconcile_managed_claude_plugins(&self) -> Result<Vec<String>, CapabilitySyncError> {
-        let manifest = self.manifest.load()?;
+        let manifest = self.load_manifest_with_plugin_store_migration()?;
         let mut restored = Vec::new();
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
         for (key, plugin) in plugins {
@@ -445,7 +456,7 @@ impl GlobalCapabilityStore {
                 restored.push(key.clone());
             }
             ensure_plugin_hook_permissions(&runtime_path)?;
-            self.install_claude_marketplace_metadata(&spec, &store_path)?;
+            self.install_marketplace_metadata(&spec, &store_path)?;
             let installed = read_installed_plugins(&self.plugins_dir)?;
             let registered = installed
                 .get("plugins")
@@ -457,9 +468,34 @@ impl GlobalCapabilityStore {
             if !registered {
                 upsert_installed_plugin(&self.plugins_dir, &spec, &runtime_path)?;
             }
-            enable_plugin(&self.plugins_dir, &key)?;
+            set_plugin_enabled(&self.plugins_dir, &key, spec.enabled)?;
         }
         Ok(restored)
+    }
+
+    fn load_manifest_with_plugin_store_migration(&self) -> Result<Value, CapabilitySyncError> {
+        let mut manifest = self.manifest.load()?;
+        let plugin_store_dir = self.plugin_store_dir();
+        let (changed, legacy_paths) =
+            rewrite_managed_plugin_store_paths(&mut manifest, &plugin_store_dir)?;
+        if !changed {
+            return Ok(manifest);
+        }
+
+        let revision = manifest
+            .get("revision")
+            .and_then(Value::as_i64)
+            .unwrap_or_default()
+            + 1;
+        manifest["revision"] = json!(revision);
+        write_plugin_manifest_atomic(&self.manifest.path, &manifest)?;
+
+        for legacy_path in legacy_paths {
+            remove_existing_path(&legacy_path)?;
+            remove_empty_legacy_store_parents(&legacy_path, &plugin_store_dir)?;
+        }
+        write_plugin_store_layout_marker(&plugin_store_dir)?;
+        Ok(manifest)
     }
 
     fn install_plugin_runtime_metadata(
@@ -507,9 +543,9 @@ impl GlobalCapabilityStore {
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
         copy_dir_atomic(store_path, &runtime_path)?;
-        self.install_claude_marketplace_metadata(spec, store_path)?;
+        self.install_marketplace_metadata(spec, store_path)?;
         upsert_installed_plugin(&self.plugins_dir, spec, &runtime_path)?;
-        enable_plugin(&self.plugins_dir, &spec.key)
+        set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)
     }
 
     fn remove_claude_plugin_runtime_path(&self, path: &Path) -> Result<(), CapabilitySyncError> {
@@ -532,7 +568,69 @@ impl GlobalCapabilityStore {
         remove_existing_path(path)
     }
 
-    fn install_claude_marketplace_metadata(
+    fn install_codex_marketplace_metadata(
+        &self,
+        spec: &PluginSyncSpec,
+        store_path: &Path,
+    ) -> Result<(), CapabilitySyncError> {
+        let marketplace_dir = self
+            .codex_plugins_dir
+            .join("marketplaces")
+            .join(&spec.marketplace);
+        let marketplace_link = marketplace_dir.join("plugins").join(&spec.name);
+        link_or_copy_dir(store_path, &marketplace_link)?;
+
+        let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
+        let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
+        let root = ensure_root_object(&mut marketplace);
+        root.insert("name".to_owned(), json!(spec.marketplace));
+        root.insert("interface".to_owned(), json!({"displayName": "Wegent"}));
+        upsert_marketplace_plugin(
+            &mut marketplace,
+            &spec.name,
+            json!({
+                "name": spec.name,
+                "source": {
+                    "source": "local",
+                    "path": format!("./plugins/{}", spec.name),
+                },
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                    "products": ["CODEX"],
+                },
+            }),
+        )?;
+        write_json(&marketplace_json_path, &marketplace)?;
+
+        let config_path = self
+            .codex_plugins_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("config.toml");
+        let content = match fs::read_to_string(&config_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.into()),
+        };
+        let mut document = content.parse::<DocumentMut>().map_err(|error| {
+            CapabilitySyncError::invalid_payload(format!(
+                "Invalid Codex config {}: {error}",
+                config_path.display()
+            ))
+        })?;
+        document["marketplaces"][&spec.marketplace]["source_type"] = value("local");
+        document["marketplaces"][&spec.marketplace]["source"] =
+            value(marketplace_dir.display().to_string());
+        document["plugins"][&spec.key]["enabled"] = value(spec.enabled);
+        let next_content = document.to_string();
+        if next_content != content {
+            replace_codex_config(&config_path, &next_content)?;
+        }
+        Ok(())
+    }
+
+    fn install_marketplace_metadata(
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
@@ -545,14 +643,14 @@ impl GlobalCapabilityStore {
         let marketplace_link = marketplace_plugins_dir.join(plugin_codex_link_name(spec));
         link_or_copy_dir(store_path, &marketplace_link)?;
 
-        let mut known =
-            read_json_or_default(&self.plugins_dir.join("known_marketplaces.json"), || {
-                json!({})
-            })?;
         let marketplace_source = json!({
             "source": "directory",
             "path": marketplace_dir.display().to_string(),
         });
+        let mut known =
+            read_json_or_default(&self.plugins_dir.join("known_marketplaces.json"), || {
+                json!({})
+            })?;
         ensure_root_object(&mut known).insert(
             spec.marketplace.clone(),
             json!({
@@ -577,78 +675,75 @@ impl GlobalCapabilityStore {
         write_json(&settings_path, &settings)?;
 
         let marketplace_json_path = marketplace_dir.join(".claude-plugin/marketplace.json");
-        let mut marketplace =
-            read_json_or_default(&marketplace_json_path, || claude_marketplace(spec))?;
+        let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
         marketplace["$schema"] = json!("https://anthropic.com/claude-code/marketplace.schema.json");
         marketplace["name"] = json!(spec.marketplace);
         marketplace["description"] = json!("Plugins managed by Wegent.");
         marketplace["owner"] = json!({"name": "Wegent Team"});
-        if !marketplace.get("plugins").is_some_and(Value::is_array) {
-            marketplace["plugins"] = json!([]);
-        }
-        let plugins = marketplace["plugins"]
-            .as_array_mut()
-            .expect("Claude marketplace plugins array");
-        plugins.retain(|plugin| {
-            plugin.get("name").and_then(Value::as_str) != Some(spec.name.as_str())
-        });
-        plugins.push(claude_marketplace_plugin(spec));
-        write_json(&marketplace_json_path, &marketplace)
+        upsert_marketplace_plugin(
+            &mut marketplace,
+            &spec.name,
+            json!({
+                "description": "",
+                "name": spec.name,
+                "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                "version": spec.version,
+            }),
+        )?;
+        write_json(&marketplace_json_path, &marketplace)?;
+
+        let codex_marketplace_path = marketplace_dir.join(".agents/plugins/marketplace.json");
+        let mut codex_marketplace = read_json_or_default(&codex_marketplace_path, || json!({}))?;
+        let root = ensure_root_object(&mut codex_marketplace);
+        root.insert("name".to_owned(), json!(spec.marketplace));
+        root.insert("interface".to_owned(), json!({"displayName": "Wegent"}));
+        upsert_marketplace_plugin(
+            &mut codex_marketplace,
+            &spec.name,
+            json!({
+                "name": spec.name,
+                "source": {
+                    "source": "local",
+                    "path": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                },
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+            }),
+        )?;
+        write_json(&codex_marketplace_path, &codex_marketplace)
     }
 
-    fn install_codex_marketplace_metadata(
+    fn record_app_server_plugin(
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
-    ) -> Result<(), CapabilitySyncError> {
-        let marketplace_dir = self
-            .codex_plugins_dir
+        manifest: &mut Value,
+    ) {
+        ensure_object_field(manifest, "plugins").insert(
+            spec.key.clone(),
+            json!({
+                "managed": true,
+                "name": spec.name,
+                "key": spec.key,
+                "installed_plugin_id": spec.installed_plugin_id,
+                "marketplace": spec.marketplace,
+                "enabled": spec.enabled,
+                "version": spec.version,
+                "checksum": spec.checksum,
+                "store_path": store_path.display().to_string(),
+                "install_authority": "codex_app_server",
+                "updated_at": now_rfc3339_like(),
+            }),
+        );
+    }
+
+    fn plugin_marketplace_manifest_path(&self, marketplace: &str) -> PathBuf {
+        self.plugins_dir
             .join("marketplaces")
-            .join(&spec.marketplace);
-        let marketplace_link = marketplace_dir.join("plugins").join(&spec.name);
-        link_or_copy_dir(store_path, &marketplace_link)?;
-
-        let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
-        let mut marketplace =
-            read_json_or_default(&marketplace_json_path, || codex_marketplace(spec))?;
-        marketplace["name"] = json!(spec.marketplace);
-        if !marketplace.get("plugins").is_some_and(Value::is_array) {
-            marketplace["plugins"] = json!([]);
-        }
-        let plugins = marketplace["plugins"]
-            .as_array_mut()
-            .expect("Codex marketplace plugins array");
-        plugins.retain(|plugin| {
-            plugin.get("name").and_then(Value::as_str) != Some(spec.name.as_str())
-        });
-        plugins.push(codex_marketplace_plugin(spec));
-        write_json(&marketplace_json_path, &marketplace)?;
-
-        let config_path = self
-            .codex_plugins_dir
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("config.toml");
-        let content = match fs::read_to_string(&config_path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(error.into()),
-        };
-        let mut document = content.parse::<DocumentMut>().map_err(|error| {
-            CapabilitySyncError::invalid_payload(format!(
-                "Invalid Codex config {}: {error}",
-                config_path.display()
-            ))
-        })?;
-        document["marketplaces"][&spec.marketplace]["source_type"] = value("local");
-        document["marketplaces"][&spec.marketplace]["source"] =
-            value(marketplace_dir.display().to_string());
-        document["plugins"][&spec.key]["enabled"] = value(true);
-        let next_content = document.to_string();
-        if next_content != content {
-            replace_codex_config(&config_path, &next_content)?;
-        }
-        Ok(())
+            .join(marketplace)
+            .join(".agents/plugins/marketplace.json")
     }
 
     fn skill_store_path(&self, spec: &SkillSyncSpec) -> PathBuf {
@@ -657,7 +752,18 @@ impl GlobalCapabilityStore {
 
     fn plugin_store_path(&self, spec: &PluginSyncSpec) -> Option<PathBuf> {
         spec.store_dir_name()
-            .map(|name| self.store_dir.join("plugins").join(name))
+            .map(|name| self.plugin_store_dir().join("plugins").join(name))
+    }
+
+    fn plugin_store_dir(&self) -> PathBuf {
+        if let Some(store_dir) = &self.plugin_store_dir_override {
+            return store_dir.clone();
+        }
+        self.manifest
+            .path
+            .parent()
+            .map(|capabilities_dir| capabilities_dir.join("store"))
+            .unwrap_or_else(|| PathBuf::from("store"))
     }
 
     fn plugin_runtime_link(&self, spec: &PluginSyncSpec) -> PathBuf {
@@ -677,6 +783,105 @@ impl GlobalCapabilityStore {
     }
 }
 
+fn rewrite_managed_plugin_store_paths(
+    manifest: &mut Value,
+    canonical_store: &Path,
+) -> Result<(bool, Vec<PathBuf>), CapabilitySyncError> {
+    let mut changed = false;
+    let mut migrated_paths = BTreeSet::new();
+    let entries = ensure_object_field(manifest, "plugins");
+    for entry in entries.values_mut() {
+        if entry.get("managed").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(legacy_path) = value_string(entry.get("store_path")).map(PathBuf::from) else {
+            continue;
+        };
+        if legacy_path.starts_with(canonical_store)
+            || legacy_plugin_store_root(&legacy_path).is_none()
+        {
+            continue;
+        }
+        let Some(package_name) = legacy_path.file_name() else {
+            continue;
+        };
+        let canonical_path = canonical_store.join("plugins").join(package_name);
+        if legacy_path.is_dir() {
+            copy_dir_atomic(&legacy_path, &canonical_path)?;
+            migrated_paths.insert(legacy_path.clone());
+        } else if !has_plugin_manifest(&canonical_path) {
+            // Missing legacy packages must not permanently bind to an unverified
+            // canonical leftover; leave the path for a later sync to recover.
+            continue;
+        } else if let Some(object) = entry.as_object_mut() {
+            // Package was already relocated (for example by desktop home merge).
+            // Drop the cached checksum so the next sync can revalidate content.
+            object.remove("checksum");
+        }
+        entry["store_path"] = json!(canonical_path.display().to_string());
+        changed = true;
+    }
+    Ok((changed, migrated_paths.into_iter().collect()))
+}
+
+fn legacy_plugin_store_root(path: &Path) -> Option<&Path> {
+    let plugins_dir = path.parent()?;
+    if plugins_dir.file_name()?.to_str()? != "plugins" {
+        return None;
+    }
+    let store_dir = plugins_dir.parent()?;
+    if store_dir.file_name()?.to_str()? != "store" {
+        return None;
+    }
+    let capabilities_dir = store_dir.parent()?;
+    (capabilities_dir.file_name()?.to_str()? == "capabilities").then_some(store_dir)
+}
+
+fn remove_empty_legacy_store_parents(
+    legacy_path: &Path,
+    canonical_store: &Path,
+) -> Result<(), CapabilitySyncError> {
+    let Some(store_dir) = legacy_path.parent().and_then(Path::parent) else {
+        return Ok(());
+    };
+    if store_dir == canonical_store {
+        return Ok(());
+    }
+    for directory in [legacy_path.parent(), Some(store_dir)]
+        .into_iter()
+        .flatten()
+    {
+        if directory.is_dir() && fs::read_dir(directory)?.next().is_none() {
+            fs::remove_dir(directory)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_plugin_store_layout_marker(store_dir: &Path) -> Result<(), CapabilitySyncError> {
+    write_json(
+        &store_dir.join(".plugin-store-layout.json"),
+        &json!({
+            "version": 1,
+            "authority": "manifest_executor_home",
+        }),
+    )
+}
+
+fn write_plugin_manifest_atomic(path: &Path, manifest: &Value) -> Result<(), CapabilitySyncError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    serde_json::to_writer_pretty(&mut temporary, manifest)?;
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions())?;
+    }
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
 pub struct CapabilitySyncHandler<P = NoopPackageProvider>
 where
     P: CapabilityPackageProvider,
@@ -684,6 +889,7 @@ where
     auth_token: String,
     store: GlobalCapabilityStore,
     package_provider: P,
+    plugin_runtime: Option<std::sync::Arc<dyn CapabilityPluginRuntime>>,
     sync_lock: AsyncMutex<()>,
 }
 
@@ -710,8 +916,17 @@ where
             auth_token: auth_token.into(),
             store,
             package_provider,
+            plugin_runtime: None,
             sync_lock: AsyncMutex::new(()),
         }
+    }
+
+    pub fn with_plugin_runtime<R>(mut self, runtime: R) -> Self
+    where
+        R: CapabilityPluginRuntime + 'static,
+    {
+        self.plugin_runtime = Some(std::sync::Arc::new(runtime));
+        self
     }
 
     pub fn auth_token(&self) -> &str {
@@ -720,7 +935,6 @@ where
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let _sync_guard = self.sync_lock.lock().await;
-        let mut manifest = self.store.manifest.load()?;
         let mode = payload
             .get("mode")
             .and_then(Value::as_str)
@@ -733,6 +947,11 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut manifest = if plugin_specs.is_empty() {
+            self.store.manifest.load()?
+        } else {
+            self.store.load_manifest_with_plugin_store_migration()?
+        };
 
         if mode == "replace" {
             let desired_skills = skill_specs
@@ -744,7 +963,8 @@ where
                 .map(|spec| spec.key.clone())
                 .collect::<BTreeSet<_>>();
             self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
+            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)
+                .await?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -888,11 +1108,12 @@ where
             });
         let should_download = spec.download_path.is_some()
             && (!has_plugin_manifest(&store_path)
-                || spec
-                    .checksum
-                    .as_ref()
-                    .zip(previous_checksum.as_ref())
-                    .is_some_and(|(expected, previous)| expected != previous));
+                || spec.checksum.as_ref().is_some_and(|expected| {
+                    previous_checksum
+                        .as_ref()
+                        .map(|previous| previous != expected)
+                        .unwrap_or(true)
+                }));
 
         if should_download {
             let download_path = spec.download_path.as_deref().unwrap_or_default();
@@ -906,7 +1127,57 @@ where
                     });
                 }
             }
-            extract_plugin_zip(&package, &store_path)?;
+            let backup_path = if store_path.exists() {
+                Some(sibling_temp_path(&store_path).with_extension("rollback"))
+            } else {
+                None
+            };
+            if let Some(backup) = backup_path.as_ref() {
+                if let Err(error) = copy_dir_recursive(&store_path, backup) {
+                    if !store_path.is_dir() {
+                        let _ = error;
+                    }
+                }
+            }
+            let extract_result = extract_plugin_zip(&package, &store_path);
+            if let Err(error) = extract_result {
+                if let Some(backup) = backup_path.as_ref() {
+                    let _ = remove_existing_path(&store_path);
+                    let _ = copy_dir_recursive(backup, &store_path);
+                    let _ = remove_existing_path(backup);
+                }
+                return Err(error);
+            }
+            if let Some(runtime) = &self.plugin_runtime {
+                self.store.install_marketplace_metadata(spec, &store_path)?;
+                let marketplace_manifest_path = self
+                    .store
+                    .plugin_marketplace_manifest_path(&spec.marketplace);
+                if let Err(error) = runtime
+                    .install_plugin(spec, &marketplace_manifest_path)
+                    .await
+                {
+                    if let Some(backup) = backup_path.as_ref() {
+                        let _ = remove_existing_path(&store_path);
+                        let _ = copy_dir_recursive(backup, &store_path);
+                    } else {
+                        let _ = remove_existing_path(&store_path);
+                    }
+                    if let Some(backup) = backup_path.as_ref() {
+                        let _ = remove_existing_path(backup);
+                    }
+                    return Err(error);
+                }
+                self.store
+                    .record_app_server_plugin(spec, &store_path, manifest);
+            } else {
+                self.store
+                    .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+            }
+            if let Some(backup) = backup_path.as_ref() {
+                let _ = remove_existing_path(backup);
+            }
+            return Ok(());
         } else if !has_plugin_manifest(&store_path) {
             return Err(CapabilitySyncError::invalid_payload(format!(
                 "Plugin package {} is not available",
@@ -914,9 +1185,20 @@ where
             )));
         }
 
-        ensure_dual_plugin_manifests(&store_path)?;
-        self.store
-            .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+        if let Some(runtime) = &self.plugin_runtime {
+            self.store.install_marketplace_metadata(spec, &store_path)?;
+            let marketplace_manifest_path = self
+                .store
+                .plugin_marketplace_manifest_path(&spec.marketplace);
+            runtime
+                .install_plugin(spec, &marketplace_manifest_path)
+                .await?;
+            self.store
+                .record_app_server_plugin(spec, &store_path, manifest);
+        } else {
+            self.store
+                .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+        }
         Ok(())
     }
 
@@ -943,7 +1225,7 @@ where
         Ok(())
     }
 
-    fn remove_stale_managed_plugins(
+    async fn remove_stale_managed_plugins(
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
@@ -963,20 +1245,29 @@ where
         let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
         let plugins = ensure_object_field(&mut installed, "plugins");
         for (key, plugin) in stale {
-            plugins.remove(&key);
-            if let Some(claude_path) = plugin
-                .get("runtime")
-                .and_then(|runtime| value_string(runtime.get("claude_link")))
-                .map(PathBuf::from)
-            {
-                self.store.remove_claude_plugin_runtime_path(&claude_path)?;
+            if let Some(runtime) = &self.plugin_runtime {
+                let name = value_string(plugin.get("name"))
+                    .or_else(|| key.split_once('@').map(|(name, _)| name.to_owned()))
+                    .unwrap_or_else(|| key.clone());
+                let marketplace = value_string(plugin.get("marketplace"))
+                    .or_else(|| {
+                        key.split_once('@')
+                            .map(|(_, marketplace)| marketplace.to_owned())
+                    })
+                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned());
+                runtime.uninstall_plugin(&name, &marketplace).await?;
             }
-            if let Some(codex_path) = plugin
-                .get("runtime")
-                .and_then(|runtime| value_string(runtime.get("codex_link")))
-                .map(PathBuf::from)
-            {
-                self.store.remove_codex_plugin_runtime_path(&codex_path)?;
+            plugins.remove(&key);
+            if let Some(runtime) = plugin.get("runtime") {
+                if let Some(path) = value_string(runtime.get("claude_link")) {
+                    remove_existing_path(Path::new(&path))?;
+                }
+                if let Some(path) = value_string(runtime.get("codex_link")) {
+                    remove_existing_path(Path::new(&path))?;
+                }
+            }
+            if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) {
+                remove_existing_path(&store_path)?;
             }
             ensure_object_field(manifest, "plugins").remove(&key);
         }
@@ -1220,6 +1511,7 @@ pub fn restore_enabled_claude_plugin_cache(
 
     let installed = read_installed_plugins(&plugins_dir)?;
     let installed_plugins = object_map(installed.get("plugins")).unwrap_or_default();
+
     for (key, enabled) in enabled_plugins {
         if enabled.as_bool() != Some(true) {
             continue;

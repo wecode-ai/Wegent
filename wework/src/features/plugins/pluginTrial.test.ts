@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
+  buildContextualPluginPrompt,
+  buildRefinedPluginPrompt,
+  buildTrialTemplatePrompt,
   consumePluginTrial,
   consumePluginTrialInput,
+  dismissTrialGuide,
+  getPluginUseCount30d,
   pluginTrialInput,
+  pluginTrialTemplates,
+  queuePluginPromptTrial,
   queuePluginReferenceTrial,
   queuePluginTrial,
+  recordPluginUsage,
+  recordPluginUsageFromInput,
+  shouldShowPluginTrialGuide,
 } from './pluginTrial'
 
 function pluginWithSkill(
@@ -120,6 +130,62 @@ describe('plugin trial state', () => {
     expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
   })
 
+  test('falls back to the workspace marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('uses visibility over stale source marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'workspace'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+      marketplace: 'wework',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('falls back to the public marketplace for public managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'public'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework) ')
+  })
+
+  test('falls back to the personal marketplace for personal managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'personal'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework-personal) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
@@ -138,8 +204,13 @@ describe('plugin trial state', () => {
   })
 
   test('queues plugin templates for the trial composer', () => {
-    expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
-    expect(consumePluginTrial()?.templates).toEqual([
+    expect(
+      queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'), {
+        openInNewChat: true,
+      })
+    ).toBe(true)
+    const trial = consumePluginTrial()
+    expect(trial?.templates).toEqual([
       {
         name: 'Project Memo',
         path: 'project_memo',
@@ -147,5 +218,115 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
+    expect(trial?.openInNewChat).toBe(true)
+  })
+
+  test('builds useful guide scenarios when a plugin has no templates or default prompts', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = []
+    plugin.spec.components.commands = []
+
+    expect(pluginTrialTemplates(plugin)).toEqual([
+      expect.objectContaining({
+        path: 'prompt-0',
+        description: 'Use Documents to summarize the current context and propose next steps',
+      }),
+      expect.objectContaining({ path: 'prompt-1' }),
+      expect.objectContaining({ path: 'prompt-2' }),
+    ])
+  })
+
+  test('keeps the selected detail scenario first in the chat guide', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = []
+    plugin.spec.components.commands = []
+
+    expect(queuePluginPromptTrial(plugin, 'Review the quarterly report for inconsistencies')).toBe(
+      true
+    )
+    expect(consumePluginTrial()?.templates[0]).toEqual({
+      name: 'Review the quarterly report for inconsistencies',
+      path: 'selected-use-case',
+      description: 'Review the quarterly report for inconsistencies',
+    })
+  })
+
+  test('keeps a refined detail task concise and removes the duplicate base scenario', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = [
+      {
+        name: 'Review my current working-tree changes.',
+        path: 'current-changes',
+        description: 'Review my current working-tree changes.',
+      },
+      {
+        name: 'Review this branch against its merge base.',
+        path: 'branch',
+        description: 'Review this branch against its merge base.',
+      },
+    ]
+
+    expect(
+      pluginTrialTemplates(
+        plugin,
+        'Review my current working-tree changes.\nFocus: inspect architecture impact'
+      )
+    ).toEqual([
+      {
+        name: 'Review my current working-tree changes.',
+        path: 'selected-use-case',
+        description: 'Review my current working-tree changes.\nFocus: inspect architecture impact',
+      },
+      expect.objectContaining({ path: 'branch' }),
+    ])
+  })
+
+  test('tracks plugin usage for the 30-day guide gate', () => {
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+    expect(getPluginUseCount30d('Sites')).toBe(0)
+    expect(shouldShowPluginTrialGuide('Sites', 'scope-a')).toBe(true)
+    recordPluginUsage('Sites')
+    expect(getPluginUseCount30d('Sites')).toBe(1)
+    expect(shouldShowPluginTrialGuide('Sites', 'scope-a')).toBe(false)
+    dismissTrialGuide('Docs', 'scope-a')
+    expect(shouldShowPluginTrialGuide('Docs', 'scope-a')).toBe(false)
+  })
+
+  test('records plugin usage from composer mentions', () => {
+    window.localStorage.clear()
+    recordPluginUsageFromInput('[$Sites](plugin://sites@openai-bundled) summarize this repo')
+    expect(getPluginUseCount30d('Sites')).toBe(1)
+  })
+
+  test('builds trial template prompts from the current plugin mention', () => {
+    expect(
+      buildTrialTemplatePrompt('[$Sites](plugin://sites@openai-bundled) ', {
+        name: 'Project Memo',
+        path: 'project_memo',
+        description: 'Draft a project memo',
+      })
+    ).toBe('[$Sites](plugin://sites@openai-bundled) Draft a project memo ')
+  })
+
+  test('builds a conversation-aware task while preserving the plugin mention and current idea', () => {
+    expect(
+      buildContextualPluginPrompt(
+        '[$Sites](plugin://sites@openai-bundled) Build a launch page',
+        'Use the recent conversation to complete the task.',
+        'My current idea'
+      )
+    ).toBe(
+      '[$Sites](plugin://sites@openai-bundled) Use the recent conversation to complete the task.\n\nMy current idea: Build a launch page '
+    )
+  })
+
+  test('applies an AI-refined task while preserving the plugin mention', () => {
+    expect(
+      buildRefinedPluginPrompt(
+        '[$Sites](plugin://sites@openai-bundled) rough idea',
+        'Build a launch page for the Q4 campaign'
+      )
+    ).toBe('[$Sites](plugin://sites@openai-bundled) Build a launch page for the Q4 campaign ')
   })
 })

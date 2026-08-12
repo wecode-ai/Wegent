@@ -41,18 +41,28 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import { listSkillMarketProviders, type SkillMarketProvider } from '@/apis/skillMarketplace'
 import { DiscoverResources } from './components/DiscoverResources'
 import { FeaturedScenarios } from './components/FeaturedScenarios'
 import { InstalledResources } from './components/InstalledResources'
+import { McpMarketplace } from './components/McpMarketplace'
 import { MyResources } from './components/MyResources'
 import { PublishedResources } from './components/PublishedResources'
 import type { ResourceCreateRequest } from './components/ResourceCreateButton'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
-import type { ManagedResourceType } from './types'
+import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
+import type { ManagedResourceType, ResourceNavigationType } from './types'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
+import {
+  SkillListWithScope,
+  type ResourceListState,
+} from '@/features/settings/components/SkillListWithScope'
 
-const discoverTypes: ManagedResourceType[] = ['agent', 'skill']
+type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all'>
+
+const discoverTypes: ActiveResourceNavigationType[] = ['agent', 'skill', 'mcp']
 const mineTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
 const coreCreateTypes: Array<{ type: ManagedResourceType; icon: typeof Bot }> = [
   { type: 'agent', icon: Bot },
@@ -64,9 +74,9 @@ const advancedCreateTypes: Array<{ type: ManagedResourceType; icon: typeof Bot }
   { type: 'retriever', icon: Database },
 ]
 
-type MineSource = 'all' | 'personal' | 'group' | 'system' | 'installed'
+type MineSource = 'all' | 'mine' | 'personal' | 'group' | 'system' | 'installed'
 
-const mineSources: MineSource[] = ['all', 'personal', 'group', 'system', 'installed']
+const mineSources: MineSource[] = ['all', 'mine', 'personal', 'group', 'system', 'installed']
 
 function isMineSource(value: string | null): value is MineSource {
   return mineSources.includes(value as MineSource)
@@ -76,8 +86,81 @@ function getGroupDisplayName(group: { name: string; display_name?: string | null
   return group.display_name || group.name
 }
 
+const initialResourceListState: ResourceListState = {
+  loading: true,
+  hasItems: false,
+  hasError: false,
+}
+
+function TeamSkillResources({
+  groupName,
+  groups,
+  keyword,
+}: {
+  groupName: string
+  groups: Group[]
+  keyword: string
+}) {
+  const { t } = useTranslation('resource-library')
+  const { t: tCommon } = useTranslation('common')
+  const [nativeState, setNativeState] = useState<ResourceListState>(initialResourceListState)
+  const [installedState, setInstalledState] = useState<ResourceListState>(initialResourceListState)
+  const hasItems = nativeState.hasItems || installedState.hasItems
+  const isLoading = !hasItems && (nativeState.loading || installedState.loading)
+  const isEmpty =
+    !hasItems &&
+    !nativeState.loading &&
+    !installedState.loading &&
+    !nativeState.hasError &&
+    !installedState.hasError
+
+  return (
+    <div className="space-y-6" data-testid="team-skill-resources">
+      <SkillListWithScope
+        scope="group"
+        selectedGroup={groupName}
+        groups={groups}
+        sourceFilter="group"
+        showAutoEnabledSkills={false}
+        hideCreateActions
+        hideEmptyState
+        hideLoadingState
+        compact
+        searchQuery={keyword}
+        onListStateChange={setNativeState}
+      />
+      <InstalledResources
+        resourceType="skill"
+        keyword={keyword}
+        groupNamespaces={[groupName]}
+        excludeGroupOwned
+        hideLoadingState
+        hideEmptyState
+        onListStateChange={setInstalledState}
+      />
+      {isLoading && (
+        <div
+          className="flex min-h-[260px] items-center justify-center text-text-secondary"
+          data-testid="team-skill-resources-loading"
+        >
+          {tCommon('skills.loading')}
+        </div>
+      )}
+      {isEmpty && (
+        <div
+          className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"
+          data-testid="team-skill-resources-empty"
+        >
+          {t('states.empty')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
+  const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -87,24 +170,34 @@ export function ResourceLibraryPage() {
   const isPublishedView = tabParam === 'published'
   const isMineView = tabParam === 'mine' || isLegacyTeamView || isPublishedView
   const availableTypes = isMineView ? mineTypes : discoverTypes
-  const resourceType = availableTypes.includes(typeParam as ManagedResourceType)
-    ? (typeParam as ManagedResourceType)
+  const resourceType = availableTypes.includes(typeParam as ActiveResourceNavigationType)
+    ? (typeParam as ActiveResourceNavigationType)
     : 'agent'
+  const managedResourceType: ManagedResourceType = resourceType === 'mcp' ? 'agent' : resourceType
   const sourceParam = searchParams.get('source')
   const legacyScopeParam = searchParams.get('scope')
   const legacySource =
     legacyScopeParam === 'personal' || legacyScopeParam === 'group' ? legacyScopeParam : null
   const requestedSource = isLegacyTeamView
     ? 'group'
-    : sourceParam || legacySource || (isMineView ? 'personal' : null)
+    : sourceParam ||
+      legacySource ||
+      (isMineView
+        ? resourceType === 'agent' || resourceType === 'skill'
+          ? 'mine'
+          : 'personal'
+        : null)
   const source = isMineSource(requestedSource) ? requestedSource : 'all'
   const supportsInstalledSource = resourceType === 'agent' || resourceType === 'skill'
+  const supportsCreatedByMeSource = resourceType === 'agent' || resourceType === 'skill'
   const supportsSystemSource =
     resourceType === 'model' || resourceType === 'shell' || resourceType === 'retriever'
   const isUnsupportedSource =
     (source === 'installed' && !supportsInstalledSource) ||
-    (source === 'system' && !supportsSystemSource)
-  const effectiveSource = isUnsupportedSource ? 'personal' : source
+    (source === 'system' && !supportsSystemSource) ||
+    (source === 'mine' && !supportsCreatedByMeSource)
+  const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
+  const effectiveSource = isUnsupportedSource ? fallbackSource : source
   const keywordParam = searchParams.get('keyword') || ''
   const selectedGroupName = searchParams.get('group')
   const teamGroupState = useTeamCapabilityGroups({
@@ -128,6 +221,11 @@ export function ResourceLibraryPage() {
   const [managedRevision, setManagedRevision] = useState(0)
   const [publishedRevision, setPublishedRevision] = useState(0)
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
+  const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
+  const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
+  const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
+    null
+  )
   const [createRequest, setCreateRequest] = useState<
     (ResourceCreateRequest & { type: ManagedResourceType }) | null
   >(null)
@@ -160,7 +258,7 @@ export function ResourceLibraryPage() {
       if (!sourceParam) updates.source = legacySource
       updates.scope = null
     }
-    if (isUnsupportedSource) updates.source = 'personal'
+    if (isUnsupportedSource) updates.source = fallbackSource
     if (Object.keys(updates).length > 0) replaceParams(updates)
   }, [
     isLegacyTeamView,
@@ -169,12 +267,51 @@ export function ResourceLibraryPage() {
     resourceType,
     sourceParam,
     isUnsupportedSource,
+    fallbackSource,
     typeParam,
   ])
 
   useEffect(() => {
     setSearchInput(keywordParam)
   }, [keywordParam])
+
+  useEffect(() => {
+    if (isMineView || resourceType !== 'skill') {
+      setSkillMarketProviders([])
+      setSkillMarketProvidersError('')
+      setActiveSkillMarketProviderKey(null)
+      return
+    }
+
+    let isMounted = true
+    setSkillMarketProvidersError('')
+    listSkillMarketProviders()
+      .then(providers => {
+        if (!isMounted) return
+        setSkillMarketProviders(providers)
+      })
+      .catch(loadError => {
+        if (!isMounted) return
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
+
+  const retrySkillMarketProviders = () => {
+    setSkillMarketProvidersError('')
+    listSkillMarketProviders()
+      .then(setSkillMarketProviders)
+      .catch(loadError => {
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
+      })
+  }
 
   const handleNewCapabilityType = (type: ManagedResourceType) => {
     createRequestId.current += 1
@@ -228,13 +365,16 @@ export function ResourceLibraryPage() {
     })
   }
 
-  const handleTypeChange = (nextType: ManagedResourceType) => {
+  const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
+    if (nextType === 'all') return
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
+    const nextSupportsCreatedByMeSource = nextType === 'agent'
     const nextSupportsSystemSource =
       nextType === 'model' || nextType === 'shell' || nextType === 'retriever'
     const shouldResetSource =
       (effectiveSource === 'installed' && !nextSupportsInstalledSource) ||
-      (effectiveSource === 'system' && !nextSupportsSystemSource)
+      (effectiveSource === 'system' && !nextSupportsSystemSource) ||
+      (effectiveSource === 'mine' && !nextSupportsCreatedByMeSource)
 
     replaceParams({
       type: nextType,
@@ -277,20 +417,64 @@ export function ResourceLibraryPage() {
 
   const renderContent = () => {
     if (!isMineView) {
+      if (resourceType === 'mcp') return <McpMarketplace />
       return (
         <>
           {resourceType === 'agent' && <FeaturedScenarios />}
-          <DiscoverResources resourceType={resourceType} hideSearch />
+          {resourceType === 'skill' && skillMarketProvidersError && (
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3"
+              role="alert"
+              data-testid="skill-marketplace-providers-error"
+            >
+              <p className="min-w-0 text-sm text-destructive">
+                {skillMarketProvidersLoadFailedLabel}: {skillMarketProvidersError}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 shrink-0"
+                onClick={retrySkillMarketProviders}
+                data-testid="skill-marketplace-providers-retry"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+                {t('actions.retry')}
+              </Button>
+            </div>
+          )}
+          <DiscoverResources
+            resourceType={resourceType}
+            systemOnly
+            hideSearch
+            externalMarketplaces={
+              resourceType === 'skill'
+                ? skillMarketProviders.map(provider => ({
+                    key: provider.key,
+                    label: provider.name,
+                    content: (
+                      <SkillMarketplaceSearch
+                        key={provider.key}
+                        provider={provider}
+                        namespace="default"
+                        onSkillsChange={() => setManagedRevision(revision => revision + 1)}
+                      />
+                    ),
+                  }))
+                : []
+            }
+            activeExternalMarketplaceKey={activeSkillMarketProviderKey}
+            onExternalMarketplaceChange={setActiveSkillMarketProviderKey}
+          />
         </>
       )
     }
     if (isPublishedView) {
-      return <PublishedResources key={publishedRevision} resourceType={resourceType} />
+      return <PublishedResources key={publishedRevision} resourceType={managedResourceType} />
     }
     if (isTeamAddMode && selectedGroupName) {
       return (
         <DiscoverResources
-          resourceType={resourceType}
+          resourceType={managedResourceType === 'agent' ? 'agent' : 'skill'}
           targetNamespace={selectedGroupName}
           hideSearch
         />
@@ -300,7 +484,7 @@ export function ResourceLibraryPage() {
       return (
         <InstalledResources
           key={`installed:${resourceType}`}
-          resourceType={resourceType}
+          resourceType={managedResourceType === 'agent' ? 'agent' : 'skill'}
           keyword={keywordParam}
         />
       )
@@ -336,13 +520,39 @@ export function ResourceLibraryPage() {
           </div>
         )
       }
+      if (managedResourceType === 'agent') {
+        return (
+          <MyResources
+            key={`${managedRevision}:agent:group:${selectedGroupName || 'all'}`}
+            allowedTypes={['agent']}
+            fixedSource="group"
+            fixedGroup={selectedGroupName}
+            hideSourceControls
+            hideTypeControls
+            hideManagerCreateActions
+            hideSortControls
+            hideTeamModeFilter
+            searchQuery={keywordParam}
+          />
+        )
+      }
+      if (selectedGroupName) {
+        return (
+          <TeamSkillResources
+            groupName={selectedGroupName}
+            groups={teamGroupState.groups}
+            keyword={keywordParam}
+          />
+        )
+      }
       return (
         <InstalledResources
-          resourceType={resourceType}
+          resourceType="skill"
           keyword={keywordParam}
           groupNamespaces={
             selectedGroupName ? [selectedGroupName] : teamGroupState.groups.map(group => group.name)
           }
+          groups={teamGroupState.groups}
         />
       )
     }
@@ -350,8 +560,8 @@ export function ResourceLibraryPage() {
     const fixedSource = effectiveSource as Exclude<MineSource, 'installed'>
     return (
       <MyResources
-        key={`${managedRevision}:${resourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
-        allowedTypes={[resourceType]}
+        key={`${managedRevision}:${managedResourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
+        allowedTypes={[managedResourceType]}
         fixedSource={fixedSource}
         fixedGroup={effectiveSource === 'group' ? selectedGroupName : undefined}
         hideSourceControls
@@ -367,7 +577,7 @@ export function ResourceLibraryPage() {
 
   const sourceOptions: MineSource[] = [
     'all',
-    'personal',
+    supportsCreatedByMeSource ? 'mine' : 'personal',
     'group',
     ...(supportsSystemSource ? (['system'] as const) : []),
     ...(supportsInstalledSource ? (['installed'] as const) : []),
@@ -459,48 +669,50 @@ export function ResourceLibraryPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <ResourceTypeFilter
                   value={resourceType}
-                  onValueChange={value => handleTypeChange(value as ManagedResourceType)}
+                  onValueChange={handleTypeChange}
                   filters={availableTypes}
                   marketLabels={!isMineView}
                 />
-                <form
-                  className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px] sm:pb-0"
-                  onSubmit={handleSearch}
-                  data-testid="resource-library-header-search"
-                >
-                  <Search
-                    className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted sm:top-1/2"
-                    aria-hidden
-                  />
-                  <Input
-                    value={searchInput}
-                    onChange={event => setSearchInput(event.target.value)}
-                    placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
-                    className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
-                    data-testid="resource-library-header-search-input"
-                  />
-                  {searchInput && (
-                    <button
-                      type="button"
-                      className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary sm:top-1/2"
-                      aria-label={t('actions.clear_search')}
-                      onClick={() => {
-                        setSearchInput('')
-                        replaceParams({ keyword: null })
-                      }}
-                      data-testid="resource-library-header-search-clear"
-                    >
-                      <X className="h-4 w-4" aria-hidden />
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    className="sr-only"
-                    data-testid="resource-library-header-search-button"
+                {isMineView && (
+                  <form
+                    className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px] sm:pb-0"
+                    onSubmit={handleSearch}
+                    data-testid="resource-library-header-search"
                   >
-                    {t('actions.search')}
-                  </button>
-                </form>
+                    <Search
+                      className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted sm:top-1/2"
+                      aria-hidden
+                    />
+                    <Input
+                      value={searchInput}
+                      onChange={event => setSearchInput(event.target.value)}
+                      placeholder={t(getResourceSearchPlaceholderKey(managedResourceType))}
+                      className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
+                      data-testid="resource-library-header-search-input"
+                    />
+                    {searchInput && (
+                      <button
+                        type="button"
+                        className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary sm:top-1/2"
+                        aria-label={t('actions.clear_search')}
+                        onClick={() => {
+                          setSearchInput('')
+                          replaceParams({ keyword: null })
+                        }}
+                        data-testid="resource-library-header-search-clear"
+                      >
+                        <X className="h-4 w-4" aria-hidden />
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      className="sr-only"
+                      data-testid="resource-library-header-search-button"
+                    >
+                      {t('actions.search')}
+                    </button>
+                  </form>
+                )}
               </div>
 
               {isMineView && (

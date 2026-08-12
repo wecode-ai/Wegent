@@ -20,6 +20,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  SquareTerminal,
   Sparkles,
   UserRound,
   X,
@@ -38,7 +39,9 @@ import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import {
@@ -59,7 +62,6 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
@@ -161,6 +163,7 @@ import {
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -175,6 +178,8 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  localHarnessSessions?: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -188,6 +193,8 @@ interface DesktopSidebarProps {
   onToggleSidebar?: () => void
   onNewChat: () => void
   onStartStandaloneChat: () => void
+  onOpenLocalHarnessSession?: (sessionId: string) => void
+  onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -352,18 +359,25 @@ function getSidebarPathBasename(path: string): string {
   return parts.at(-1) ?? normalizedPath
 }
 
+/**
+ * Whether any project or chat already represents the workspace path.
+ *
+ * The standalone row must not duplicate a workspace that is already visible
+ * under another device route: the same path can be opened as both a local and
+ * an aliased cloud project, and the workbench deduplicates them into one row.
+ */
 function runtimeWorkHasWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string,
   workspacePath: string
 ): boolean {
   const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
-  return (runtimeWork?.projects ?? []).some(projectWork =>
-    projectWork.deviceWorkspaces.some(
-      workspace =>
-        workspace.deviceId === deviceId &&
-        normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
-    )
+  const hasMatchingWorkspace = (workspace: RuntimeDeviceWorkspace) =>
+    normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
+
+  return (
+    (runtimeWork?.projects ?? []).some(projectWork =>
+      projectWork.deviceWorkspaces.some(hasMatchingWorkspace)
+    ) || (runtimeWork?.chats ?? []).some(hasMatchingWorkspace)
   )
 }
 
@@ -376,7 +390,7 @@ function standaloneRuntimeProjectWork(
   const normalizedDeviceId = deviceId?.trim()
   const normalizedWorkspacePath = workspacePath ? normalizeSidebarWorkspacePath(workspacePath) : ''
   if (!normalizedDeviceId || !normalizedWorkspacePath) return null
-  if (runtimeWorkHasWorkspace(runtimeWork, normalizedDeviceId, normalizedWorkspacePath)) {
+  if (runtimeWorkHasWorkspace(runtimeWork, normalizedWorkspacePath)) {
     return null
   }
 
@@ -484,6 +498,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
 const SIDEBAR_RUNNING_SPINNER_CLASS =
   'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
+const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
+  'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -629,6 +645,8 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 }
 
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  const deviceName = deviceState.device?.name?.trim()
+  if (deviceName) return deviceName
   return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
 }
 
@@ -1119,7 +1137,7 @@ function GlobalImNotificationBell({
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.away_im_reminder_description',
-                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                    '锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
                   )}
                 </p>
               </div>
@@ -1306,6 +1324,56 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   )
 }
 
+function SidebarReleaseNotesCard({
+  releaseNotes,
+  onOpen,
+  onDismiss,
+}: {
+  releaseNotes: WeworkInstalledReleaseNotes
+  onOpen: () => void
+  onDismiss: () => void
+}) {
+  const { t } = useTranslation('common')
+  const dismissLabel = t('workbench.app_release_notes_dismiss', '关闭版本更新提示')
+
+  return (
+    <aside
+      data-testid="sidebar-release-notes-card"
+      className="relative mb-1 shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm"
+    >
+      <button
+        type="button"
+        data-testid="sidebar-release-notes-open"
+        onClick={onOpen}
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      >
+        <span className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          <span className="min-w-0 truncate text-sm font-medium">
+            {t('workbench.app_release_notes_updated', {
+              defaultValue: 'Wework 已更新至 v{{version}}',
+              version: releaseNotes.version,
+            })}
+          </span>
+        </span>
+        <span className="mt-1 block text-xs leading-4 text-text-secondary">
+          {t('workbench.app_release_notes_summary', '查看此版本的新功能和改进')}
+        </span>
+      </button>
+      <button
+        type="button"
+        data-testid="sidebar-release-notes-dismiss"
+        aria-label={dismissLabel}
+        title={dismissLabel}
+        onClick={onDismiss}
+        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </aside>
+  )
+}
+
 function calculateSidebarUpdateDownloadPercent(
   downloadedBytes: number,
   totalBytes: number | null
@@ -1376,7 +1444,7 @@ function getDeviceUnavailableActionTitle(
 ) {
   const status = getSidebarDeviceStatusLabel(t, deviceState.status)
   return formatSidebarTemplate(
-    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法新建项目对话：{{device}}'),
+    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法私信 AI：{{device}}'),
     { status, device: getSidebarDeviceName(deviceState) }
   )
 }
@@ -1439,6 +1507,9 @@ function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
+  const titleShimmerDelayRef = useRef<number | null>(null)
+  const previousTitleRef = useRef(task.title)
+  const [titleShimmering, setTitleShimmering] = useState(false)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
   const projectLabel = projectName?.trim() || t('workbench.task')
@@ -1492,8 +1563,23 @@ function RuntimeTaskRow({
       if (archiveDelayRef.current !== null) {
         window.clearTimeout(archiveDelayRef.current)
       }
+      if (titleShimmerDelayRef.current !== null) {
+        window.clearTimeout(titleShimmerDelayRef.current)
+      }
     }
   }, [])
+  useEffect(() => {
+    if (previousTitleRef.current === task.title) return
+    previousTitleRef.current = task.title
+    setTitleShimmering(true)
+    if (titleShimmerDelayRef.current !== null) {
+      window.clearTimeout(titleShimmerDelayRef.current)
+    }
+    titleShimmerDelayRef.current = window.setTimeout(() => {
+      titleShimmerDelayRef.current = null
+      setTitleShimmering(false)
+    }, 760)
+  }, [task.title])
   const runArchive = async (options?: ArchiveRuntimeTaskOptions) => {
     setArchiving(true)
     try {
@@ -1599,6 +1685,7 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
+          aria-current={selected ? 'page' : undefined}
           onClick={handleOpen}
           onContextMenu={event => {
             event.preventDefault()
@@ -1625,7 +1712,20 @@ function RuntimeTaskRow({
         >
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-              <span className="truncate">
+              <span
+                data-testid={`runtime-local-task-title-${task.taskId}`}
+                className={cn(
+                  'runtime-task-title relative truncate',
+                  titleShimmering && 'is-updated'
+                )}
+              >
+                {titleShimmering ? (
+                  <span
+                    aria-hidden="true"
+                    className="runtime-task-title-shimmer"
+                    data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                  />
+                ) : null}
                 <span
                   data-sidebar-drag-activator
                   data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
@@ -1648,7 +1748,20 @@ function RuntimeTaskRow({
               </span>
             </span>
           ) : (
-            <span className="min-w-0 flex-1 truncate">
+            <span
+              data-testid={`runtime-local-task-title-${task.taskId}`}
+              className={cn(
+                'runtime-task-title relative min-w-0 flex-1 truncate',
+                titleShimmering && 'is-updated'
+              )}
+            >
+              {titleShimmering ? (
+                <span
+                  aria-hidden="true"
+                  className="runtime-task-title-shimmer"
+                  data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                />
+              ) : null}
               <span
                 data-sidebar-drag-activator
                 data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
@@ -1885,9 +1998,73 @@ function RuntimeTaskRow({
   )
 }
 
+function LocalHarnessSessionRow({
+  session,
+  selected,
+  indentClassName,
+  onOpen,
+  onClose,
+}: {
+  session: LocalHarnessWorkbenchSession
+  selected: boolean
+  indentClassName?: string
+  onOpen?: (sessionId: string) => void
+  onClose?: (sessionId: string) => void | Promise<void>
+}) {
+  const { t } = useTranslation('common')
+  const canArchive = session.harnessId === 'opencode'
+  const canClose = !session.isPrimary
+  const useArchiveTestId = canArchive && session.isPrimary
+
+  return (
+    <div className="group/harness-session relative flex items-center">
+      <button
+        type="button"
+        data-testid={`local-harness-session-row-${session.sessionId}`}
+        onClick={() => onOpen?.(session.sessionId)}
+        aria-current={selected ? 'page' : undefined}
+        className={cn(
+          'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2.5 text-left text-sm',
+          indentClassName,
+          selected
+            ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+            : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+        )}
+      >
+        <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="truncate">{session.title}</span>
+      </button>
+      {onClose && (canArchive || canClose) && (
+        <button
+          type="button"
+          data-testid={
+            useArchiveTestId
+              ? `archive-local-harness-session-${session.sessionId}`
+              : `close-local-harness-session-${session.sessionId}`
+          }
+          onClick={event => {
+            event.stopPropagation()
+            void onClose(session.sessionId)
+          }}
+          aria-label={
+            canArchive
+              ? t('workbench.archive_harness', '归档编码会话')
+              : t('workbench.close_harness', '关闭编码工具')
+          }
+          className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+        >
+          {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ProjectItem({
   project,
   expanded,
+  localHarnessSessions,
+  activeLocalHarnessSessionId,
   onToggleProject,
   devices,
   runtimeProjectWork,
@@ -1910,9 +2087,13 @@ function ProjectItem({
   onArchiveRuntimeTask,
   onArchiveProjectConversations,
   onToggleRuntimeTaskNotification,
+  onOpenLocalHarnessSession,
+  onCloseLocalHarnessSession,
 }: {
   project: ProjectWithTasks
   expanded: boolean
+  localHarnessSessions: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId: string | null
   onToggleProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
@@ -1949,6 +2130,8 @@ function ProjectItem({
     address: RuntimeTaskAddress,
     subscribed: boolean
   ) => Promise<void> | void
+  onOpenLocalHarnessSession?: (sessionId: string) => void
+  onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
@@ -2039,7 +2222,7 @@ function ProjectItem({
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
-      : t('workbench.new_project_chat', '新建项目对话')
+      : t('workbench.new_project_chat', '私信 AI')
   const archiveConversationCount = allRuntimeTaskItems.length
   const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
   const persistedProjectPinned = runtimeProjectWork?.project.pinned ?? false
@@ -2225,6 +2408,7 @@ function ProjectItem({
                   <ProjectFolderIcon
                     project={project}
                     remote={isRuntimeRemoteProject(runtimeProjectWork)}
+                    open={expanded}
                     className="h-3.5 w-3.5 shrink-0"
                   />
                 )}
@@ -2388,7 +2572,17 @@ function ProjectItem({
       >
         <div className="min-h-0 overflow-hidden">
           <div className="space-y-0.5">
-            {runtimeTaskItems.length === 0 ? (
+            {localHarnessSessions.map(session => (
+              <LocalHarnessSessionRow
+                key={session.sessionId}
+                session={session}
+                selected={activeLocalHarnessSessionId === session.sessionId}
+                indentClassName="pl-9"
+                onOpen={onOpenLocalHarnessSession}
+                onClose={onCloseLocalHarnessSession}
+              />
+            ))}
+            {runtimeTaskItems.length === 0 && localHarnessSessions.length === 0 ? (
               <div
                 data-testid={`project-local-tasks-empty-${project.id}`}
                 className="ml-9 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
@@ -2553,8 +2747,12 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
+  localHarnessSessions = [],
+  activeLocalHarnessSessionId = null,
   onNewChat,
   onStartStandaloneChat,
+  onOpenLocalHarnessSession,
+  onCloseLocalHarnessSession,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -2623,7 +2821,9 @@ export function DesktopSidebar({
   const platform = getPlatform()
   const usesOverlayTitlebar = false
   const isWindowsTauri = isTauriRuntime() && platform === 'win'
-  const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
+  const appUpdate = useOptionalAppUpdate()
+  const hasAvailableAppUpdate = Boolean(appUpdate?.availableUpdate)
+  const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sidebarAccount = requiresCloudLogin
     ? {
@@ -2634,7 +2834,6 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const windowFocused = useWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -2646,6 +2845,7 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const [releaseNotesDialogOpen, setReleaseNotesDialogOpen] = useState(false)
   const [accountCloudDialogOpen, setAccountCloudDialogOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
@@ -2753,6 +2953,27 @@ export function DesktopSidebar({
     () => sortableProjects.filter(({ runtimeProjectWork }) => !runtimeProjectWork?.project.pinned),
     [sortableProjects]
   )
+  const sidebarProjectIds = useMemo(
+    () => new Set(sidebarProjects.map(project => project.id)),
+    [sidebarProjects]
+  )
+  const standaloneLocalHarnessSessions = useMemo(
+    () =>
+      localHarnessSessions.filter(
+        session => session.projectId === null || !sidebarProjectIds.has(session.projectId)
+      ),
+    [localHarnessSessions, sidebarProjectIds]
+  )
+  const localHarnessSessionsByProjectId = useMemo(() => {
+    const sessionsByProjectId = new Map<number, LocalHarnessWorkbenchSession[]>()
+    for (const session of localHarnessSessions) {
+      if (session.projectId === null || !sidebarProjectIds.has(session.projectId)) continue
+      const sessions = sessionsByProjectId.get(session.projectId) ?? []
+      sessions.push(session)
+      sessionsByProjectId.set(session.projectId, sessions)
+    }
+    return sessionsByProjectId
+  }, [localHarnessSessions, sidebarProjectIds])
   const chatWorkspaces = useMemo(() => runtimeWork?.chats ?? [], [runtimeWork?.chats])
   const chatTaskItems = useMemo(
     () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
@@ -2999,6 +3220,16 @@ export function DesktopSidebar({
   )
   const chatSectionArchiveCount = chatSectionArchiveAddresses.length
   const selectedRuntimeProject = useMemo(() => {
+    const activeHarnessProjectId = localHarnessSessions.find(
+      session => session.sessionId === activeLocalHarnessSessionId
+    )?.projectId
+    if (activeHarnessProjectId) {
+      return {
+        autoExpandKey: `harness:${activeLocalHarnessSessionId}`,
+        id: activeHarnessProjectId,
+      }
+    }
+
     if (currentRuntimeTask) {
       const projectWork = sidebarRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
@@ -3032,7 +3263,14 @@ export function DesktopSidebar({
           id: runtimeProjectUiId(projectWork.project),
         }
       : null
-  }, [currentRuntimeTask, sidebarRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
+  }, [
+    activeLocalHarnessSessionId,
+    currentRuntimeTask,
+    localHarnessSessions,
+    sidebarRuntimeProjects,
+    standaloneDeviceId,
+    standaloneWorkspacePath,
+  ])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
@@ -3042,7 +3280,12 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
-  const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
+  const displayedChatsExpanded =
+    chatsExpanded ||
+    selectedRuntimeChatVisible ||
+    standaloneLocalHarnessSessions.some(
+      session => session.sessionId === activeLocalHarnessSessionId
+    )
   const isArchiveSectionSubmitting =
     archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
   const archiveSectionDialogTestId =
@@ -3242,7 +3485,6 @@ export function DesktopSidebar({
   return (
     <aside
       data-testid={containerTestId}
-      data-window-focused={windowFocused}
       data-sidebar-translucent={
         isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
       }
@@ -3255,9 +3497,6 @@ export function DesktopSidebar({
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
-        !windowFocused &&
-          !(background.imagePath && background.inSidebar) &&
-          'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
       )}
@@ -3286,6 +3525,7 @@ export function DesktopSidebar({
                 sidebarCollapsed={false}
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
+                buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
               />
             </div>
           )}
@@ -3297,6 +3537,7 @@ export function DesktopSidebar({
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}
                     className="gap-0"
+                    buttonClassName={SIDEBAR_HEADER_ICON_BUTTON_CLASS}
                   />
                 )}
                 {onOpenSearch && (
@@ -3367,21 +3608,20 @@ export function DesktopSidebar({
             data-scrolled={sidebarScrolled}
             onScroll={event => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
             className={cn(
-              'scrollbar-none relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              'relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
               sidebarScrolled &&
-                '[mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]'
+                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
+              !sidebarScrolled && 'scrollbar-none'
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={AlarmClock}
-                  label={t('workbench.automation', '已安排')}
-                  testId="automation-button"
-                  selected={activeItem === 'automation'}
-                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-                />
-              )}
+              <DesktopSidebarNavItem
+                icon={AlarmClock}
+                label={t('workbench.automation', '已安排')}
+                testId="automation-button"
+                selected={activeItem === 'automation'}
+                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+              />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
                   icon={Sparkles}
@@ -3571,6 +3811,10 @@ export function DesktopSidebar({
                           <ProjectItem
                             project={project}
                             expanded={displayedExpandedProjectIds.has(project.id)}
+                            localHarnessSessions={
+                              localHarnessSessionsByProjectId.get(project.id) ?? []
+                            }
+                            activeLocalHarnessSessionId={activeLocalHarnessSessionId}
                             devices={devices}
                             runtimeProjectWork={runtimeProjectWork}
                             currentRuntimeTask={currentRuntimeTask}
@@ -3594,6 +3838,8 @@ export function DesktopSidebar({
                             onArchiveRuntimeTask={onArchiveRuntimeTask}
                             onArchiveProjectConversations={onArchiveProjectConversations}
                             onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                            onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                            onCloseLocalHarnessSession={onCloseLocalHarnessSession}
                           />
                         )}
                       />
@@ -3769,6 +4015,10 @@ export function DesktopSidebar({
                         <ProjectItem
                           project={project}
                           expanded={displayedExpandedProjectIds.has(project.id)}
+                          localHarnessSessions={
+                            localHarnessSessionsByProjectId.get(project.id) ?? []
+                          }
+                          activeLocalHarnessSessionId={activeLocalHarnessSessionId}
                           devices={devices}
                           runtimeProjectWork={runtimeProjectWork}
                           currentRuntimeTask={currentRuntimeTask}
@@ -3792,6 +4042,8 @@ export function DesktopSidebar({
                           onArchiveRuntimeTask={onArchiveRuntimeTask}
                           onArchiveProjectConversations={onArchiveProjectConversations}
                           onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                          onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                          onCloseLocalHarnessSession={onCloseLocalHarnessSession}
                         />
                       )}
                     />
@@ -3802,7 +4054,9 @@ export function DesktopSidebar({
                   <DesktopSidebarSectionHeader
                     title={t('workbench.tasks')}
                     expanded={displayedChatsExpanded}
-                    hasContent={regularChatTaskItems.length > 0}
+                    hasContent={
+                      standaloneLocalHarnessSessions.length > 0 || regularChatTaskItems.length > 0
+                    }
                     toggleTestId="runtime-chat-section-toggle"
                     iconTestId="runtime-chat-section-chevron-right"
                     onToggle={() => setChatsExpanded(expanded => !expanded)}
@@ -3841,14 +4095,24 @@ export function DesktopSidebar({
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
-                      {regularChatTaskItems.length === 0 ? (
+                      {standaloneLocalHarnessSessions.map(session => (
+                        <LocalHarnessSessionRow
+                          key={session.sessionId}
+                          session={session}
+                          selected={activeLocalHarnessSessionId === session.sessionId}
+                          onOpen={onOpenLocalHarnessSession}
+                          onClose={onCloseLocalHarnessSession}
+                        />
+                      ))}
+                      {standaloneLocalHarnessSessions.length === 0 &&
+                      regularChatTaskItems.length === 0 ? (
                         <div
                           data-testid="runtime-chat-empty"
                           className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
                         >
                           {t('workbench.no_chats', '暂无会话')}
                         </div>
-                      ) : (
+                      ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"
                           className="space-y-0.5"
@@ -3905,13 +4169,24 @@ export function DesktopSidebar({
                             />
                           )}
                         />
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </section>
               </>
             )}
           </div>
+
+          {installedReleaseNotes && (
+            <SidebarReleaseNotesCard
+              releaseNotes={installedReleaseNotes}
+              onOpen={() => setReleaseNotesDialogOpen(true)}
+              onDismiss={() => {
+                setReleaseNotesDialogOpen(false)
+                appUpdate?.dismissInstalledReleaseNotes()
+              }}
+            />
+          )}
 
           <div ref={settingsMenuRef} className="group/account relative shrink-0">
             <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
@@ -4012,6 +4287,14 @@ export function DesktopSidebar({
               )}
             </div>
           </div>
+
+          {installedReleaseNotes && (
+            <AppReleaseNotesDialog
+              open={releaseNotesDialogOpen}
+              releaseNotes={installedReleaseNotes}
+              onClose={() => setReleaseNotesDialogOpen(false)}
+            />
+          )}
 
           {accountCloudDialogOpen && (
             <CloudConnectionDialog

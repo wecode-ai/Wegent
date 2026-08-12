@@ -1228,6 +1228,91 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_status", "expected_http_status"),
+    [
+        ("conflicted", 409),
+        ("artifact_missing", 410),
+    ],
+)
+async def test_runtime_file_changes_revert_preserves_device_failure_status(
+    test_db,
+    test_user,
+    monkeypatch,
+    device_status,
+    expected_http_status,
+):
+    from app.schemas.runtime_work import (
+        RuntimeFileChangesRevertRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    execute = AsyncMock(
+        return_value={
+            "stdout": {
+                "success": False,
+                "status": device_status,
+                "error": "device revert failed",
+            }
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "execute_configured_device_command",
+        execute,
+    )
+    request = RuntimeFileChangesRevertRequest(
+        address=RuntimeTaskAddress(deviceId="device-1", taskId="codex-1"),
+        fileChanges={
+            "version": 1,
+            "status": "active",
+            "artifact_id": "turn-file-changes/codex/turn-1",
+            "device_id": "device-1",
+            "workspace_path": "/repo/Wegent",
+            "file_count": 1,
+            "additions": 1,
+            "deletions": 0,
+            "files": [
+                {
+                    "path": "README.md",
+                    "change_type": "modified",
+                    "additions": 1,
+                    "deletions": 0,
+                    "binary": False,
+                }
+            ],
+            "reverted_at": None,
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.revert_runtime_file_changes(
+            db=test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+
+    assert exc_info.value.status_code == expected_http_status
+    assert exc_info.value.detail["file_changes"]["status"] == device_status
+    execute.assert_awaited_once_with(
+        db=test_db,
+        user_id=test_user.id,
+        device_id="device-1",
+        command_key="turn_file_changes_revert",
+        path="/repo/Wegent",
+        args=["turn-file-changes/codex/turn-1"],
+        timeout_seconds=30,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_transcript_dispatches_full_content_payload(
     test_db,
     test_user,
@@ -1697,6 +1782,11 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         }
     )
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
@@ -1733,6 +1823,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
                     "value": "terminal output",
                 }
             },
+            "executionRequest": {"prompt": "continue"},
         },
         timeout_seconds=600,
     )
@@ -1905,6 +1996,11 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     )
     rpc = AsyncMock(return_value={"success": True, "accepted": True})
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
+    )
 
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
@@ -3774,6 +3870,12 @@ def test_runtime_model_override_falls_back_to_request_model_id_for_unknown_model
 
 def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
     """Create a minimal Team + Bot + Shell + Ghost for runtime request building."""
+    model = _codex_provider_model(
+        test_db,
+        user_id,
+        name="codex-model",
+        api_model_id="gpt-test",
+    )
     shell = Kind(
         user_id=user_id,
         kind="Shell",
@@ -3818,6 +3920,7 @@ def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
             "spec": {
                 "ghostRef": {"name": "ghost", "namespace": "default"},
                 "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+                "modelRef": {"name": model.name, "namespace": model.namespace},
             },
             "status": {"state": "Available"},
         },
@@ -3846,6 +3949,136 @@ def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
     test_db.commit()
     test_db.refresh(team)
     return team
+
+
+def test_build_runtime_send_execution_request_uses_complete_create_request(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    team = _runtime_team_with_bot(test_db, test_user.id)
+    monkeypatch.setattr(
+        runtime_work_service.settings,
+        "DEFAULT_TEAM_TASK",
+        f"{team.name}#{team.namespace}",
+    )
+
+    execution_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskAddress(
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            localTaskId="codex-1",
+        ),
+        message="continue",
+        attachment_ids=[],
+        additional_context={
+            "wework.terminal.current": {
+                "kind": "application",
+                "value": "terminal output",
+            }
+        },
+    )
+
+    assert execution_request.team_id == team.id
+    assert execution_request.project_workspace_path == "/repo/Wegent"
+    assert execution_request.device_id == "device-1"
+    assert execution_request.prompt.endswith("continue")
+    assert "terminal output" in execution_request.prompt
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_message_does_not_dispatch_when_request_build_fails(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    def fail_build(**kwargs):
+        raise AttributeError("missing request field")
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        fail_build,
+    )
+    rpc = AsyncMock()
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.send_runtime_message(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeSendRequest(
+                address=RuntimeTaskAddress(
+                    deviceId="device-1",
+                    localTaskId="codex-1",
+                ),
+                message="continue",
+            ),
+        )
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Failed to build runtime execution request"
+    rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_request_user_input_response_omits_execution_request(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    def unexpected_build(**kwargs):
+        raise AssertionError("request-user-input response must not build a new turn")
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        unexpected_build,
+    )
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="option-a",
+            requestUserInputResponse={"answers": {"choice": "option-a"}},
+        ),
+    )
+
+    assert response.accepted is True
+    rpc.assert_awaited_once()
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["requestUserInputResponse"] == {"answers": {"choice": "option-a"}}
+    assert "executionRequest" not in payload
 
 
 def test_build_runtime_execution_request_resolves_crd_model_id(

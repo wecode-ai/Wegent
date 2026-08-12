@@ -21,6 +21,15 @@ class WorkspaceRefLookup:
     name: str
 
 
+@dataclass(frozen=True)
+class FailedSubtaskDetail:
+    """Failed subtask with the task and user data needed by monitoring views."""
+
+    subtask: Subtask
+    task: TaskResource
+    user_name: Optional[str]
+
+
 class TaskIdAllocationError(RuntimeError):
     """Raised when a task ID reservation cannot be allocated."""
 
@@ -441,6 +450,8 @@ class TaskStore(Protocol):
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]: ...
 
     def list_archived_task_ids(
@@ -586,6 +597,14 @@ class SubtaskStore(Protocol):
         subtask_ids: Sequence[int],
         role: SubtaskRole,
     ) -> list[Subtask]: ...
+
+    def list_failed_details_by_ids(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        limit: int,
+    ) -> list[FailedSubtaskDetail]: ...
 
     def get_accessible_by_id(
         self,
@@ -854,6 +873,10 @@ class SubtaskStore(Protocol):
     ) -> list[Subtask]: ...
 
     def list_running(self, db: Session) -> list[Subtask]: ...
+
+    def list_running_since(
+        self, db: Session, *, created_after: datetime
+    ) -> list[Subtask]: ...
 
     def list_session_task_ids(
         self, db: Session, *, skip: int, limit: int

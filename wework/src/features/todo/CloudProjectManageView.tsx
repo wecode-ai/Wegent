@@ -9,8 +9,11 @@ import type {
   CloudUserSearchItem,
 } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import {
@@ -68,6 +71,7 @@ export function CloudProjectManageView({
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [version, setVersion] = useState(project.version)
   const [error, setError] = useState<string | null>(null)
   const [members, setMembers] = useState<CloudProjectMember[]>([])
@@ -182,7 +186,9 @@ export function CloudProjectManageView({
     try {
       const updated = await updateProject({ visibility: next, version })
       setVisibility(updated.visibility ?? next)
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setVisibility(previous)
       setError(cause instanceof Error ? cause.message : '更新项目权限失败')
     } finally {
@@ -206,7 +212,9 @@ export function CloudProjectManageView({
           show_date: next.showDate,
         },
       })
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setDisplay(previous)
       setError(cause instanceof Error ? cause.message : '保存卡片显示设置失败')
     } finally {
@@ -225,7 +233,9 @@ export function CloudProjectManageView({
         board_config: { group_by: project.board_config?.group_by ?? 'status', statuses: next },
       })
       setStatuses(updated.board_config?.statuses ?? next)
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setStatuses(previous)
       setError(cause instanceof Error ? cause.message : '保存状态设置失败')
     } finally {
@@ -240,7 +250,9 @@ export function CloudProjectManageView({
       const member = await api.addCloudProjectMember(project.id, user.id, memberRole)
       setMembers(current => [...current, member])
       setMemberQuery('')
+      track('feature_action_completed', { domain: 'project_space', action: 'member_invite' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '添加成员失败')
     } finally {
       setSavingUserId(null)
@@ -256,7 +268,12 @@ export function CloudProjectManageView({
       setMembers(current =>
         current.map(item => (item.user_id === updated.user_id ? updated : item))
       )
+      track('feature_action_completed', {
+        domain: 'project_space',
+        action: 'member_role_change',
+      })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '更新成员失败')
     }
   }
@@ -266,7 +283,9 @@ export function CloudProjectManageView({
     try {
       await api.removeCloudProjectMember(project.id, member.user_id)
       setMembers(current => current.filter(item => item.user_id !== member.user_id))
+      track('feature_action_completed', { domain: 'project_space', action: 'member_remove' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '移除成员失败')
     }
   }
@@ -465,15 +484,24 @@ export function CloudProjectManageView({
                         <option value="Developer">Developer</option>
                         <option value="Reporter">Reporter</option>
                       </select>
-                      <button
-                        type="button"
-                        data-testid={`cloud-project-member-remove-${member.user_id}`}
-                        onClick={() => void removeMember(member)}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
-                        aria-label={`移除 ${member.user_name}`}
+                      <Tooltip
+                        label={t('todo.remove_member', '移除 {{name}}', {
+                          name: member.user_name,
+                        })}
+                        align="end"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                        <button
+                          type="button"
+                          data-testid={`cloud-project-member-remove-${member.user_id}`}
+                          onClick={() => void removeMember(member)}
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
+                          aria-label={t('todo.remove_member', '移除 {{name}}', {
+                            name: member.user_name,
+                          })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
                     </>
                   )}
                 </div>
@@ -585,16 +613,24 @@ export function CloudProjectManageView({
                     onKeyDown={event => event.key === 'Enter' && void renameTag(tag)}
                     className="h-6 w-28 bg-transparent px-1 text-sm outline-none"
                   />
-                  <button type="button" onClick={() => void renameTag(tag)} aria-label="确认重命名">
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRenamingTag(null)}
-                    aria-label="取消重命名"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <Tooltip label={t('todo.confirm_rename', '确认重命名')}>
+                    <button
+                      type="button"
+                      onClick={() => void renameTag(tag)}
+                      aria-label={t('todo.confirm_rename', '确认重命名')}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('todo.cancel_rename', '取消重命名')}>
+                    <button
+                      type="button"
+                      onClick={() => setRenamingTag(null)}
+                      aria-label={t('todo.cancel_rename', '取消重命名')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 </span>
               ) : (
                 <span

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
 from app.schemas.kind import SkillRefMeta
@@ -340,6 +340,18 @@ class TaskArchiveBatchResponse(BaseModel):
 
     message: str
     count: int
+
+
+MAX_TASK_DELETE_BATCH_SIZE = 50
+
+
+class TaskBulkDeleteRequest(BaseModel):
+    """Request body for bulk task deletion."""
+
+    task_ids: list[int] = Field(
+        min_length=1,
+        max_length=MAX_TASK_DELETE_BATCH_SIZE,
+    )
 
 
 class PipelineStageInfo(BaseModel):

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { AlertCircle, Loader2, Plus, RefreshCw, Search } from 'lucide-react'
+import { ApiError } from '@/api/http'
 import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
 import {
   DEFAULT_APPLICATION_TYPE,
+  type ApplicationCreateStrategy,
   getApplicationTypeDefinition,
 } from './applicationTypeDefinitions'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
@@ -14,12 +17,13 @@ import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
   api: SitesApi
-  onCreate: (appType: SiteAppType) => void | Promise<void>
+  onCreate: (appType: SiteAppType, create: ApplicationCreateStrategy) => void | Promise<void>
   creatingType?: SiteAppType | null
   pageSize?: number
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
   createError?: string | null
+  createNotice?: string | null
   onOpenPlugins?: () => void
 }
 
@@ -33,6 +37,18 @@ interface ApplicationCollectionOptions {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+}
+
+function isSecurityCheckingError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.errorCode === 'SECURITY_CHECKING') return true
+  const detail = recordValue(error.detail)
+  const nestedError = recordValue(detail?.error)
+  return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
 function getInitialAppType(): SiteAppType {
@@ -165,6 +181,20 @@ function SitesCreateError({
   )
 }
 
+function SitesCreateNotice({ message }: { message: string }) {
+  return (
+    <div
+      className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text-secondary"
+      role="status"
+      aria-live="polite"
+      data-testid="sites-create-notice"
+    >
+      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-muted" aria-hidden="true" />
+      <span className="min-w-0 truncate">{message}</span>
+    </div>
+  )
+}
+
 export function SitesWorkspace({
   api,
   onCreate,
@@ -173,6 +203,7 @@ export function SitesWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
   createError,
+  createNotice,
   onOpenPlugins,
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
@@ -243,31 +274,40 @@ export function SitesWorkspace({
 
   const publish = async (site: Site) => {
     if (deletingSiteId === site.siteid) return
+    const nextNetwork = site.network === 'outer' || site.external_url ? 'inner' : 'outer'
     setPublishingIds(current => new Set(current).add(site.siteid))
     collection.setItems(current =>
       current.map(item =>
-        item.app_type === 'site' && item.siteid === site.siteid
+        item.app_type === 'web' && item.siteid === site.siteid
           ? { ...item, publish_status: 'publishing', last_publish_error: null }
           : item
       )
     )
     try {
-      const published = await api.publishSite(site.siteid)
+      const published = await api.updateSiteNetwork(site.siteid, nextNetwork)
       collection.setItems(current =>
         current.map(item => (item.siteid === site.siteid ? published : item))
       )
+      track('feature_action_completed', { action: 'publish', domain: 'site' })
     } catch (error) {
       collection.setItems(current =>
         current.map(item =>
-          item.app_type === 'site' && item.siteid === site.siteid
-            ? {
-                ...item,
-                publish_status: 'failed',
-                last_publish_error: errorMessage(error, t('publish_failed', '发布失败')),
-              }
+          item.app_type === 'web' && item.siteid === site.siteid
+            ? isSecurityCheckingError(error)
+              ? {
+                  ...item,
+                  publish_status: 'scanning',
+                  last_publish_error: null,
+                }
+              : {
+                  ...item,
+                  publish_status: 'failed',
+                  last_publish_error: errorMessage(error, t('publish_failed', '发布失败')),
+                }
             : item
         )
       )
+      track('operation_failed', { operation: 'site_action' })
     } finally {
       setPublishingIds(current => {
         const next = new Set(current)
@@ -288,8 +328,10 @@ export function SitesWorkspace({
       )
       collection.setTotal(current => Math.max(0, current - 1))
       setPendingDeleteSite(null)
+      track('feature_action_completed', { action: 'delete', domain: 'site' })
     } catch (error) {
       setDeleteError(errorMessage(error, t('delete_failed', '站点删除失败')))
+      track('operation_failed', { operation: 'site_action' })
     } finally {
       setDeletingSiteId(null)
     }
@@ -301,7 +343,7 @@ export function SitesWorkspace({
       label: t(definition.create.label.key, definition.create.label.fallback),
       icon: definition.icon,
       testId: definition.create.testId,
-      onSelect: () => onCreate(definition.appType),
+      onSelect: () => onCreate(definition.appType, definition.create),
     }))
 
   const emptyTitle = t(activeDefinition.emptyTitle.key, activeDefinition.emptyTitle.fallback)
@@ -424,6 +466,7 @@ export function SitesWorkspace({
             onOpenPlugins={onOpenPlugins}
           />
         )}
+        {!createError && createNotice && <SitesCreateNotice message={createNotice} />}
 
         <div
           id="applications-tab-panel"

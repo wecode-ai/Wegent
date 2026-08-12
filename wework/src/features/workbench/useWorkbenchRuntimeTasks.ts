@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
@@ -31,6 +32,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   getRuntimeTaskRouteKey,
+  getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
   isSameRuntimeTaskIdentity,
   projectTaskAddresses,
@@ -219,8 +221,8 @@ export function useWorkbenchRuntimeTasks({
         try {
           if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
           await services.runtimeWorkApi.deleteWorktree({
-            deviceId: target.workspace.deviceId,
-            path: target.workspace.workspacePath,
+            deviceId: target.deviceId,
+            path: target.path,
             preserveSnapshot: true,
           })
         } catch (error) {
@@ -267,9 +269,11 @@ export function useWorkbenchRuntimeTasks({
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
+        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
       }
       const failedResult = results.find(result => !result.response?.accepted)
       if (!failedResult) return { status: 'archived' }
+      track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',
         error:
@@ -486,7 +490,7 @@ export function useWorkbenchRuntimeTasks({
   }
 }
 
-type RuntimeTaskWorktreeTarget = { workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }
+type RuntimeTaskWorktreeTarget = { deviceId: string; path: string }
 
 function uniqueRuntimeTaskAddresses(addresses: RuntimeTaskAddress[]): RuntimeTaskAddress[] {
   const uniqueAddresses = new Map(
@@ -507,12 +511,14 @@ function findRuntimeTaskWorktree(
 
   for (const workspace of workspaces) {
     if (workspace.deviceId !== address.deviceId) continue
-    if (address.workspacePath?.trim() && workspace.workspacePath !== address.workspacePath.trim()) {
-      continue
-    }
     const task = workspace.tasks.find(item => item.taskId === address.taskId)
     if (!task || !isRuntimeTaskWorktree(workspace, task)) continue
-    return { workspace, task }
+    const path = getRuntimeTaskWorkspacePath(workspace, task)
+    if (address.workspacePath?.trim() && path !== address.workspacePath.trim()) continue
+    return {
+      deviceId: workspace.deviceId,
+      path,
+    }
   }
 
   return null
@@ -533,7 +539,7 @@ function uniqueRuntimeTaskWorktreeTargets(
   const seen = new Set<string>()
   const uniqueTargets: RuntimeTaskWorktreeTarget[] = []
   for (const target of targets) {
-    const key = `${target.workspace.deviceId}:${target.workspace.workspacePath}`
+    const key = `${target.deviceId}:${target.path}`
     if (seen.has(key)) continue
     seen.add(key)
     uniqueTargets.push(target)

@@ -44,6 +44,13 @@ interface UserViewportAnchor {
   textOffset: number | null
 }
 
+interface PendingLayoutScrollPosition {
+  conversationKey: string | null
+  scrollHeightPx: number
+  distanceFromBottomPx: number
+  previousOverflowAnchor: string
+}
+
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
   loading?: boolean
@@ -56,6 +63,8 @@ interface ScrollableMessageAreaProps {
   scrollerClassName?: string
   contentClassName?: string
   messageListClassName?: string
+  contentFooter?: ReactNode
+  contentFooterClassName?: string
   stickyFooter?: ReactNode
   stickyFooterClassName?: string
   scrollButtonClassName?: string
@@ -129,6 +138,10 @@ function areScrollableMessageAreaPropsEqual(
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.contentClassName !== next.contentClassName ? 'contentClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
+    previous.contentFooter !== next.contentFooter ? 'contentFooter' : null,
+    previous.contentFooterClassName !== next.contentFooterClassName
+      ? 'contentFooterClassName'
+      : null,
     previous.stickyFooter !== next.stickyFooter ? 'stickyFooter' : null,
     previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
@@ -203,6 +216,8 @@ function ScrollableMessagePaneContent({
   scrollerClassName,
   contentClassName,
   messageListClassName,
+  contentFooter,
+  contentFooterClassName,
   stickyFooter,
   stickyFooterClassName,
   scrollButtonClassName,
@@ -267,6 +282,7 @@ function ScrollableMessagePaneContent({
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
   const autoLoadedTranscriptGapKeysRef = useRef(new Set<string>())
+  const pendingLayoutScrollPositionRef = useRef<PendingLayoutScrollPosition | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [turnNavigationLoading, setTurnNavigationLoading] = useState(false)
   const [turnNavigationTargetMessageId, setTurnNavigationTargetMessageId] = useState<string | null>(
@@ -335,6 +351,30 @@ function ScrollableMessagePaneContent({
     []
   )
 
+  const releasePendingLayoutScrollPosition = useCallback(() => {
+    const pending = pendingLayoutScrollPositionRef.current
+    const scroller = activeScrollRefRef.current.current
+    if (pending && scroller) {
+      scroller.style.overflowAnchor = pending.previousOverflowAnchor
+    }
+    pendingLayoutScrollPositionRef.current = null
+  }, [])
+
+  const preserveScrollPositionForNextLayout = useCallback(() => {
+    const scroller = activeScrollRefRef.current.current
+    if (!scroller) return
+
+    clearScheduledScrolls()
+    releasePendingLayoutScrollPosition()
+    pendingLayoutScrollPositionRef.current = {
+      conversationKey: currentScrollKey,
+      scrollHeightPx: scroller.scrollHeight,
+      distanceFromBottomPx: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+      previousOverflowAnchor: scroller.style.overflowAnchor,
+    }
+    scroller.style.overflowAnchor = 'none'
+  }, [clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
+
   const handleTurnNavigationScrollTargetChange = useCallback(
     (messageId: string | null) => {
       const scrolling = messageId !== null
@@ -379,6 +419,7 @@ function ScrollableMessagePaneContent({
         autoLoadedTranscriptGapKeysRef.current.add(gapKey)
       }
 
+      preserveScrollPositionForNextLayout()
       loadingTranscriptGapKeyRef.current = gapKey
       setLoadingTranscriptGapKey(gapKey)
       try {
@@ -395,7 +436,7 @@ function ScrollableMessagePaneContent({
         setLoadingTranscriptGapKey(current => (current === gapKey ? null : current))
       }
     },
-    [onLoadTranscriptGap]
+    [onLoadTranscriptGap, preserveScrollPositionForNextLayout]
   )
 
   useEffect(() => {
@@ -477,6 +518,29 @@ function ScrollableMessagePaneContent({
     },
     [clearScheduledScrolls, currentScrollKey, messages.length, saveCurrentScrollPosition]
   )
+
+  const restorePendingLayoutScrollPosition = useCallback(() => {
+    const scroller = activeScrollRefRef.current.current
+    const pending = pendingLayoutScrollPositionRef.current
+    if (!scroller || !pending) return false
+    if (pending.conversationKey !== currentScrollKey) {
+      releasePendingLayoutScrollPosition()
+      return false
+    }
+    if (Math.abs(scroller.scrollHeight - pending.scrollHeightPx) < 0.5) {
+      return false
+    }
+
+    const nextScrollTop = Math.max(
+      0,
+      scroller.scrollHeight - scroller.clientHeight - pending.distanceFromBottomPx
+    )
+    releasePendingLayoutScrollPosition()
+    scroller.scrollTop = nextScrollTop
+    lastScrollTopRef.current = scroller.scrollTop
+    updateScrollState({ skipSave: true })
+    return true
+  }, [currentScrollKey, releasePendingLayoutScrollPosition, updateScrollState])
 
   const setScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
@@ -696,6 +760,7 @@ function ScrollableMessagePaneContent({
     if (conversationChanged) {
       userViewportAnchorRef.current = null
       preserveLatestUserTurnRef.current = false
+      releasePendingLayoutScrollPosition()
     } else if (latestUserMessageChanged) {
       preserveLatestUserTurnRef.current = true
     }
@@ -760,6 +825,7 @@ function ScrollableMessagePaneContent({
     messageScrollSignature,
     messages,
     messages.length,
+    releasePendingLayoutScrollPosition,
     scheduleStableRestoreSavedScrollPosition,
     scheduleStableScrollToBottom,
     scrollToBottom,
@@ -842,6 +908,9 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const handleContentLayoutChange = useCallback(() => {
+    if (restorePendingLayoutScrollPosition()) {
+      return
+    }
     if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
       return
     }
@@ -878,6 +947,7 @@ function ScrollableMessagePaneContent({
     currentScrollKey,
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
+    restorePendingLayoutScrollPosition,
     restoreUserViewportAnchor,
     scrollToBottom,
     setScrollToBottom,
@@ -901,7 +971,13 @@ function ScrollableMessagePaneContent({
     return () => resizeObserver.disconnect()
   }, [handleContentLayoutChange, stickyFooter])
 
-  useEffect(() => clearScheduledScrolls, [clearScheduledScrolls])
+  useEffect(
+    () => () => {
+      clearScheduledScrolls()
+      releasePendingLayoutScrollPosition()
+    },
+    [clearScheduledScrolls, releasePendingLayoutScrollPosition]
+  )
 
   const handleScrollToBottom = () => {
     userScrollPausedAutoFollowRef.current = false
@@ -924,6 +1000,13 @@ function ScrollableMessagePaneContent({
     userScrollIntentRef.current = false
     if (userInitiated) {
       preserveLatestUserTurnRef.current = false
+      const pending = pendingLayoutScrollPositionRef.current
+      const scroller = activeScrollRefRef.current.current
+      if (pending && scroller && pending.conversationKey === currentScrollKey) {
+        pending.scrollHeightPx = scroller.scrollHeight
+        pending.distanceFromBottomPx =
+          scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+      }
     }
     if (restoringScrollKeyRef.current === currentScrollKey) {
       if (!userInitiated) {
@@ -1075,7 +1158,10 @@ function ScrollableMessagePaneContent({
                   <button
                     type="button"
                     data-testid="load-older-runtime-transcript-button"
-                    onClick={() => void onLoadMoreBefore?.()}
+                    onClick={() => {
+                      preserveScrollPositionForNextLayout()
+                      void onLoadMoreBefore?.()
+                    }}
                     disabled={loadingMoreBefore}
                     className="flex h-11 min-w-[44px] items-center justify-center rounded-md border border-border bg-surface px-4 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
                   >
@@ -1118,6 +1204,14 @@ function ScrollableMessagePaneContent({
                 onVirtualLayoutChange={handleContentLayoutChange}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
+              {contentFooter ? (
+                <div
+                  data-testid={`${scrollTestId}-content-footer`}
+                  className={contentFooterClassName}
+                >
+                  {contentFooter}
+                </div>
+              ) : null}
             </>
           )}
         </div>

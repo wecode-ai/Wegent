@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -9,16 +9,19 @@ import { PluginManagementWorkspace } from '@/components/plugins/PluginManagement
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
+  const cloudConnection = useOptionalCloudConnection()
   const isMobile = useIsMobile()
   const {
     state,
@@ -57,6 +60,10 @@ export function PluginManagementPage() {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
+
+  useEffect(() => {
+    track('plugin_center_opened', { surface: 'management' })
+  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -188,6 +195,8 @@ export function PluginManagementPage() {
         </>
       )}
       <PluginManagementWorkspace
+        cloudApiBaseUrl={cloudConnection.apiBaseUrl}
+        cloudToken={cloudConnection.token}
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
           !isMobile && sidebarCollapsed && !isTauri ? (

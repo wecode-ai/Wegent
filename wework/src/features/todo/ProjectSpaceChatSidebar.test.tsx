@@ -155,7 +155,7 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('project-space-chat-header')).toHaveClass('h-[52px]')
     expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('91')
     expect(screen.getByTestId('project-space-chat-resize-handle')).toHaveAccessibleName(
-      '调整项目对话宽度'
+      '调整私信 AI 宽度'
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-empty-state-text',
@@ -285,55 +285,6 @@ describe('ProjectSpaceChatSidebar', () => {
       'data-mount-id',
       createdChatMountId
     )
-  })
-
-  it('opens a task draft with its mention and binds the created conversation', async () => {
-    const address = { deviceId: 'device-1', taskId: 'task-conversation' }
-    mocks.createProjectRuntimeTask.mockResolvedValue(address)
-
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        launchRequest={{
-          id: 1,
-          item: {
-            id: 'WEG-18',
-            title: '修复登录流程',
-            description: '结合现有代码定位问题',
-            status: 'in_progress',
-          },
-          localProjectId: null,
-        }}
-        onClose={vi.fn()}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-        'data-initial-input',
-        '[$任务:WEG-18](cloud://projects/11/todos/WEG-18)\n\n任务描述：\n结合现有代码定位问题\n\n补充说明：\n'
-      )
-    )
-    expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('')
-
-    await userEvent.click(screen.getByTestId('mock-chat-send'))
-
-    await waitFor(() =>
-      expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
-        '管理当前项目',
-        expect.objectContaining({
-          project: null,
-          cloudProjectId: '11',
-          additionalContext: expect.objectContaining({
-            projectSpaceTask: expect.objectContaining({
-              value: expect.stringContaining('cloud://projects/11/todos/WEG-18'),
-            }),
-          }),
-        })
-      )
-    )
-    expect(mocks.bindTask).toHaveBeenCalledWith('WEG-18', address, '修复登录流程')
   })
 
   it('resizes the project conversation sidebar and remembers the width', async () => {

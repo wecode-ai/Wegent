@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, File, Folder, FolderPlus, Pencil, Trash2, Upload } from 'lucide-react'
 import type { CloudProject, CloudProjectFile, ProjectDeliveryFile } from '@/api/deliveries'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { track } from '@/telemetry/client'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
 export function CloudFilesView({ api, project }: { api: DeliveryApi; project: CloudProject }) {
+  const { t } = useTranslation('common')
   const [files, setFiles] = useState<CloudProjectFile[]>([])
   const [deliveryFiles, setDeliveryFiles] = useState<ProjectDeliveryFile[]>([])
   const [folderName, setFolderName] = useState('')
@@ -33,8 +37,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       await Promise.all(selected.map(file => api.uploadCloudFile(project.id, file)))
       refresh()
+      track('feature_action_completed', { action: 'upload', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '上传失败，请重试')
+      track('operation_failed', { operation: 'project_space_file_action' })
     } finally {
       setUploadingCount(0)
       if (inputRef.current) inputRef.current.value = ''
@@ -50,8 +56,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       setFolderName('')
       setCreatingFolder(false)
       refresh()
+      track('feature_action_completed', { action: 'create', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '创建文件夹失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -61,8 +69,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       const access = await api.accessCloudFile(entry.id)
       await openExternalUrl(access.url, { target: 'wework' })
+      track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '打开文件失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -71,8 +81,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       const access = await api.accessDeliveryFile(entry.asset_id)
       await openExternalUrl(access.url, { target: 'wework' })
+      track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '打开交付文件失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -84,8 +96,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       setFiles(current =>
         current.filter(file => file.id !== entry.id && !file.path.startsWith(`${entry.path}/`))
       )
+      track('feature_action_completed', { action: 'delete', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -100,8 +114,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       await api.moveCloudFile(entry.id, path, entry.version)
       setEditingFileId(null)
       refresh()
+      track('feature_action_completed', { action: 'move', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '重命名或移动失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -225,38 +241,59 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
                   {entry.kind === 'file' ? `${entry.size_bytes} B` : '—'}
                 </span>
                 <span className="flex justify-end gap-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-                  <button
-                    type="button"
-                    data-testid={`cloud-file-rename-${entry.id}`}
-                    onClick={() => {
-                      setEditingFileId(entry.id)
-                      setEditingPath(entry.path)
-                    }}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted"
-                    aria-label={`重命名或移动 ${entry.path}`}
+                  <Tooltip
+                    label={t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                      path: entry.path,
+                    })}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  {entry.kind === 'file' && (
                     <button
                       type="button"
-                      data-testid={`cloud-file-open-${entry.id}`}
-                      onClick={() => void openFile(entry)}
-                      className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                      aria-label={`打开 ${entry.path}`}
+                      data-testid={`cloud-file-rename-${entry.id}`}
+                      onClick={() => {
+                        setEditingFileId(entry.id)
+                        setEditingPath(entry.path)
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted"
+                      aria-label={t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                        path: entry.path,
+                      })}
                     >
-                      <Download className="h-3.5 w-3.5" />
+                      <Pencil className="h-3.5 w-3.5" />
                     </button>
+                  </Tooltip>
+                  {entry.kind === 'file' && (
+                    <Tooltip
+                      label={t('todo.open_file_path', '打开 {{path}}', { path: entry.path })}
+                    >
+                      <button
+                        type="button"
+                        data-testid={`cloud-file-open-${entry.id}`}
+                        onClick={() => void openFile(entry)}
+                        className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
+                        aria-label={t('todo.open_file_path', '打开 {{path}}', {
+                          path: entry.path,
+                        })}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
                   )}
-                  <button
-                    type="button"
-                    data-testid={`cloud-file-delete-${entry.id}`}
-                    onClick={() => void deleteFile(entry)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-destructive"
-                    aria-label={`删除 ${entry.path}`}
+                  <Tooltip
+                    label={t('todo.delete_file_path', '删除 {{path}}', { path: entry.path })}
+                    align="end"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                    <button
+                      type="button"
+                      data-testid={`cloud-file-delete-${entry.id}`}
+                      onClick={() => void deleteFile(entry)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-destructive"
+                      aria-label={t('todo.delete_file_path', '删除 {{path}}', {
+                        path: entry.path,
+                      })}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 </span>
               </div>
             ))
@@ -287,31 +324,45 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
                   data-testid={`delivery-file-${entry.asset_id}`}
                   className="grid min-h-12 grid-cols-[240px_minmax(0,1fr)_120px_120px_80px_40px] items-center border-t border-border px-4 text-xs transition-colors hover:bg-muted/60"
                 >
-                  <span
-                    className="flex min-w-0 items-center gap-2"
-                    title={`${entry.loop_item_id} · ${entry.loop_item_title}`}
+                  <Tooltip
+                    label={`${entry.loop_item_id} · ${entry.loop_item_title}`}
+                    align="start"
+                    className="min-w-0 shrink"
                   >
-                    <span className="shrink-0 font-mono text-text-muted">{entry.loop_item_id}</span>
-                    <span className="truncate text-text-primary">{entry.loop_item_title}</span>
-                  </span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 font-mono text-text-muted">
+                        {entry.loop_item_id}
+                      </span>
+                      <span className="truncate text-text-primary">{entry.loop_item_title}</span>
+                    </span>
+                  </Tooltip>
                   <span className="flex min-w-0 items-center gap-2 text-text-primary">
                     <File className="h-4 w-4 shrink-0 text-text-muted" />
-                    <span className="truncate" title={entry.relative_path}>
-                      {entry.relative_path}
-                    </span>
+                    <Tooltip label={entry.relative_path} align="start" className="min-w-0 shrink">
+                      <span className="truncate">{entry.relative_path}</span>
+                    </Tooltip>
                   </span>
                   <span className="truncate text-text-muted">{entry.content_type || '文件'}</span>
                   <span className="text-text-muted">{entry.delivered_at.slice(0, 10)}</span>
                   <span className="text-text-muted">{entry.size_bytes} B</span>
-                  <button
-                    type="button"
-                    data-testid={`delivery-file-open-${entry.asset_id}`}
-                    onClick={() => void openDeliveryFile(entry)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                    aria-label={`打开交付文件 ${entry.relative_path}`}
+                  <Tooltip
+                    label={t('todo.open_delivery_file', '打开交付文件 {{path}}', {
+                      path: entry.relative_path,
+                    })}
+                    align="end"
                   >
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
+                    <button
+                      type="button"
+                      data-testid={`delivery-file-open-${entry.asset_id}`}
+                      onClick={() => void openDeliveryFile(entry)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
+                      aria-label={t('todo.open_delivery_file', '打开交付文件 {{path}}', {
+                        path: entry.relative_path,
+                      })}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 </div>
               ))
             )}

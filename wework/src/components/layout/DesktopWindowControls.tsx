@@ -1,4 +1,5 @@
 import { Edit3, PanelLeft } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -8,6 +9,7 @@ interface DesktopWindowControlsProps {
   onToggleSidebar: () => void
   onNewChat?: () => void
   className?: string
+  buttonClassName?: string
   toggleTestId?: string
 }
 
@@ -16,6 +18,7 @@ export function DesktopWindowControls({
   onToggleSidebar,
   onNewChat,
   className = '',
+  buttonClassName,
   toggleTestId,
 }: DesktopWindowControlsProps) {
   const { t } = useTranslation('common')
@@ -25,27 +28,31 @@ export function DesktopWindowControls({
 
   return (
     <div data-testid="desktop-window-controls" className={cn('flex items-center gap-3', className)}>
-      <button
-        type="button"
-        data-testid={
-          toggleTestId ?? (sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button')
-        }
-        onClick={onToggleSidebar}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={toggleLabel}
-      >
-        <PanelLeft />
-      </button>
-      {sidebarCollapsed && onNewChat && (
+      <Tooltip label={toggleLabel} side="bottom" align="start">
         <button
           type="button"
-          data-testid="desktop-controls-new-chat-button"
-          onClick={onNewChat}
-          className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-          aria-label={t('workbench.new_chat', '新对话')}
+          data-testid={
+            toggleTestId ?? (sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button')
+          }
+          onClick={onToggleSidebar}
+          className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, buttonClassName)}
+          aria-label={toggleLabel}
         >
-          <Edit3 />
+          <PanelLeft />
         </button>
+      </Tooltip>
+      {sidebarCollapsed && onNewChat && (
+        <Tooltip label={t('workbench.new_chat', '新对话')} side="bottom" align="start">
+          <button
+            type="button"
+            data-testid="desktop-controls-new-chat-button"
+            onClick={onNewChat}
+            className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, buttonClassName)}
+            aria-label={t('workbench.new_chat', '新对话')}
+          >
+            <Edit3 />
+          </button>
+        </Tooltip>
       )}
     </div>
   )

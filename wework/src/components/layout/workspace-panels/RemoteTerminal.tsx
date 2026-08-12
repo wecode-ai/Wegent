@@ -17,7 +17,11 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
-import { installXtermRenderRecovery, refreshXterm } from './xtermRenderRecovery'
+import {
+  installXtermRenderRecovery,
+  logXtermRenderState,
+  refreshXterm,
+} from './xtermRenderRecovery'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -99,7 +103,18 @@ export function RemoteTerminal({
 
   useEffect(() => {
     activeRef.current = active
-  }, [active])
+    const container = containerRef.current
+    if (!container) return
+    logXtermRenderState({
+      active,
+      container,
+      phase: 'active-changed',
+      sessionId,
+      taskId,
+      terminal: terminalRef.current,
+      terminalKind: 'remote',
+    })
+  }, [active, sessionId, taskId])
 
   useEffect(() => {
     contextRef.current = { taskId, workspacePath, cwd, title }
@@ -316,7 +331,16 @@ export function RemoteTerminal({
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
         refreshXterm(terminal)
-        terminal.focus()
+        logXtermRenderState({
+          active,
+          container,
+          phase: 'activation-complete',
+          sessionId,
+          taskId,
+          terminal,
+          terminalKind: 'remote',
+        })
+        terminal.textarea?.focus({ preventScroll: true })
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
         return
@@ -335,7 +359,7 @@ export function RemoteTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, showWorkbenchBackground])
+  }, [active, sessionId, showWorkbenchBackground, taskId])
 
   return (
     <div

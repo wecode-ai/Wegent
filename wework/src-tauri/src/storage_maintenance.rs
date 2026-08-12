@@ -9,14 +9,14 @@ use std::{
 use fs2::FileExt;
 use tauri::Manager;
 
-const INITIAL_DELAY: Duration = Duration::from_secs(5 * 60);
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const TEMP_FILE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const STAGING_DIRECTORY_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const LOG_FILE_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const RUNTIME_INSTANCE_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const MAX_REMOVALS_PER_DIRECTORY: usize = 20;
-const MAX_RUNTIME_INSTANCE_REMOVALS: usize = 2;
 const RUNTIME_INSTANCE_LOCK_FILE: &str = ".instance.lock";
+const MARKETPLACE_STAGING_PREFIXES: [&str; 2] = ["marketplace-add-", "marketplace-upgrade-"];
 
 struct RuntimeInstanceLease {
     root: PathBuf,
@@ -33,7 +33,6 @@ pub fn schedule(app: tauri::AppHandle) {
                 None
             }
         };
-        thread::sleep(INITIAL_DELAY);
         loop {
             let now = SystemTime::now();
             if let Some(lease) = &runtime_instance_lease {
@@ -104,6 +103,20 @@ fn run(app: &tauri::AppHandle, now: SystemTime, lease: Option<&RuntimeInstanceLe
         &HashSet::new(),
     );
 
+    match crate::local_executor::managed_codex_home_paths() {
+        Ok(codex_homes) => {
+            for codex_home in codex_homes {
+                cleanup_staging_target(
+                    &codex_home.join(".tmp/marketplaces/.staging"),
+                    now,
+                    STAGING_DIRECTORY_MAX_AGE,
+                    &MARKETPLACE_STAGING_PREFIXES,
+                );
+            }
+        }
+        Err(error) => log::warn!("Failed to locate managed Codex homes: {error}"),
+    }
+
     match crate::app_log_directory(app) {
         Ok(log_directory) => {
             let current_process_suffix = format!("-{}.log", std::process::id());
@@ -123,7 +136,6 @@ fn run(app: &tauri::AppHandle, now: SystemTime, lease: Option<&RuntimeInstanceLe
             &lease.instance,
             now,
             RUNTIME_INSTANCE_MAX_AGE,
-            MAX_RUNTIME_INSTANCE_REMOVALS,
         ) {
             log::warn!(
                 "Runtime instance maintenance skipped {}: {error}",
@@ -148,6 +160,20 @@ fn cleanup_target(
     ) {
         log::warn!(
             "Storage maintenance skipped {}: {error}",
+            directory.display()
+        );
+    }
+}
+
+fn cleanup_staging_target(
+    directory: &Path,
+    now: SystemTime,
+    max_age: Duration,
+    allowed_prefixes: &[&str],
+) {
+    if let Err(error) = cleanup_old_directories(directory, now, max_age, allowed_prefixes) {
+        log::warn!(
+            "Staging directory maintenance skipped {}: {error}",
             directory.display()
         );
     }
@@ -208,12 +234,65 @@ fn cleanup_old_files(
     Ok(removed)
 }
 
+fn cleanup_old_directories(
+    directory: &Path,
+    now: SystemTime,
+    max_age: Duration,
+    allowed_prefixes: &[&str],
+) -> Result<usize, String> {
+    ensure_concrete_absolute_path(directory)?;
+    if !directory.exists() {
+        return Ok(0);
+    }
+    let canonical_directory = fs::canonicalize(directory)
+        .map_err(|error| format!("Failed to resolve {}: {error}", directory.display()))?;
+    let mut candidates = fs::read_dir(directory)
+        .map_err(|error| format!("Failed to inspect {}: {error}", directory.display()))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).ok()?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !allowed_prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+            {
+                return None;
+            }
+            let modified = metadata.modified().ok()?;
+            let age = now.duration_since(modified).ok()?;
+            (age >= max_age).then_some((modified, path))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(modified, _)| *modified);
+
+    let mut removed = 0;
+    for (_, path) in candidates {
+        if let Err(error) = ensure_safe_directory_target(&canonical_directory, &path) {
+            log::warn!("Skipping unsafe staging directory target: {error}");
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => removed += 1,
+            Err(error) => {
+                log::warn!(
+                    "Failed to remove staging directory {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(removed)
+}
+
 fn cleanup_old_runtime_instances(
     root: &Path,
     current_instance: &Path,
     now: SystemTime,
     max_age: Duration,
-    max_removals: usize,
 ) -> Result<usize, String> {
     ensure_concrete_absolute_path(root)?;
     ensure_concrete_absolute_path(current_instance)?;
@@ -247,9 +326,9 @@ fn cleanup_old_runtime_instances(
             _ => continue,
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !is_runtime_instance_name(&name) {
+        let Some(pid) = runtime_instance_pid(&name) else {
             continue;
-        }
+        };
         let canonical_path = match fs::canonicalize(&path) {
             Ok(canonical_path) => canonical_path,
             Err(error) => {
@@ -265,7 +344,7 @@ fn cleanup_old_runtime_instances(
         }
 
         let lock_path = path.join(RUNTIME_INSTANCE_LOCK_FILE);
-        let (modified, lock) = match inactive_instance_lock(&lock_path, &metadata) {
+        let (modified, lock) = match inactive_instance_lock(&lock_path, &metadata, pid) {
             Ok(Some(state)) => state,
             Ok(None) => continue,
             Err(error) => {
@@ -286,7 +365,7 @@ fn cleanup_old_runtime_instances(
     candidates.sort_by_key(|(modified, _, _)| *modified);
 
     let mut removed = 0;
-    for (_, path, lock) in candidates.into_iter().take(max_removals) {
+    for (_, path, lock) in candidates {
         if let Err(error) = ensure_safe_directory_target(&canonical_root, &path) {
             log::warn!("Skipping unsafe runtime instance target: {error}");
             continue;
@@ -308,8 +387,12 @@ fn cleanup_old_runtime_instances(
 fn inactive_instance_lock(
     lock_path: &Path,
     instance_metadata: &fs::Metadata,
+    pid: u32,
 ) -> Result<Option<(SystemTime, Option<File>)>, String> {
     if !lock_path.exists() {
+        if process_is_alive(pid) {
+            return Ok(None);
+        }
         return Ok(Some((
             instance_metadata
                 .modified()
@@ -345,19 +428,54 @@ fn inactive_instance_lock(
     Ok(Some((modified, Some(lock))))
 }
 
-fn is_runtime_instance_name(name: &str) -> bool {
+fn runtime_instance_pid(name: &str) -> Option<u32> {
     let Some(identity) = name.strip_prefix("wework-") else {
-        return false;
+        return None;
     };
+    let identity = identity.strip_prefix("dev-").unwrap_or(identity);
     let Some((pid, timestamp)) = identity.split_once('-') else {
-        return false;
+        return None;
     };
-    !pid.is_empty()
-        && !timestamp.is_empty()
-        && pid.chars().all(|character| character.is_ascii_digit())
-        && timestamp
+    if timestamp.is_empty()
+        || !timestamp
             .chars()
             .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    pid.parse().ok()
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const STILL_ACTIVE: u32 = 259;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut exit_code = 0;
+        let result = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        result != 0 && exit_code == STILL_ACTIVE
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_alive(_pid: u32) -> bool {
+    false
 }
 
 fn ensure_concrete_absolute_path(path: &Path) -> Result<(), String> {
@@ -513,6 +631,42 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_removes_only_old_known_staging_directories() {
+        let root = test_directory("wework-storage-staging");
+        let stale = root.join("marketplace-upgrade-stale");
+        let recent = root.join("marketplace-add-recent");
+        let unknown = root.join("user-marketplace");
+        for directory in [&stale, &recent, &unknown] {
+            fs::create_dir_all(directory).unwrap();
+            fs::write(directory.join("content"), "content").unwrap();
+        }
+        let outside = root.with_extension("outside");
+        fs::create_dir_all(&outside).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("marketplace-upgrade-linked")).unwrap();
+        let now = SystemTime::now();
+        set_directory_modified(&stale, now - Duration::from_secs(120));
+        set_directory_modified(&recent, now - Duration::from_secs(30));
+        set_directory_modified(&unknown, now - Duration::from_secs(120));
+
+        let removed = cleanup_old_directories(
+            &root,
+            now,
+            Duration::from_secs(60),
+            &MARKETPLACE_STAGING_PREFIXES,
+        )
+        .unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(!stale.exists());
+        assert!(recent.is_dir());
+        assert!(unknown.is_dir());
+        assert!(outside.is_dir());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
     fn cleanup_removes_only_old_inactive_runtime_instances() {
         let root = test_directory("wework-runtime-maintenance");
         let current = root.join("wework-10-100");
@@ -537,8 +691,7 @@ mod tests {
         drop(stale_lock);
 
         let removed =
-            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60), 10)
-                .unwrap();
+            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60)).unwrap();
 
         assert_eq!(removed, 1);
         assert!(current.is_dir());
@@ -551,13 +704,21 @@ mod tests {
     }
 
     #[test]
-    fn runtime_cleanup_is_bounded_and_ignores_unknown_directories() {
-        let root = test_directory("wework-runtime-maintenance-bounded");
+    fn runtime_cleanup_drains_stale_instances_and_ignores_unknown_directories() {
+        let root = test_directory("wework-runtime-maintenance-drain");
         let current = root.join("wework-10-100");
         let unknown = root.join("user-data");
+        let legacy = root.join("wework-dev-99-999");
         fs::create_dir_all(&current).unwrap();
         fs::create_dir_all(&unknown).unwrap();
+        fs::create_dir_all(&legacy).unwrap();
         let now = SystemTime::now();
+        let legacy_lock = create_instance_lock_file(&legacy);
+        set_modified(
+            legacy.join(RUNTIME_INSTANCE_LOCK_FILE),
+            now - Duration::from_secs(120),
+        );
+        drop(legacy_lock);
         for index in 0..3 {
             let instance = root.join(format!("wework-{}-{}", index + 20, index + 200));
             fs::create_dir_all(&instance).unwrap();
@@ -570,20 +731,31 @@ mod tests {
         }
 
         let removed =
-            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60), 2)
-                .unwrap();
+            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60)).unwrap();
 
-        assert_eq!(removed, 2);
+        assert_eq!(removed, 4);
         assert!(current.is_dir());
         assert!(unknown.is_dir());
-        assert_eq!(
-            fs::read_dir(&root)
-                .unwrap()
-                .filter_map(Result::ok)
-                .filter(|entry| is_runtime_instance_name(&entry.file_name().to_string_lossy()))
-                .count(),
-            2
-        );
+        assert!(!legacy.exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_cleanup_preserves_lockless_instance_with_live_pid() {
+        let root = test_directory("wework-runtime-maintenance-live-pid");
+        let current = root.join("wework-10-100");
+        let active = root.join(format!("wework-{}-200", std::process::id()));
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&active).unwrap();
+        let now = SystemTime::now();
+        set_directory_modified(&active, now - Duration::from_secs(120));
+
+        let removed =
+            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60)).unwrap();
+
+        assert_eq!(removed, 0);
+        assert!(active.is_dir());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -614,5 +786,10 @@ mod tests {
     fn set_modified(path: PathBuf, modified: SystemTime) {
         let file = fs::OpenOptions::new().write(true).open(path).unwrap();
         file.set_modified(modified).unwrap();
+    }
+
+    fn set_directory_modified(path: &Path, modified: SystemTime) {
+        let directory = fs::OpenOptions::new().read(true).open(path).unwrap();
+        directory.set_modified(modified).unwrap();
     }
 }

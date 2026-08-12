@@ -46,7 +46,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test]
-async fn runtime_task_list_does_not_infer_execution_from_native_thread_status() {
+async fn runtime_task_list_uses_provider_turn_status_without_inheriting_stale_thread_state() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -117,6 +117,14 @@ async fn runtime_task_list_does_not_infer_execution_from_native_thread_status() 
         .iter()
         .find(|task| task["taskId"] == "thread-running-rollout")
         .unwrap();
+    let running_by_turn = tasks
+        .iter()
+        .find(|task| task["taskId"] == "thread-running-turn")
+        .unwrap();
+    let running_by_thread_status = tasks
+        .iter()
+        .find(|task| task["taskId"] == "thread-running-status")
+        .unwrap();
     let idle = tasks
         .iter()
         .find(|task| task["taskId"] == "thread-idle")
@@ -128,6 +136,12 @@ async fn runtime_task_list_does_not_infer_execution_from_native_thread_status() 
 
     assert_eq!(running_by_rollout["status"], "active");
     assert_eq!(running_by_rollout["running"], false);
+    assert_eq!(running_by_turn["status"], "running");
+    assert_eq!(running_by_turn["running"], true);
+    assert_eq!(running_by_turn["threadStatus"], "idle");
+    assert_eq!(running_by_turn["turnStatus"], "inProgress");
+    assert_eq!(running_by_thread_status["status"], "active");
+    assert_eq!(running_by_thread_status["running"], false);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
     assert_eq!(native_active["status"], "active");

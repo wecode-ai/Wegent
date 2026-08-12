@@ -4,10 +4,10 @@
 
 'use client'
 
-import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles, X, Hand, Pencil } from 'lucide-react'
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import { ArrowLeftRight, ImagePlus, Loader2, Upload, Sparkles, X, Hand, Pencil } from 'lucide-react'
 import ChatInput from './ChatInput'
-import InputBadgeDisplay from './InputBadgeDisplay'
+import InputBadgeDisplay, { useAuthenticatedImageInline } from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
@@ -82,6 +82,7 @@ export interface ChatInputCardProps extends Omit<
 
   // Submit
   canSubmit: boolean
+  submitBlockedReason?: string | null
   canQueueMessage?: boolean
   queuedMessages?: QueuedInputMessage[]
   onCancelQueuedMessage?: (id: string) => void
@@ -111,6 +112,76 @@ export interface ChatInputCardProps extends Omit<
 
   // Project context (for project selector in controls)
   projectId?: number | null
+
+  onSwapAttachments?: (firstAttachmentId: number, secondAttachmentId: number) => void
+}
+
+function FrameImageSlot({
+  attachment,
+  label,
+  disabled,
+  onUpload,
+  onRemove,
+  testId,
+}: {
+  attachment?: ChatInputCardProps['attachmentState']['attachments'][number]
+  label: string
+  disabled: boolean
+  onUpload: () => void
+  onRemove: () => void
+  testId: string
+}) {
+  const { t } = useTranslation('chat')
+  const { blobUrl, isLoading } = useAuthenticatedImageInline(
+    attachment?.id ?? 0,
+    Boolean(attachment)
+  )
+
+  if (!attachment) {
+    return (
+      <button
+        type="button"
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onUpload}
+        className="group flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border bg-muted/60 text-text-muted transition-colors hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <ImagePlus className="h-5 w-5" />
+        <span className="text-[11px]">{label}</span>
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-border bg-muted"
+      data-testid={testId}
+    >
+      {isLoading || !blobUrl ? (
+        <div className="flex h-full w-full items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+        </div>
+      ) : (
+        <img src={blobUrl} alt={label} className="h-full w-full object-cover" />
+      )}
+      <div className="absolute inset-x-0 bottom-0 bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
+        {label}
+      </div>
+      {!disabled && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={t('video.remove_frame', { frame: label })}
+          data-testid={`${testId}-remove`}
+          className="absolute -right-2 -top-2 flex h-11 w-11 items-center justify-center text-white opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+        >
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/55 hover:bg-black/75">
+            <X className="h-3 w-3" />
+          </span>
+        </button>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -134,6 +205,7 @@ export function ChatInputCard({
   selectedTeam,
   teams = [],
   onTeamChange,
+  onTeamsRefresh,
   externalApiParams,
   onExternalApiParamsChange,
   onAppModeChange,
@@ -151,6 +223,7 @@ export function ChatInputCard({
   onDragOver,
   onDrop,
   canSubmit,
+  submitBlockedReason,
   canQueueMessage = false,
   queuedMessages = [],
   onCancelQueuedMessage,
@@ -169,6 +242,7 @@ export function ChatInputCard({
   hideSelectors,
   onEditTeam,
   projectId,
+  onSwapAttachments,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -224,12 +298,18 @@ export function ChatInputCard({
   selectedResolution,
   onResolutionChange,
   availableResolutions,
+  resolutionOptions,
   selectedRatio,
   onRatioChange,
   availableRatios,
+  ratioOptions,
   selectedDuration,
   onDurationChange,
   availableDurations,
+  videoGenerationModes,
+  selectedVideoGenerationMode,
+  onVideoGenerationModeChange,
+  materialAccept,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -240,9 +320,14 @@ export function ChatInputCard({
   onGenerateModeChange,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
-
   // State for expanded input mode (2x height for easier large text editing)
   const [isInputExpanded, setIsInputExpanded] = useState(false)
+  const frameInputRef = useRef<HTMLInputElement>(null)
+  const pendingFrameSlotRef = useRef<0 | 1 | null>(null)
+  const [frameAttachmentIds, setFrameAttachmentIds] = useState<[number | null, number | null]>([
+    null,
+    null,
+  ])
 
   // Toggle expand/collapse state
   const handleExpandToggle = useCallback(() => {
@@ -256,6 +341,70 @@ export function ChatInputCard({
     !hasMessages &&
     !taskInputMessage.trim() &&
     selectedContexts.some(context => context.type === 'queue_message')
+  const imageAttachments = useMemo(
+    () =>
+      attachmentState.attachments.filter(attachment => attachment.mime_type.startsWith('image/')),
+    [attachmentState.attachments]
+  )
+  const firstLastFrameImages = frameAttachmentIds.map(attachmentId =>
+    imageAttachments.find(attachment => attachment.id === attachmentId)
+  )
+
+  useEffect(() => {
+    if (selectedVideoGenerationMode !== 'first_last_frame') {
+      pendingFrameSlotRef.current = null
+      setFrameAttachmentIds(previousIds =>
+        previousIds[0] === null && previousIds[1] === null ? previousIds : [null, null]
+      )
+      return
+    }
+
+    const availableIds = new Set(imageAttachments.map(attachment => attachment.id))
+    setFrameAttachmentIds(previousIds => {
+      const nextIds: [number | null, number | null] = [
+        previousIds[0] && availableIds.has(previousIds[0]) ? previousIds[0] : null,
+        previousIds[1] && availableIds.has(previousIds[1]) ? previousIds[1] : null,
+      ]
+      const assignedIds = new Set(nextIds.filter((id): id is number => id !== null))
+      const unassignedIds = imageAttachments
+        .map(attachment => attachment.id)
+        .filter(id => !assignedIds.has(id))
+
+      for (const attachmentId of unassignedIds) {
+        const pendingSlot = pendingFrameSlotRef.current
+        const targetSlot =
+          pendingSlot !== null && nextIds[pendingSlot] === null
+            ? pendingSlot
+            : nextIds[0] === null
+              ? 0
+              : nextIds[1] === null
+                ? 1
+                : null
+        if (targetSlot === null) break
+        nextIds[targetSlot] = attachmentId
+        if (pendingSlot === targetSlot) pendingFrameSlotRef.current = null
+      }
+
+      return nextIds[0] === previousIds[0] && nextIds[1] === previousIds[1] ? previousIds : nextIds
+    })
+  }, [imageAttachments, selectedVideoGenerationMode])
+
+  useEffect(() => {
+    const [firstFrameId, lastFrameId] = frameAttachmentIds
+    if (
+      selectedVideoGenerationMode !== 'first_last_frame' ||
+      !firstFrameId ||
+      !lastFrameId ||
+      !onSwapAttachments
+    ) {
+      return
+    }
+
+    const orderedImageIds = imageAttachments.map(attachment => attachment.id)
+    if (orderedImageIds[0] === lastFrameId && orderedImageIds[1] === firstFrameId) {
+      onSwapAttachments(firstFrameId, lastFrameId)
+    }
+  }, [frameAttachmentIds, imageAttachments, onSwapAttachments, selectedVideoGenerationMode])
 
   const getQueuedMessageStatusLabel = (status: QueuedInputMessage['status']) => {
     if (status === 'sending') return t('messages.status_sending')
@@ -519,14 +668,85 @@ export function ChatInputCard({
         )}
 
         {/* Unified Badge Display - Knowledge bases and attachments */}
+        {selectedVideoGenerationMode === 'first_last_frame' && (
+          <div
+            className="flex items-center gap-2 px-4 pt-3"
+            data-testid="first-last-frame-uploader"
+          >
+            <input
+              ref={frameInputRef}
+              data-testid="first-last-frame-file-input"
+              type="file"
+              accept={materialAccept ?? 'image/*'}
+              className="hidden"
+              onChange={event => {
+                const file = event.target.files?.[0]
+                if (file) onFileSelect(file)
+                event.target.value = ''
+              }}
+            />
+            <FrameImageSlot
+              attachment={firstLastFrameImages[0]}
+              label={t('video.first_frame')}
+              disabled={isStreaming}
+              onUpload={() => {
+                pendingFrameSlotRef.current = 0
+                frameInputRef.current?.click()
+              }}
+              onRemove={() => {
+                const attachment = firstLastFrameImages[0]
+                if (attachment) onAttachmentRemove(attachment.id)
+              }}
+              testId="first-frame-upload"
+            />
+            <button
+              type="button"
+              data-testid="swap-first-last-frames"
+              aria-label={t('video.swap_frames')}
+              disabled={
+                isStreaming ||
+                !firstLastFrameImages[0] ||
+                !firstLastFrameImages[1] ||
+                !onSwapAttachments
+              }
+              onClick={() => {
+                const [firstFrame, lastFrame] = firstLastFrameImages
+                if (firstFrame && lastFrame) {
+                  setFrameAttachmentIds([lastFrame.id, firstFrame.id])
+                  onSwapAttachments?.(firstFrame.id, lastFrame.id)
+                }
+              }}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <ArrowLeftRight className="h-4 w-4" />
+            </button>
+            <FrameImageSlot
+              attachment={firstLastFrameImages[1]}
+              label={t('video.last_frame')}
+              disabled={isStreaming || !firstLastFrameImages[0]}
+              onUpload={() => {
+                pendingFrameSlotRef.current = 1
+                frameInputRef.current?.click()
+              }}
+              onRemove={() => {
+                const attachment = firstLastFrameImages[1]
+                if (attachment) onAttachmentRemove(attachment.id)
+              }}
+              testId="last-frame-upload"
+            />
+          </div>
+        )}
+
         <InputBadgeDisplay
           contexts={selectedContexts}
           attachmentState={attachmentState}
-          onRemoveContext={contextId => {
-            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
+          onRemoveContexts={contextIds => {
+            const contextIdSet = new Set(contextIds)
+            setSelectedContexts(selectedContexts.filter(ctx => !contextIdSet.has(ctx.id)))
           }}
           onRemoveAttachment={onAttachmentRemove}
           disabled={isStreaming}
+          hideAttachments={selectedVideoGenerationMode === 'first_last_frame'}
         />
 
         {/* Quote Card - shows quoted text from text selection */}
@@ -546,12 +766,13 @@ export function ChatInputCard({
               taskType={taskType}
               autoFocus={autoFocus}
               canSubmit={canSubmit}
+              submitBlockedReason={submitBlockedReason}
               tipText={tipText}
               badge={
                 selectedTeam && !isUsingDefaultTeam ? (
                   <SelectedTeamBadge
                     team={selectedTeam}
-                    showClearButton={true}
+                    showClearButton={!hasMessages}
                     onClear={onRestoreDefaultTeam}
                     onEdit={onEditTeam}
                   />
@@ -590,7 +811,7 @@ export function ChatInputCard({
           <div className="px-4 pt-3">
             <SelectedTeamBadge
               team={selectedTeam}
-              showClearButton={true}
+              showClearButton={!hasMessages}
               onClear={onRestoreDefaultTeam}
               onEdit={onEditTeam}
             />
@@ -603,6 +824,7 @@ export function ChatInputCard({
             selectedTeam={selectedTeam}
             teams={teams}
             onTeamChange={onTeamChange}
+            onTeamsRefresh={onTeamsRefresh}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
             forceOverride={forceOverride}
@@ -639,6 +861,7 @@ export function ChatInputCard({
             isModelSelectionRequired={isModelSelectionRequired}
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
+            submitBlockedReason={submitBlockedReason}
             canQueueMessage={canQueueMessage}
             canSendGuidance={canSendGuidance}
             canCancelTask={canCancelTask}
@@ -664,12 +887,18 @@ export function ChatInputCard({
             selectedResolution={selectedResolution}
             onResolutionChange={onResolutionChange}
             availableResolutions={availableResolutions}
+            resolutionOptions={resolutionOptions}
             selectedRatio={selectedRatio}
             onRatioChange={onRatioChange}
             availableRatios={availableRatios}
+            ratioOptions={ratioOptions}
             selectedDuration={selectedDuration}
             onDurationChange={onDurationChange}
             availableDurations={availableDurations}
+            videoGenerationModes={videoGenerationModes}
+            selectedVideoGenerationMode={selectedVideoGenerationMode}
+            onVideoGenerationModeChange={onVideoGenerationModeChange}
+            materialAccept={materialAccept}
             // Image mode props
             selectedImageModel={selectedImageModel}
             onImageModelChange={onImageModelChange}

@@ -217,6 +217,30 @@ jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
       </button>
       <button
         type="button"
+        data-testid="quick-preset-title-trigger"
+        onClick={() =>
+          props.onPresetSelect?.({
+            launcher: {
+              key: 'system:quick_site',
+              type: 'system_function',
+              title: 'Quick Site',
+              team: { id: 12 },
+              targetPage: 'chat',
+              inputPresets: [],
+            },
+            preset: {
+              id: 'internal_vote',
+              title: 'Build an internal voting site',
+              prompt: null,
+              source_attachment_ids: [],
+            },
+          })
+        }
+      >
+        Quick preset without prompt
+      </button>
+      <button
+        type="button"
         data-testid="quick-team-trigger"
         onClick={() =>
           props.onTeamSelect({
@@ -306,6 +330,11 @@ jest.mock('@/features/tasks/components/hooks/useFloatingInput', () => ({
 }))
 jest.mock('@/apis/attachments', () => ({
   getAttachment: jest.fn(),
+  getFileExtension: (filename: string) => filename.slice(filename.lastIndexOf('.')),
+  isAudioExtension: (extension: string) => ['.mp3', '.m4a'].includes(extension),
+  isImageExtension: (extension: string) => ['.jpg', '.jpeg', '.png', '.webp'].includes(extension),
+  isVideoExtension: (extension: string) => ['.mp4', '.mov'].includes(extension),
+  formatsToAcceptString: jest.fn(() => 'image/*'),
 }))
 jest.mock('@/apis/user', () => ({
   userApis: {
@@ -388,6 +417,24 @@ describe('ChatArea queue message handler mounting', () => {
   it('mounts QueueMessageHandler for chat mode', () => {
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
+  })
+
+  it('keeps the selected team and code mode after consuming a quick launch preset', async () => {
+    mockSearchParams = new URLSearchParams({
+      teamId: '12',
+      quickLauncher: 'system:quick_site',
+      quickPreset: 'internal_vote',
+      agent: 'code',
+    })
+    mockRouterReplace.mockImplementationOnce((href: string) => {
+      mockSearchParams = new URL(href, 'http://localhost').searchParams
+    })
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="code" showRepositorySelector />)
+
+    await waitFor(() => {
+      expect(mockRouterReplace).toHaveBeenCalledWith('/chat?teamId=12&agent=code')
+    })
   })
 
   it('renders chat mode when search params are unavailable', () => {
@@ -713,6 +760,14 @@ describe('ChatArea queue message handler mounting', () => {
         expect.objectContaining({ focusInputAtEndSignal: 1 })
       )
     })
+  })
+
+  it('uses the preset title when the preset prompt is empty', () => {
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-preset-title-trigger'))
+
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('Build an internal voting site')
   })
 
   it('prepares and displays quick launch preset attachments', async () => {

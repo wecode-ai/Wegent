@@ -22,8 +22,8 @@ describe('device workspace path helpers', () => {
   })
 
   test('resolves executor workspace root from project workspace root', () => {
-    expect(executorWorkspaceRoot('/Users/me/.wegent-executor/workspace/projects')).toBe(
-      '/Users/me/.wegent-executor/workspace'
+    expect(executorWorkspaceRoot('/Users/me/.wework/workspace/projects')).toBe(
+      '/Users/me/.wework/workspace'
     )
     expect(executorWorkspaceRoot('/workspace')).toBe('/workspace')
   })
@@ -31,10 +31,10 @@ describe('device workspace path helpers', () => {
   test('builds managed worktree paths beside executor projects', () => {
     expect(
       buildManagedWorktreePath({
-        projectWorkspaceRoot: '/Users/me/.wegent-executor/workspace/projects',
+        projectWorkspaceRoot: '/Users/me/.wework/workspace/projects',
         sourceWorkspacePath: '/Users/me/project',
         worktreeId: 42,
       })
-    ).toBe('/Users/me/.wegent-executor/workspace/worktrees/42/project')
+    ).toBe('/Users/me/.wework/workspace/worktrees/42/project')
   })
 })

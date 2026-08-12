@@ -109,15 +109,17 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 `e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario first streams one assistant item as `final_answer` and completes the same item as `commentary`. It verifies that Executor sends `response.block.created.replacesItemId`, allowing the frontend to atomically migrate the visible assistant text into a process block so the page contains one process copy and no final-answer copy. The scenario then verifies that streaming reasoning appears as “Thinking · summary” and that the reasoning summary and its placeholder are removed after completion. It starts a long-running command and confirms that the tool-row duration continues increasing after switching tasks while the tool-group header does not show a turn-wide aggregate duration. The scenario next builds a long multi-turn conversation beyond the virtualization threshold and verifies the “Thinking” position, user scroll anchor, streaming growth, and viewport stability after reopening the task. It uses `scrollFromBottomAsUser` to move a fixed distance upward from the bottom, then combines `startScrollStabilitySampling` and `getScrollStabilitySample` to record anchor geometry, DOM changes, and real `scroll` events while response chunks arrive. The gate requires no back-and-forth anchor movement and no programmatic scroll events after the user stops. It also verifies that the waiting state disappears after completion. The scenario retains screenshots for phase reclassification, reasoning, tool timing, ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
 
-`e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Tauri WebView, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the current WKWebView bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. Results are written to `embedded-browser-agent-result.json`.
+`e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Tauri WebView, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the current WKWebView bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. When local-file support changes, the scenario also opens a `file://` HTML fixture, Markdown and extensionless text fixtures, and a local folder fixture through the bridge, and verifies that an unpreviewable local file shows a toast instead of entering the download list. Results are written to `embedded-browser-agent-result.json`.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `workspace-tabs`, `core-task-flow`, `window-lifecycle`,
-`goal-lifecycle`, `resilience`, `conversation-state`, `workspace-attachments`,
-and `rendering-extensions`. `--segment <checkpoint>` performs common startup
-and project initialization, then runs only the selected checkpoint.
+The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
+`automation-lifecycle`, `model-routing`, `core-task-flow`, `window-lifecycle`,
+`goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
+`workspace-attachments`, `rendering-extensions`, `browser-multi-tabs`, and
+`embedded-browser`. `--segment <checkpoint>` performs common startup and project
+initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
@@ -139,17 +141,30 @@ feature coverage is registered. Segment commands are also useful for focused
 local iteration:
 
 ```bash
+pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
+
+`automation-lifecycle` independently covers automation creation, immediate
+execution, pinning and continuing an existing task, and scheduled continuation.
+`model-routing` independently covers all six local protocol-switch directions,
+cross-provider retry, the vision sidecar, and the local model protocol matrix.
+Both checkpoints establish their own minimal fixtures, so they no longer extend
+the critical path for task creation, follow-up, and background plans in
+`core-task-flow`. An unsegmented complete desktop run still executes these
+scenarios, so splitting them does not reduce coverage.
 
 The plugin desktop suite reuses the same segment options while keeping its
 separate Codex Home initialization environment. Its ordered segments are
 `plugin-lifecycle`, `skill-mention-rendering`, and
 `sites-plugin-auto-install`. Each segment establishes the minimal plugin
 fixture it needs, so it can run alone or continue through the later plugin
-features:
+features. `plugin-lifecycle` also covers: the composer plugin picker no longer
+listing a plugin after uninstall, and unmatched assistant `need_login` /
+`connector_auth_required` resume text not opening a local auth card.
 
 ```bash
 pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
@@ -177,13 +192,13 @@ Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built 
 
 On macOS, desktop E2E launches a temporary `.app` bundle in the background through `open -g`. The test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting keeps the Tauri main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. After the controller connects, the runner also asserts that the test application is not the current foreground process, preventing focus-stealing regressions. Only the desktop E2E runner injects this variable; normal development and production launches are unchanged.
 
-The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Tauri application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 
 The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 
-The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
+The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, the install-time local authorization dialog, insertion of the plugin reference into the chat composer, unmatched resume auth text not opening a local auth card, composer filtering after uninstall, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for the critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
 The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. The test first waits for the Web Content memory baseline to stabilize, then samples the aggregate physical footprint of all associated WebKit Web Content processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
 

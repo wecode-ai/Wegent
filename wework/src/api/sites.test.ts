@@ -29,10 +29,14 @@ describe('createSitesApi', () => {
       json: async () => ({
         items: [
           {
-            app_type: 'site',
+            app_type: 'web',
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
+            create: {
+              plugin_name: 'wegent-sites',
+              marketplace_name: 'wegent',
+            },
           },
         ],
       }),
@@ -42,10 +46,14 @@ describe('createSitesApi', () => {
     await expect(api.listApplicationTypes()).resolves.toEqual({
       items: [
         {
-          app_type: 'site',
+          app_type: 'web',
           enabled: true,
           order: 10,
           capabilities: ['create', 'publish', 'delete'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     })
@@ -67,10 +75,10 @@ describe('createSitesApi', () => {
     })
 
     const api = createSitesApi('/api')
-    await api.listSites({ appType: 'site', q: '产品 站点', offset: 0, limit: 20 })
+    await api.listSites({ appType: 'web', q: '产品 站点', offset: 0, limit: 20 })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/sites?q=%E4%BA%A7%E5%93%81+%E7%AB%99%E7%82%B9&app_type=site&offset=0&limit=20',
+      '/api/sites?q=%E4%BA%A7%E5%93%81+%E7%AB%99%E7%82%B9&app_type=web&offset=0&limit=20',
       {
         method: 'GET',
         headers: {
@@ -92,10 +100,10 @@ describe('createSitesApi', () => {
       getToken: () => 'cloud-secret',
       redirectOnUnauthorized: false,
     })
-    await api.listSites({ appType: 'mini_program', offset: 0, limit: 20 })
+    await api.listSites({ appType: 'miniapp', offset: 0, limit: 20 })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/sites?app_type=mini_program&offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?app_type=miniapp&offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -120,6 +128,32 @@ describe('createSitesApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/publish', {
       method: 'POST',
       body: undefined,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer wegent-secret',
+      },
+    })
+  })
+
+  test('updates a site network scope through Wegent Backend', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        siteid: 'site/1',
+        network: 'inner',
+        publish_status: 'unpublished',
+        external_url: null,
+      }),
+    })
+
+    const api = createSitesApi('/api/')
+    const site = await api.updateSiteNetwork('site/1', 'inner')
+
+    expect(site.network).toBe('inner')
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/network', {
+      method: 'PUT',
+      body: JSON.stringify({ network: 'inner' }),
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',

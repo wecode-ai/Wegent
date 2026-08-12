@@ -76,6 +76,12 @@ jest.mock('@/hooks/use-toast', () => ({
   }),
 }))
 
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: { id: 1, user_name: 'yansheng3', role: 'user' },
+  }),
+}))
+
 jest.mock('@/features/settings/services/teams', () => ({
   fetchTeamsList: jest.fn(),
   deleteTeam: jest.fn(),
@@ -261,7 +267,7 @@ describe('TeamList mode filter', () => {
     expect(screen.getByText('platform')).toHaveClass('text-text-muted')
   })
 
-  it('keeps personal and group agents in mine while excluding system agents', async () => {
+  it('keeps personal and group agents created by me while excluding other creators', async () => {
     ;(fetchTeamsList as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(10, 'personal-mine-agent', ['chat']),
@@ -272,9 +278,9 @@ describe('TeamList mode filter', () => {
         namespace: 'platform',
       },
       {
-        ...makeTeam(12, 'system-agent', ['chat']),
-        namespace: 'default',
-        user_id: 0,
+        ...makeTeam(12, 'other-user-agent', ['chat']),
+        namespace: 'platform',
+        user_id: 2,
       },
     ])
 
@@ -282,7 +288,7 @@ describe('TeamList mode filter', () => {
 
     expect(await screen.findByText('personal-mine-agent')).toBeInTheDocument()
     expect(screen.getByText('group-mine-agent')).toBeInTheDocument()
-    expect(screen.queryByText('system-agent')).not.toBeInTheDocument()
+    expect(screen.queryByText('other-user-agent')).not.toBeInTheDocument()
   })
 
   it('uses the marketplace-style card grid in compact capability views', async () => {
@@ -345,6 +351,48 @@ describe('TeamList mode filter', () => {
     )
   })
 
+  it('shows edit on team-shared cards for members with edit permission', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(13, 'editable-team-agent', ['chat']),
+        namespace: 'platform',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Developer']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-13')
+    expect(within(card).getByTestId('edit-team-button-13')).toBeInTheDocument()
+  })
+
+  it('keeps team-shared cards read-only for members without edit permission', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(14, 'readonly-team-agent', ['chat']),
+        namespace: 'platform',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Reporter']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-14')
+    expect(within(card).queryByTestId('edit-team-button-14')).not.toBeInTheDocument()
+  })
+
   it('links an empty all-agents capability view to the agent marketplace', async () => {
     ;(fetchTeamsList as jest.Mock).mockResolvedValue([])
 
@@ -401,6 +449,54 @@ describe('TeamList mode filter', () => {
     )
     expect(card).not.toBeNull()
     expect(within(card as HTMLElement).queryByText('Unbind')).not.toBeInTheDocument()
+  })
+
+  it('hides team removal for a Reporter using a market Agent', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(15, 'reporter-market-agent', ['chat']),
+        namespace: 'default',
+        share_status: 2,
+        access_source: 'namespace_authorization',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        groupName="platform"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Reporter']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-15')
+    expect(within(card).queryByTestId('team-unbind-from-group-15')).not.toBeInTheDocument()
+  })
+
+  it('shows team removal for a Developer managing a market Agent', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(16, 'developer-market-agent', ['chat']),
+        namespace: 'default',
+        share_status: 2,
+        access_source: 'namespace_authorization',
+      },
+    ])
+
+    render(
+      <TeamList
+        scope="group"
+        groupName="platform"
+        sourceFilter="group"
+        compact
+        groupRoleMap={new Map([['platform', 'Developer']])}
+      />
+    )
+
+    const card = await screen.findByTestId('team-card-16')
+    expect(within(card).getByTestId('team-unbind-from-group-16')).toBeInTheDocument()
   })
 
   it('merges and deduplicates agents resolved through multiple selected groups', async () => {

@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "slug": "wework-kimi-k3",
+      "display_name": "Kimi K3",
+      "description": "Kimi K3 profile for long-horizon coding, multimodal input, and deep reasoning",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "auto_compact_token_limit": 786432,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "wework-kimi-k2-7",
+      "display_name": "Kimi K2.7 Code",
+      "description": "Kimi K2.7 Code profile for stable agentic coding",
+      "apply_patch_tool_type": "freeform",
+      "context_window": 262144,
+      "max_context_window": 262144
+    }
+  ]
+}

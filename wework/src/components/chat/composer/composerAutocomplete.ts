@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@/types/api'
+import { compareComposerPluginsByUsage, readRecentPluginAppIds } from './composerPluginSort'
 
 export type ComposerTriggerKind = 'mention' | 'skill' | 'slash'
 
@@ -18,6 +19,9 @@ export interface SlashCommand {
   searchAliases?: string[]
   requiresEmptyComposer?: boolean
   Icon: ComponentType<{ className?: string }>
+  iconUrl?: string | null
+  iconContrastPad?: boolean
+  trailingIcon?: ComponentType<{ className?: string }>
   enabled?: boolean
   testId: string
   skill?: LocalDeviceSkill
@@ -103,6 +107,7 @@ export function filterSlashCommands(
     if (!groupOrder.has(group)) groupOrder.set(group, groupOrder.size)
   })
 
+  const recentIds = readRecentPluginAppIds()
   return draftCompatibleCommands
     .map(command => ({ command, score: scoreSlashCommand(command, normalizedQuery) }))
     .filter(item => item.score > 0)
@@ -111,6 +116,9 @@ export function filterSlashCommands(
       const rightGroupOrder = groupOrder.get(right.command.group ?? null) ?? Number.MAX_SAFE_INTEGER
       if (leftGroupOrder !== rightGroupOrder) return leftGroupOrder - rightGroupOrder
       if (left.score !== right.score) return right.score - left.score
+      if (left.command.app && right.command.app) {
+        return compareComposerPluginsByUsage(left.command.app, right.command.app, recentIds)
+      }
       return left.command.title.localeCompare(right.command.title)
     })
     .map(item => item.command)

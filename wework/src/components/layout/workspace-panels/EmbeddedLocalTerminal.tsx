@@ -2,12 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
-import {
-  listenLocalTerminalExit,
-  listenLocalTerminalOutput,
-  resizeLocalTerminal,
-  writeLocalTerminal,
-} from '@/lib/local-terminal'
+import { connectLocalTerminal, resizeLocalTerminal, writeLocalTerminal } from '@/lib/local-terminal'
 import {
   applyTerminalTheme,
   createTerminalThemeScheduler,
@@ -19,7 +14,11 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
-import { installXtermRenderRecovery, refreshXterm } from './xtermRenderRecovery'
+import {
+  installXtermRenderRecovery,
+  logXtermRenderState,
+  refreshXterm,
+} from './xtermRenderRecovery'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -32,6 +31,22 @@ interface EmbeddedLocalTerminalProps {
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
   showWorkbenchBackground?: boolean
+}
+
+interface LocalTerminalResource {
+  sessionId: string
+  showWorkbenchBackground: boolean
+  dispose: () => void
+}
+
+function matchesLocalTerminalResource(
+  resource: LocalTerminalResource,
+  sessionId: string,
+  showWorkbenchBackground: boolean
+): boolean {
+  return (
+    resource.sessionId === sessionId && resource.showWorkbenchBackground === showWorkbenchBackground
+  )
 }
 
 export function EmbeddedLocalTerminal({
@@ -56,6 +71,8 @@ export function EmbeddedLocalTerminal({
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
   const appearanceRef = useRef(appearance)
+  const resourceRef = useRef<LocalTerminalResource | null>(null)
+  const cleanupTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     appearanceRef.current = appearance
@@ -76,7 +93,18 @@ export function EmbeddedLocalTerminal({
 
   useEffect(() => {
     activeRef.current = active
-  }, [active])
+    const container = containerRef.current
+    if (!container) return
+    logXtermRenderState({
+      active,
+      container,
+      phase: 'active-changed',
+      sessionId,
+      taskId,
+      terminal: terminalRef.current,
+      terminalKind: 'local',
+    })
+  }, [active, sessionId, taskId])
 
   useEffect(() => {
     contextRef.current = { taskId, workspacePath, cwd, title }
@@ -94,6 +122,22 @@ export function EmbeddedLocalTerminal({
     const container = containerRef.current
     if (!container) return
 
+    if (cleanupTimerRef.current !== null) {
+      window.clearTimeout(cleanupTimerRef.current)
+      cleanupTimerRef.current = null
+    }
+    const currentResource = resourceRef.current
+    if (
+      currentResource &&
+      matchesLocalTerminalResource(currentResource, sessionId, showWorkbenchBackground)
+    ) {
+      return () => {
+        cleanupTimerRef.current = window.setTimeout(currentResource.dispose, 0)
+      }
+    }
+    currentResource?.dispose()
+    lastSizeRef.current = null
+
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
       allowTransparency: showWorkbenchBackground,
@@ -107,11 +151,13 @@ export function EmbeddedLocalTerminal({
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
+    let terminalInputReady = false
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
     }
     const dataDisposable = terminal.onData(data => {
+      if (!terminalInputReady) return
       inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
     })
@@ -128,6 +174,7 @@ export function EmbeddedLocalTerminal({
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
+        if (!terminalInputReady) return
         inputFallback.noteData(data)
         void writeLocalTerminal(sessionId, data)
       },
@@ -161,63 +208,91 @@ export function EmbeddedLocalTerminal({
       const lastSize = lastSizeRef.current
       if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
 
-      lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
-      void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
+      const nextSize = { rows: terminal.rows, cols: terminal.cols }
+      lastSizeRef.current = nextSize
+      void resizeLocalTerminal(sessionId, nextSize.rows, nextSize.cols)
     }
 
     const resizeObserver = new ResizeObserver(fitAndResize)
     resizeObserver.observe(container)
     const removeRenderRecovery = installXtermRenderRecovery(fitAndResize)
+    fitAndResize()
     requestAnimationFrame(fitAndResize)
 
-    void listenLocalTerminalOutput(payload => {
-      if (!disposed && payload.session_id === sessionId) {
-        const context = contextRef.current
-        appendRuntimeTerminalContext({
-          sessionId,
-          taskId: context.taskId,
-          workspacePath: context.workspacePath,
-          cwd: context.cwd,
-          title: context.title,
-          kind: 'local',
-          data: payload.data,
-        })
-        terminal.write(payload.data)
-        scheduleThemeSync()
+    void connectLocalTerminal(
+      sessionId,
+      (payload, source) => {
+        if (!disposed && payload.session_id === sessionId) {
+          const context = contextRef.current
+          appendRuntimeTerminalContext({
+            sessionId,
+            taskId: context.taskId,
+            workspacePath: context.workspacePath,
+            cwd: context.cwd,
+            title: context.title,
+            kind: 'local',
+            data: payload.data,
+          })
+          terminal.write(payload.data, () => {
+            if (disposed) return
+            if (source === 'snapshot') {
+              terminalInputReady = true
+              refreshXterm(terminal)
+            }
+            scheduleThemeSync()
+          })
+        }
+      },
+      payload => {
+        if (!disposed && payload.session_id === sessionId) {
+          onExitRef.current?.()
+        }
+      },
+      {
+        taskId: contextRef.current.taskId,
+        workspacePath: contextRef.current.workspacePath,
       }
-    }).then(unlisten => {
-      if (disposed) {
-        unlisten()
-      } else {
-        unlisteners.push(unlisten)
-      }
-    })
+    )
+      .then(unlisten => {
+        if (disposed) {
+          unlisten()
+        } else {
+          unlisteners.push(unlisten)
+        }
+      })
+      .catch(error => {
+        if (!disposed) {
+          console.error('Failed to attach local terminal:', error)
+          terminal.writeln('\r\n[Terminal connection failed]')
+        }
+      })
 
-    void listenLocalTerminalExit(payload => {
-      if (!disposed && payload.session_id === sessionId) {
-        onExitRef.current?.()
-      }
-    }).then(unlisten => {
-      if (disposed) {
-        unlisten()
-      } else {
-        unlisteners.push(unlisten)
-      }
-    })
+    const resource: LocalTerminalResource = {
+      sessionId,
+      showWorkbenchBackground,
+      dispose: () => {
+        if (disposed) return
+        disposed = true
+        unobserveTheme()
+        removeRenderRecovery()
+        resizeObserver.disconnect()
+        dataDisposable.dispose()
+        titleDisposable.dispose()
+        selectionGuard.dispose()
+        inputFallback.dispose()
+        unlisteners.forEach(unlisten => unlisten())
+        terminal.dispose()
+        if (resourceRef.current === resource) {
+          terminalRef.current = null
+          fitAddonRef.current = null
+          resourceRef.current = null
+        }
+      },
+    }
+    resourceRef.current = resource
 
     return () => {
-      disposed = true
-      unobserveTheme()
-      removeRenderRecovery()
-      resizeObserver.disconnect()
-      dataDisposable.dispose()
-      titleDisposable.dispose()
-      selectionGuard.dispose()
-      inputFallback.dispose()
-      unlisteners.forEach(unlisten => unlisten())
-      terminal.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
+      cleanupTimerRef.current = window.setTimeout(resource.dispose, 0)
     }
   }, [sessionId, showWorkbenchBackground])
 
@@ -234,7 +309,16 @@ export function EmbeddedLocalTerminal({
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
         refreshXterm(terminal)
-        terminal.focus()
+        logXtermRenderState({
+          active,
+          container,
+          phase: 'activation-complete',
+          sessionId,
+          taskId,
+          terminal,
+          terminalKind: 'local',
+        })
+        terminal.textarea?.focus({ preventScroll: true })
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current
           if (lastSize?.rows !== terminal.rows || lastSize.cols !== terminal.cols) {
@@ -250,7 +334,7 @@ export function EmbeddedLocalTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, sessionId, showWorkbenchBackground])
+  }, [active, sessionId, showWorkbenchBackground, taskId])
 
   return (
     <div

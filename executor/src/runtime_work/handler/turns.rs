@@ -44,6 +44,7 @@ fn hook_user_id(value: &Value) -> Option<String> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
         self.apply_project_workspace_roots(&mut turn.request);
+        self.apply_backend_connection(&mut turn.request);
         crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
@@ -151,6 +152,11 @@ impl RuntimeWorkRpcHandler {
                     }
                     let mut event_request = mapper_request.clone();
                     if let Some(active_turn) = active_turn {
+                        mapper_handler.record_active_codex_transcript_item(
+                            &mapper_local_task_id,
+                            &active_turn.turn_id,
+                            &message,
+                        );
                         event_request.subtask_id = active_turn.turn_id;
                     }
                     event_mapper.map(
@@ -189,6 +195,8 @@ impl RuntimeWorkRpcHandler {
                         thread_id,
                         turn_id.clone(),
                     );
+                    active_turn_handler
+                        .begin_active_codex_transcript(&active_turn_local_task_id, &turn_id);
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
@@ -258,6 +266,7 @@ impl RuntimeWorkRpcHandler {
                     }),
                 );
                 let _ = mapper_handle.await;
+                handler.clear_active_codex_transcript(&turn_local_task_id);
                 handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -267,6 +276,7 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
+            handler.clear_active_codex_transcript(&turn_local_task_id);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")
@@ -314,6 +324,16 @@ impl RuntimeWorkRpcHandler {
             },
             Err(error) => Some((AutomationRunStatus::Failed, Some(error.clone()))),
         };
+        let queue_result_content = match &result {
+            Ok(turn) => match &turn.outcome {
+                ExecutionOutcome::Completed { content } => Some(content.clone()),
+                ExecutionOutcome::WaitingForUserInput { .. } => Some(String::new()),
+                ExecutionOutcome::Cancelled { .. }
+                | ExecutionOutcome::Failed { .. }
+                | ExecutionOutcome::Running => None,
+            },
+            Err(_) => None,
+        };
         match result {
             Ok(turn) => {
                 let status = match &turn.outcome {
@@ -341,6 +361,7 @@ impl RuntimeWorkRpcHandler {
                 );
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request);
+                let response_item_id = turn.response_item_id;
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -351,6 +372,7 @@ impl RuntimeWorkRpcHandler {
                         json!({
                             "value": content,
                             "turnId": active_turn.map(|turn| &turn.turn_id),
+                            "itemId": response_item_id,
                         }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
@@ -419,7 +441,8 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error);
+            self.finish_automation_run(local_task_id, status, error.clone());
+            self.finish_queue_run(local_task_id, status, error, queue_result_content);
         }
     }
 

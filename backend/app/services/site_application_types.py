@@ -5,23 +5,54 @@
 """Typed application handlers for the external Sites project API."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 
 from app.schemas.site import (
     ApplicationCapability,
+    ApplicationCreatePluginResponse,
     ApplicationTypeListResponse,
     ApplicationTypeResponse,
     MiniProgramResponse,
     SiteAppType,
     SiteListItem,
+    SiteNetwork,
     SiteResponse,
 )
+from app.services.builtin_plugin_registry import (
+    BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
+    BUILTIN_PLUGINS_BY_NAME,
+    BUILTIN_SITES_PLUGIN_NAME,
+)
+from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
+
+APPLICATION_PLUGIN_MARKETPLACE = marketplace_name_for_visibility("workspace")
 
 
 class InvalidApplicationProjectError(ValueError):
     """Raised when an upstream project cannot be converted to an application."""
+
+
+APPLICATION_TYPE_ALIASES: dict[str, SiteAppType] = {
+    "site": "web",
+    "mini_program": "miniapp",
+}
+
+
+def normalize_application_type(app_type: Any) -> str:
+    """Normalize historical Sites app type names to the current contract."""
+
+    value = app_type.strip() if isinstance(app_type, str) else ""
+    return APPLICATION_TYPE_ALIASES.get(value or "web", value or "web")
+
+
+def normalize_site_network(network: Any) -> SiteNetwork:
+    return (
+        cast(SiteNetwork, network)
+        if isinstance(network, str) and network in {"inner", "outer"}
+        else "inner"
+    )
 
 
 class ApplicationTypeHandler(ABC):
@@ -30,32 +61,58 @@ class ApplicationTypeHandler(ABC):
     app_type: SiteAppType
     order: int
     capabilities: tuple[ApplicationCapability, ...]
+    create_plugin_name: str | None = None
+    create_marketplace_name: str = APPLICATION_PLUGIN_MARKETPLACE
 
     def matches(self, payload: Any) -> bool:
         if not isinstance(payload, dict):
             return False
-        return payload.get("app_type", "site") == self.app_type
+        return (
+            normalize_application_type(
+                payload.get("app_type") or payload.get("project_type")
+            )
+            == self.app_type
+        )
 
     @abstractmethod
     def parse(self, payload: Any, *, username: str) -> SiteListItem:
         """Validate one upstream project and return its typed application."""
 
     def descriptor(self) -> ApplicationTypeResponse:
+        builtin_plugin = (
+            BUILTIN_PLUGINS_BY_NAME.get(self.create_plugin_name)
+            if self.create_plugin_name
+            else None
+        )
+        create_marketplace_name = (
+            marketplace_name_for_visibility(builtin_plugin.visibility)
+            if builtin_plugin
+            else self.create_marketplace_name
+        )
         return ApplicationTypeResponse(
             app_type=self.app_type,
             order=self.order,
             capabilities=list(self.capabilities),
+            create=(
+                ApplicationCreatePluginResponse(
+                    plugin_name=self.create_plugin_name,
+                    marketplace_name=create_marketplace_name,
+                )
+                if self.create_plugin_name
+                else None
+            ),
         )
 
 
 class SiteApplicationHandler(ApplicationTypeHandler):
-    app_type: SiteAppType = "site"
+    app_type: SiteAppType = "web"
     order: int = 10
     capabilities: tuple[ApplicationCapability, ...] = (
         "create",
         "publish",
         "delete",
     )
+    create_plugin_name = BUILTIN_SITES_PLUGIN_NAME
 
     def parse(self, payload: Any, *, username: str) -> SiteResponse:
         if not isinstance(payload, dict):
@@ -63,7 +120,8 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         url = payload.get("url")
         if not isinstance(url, str) or not url:
             raise InvalidApplicationProjectError("site project does not have a URL")
-        network = payload.get("network")
+        network = normalize_site_network(payload.get("network"))
+        version_status = payload.get("version_status")
         project_id = payload.get("id")
         created_at = payload.get("created_at")
         snapshot = payload.get("snapshot")
@@ -74,9 +132,14 @@ class SiteApplicationHandler(ApplicationTypeHandler):
             "username": username,
             "name": payload.get("title"),
             "slug": project_id,
+            "network": network,
             "internal_url": url,
             "external_url": url if network == "outer" else None,
-            "publish_status": "published" if network == "outer" else "unpublished",
+            "publish_status": (
+                "scanning"
+                if version_status == "scanning"
+                else "published" if network == "outer" else "unpublished"
+            ),
             "last_publish_error": None,
             "thumbnail_url": (
                 snapshot if isinstance(snapshot, str) and snapshot else None
@@ -92,12 +155,13 @@ class SiteApplicationHandler(ApplicationTypeHandler):
 
 
 class MiniProgramApplicationHandler(ApplicationTypeHandler):
-    app_type: SiteAppType = "mini_program"
+    app_type: SiteAppType = "miniapp"
     order: int = 20
     capabilities: tuple[ApplicationCapability, ...] = (
         "create",
         "open_experience",
     )
+    create_plugin_name = BUILTIN_MINI_PROGRAM_PLUGIN_NAME
 
     def parse(self, payload: Any, *, username: str) -> MiniProgramResponse:
         if not isinstance(payload, dict):
@@ -105,6 +169,7 @@ class MiniProgramApplicationHandler(ApplicationTypeHandler):
         project_id = payload.get("id")
         created_at = payload.get("created_at")
         snapshot = payload.get("snapshot")
+        network = normalize_site_network(payload.get("network"))
         mini_program = {
             "app_type": self.app_type,
             "siteid": project_id,
@@ -113,9 +178,10 @@ class MiniProgramApplicationHandler(ApplicationTypeHandler):
             "name": payload.get("title"),
             "slug": project_id,
             "app_id": payload.get("app_id"),
-            "status": payload.get("status"),
+            "status": payload.get("status")
+            or ("published" if network == "outer" else "experience"),
             "version": payload.get("version"),
-            "experience_url": payload.get("experience_url"),
+            "experience_url": payload.get("experience_url") or payload.get("url"),
             "thumbnail_url": (
                 snapshot if isinstance(snapshot, str) and snapshot else None
             ),
@@ -142,7 +208,7 @@ APPLICATION_TYPE_HANDLER_BY_NAME = {
 
 def get_application_type_handler(app_type: SiteAppType) -> ApplicationTypeHandler:
     """Return the registered handler for one validated application type."""
-    return APPLICATION_TYPE_HANDLER_BY_NAME[app_type]
+    return APPLICATION_TYPE_HANDLER_BY_NAME[normalize_application_type(app_type)]
 
 
 def list_application_types() -> ApplicationTypeListResponse:

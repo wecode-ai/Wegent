@@ -41,6 +41,7 @@ When a cloud Model CRD uses OpenAI Chat Completions and its provider model name 
 - It sends Kimi's supported `thinking` field instead of the generic `reasoning_effort` field.
 - It preserves `reasoning_content` across multi-turn messages and tool calls.
 - It preserves namespace tool identity through a reversible mapping so same-named tools still route to the correct executor.
+- It retains the top-level `type: "object"` on function parameters, equivalently nests a root `anyOf` constraint under `allOf`, and fills object types on `anyOf` branches to satisfy Kimi tool-schema validation.
 
 An explicit Anthropic Messages configuration is never overridden. Operators must select OpenAI Chat Completions in the Model CRD through `protocol` or `apiFormat`. Leaving only `env.model=claude` without protocol metadata continues to route requests as Anthropic Messages to `/v1/messages`.
 
@@ -68,6 +69,17 @@ Codex can group child tools under a `type: "namespace"` tool when it sends an Op
 4. When the upstream returns a flat tool call, the proxy restores the original `name` and `namespace` before emitting Responses events back to Codex.
 
 The mapping is request-scoped protocol context. It is not persisted in model configuration and does not guess a namespace from the returned tool name. Tools with the same child name in different namespaces therefore continue to route to the correct executor.
+
+### On-Demand App Tool Expansion
+
+Wework must not inject the complete schemas of every App and browser child tool into the first model request of a new conversation. The Codex launch configuration enables Remote Apps and `tool_search`; the model searches for a required namespace first, and only tools returned by that search are added to later model requests:
+
+- Responses models with native Codex `tool_search` and namespace-tool support use the native protocol without redundant executor conversion.
+- For models using OpenAI Chat Completions, Anthropic Messages, or another protocol without namespace tools, the executor expands only namespaces matched by the current `tool_search` result. Tools from unmatched Apps must not enter the request.
+- The executor converts the active tool list, historical tool calls, tool results, and explicit `tool_choice` together, then restores the original namespace identity before returning events to Codex.
+- An ordinary message carries only the compact `tool_search` entry point. Adding Apps or browser tools must not make the initial request grow linearly with all tool schemas.
+
+Protocol-conversion E2E coverage must include Responses, Chat Completions, and Anthropic Messages. It verifies that the initial request contains no expanded namespace, only searched tools appear afterward, tool calls and results round-trip, and the initial serialized tool payload stays under a fixed size limit.
 
 ## Security Benefits
 

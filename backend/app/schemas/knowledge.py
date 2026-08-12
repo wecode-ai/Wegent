@@ -54,6 +54,26 @@ class DocumentSourceType(str, Enum):
     TABLE = "table"
     WEB = "web"
     ATTACHMENT = "attachment"
+    # Source file indexed for retrieval rather than a browsable document. Declared so
+    # ensure_source_type_enum does not silently coerce it to FILE.
+    CODE = "code"
+
+
+def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
+    """Refuse ``code`` on a public document create.
+
+    A code target is an indexed source file rather than a browsable page, so every
+    reader-facing scope filters it out -- but the document count does not, which makes
+    a document a client can create, that raises the count, and that no list will ever
+    show. Nothing writes ``code`` yet; it is declared for the phase that indexes
+    repository sources, and that phase will write it through its own path the way the
+    wiki projection does.
+    """
+    if value == DocumentSourceType.CODE:
+        raise ValueError(
+            "'code' documents are written by the indexer, not through this API"
+        )
+    return value
 
 
 class DocumentIndexStatus(str, Enum):
@@ -105,6 +125,25 @@ class ResourceScope(str, Enum):
     ALL = "all"
 
 
+class KnowledgeBaseType(str, Enum):
+    """What a knowledge base is, stored at ``spec.kbType``.
+
+    ``notebook`` and ``classic`` differ only in the default opening view and can be
+    switched freely. ``code_wiki`` is a different thing altogether: it is bound to a
+    source repository, generated and maintained by an agent, and published by the
+    server rather than edited by hand.
+
+    The three are mutually exclusive, so one field carries all of them. A knowledge
+    base may move between ``notebook`` and ``classic``, but **never** into or out of
+    ``code_wiki``: doing so would either orphan a repository binding and its version
+    history, or produce a code wiki with no repository at all.
+    """
+
+    NOTEBOOK = "notebook"
+    CLASSIC = "classic"
+    CODE_WIKI = "code_wiki"
+
+
 # ============== Knowledge Base Schemas ==============
 # Note: RetrieverRef, EmbeddingModelRef, HybridWeights, RetrievalConfig
 # are imported from app.schemas.kind to maintain single source of truth
@@ -152,6 +191,51 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
+# Scopes a model reference may name. Four, not three: `runtime` is a real scope --
+# see the same list in `app/schemas/user.py` -- and whitelisting only the obvious
+# three would reject a legitimate reference.
+MODEL_REF_TYPES = ("public", "user", "group", "runtime")
+
+
+def validated_model_ref(
+    value: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """A model reference that can actually select a model, or None for "unset".
+
+    Checked here because nothing downstream does. A name of spaces is truthy, so
+    it passes into the spec, and the run then reads any truthy name as a
+    deliberate override and pins its task to a model that does not exist -- which
+    surfaces much later, as a failed generation rather than a rejected request.
+    An unsupported `type` fails the same way.
+    """
+    if value is None:
+        return None
+
+    name = (value.get("name") or "").strip()
+    if not name:
+        raise ValueError("model reference requires a model name")
+
+    model_type = (value.get("type") or "").strip()
+    if model_type and model_type not in MODEL_REF_TYPES:
+        raise ValueError(
+            f"unsupported model type {model_type!r}; "
+            f"expected one of {', '.join(MODEL_REF_TYPES)}"
+        )
+    namespace = (value.get("namespace") or "").strip()
+
+    # A blank optional string is dropped, not passed through. Spreading `value`
+    # carries the original in, so a type of spaces -- which the check above reads as
+    # unset, and so never rejects -- would survive as a non-empty invalid scope and
+    # reach the task as one. That is the exact failure this function exists to stop.
+    normalised = {**value, "name": name}
+    for key, cleaned in (("type", model_type), ("namespace", namespace)):
+        if cleaned:
+            normalised[key] = cleaned
+        else:
+            normalised.pop(key, None)
+    return normalised
+
+
 class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
@@ -162,9 +246,35 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
-    kb_type: Optional[str] = Field(
-        "notebook",
-        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
+    kb_type: KnowledgeBaseType = Field(
+        KnowledgeBaseType.NOTEBOOK,
+        description=(
+            "'notebook' opens Notebook view by default, 'classic' opens document view. "
+            "'code_wiki' is a repository-backed, agent-generated wiki and can only be "
+            "created through the dedicated code wiki endpoint."
+        ),
+    )
+    source: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Source repository a code wiki is generated from (code wikis only)",
+    )
+    language: Optional[str] = Field(
+        None,
+        max_length=10,
+        description=(
+            "Language a code wiki's pages are generated in. None falls back to the "
+            "deployment default rather than meaning English."
+        ),
+    )
+    show_generation_task: bool = Field(
+        False,
+        description=(
+            "Whether a code wiki's generation runs appear in the creator's "
+            "conversation list. Off by default: a wiki regenerates on its own, so "
+            "its runs are work nobody started a conversation to do. The wiki's run "
+            "history shows them either way and links to the task, so hiding them "
+            "loses nothing. Meaningless for other knowledge base types."
+        ),
     )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
@@ -180,6 +290,19 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation, as "
+            "{'name': ..., 'type': 'public|user|group|runtime'}. Only a code wiki "
+            "generates, and CodeWikiCreate requires it there. Unset means the team's "
+            "bot supplies the model, which is what wikis created before this field do."
+        ),
+    )
+
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -246,6 +369,30 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Model that runs this knowledge base's own generation. Editable so a "
+            "wiki created before the field existed can be given one; the next run "
+            "picks it up, and one already running keeps the model it started with. "
+            "Explicit null clears it, returning the wiki to its team's model."
+        ),
+    )
+
+    # Explicit null stays a valid way to clear the field; anything else has to name
+    # a model, because this value is persisted straight into the spec.
+    _check_execution_model_ref = field_validator("execution_model_ref")(
+        lambda cls, value: validated_model_ref(value)
+    )
+    show_generation_task: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether a code wiki's generation runs appear in the conversation list. "
+            "Editable after creation: it is a display preference, not something the "
+            "wiki was built with, so a reader who wants to watch a run should not "
+            "have to rebuild the wiki to see one."
+        ),
+    )
     guided_questions: Optional[List[str]] = Field(
         None,
         max_length=3,
@@ -295,8 +442,303 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         return v
 
 
+class CodeWikiCreate(KnowledgeBaseCreate):
+    """Request to create a code wiki bound to a source repository.
+
+    **Inherits every field of ``KnowledgeBaseCreate``** rather than restating the ones
+    a code wiki happens to need. A code wiki is an ordinary knowledge base with a
+    repository attached, so retrieval, summary, guided questions and call limits all
+    apply to it — and a hand-picked subset silently drops whatever the create form
+    collected but this schema forgot, which is exactly what happened to the summary
+    settings and the retrieval config.
+
+    Only three things differ: the kind is set by the endpoint rather than the caller,
+    the name may be blank, and a repository is required.
+    """
+
+    # Blank means "use the repository's own name", filled in by the endpoint. The
+    # inherited field requires at least one character.
+    name: str = Field(
+        "",
+        max_length=100,
+        description=(
+            "Left blank, the repository's own name is used. The client sends what it "
+            "resolved for the form; the box itself is not pre-filled, where it would "
+            "read as the caller's own input."
+        ),
+    )
+    namespace: Optional[str] = Field(
+        None,
+        max_length=100,
+        description=(
+            "Where to file the wiki, as for any other knowledge base. Defaults to "
+            "the creator's personal namespace."
+        ),
+    )
+    source_type: Literal["github", "gitlab", "gitea"] = Field(
+        ...,
+        description=(
+            "Which platform hosts the repository. Required because a self-hosted "
+            "GitLab or Gitea cannot be told apart by its domain."
+        ),
+    )
+    source_url: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Repository the wiki documents",
+    )
+    language: str = Field(
+        "",
+        max_length=10,
+        description=(
+            "What language to generate the pages in. Empty falls back to "
+            "WIKI_DEFAULT_LANGUAGE, which is what a wiki created before this field "
+            "existed also does."
+        ),
+    )
+    execution_model_ref: Dict[str, str] = Field(
+        ...,
+        description=(
+            "Model the generation agent runs on. Required: a wiki reads a whole "
+            "repository, so which model sees it is the caller's decision to make, "
+            "not one to inherit silently from whichever bot the team happens to bind."
+        ),
+    )
+
+    @field_validator("execution_model_ref")
+    @classmethod
+    def model_ref_names_a_model(cls, value: Dict[str, str]) -> Dict[str, str]:
+        """Reject a ref that cannot select a model. Required here, so never None."""
+        checked = validated_model_ref(value)
+        assert checked is not None
+        return checked
+
+
+class CodeWikiChangedPath(BaseModel):
+    """One file the repository changed since the published commit."""
+
+    path: str = Field(..., min_length=1, max_length=1000)
+    change_type: Literal["A", "M", "D", "R"] = Field(
+        "M",
+        description="Git status letter: A added, M modified, D deleted, R renamed",
+    )
+
+
+class CodeWikiListItem(BaseModel):
+    """One code wiki, as a list shows it.
+
+    Everything here is read from the knowledge base's spec, written when the version
+    was published. A list that had to join every wiki against its generations for
+    these three fields would pay for them on every page load.
+    """
+
+    id: int
+    name: str
+    description: Optional[str] = None
+    project_name: str = Field("", description="Repository the wiki documents")
+    source_url: str = Field("", description="Repository URL")
+    last_published_at: Optional[str] = Field(
+        None, description="When the live version was published; null if never"
+    )
+    last_published_commit: str = Field(
+        "", description="Commit the live version documents"
+    )
+    document_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class CodeWikiListResponse(BaseModel):
+    """Code wikis the caller may read."""
+
+    items: List[CodeWikiListItem]
+    total: int
+
+
+class CodeWikiPageNode(BaseModel):
+    """One node of the reader's navigation.
+
+    Every node is a page. The hierarchy comes from the page paths and the order from
+    the knowledge base's recorded order, so the client renders what it is given
+    rather than reassembling a tree from a paginated document list and a separate
+    array — two things it would have to keep consistent itself.
+    """
+
+    path: str = Field(..., description="Stable page path; identity, not a label")
+    title: str = Field(..., description="What the page is called")
+    document_id: int = Field(0, description="0 for a section with no page of its own")
+    has_content: bool = True
+    children: List["CodeWikiPageNode"] = Field(default_factory=list)
+
+
+class CodeWikiPageTree(BaseModel):
+    """The navigation for one code wiki."""
+
+    pages: List[CodeWikiPageNode]
+
+
+class CodeWikiRunStatus(BaseModel):
+    """Whether anything is being done to this wiki, and what came of it last time.
+
+    Separate from the page tree the reader also fetches: while a run is going the
+    client polls this, and the tree is large enough that polling it would be the
+    wrong thing to repeat every few seconds.
+    """
+
+    status: Literal["running", "failed", "completed", "never"]
+    generation_id: int = 0
+    started_at: Optional[datetime] = None
+    error_message: str = Field("", description="Why the last run failed, if it did")
+    failure_code: str = Field(
+        "",
+        description=(
+            "Names a failure this server stated in its own words, for a client to "
+            "translate. Empty means the reason came from outside — the agent, git, "
+            "an exception — and error_message is all there is."
+        ),
+    )
+    is_stale: bool = Field(
+        False,
+        description=(
+            "A run whose worker has gone quiet for longer than the sweep tolerates. "
+            "Triggering again reclaims it and starts afresh, so a client may offer "
+            "that rather than reporting the wiki as busy."
+        ),
+    )
+    last_published_at: Optional[str] = None
+    last_published_commit: str = ""
+
+
+class CodeWikiRunCreate(BaseModel):
+    """Request to regenerate a code wiki now.
+
+    Both fields are optional and describe the repository's current state. Supplying
+    neither is safe but expensive: with no commit to compare against, the run cannot
+    tell what changed and rebuilds the whole wiki rather than guessing.
+    """
+
+    head_commit: str = Field(
+        "",
+        max_length=64,
+        description=(
+            "Commit the repository is at now. Compared against the published commit "
+            "to decide whether anything needs regenerating at all."
+        ),
+    )
+    changed_paths: Optional[List[CodeWikiChangedPath]] = Field(
+        None,
+        description=(
+            "Files changed since the published commit. Absent means unknown, which "
+            "forces a full rebuild; an empty list means nothing changed."
+        ),
+    )
+
+
+class CodeWikiRunResponse(BaseModel):
+    """What happened when a code wiki was asked to regenerate."""
+
+    started: bool = Field(..., description="Whether a run was actually created")
+    mode: str = Field("", description="Run mode chosen: full, incremental or skip")
+    reason: str = Field("", description="Why that mode was chosen")
+    generation_id: int = Field(0, description="The version being written, when started")
+    task_id: int = Field(0, description="Task running the agent, when started")
+
+
+class CodeWikiRunRecord(BaseModel):
+    """One past attempt at generating this wiki.
+
+    Reported per run rather than folded into the wiki's current state because the
+    question a reader brings here is not "is it busy" but "why does it look like
+    this" — and the answer is usually in a run that already ended.
+    """
+
+    generation_id: int
+    status: Literal["running", "failed", "completed"]
+    mode: str = Field("", description="full or incremental")
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    commit: str = Field("", description="Commit the run was documenting")
+    error_message: str = Field("", description="Why it failed, if it did")
+    failure_code: str = Field(
+        "", description="Names a server-stated failure, for a client to translate"
+    )
+    published: bool = Field(
+        False, description="Whether this is the version readers currently see"
+    )
+    task_id: int = Field(
+        0,
+        description=(
+            "Task that ran the agent. Openable by id even when the task is kept out "
+            "of the conversation list, which is what makes hiding it safe."
+        ),
+    )
+    task_status: str = Field(
+        "",
+        description=(
+            "What became of that task. Reported beside the version's own outcome "
+            "because the two are different facts and can honestly differ: an agent "
+            "that concluded its run leaves a published version behind even if its "
+            "container then died."
+        ),
+    )
+
+
+class CodeWikiRunHistory(BaseModel):
+    """Recent runs, newest first."""
+
+    runs: List[CodeWikiRunRecord] = Field(default_factory=list)
+
+
+class CodeWikiExisting(BaseModel):
+    """A wiki of this repository somebody has already built."""
+
+    id: int
+    name: str
+    owner_name: str = Field("", description="Who to ask, when it is not accessible")
+    accessible: bool = Field(
+        False, description="Whether the caller can already open it"
+    )
+
+
+class CodeWikiResolveRequest(BaseModel):
+    """Ask what is known about a repository before binding a wiki to it."""
+
+    source_type: Literal["github", "gitlab", "gitea"]
+    source_url: str = Field(..., min_length=1, max_length=500)
+
+
+class CodeWikiResolveResponse(BaseModel):
+    """What the create form needs, in one answer rather than three probes.
+
+    ``exists`` false means "not readable with what you have"; private and absent are
+    deliberately not told apart, since distinguishing them would disclose which
+    private repositories exist.
+    """
+
+    exists: bool
+    visibility: str = Field("", description="public or private, when readable")
+    default_branch: str = Field("", description="Saves listing branches to pick one")
+    name: str = Field("", description="Repository path, offered as the wiki's name")
+    description: str = Field("", description="Offered as the wiki's description")
+    access: str = Field("none", description="public, member, or none")
+    existing_wikis: List["CodeWikiExisting"] = Field(
+        default_factory=list,
+        description=(
+            "Code wikis that already document this repository, whoever owns them. "
+            "Named rather than counted: asking for a share needs somebody to ask."
+        ),
+    )
+
+
 class KnowledgeBaseTypeUpdate(BaseModel):
-    """Schema for updating the default opening view."""
+    """Schema for updating the default opening view.
+
+    The pattern deliberately excludes ``code_wiki``: it is not a view preference but a
+    binding to a source repository, so it can be neither adopted nor abandoned by
+    toggling a view. Turning a code wiki into a notebook would orphan its repository
+    and version history; the reverse would produce a code wiki with no repository.
+    """
 
     kb_type: str = Field(
         ...,
@@ -314,9 +756,27 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     user_id: int
     namespace: str
     direct_access_requirement: Literal["read", "edit"] = "read"
-    kb_type: Optional[str] = Field(
-        "notebook",
-        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
+    source: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Repository a code wiki documents. Absent for every other kind, which "
+            "is how a client tells them apart without a second request."
+        ),
+    )
+    language: Optional[str] = Field(
+        None, description="Language a code wiki's pages are generated in"
+    )
+    show_generation_task: bool = Field(
+        False,
+        description=(
+            "Whether a code wiki's generation runs appear in the conversation list. "
+            "Returned so the edit form can show what is set rather than defaulting "
+            "the switch to off and silently turning it off on the next save."
+        ),
+    )
+    kb_type: KnowledgeBaseType = Field(
+        KnowledgeBaseType.NOTEBOOK,
+        description="What this knowledge base is; see KnowledgeBaseType",
     )
     document_count: int
     is_active: bool
@@ -330,6 +790,10 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation",
+    )
+    execution_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model that runs this knowledge base's own generation",
     )
     summary: Optional[dict] = Field(
         None,
@@ -381,8 +845,13 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         summary = spec.get("summary")
         # Extract summary_model_ref from spec
         summary_model_ref = spec.get("summaryModelRef")
+        execution_model_ref = spec.get("executionModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
-        kb_type = spec.get("kbType", "notebook")
+        kb_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
+        # Only a code wiki has one. Carried so a list can render the repository on
+        # the card and the reader can be linked to, without a second request per row.
+        source = spec.get("source")
+        language = spec.get("language")
 
         # Extract guided questions from spec
         guided_questions = spec.get("guidedQuestions")
@@ -410,12 +879,16 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             namespace=kind.namespace,
             direct_access_requirement=spec.get("directAccessRequirement", "read"),
             kb_type=kb_type,
+            source=source,
+            language=language,
+            show_generation_task=bool(spec.get("showGenerationTask", False)),
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(
                 spec.get("retrievalConfig"), kind.id
             ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
+            execution_model_ref=execution_model_ref,
             summary=summary,
             guided_questions=guided_questions,
             max_calls_per_conversation=max_calls,
@@ -462,6 +935,8 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     )
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
+
+    _no_code_source = field_validator("source_type")(reject_code_source_type)
     source_config: dict = Field(
         default_factory=dict,
         description="Source configuration (e.g., {'url': '...'} for table)",
@@ -1145,6 +1620,8 @@ class KnowledgeDocumentCreateV1(BaseModel):
             "'web' (URL scraping), 'attachment' (existing attachment ID)"
         ),
     )
+
+    _no_code_source = field_validator("source_type")(reject_code_source_type)
     # source_type=text
     content: Optional[str] = Field(
         None,

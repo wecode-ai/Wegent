@@ -9,6 +9,8 @@ Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
+from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -22,11 +24,13 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.subtask_context import ContextType
 from app.models.task import TaskResource
 from app.models.user import User
@@ -37,10 +41,19 @@ from app.schemas.subtask_context import (
     TruncationInfo,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.public_link import (
+    InvalidPublicAttachmentToken,
+    generate_public_attachment_token,
+    verify_public_attachment_token,
+)
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
 from app.services.shared_task import shared_task_service
+from app.services.web_scraper.security import (
+    WebScraperSecurityError,
+    WebScraperUrlGuard,
+)
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
@@ -65,6 +78,10 @@ def _extract_subtask_id_from_task_token(authorization: str) -> int:
 router = APIRouter()
 
 ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
+REMOTE_MEDIA_TIMEOUT = 120.0
+REMOTE_MEDIA_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_TOKEN_EXPIRE_SECONDS = 300
+DOWNLOAD_TOKEN_SCOPE = "attachment_download"
 
 
 def _build_content_disposition(filename: str) -> str:
@@ -86,6 +103,120 @@ def _build_content_disposition(filename: str) -> str:
     # ASCII filename: use simple quoted string
     escaped = filename.replace("\\", "\\\\").replace('"', '\\"')
     return f'attachment; filename="{escaped}"'
+
+
+async def _stream_remote_media(
+    url: str,
+    filename: str,
+    default_media_type: str,
+    range_header: Optional[str] = None,
+) -> StreamingResponse:
+    """Proxy remote media without buffering the complete file in memory."""
+    import httpx
+
+    try:
+        WebScraperUrlGuard().validate_initial_url(url)
+    except WebScraperSecurityError as exc:
+        raise HTTPException(status_code=502, detail="Invalid remote media URL") from exc
+
+    client = httpx.AsyncClient(timeout=REMOTE_MEDIA_TIMEOUT)
+    request_headers = {"Range": range_header} if range_header else {}
+    stream_context = client.stream("GET", url, headers=request_headers)
+    try:
+        response = await stream_context.__aenter__()
+        response.raise_for_status()
+    except Exception as exc:
+        with suppress(Exception):
+            await stream_context.__aexit__(type(exc), exc, exc.__traceback__)
+        await client.aclose()
+        raise
+
+    async def iter_bytes():
+        try:
+            async for chunk in response.aiter_bytes(chunk_size=REMOTE_MEDIA_CHUNK_SIZE):
+                if chunk:
+                    yield chunk
+        finally:
+            await stream_context.__aexit__(None, None, None)
+            await client.aclose()
+
+    headers = {
+        "Content-Disposition": _build_content_disposition(filename),
+        "Referrer-Policy": "no-referrer",
+        "X-Accel-Buffering": "no",
+    }
+    for source_header, target_header in (
+        ("content-length", "Content-Length"),
+        ("content-range", "Content-Range"),
+        ("accept-ranges", "Accept-Ranges"),
+    ):
+        value = response.headers.get(source_header)
+        if value:
+            headers[target_header] = value
+    headers.setdefault("Accept-Ranges", "bytes")
+
+    return StreamingResponse(
+        iter_bytes(),
+        media_type=response.headers.get("content-type", default_media_type),
+        headers=headers,
+        status_code=response.status_code,
+    )
+
+
+def _create_download_token(attachment_id: int, user: User) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=DOWNLOAD_TOKEN_EXPIRE_SECONDS
+    )
+    return jwt.encode(
+        {
+            "scope": DOWNLOAD_TOKEN_SCOPE,
+            "attachment_id": attachment_id,
+            "user_id": user.id,
+            "sub": user.user_name,
+            "exp": expires_at,
+        },
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+
+def _resolve_user_from_download_token(
+    db: Session,
+    attachment_id: int,
+    download_token: str,
+) -> User:
+    try:
+        payload = jwt.decode(
+            download_token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+    except JWTError as exc:
+        logger.warning(
+            "Invalid attachment download token: attachment_id=%s reason=%s",
+            attachment_id,
+            exc.__class__.__name__,
+        )
+        raise HTTPException(status_code=401, detail="Invalid download token")
+
+    if (
+        payload.get("scope") != DOWNLOAD_TOKEN_SCOPE
+        or payload.get("attachment_id") != attachment_id
+    ):
+        raise HTTPException(status_code=401, detail="Invalid download token")
+
+    user = (
+        db.query(User)
+        .filter(
+            User.id == payload.get("user_id"),
+            User.user_name == payload.get("sub"),
+            User.is_active == True,
+        )
+        .first()
+    )
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid download token")
+    return user
 
 
 def _check_knowledge_base_access(
@@ -535,6 +666,10 @@ async def download_attachment(
     share_token: Optional[str] = Query(
         None, description="Share token for public access"
     ),
+    download_token: Optional[str] = Query(
+        None, description="Short-lived token for browser-native download"
+    ),
+    range_header: Optional[str] = Header(None, alias="Range"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
@@ -552,8 +687,16 @@ async def download_attachment(
     has_access = False
     context = None
 
-    # Method 1: Share token authentication (no login required)
-    if share_token:
+    # Method 1: Short-lived token used by browser-native downloads.
+    if download_token:
+        current_user = _resolve_user_from_download_token(
+            db, attachment_id, download_token
+        )
+        context = _get_attachment_context(db, attachment_id, current_user)
+        has_access = True
+
+    # Method 2: Share token authentication (no login required)
+    elif share_token:
         has_access = _validate_share_token_access(db, attachment_id, share_token)
         if has_access:
             # Get context for share token access
@@ -564,12 +707,12 @@ async def download_attachment(
             if context is None:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Method 2: JWT token authentication (existing logic)
+    # Method 3: JWT token authentication (existing logic)
     elif current_user:
         context = _get_attachment_context(db, attachment_id, current_user)
         has_access = True
 
-    # Method 3: No authentication - redirect to login for browser access
+    # Method 4: No authentication - redirect to login for browser access
     else:
         # Check if it's a browser request (accepts HTML)
         accept_header = request.headers.get("Accept", "")
@@ -589,17 +732,23 @@ async def download_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Check if attachment has an external URL (e.g., generated video)
-    # For such attachments, redirect to the external URL instead of serving binary data
+    # Generated videos are streamed through the backend so the browser receives
+    # attachment headers without the service buffering the complete file.
     if context.type_data and isinstance(context.type_data, dict):
         video_metadata = context.type_data.get("video_metadata")
         if video_metadata and isinstance(video_metadata, dict):
             video_url = video_metadata.get("video_url")
             if video_url:
                 logger.info(
-                    f"Redirecting attachment {attachment_id} to external video URL"
+                    "Streaming remote video attachment: attachment_id=%s",
+                    attachment_id,
                 )
-                return RedirectResponse(url=video_url, status_code=302)
+                return await _stream_remote_media(
+                    video_url,
+                    context.original_filename,
+                    default_media_type=context.mime_type or "video/mp4",
+                    range_header=range_header,
+                )
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
@@ -624,6 +773,20 @@ async def download_attachment(
             "Content-Disposition": _build_content_disposition(context.original_filename)
         },
     )
+
+
+@router.post("/{attachment_id}/download-token")
+async def create_attachment_download_token(
+    attachment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Create a short-lived token for browser-native attachment downloads."""
+    _get_attachment_context(db, attachment_id, current_user)
+    return {
+        "download_token": _create_download_token(attachment_id, current_user),
+        "expires_in": DOWNLOAD_TOKEN_EXPIRE_SECONDS,
+    }
 
 
 @router.get("/{attachment_id}/executor-download")
@@ -823,10 +986,6 @@ async def get_all_task_attachments(
 # Public Share Link Endpoints
 # =============================================================================
 
-import secrets
-from datetime import datetime, timedelta, timezone
-
-from jose import JWTError, jwt
 from pydantic import BaseModel
 
 
@@ -838,76 +997,22 @@ class PublicShareLinkResponse(BaseModel):
 
 
 def _generate_public_share_token(attachment_id: int, expires_in_days: int = 7) -> str:
-    """
-    Generate a JWT token for public attachment download.
-
-    The token contains:
-    - aid: attachment_id
-    - nonce: random string to prevent enumeration attacks
-    - exp: expiration timestamp
-    - type: "public_dl" (token type)
-
-    Args:
-        attachment_id: ID of the attachment to share
-        expires_in_days: Token expiration time in days (default: 7)
-
-    Returns:
-        Signed JWT token
-    """
-    from app.core.config import settings
-
-    expire = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
-
-    # Generate random nonce to prevent enumeration attacks
-    # Even if someone knows attachment_id, they can't construct valid token
-    nonce = secrets.token_urlsafe(8)
-
-    to_encode = {
-        "aid": attachment_id,
-        "nonce": nonce,
-        "exp": expire,
-        "type": "public_dl",
-    }
-
-    token = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
-    return token
+    """Backward-compatible wrapper for public attachment share tokens."""
+    return generate_public_attachment_token(
+        attachment_id,
+        timedelta(days=expires_in_days),
+    )
 
 
 def _verify_public_share_token(token: str) -> dict:
-    """
-    Verify and decode a public share token.
-
-    Returns:
-        Decoded token payload with attachment_id
-
-    Raises:
-        HTTPException: If token is invalid or expired
-    """
-    from app.core.config import settings
-
-    credentials_exception = HTTPException(
-        status_code=403,
-        detail="Invalid or expired share link",
-    )
-
+    """Backward-compatible wrapper for public attachment token verification."""
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-
-        # Verify token type
-        if payload.get("type") != "public_dl":
-            raise credentials_exception
-
-        # Verify required fields
-        attachment_id = payload.get("aid")
-        nonce = payload.get("nonce")
-
-        if attachment_id is None or nonce is None:
-            raise credentials_exception
-
-        return {"attachment_id": int(attachment_id), "nonce": nonce}
-
-    except JWTError:
-        raise credentials_exception
+        return verify_public_attachment_token(token)
+    except InvalidPublicAttachmentToken as exc:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or expired share link",
+        ) from exc
 
 
 @router.post("/{attachment_id}/public-share", response_model=PublicShareLinkResponse)
@@ -920,8 +1025,7 @@ async def create_public_share_link(
     """
     Generate a public share link for an attachment.
 
-    This link can be shared with any logged-in user, regardless of
-    whether they have direct access to the attachment.
+    This link can be shared with anyone who has the signed URL.
 
     The generated token contains a random nonce to prevent enumeration attacks,
     making it impossible to guess other valid tokens even if attachment IDs are known.
@@ -973,13 +1077,12 @@ async def create_public_share_link(
 async def public_download_attachment(
     token: str = Query(..., description="Public share token"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
 ):
     """
     Download an attachment using a public share token.
 
-    Any logged-in user can download the attachment using a valid share token,
-    regardless of their direct access permissions to the original attachment.
+    Anyone with a valid signed token can download the attachment. The token is
+    scoped to one attachment and expires automatically.
 
     Args:
         token: Public share token generated by /{id}/public-share endpoint
@@ -1012,8 +1115,8 @@ async def public_download_attachment(
         )
 
     logger.info(
-        f"[PublicDownload] User {current_user.id} downloaded attachment {attachment_id} "
-        f"via public share link"
+        f"[PublicDownload] Downloaded attachment {attachment_id} "
+        f"via signed public link"
     )
 
     return Response(

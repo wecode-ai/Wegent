@@ -131,8 +131,29 @@ describe('WorkspacePanelActions', () => {
     expect(
       screen.queryByTestId('toggle-right-workspace-panel-expanded-button')
     ).not.toBeInTheDocument()
-    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toHaveClass(
+      'text-text-secondary',
+      'hover:bg-text-primary/[0.06]',
+      'hover:text-text-primary'
+    )
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toHaveClass(
+      'text-text-secondary',
+      'hover:bg-text-primary/[0.06]',
+      'hover:text-text-primary'
+    )
+  })
+
+  test('uses theme-aware active colors for open workspace panels', () => {
+    render(<WorkspacePanelActions {...baseProps} rightPanelOpen bottomPanelOpen />)
+
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toHaveClass(
+      'bg-muted',
+      'text-text-primary'
+    )
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toHaveClass(
+      'bg-muted',
+      'text-text-primary'
+    )
   })
 
   test('expands and restores an open right workspace panel', async () => {
@@ -168,6 +189,10 @@ describe('WorkspacePanelActions', () => {
     expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
       'aria-pressed',
       'true'
+    )
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveClass(
+      'bg-muted',
+      'text-text-primary'
     )
   })
 
@@ -372,14 +397,15 @@ describe('WorkspacePanelActions', () => {
       'overflow-hidden',
       'rounded-[14px]',
       'border-border/60',
-      'bg-background'
+      'bg-muted',
+      'text-text-secondary'
     )
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveClass(
       'h-8',
       'gap-1.5',
       'bg-transparent',
-      'hover:bg-black/[0.06]',
-      'active:bg-black/[0.10]'
+      'hover:bg-text-primary/[0.06]',
+      'active:bg-text-primary/[0.10]'
     )
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveTextContent(
       /Open location|打开位置|workbench\.open_workspace_location/
@@ -387,7 +413,8 @@ describe('WorkspacePanelActions', () => {
     expect(screen.getByTestId('open-local-workspace-picker-button')).toHaveClass(
       'h-8',
       'w-7',
-      'hover:bg-black/[0.06]'
+      'text-text-secondary',
+      'hover:bg-text-primary/[0.06]'
     )
     expect(screen.getByTestId('open-local-workspace-picker-button')).not.toHaveClass('border-l')
 

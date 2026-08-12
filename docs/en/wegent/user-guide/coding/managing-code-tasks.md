@@ -77,6 +77,15 @@ Click the model selector to override the agent's default model:
 
 When you switch to a different model in an existing Wework conversation, Wework asks for confirmation first. Different models may interpret existing context differently and may vary in tool support, response style, and task continuity. After confirmation, the new model is used for the next message; a response already in progress continues with the previous model. No warning is shown when selecting a model for a new conversation or reselecting the model that is already chosen.
 
+#### Friendly Titles
+
+You can enable **Use friendly titles** under **Settings > General > Runtime**. It is off by default, and enabling it requires a title-generation model:
+
+- **Same as task**: The default option. Each new task uses the model actually selected for that task to generate its title.
+- **A specific model**: Used only to generate the title asynchronously; it does not change the model used by the task itself.
+
+Title generation never blocks task submission. If a selected title model is no longer available, Wework skips title generation and still creates the task normally.
+
 #### Knowledge Base Context
 
 Click the context button to add knowledge bases:
@@ -188,13 +197,15 @@ While a Wework task is running, you can choose among three send modes:
 
 After entering a message, use the down arrow on the right side of the send button to open the menu. The clock means wait for the current response, the turning arrow means guide the current response, and the lightning bolt means interrupt and send immediately. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
 
-The queue sends messages from top to bottom. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
+The queue sends messages serially from top to bottom. After Wework submits the first queued message, it waits for that message's new turn to confirm that it started before allowing another queued message to send. The next message is sent only after the active turn finishes, preventing queued messages from being submitted concurrently. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
 
 If you submit new composer text while the queue is paused, Wework asks how to handle the existing queue:
 
 - **Keep and continue**: sends the new composer message first, then continues the preserved queue; the composer is cleared after submission.
 - **Clear queue**: removes the existing queue and sends only the new composer message.
 - **Cancel**: sends nothing and preserves both the composer and the queue.
+
+The temporary sidebar conversation supports the same running send modes as the main conversation. A message sent normally while the current response is running enters the pending queue and is sent automatically after the response finishes. Selecting **Guide current response** applies the message to the same active turn in the temporary conversation instead of creating a regular follow-up turn. The sidebar does not surface “task is already running” as a send failure while a message is queued; from its queue card, you can cancel or edit the pending message, or send it as guidance.
 
 ---
 

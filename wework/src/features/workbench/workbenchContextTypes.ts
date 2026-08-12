@@ -13,6 +13,7 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  ModelType,
   PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
@@ -79,6 +80,8 @@ export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<vo
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  forceNewTask?: boolean
+  additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
@@ -87,7 +90,7 @@ export interface SendCurrentInputOptions {
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
-  ) => void
+  ) => void | Promise<void>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -108,6 +111,29 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  modelId?: string | null
+  /** Full execution model fields resolved from a UnifiedModel; replaces the
+   * global workbench model when provided, matching task-message execution. */
+  executionModel?: {
+    modelId?: string | null
+    modelType?: string | null
+    modelOptions?: ModelOptions
+  } | null
+  /** Model selection used for the created runtime task handle; replaces the
+   * global workbench selection when provided. */
+  modelSelection?: {
+    modelName: string
+    modelType: ModelType | null
+    options: ModelOptions
+  } | null
+  /** Force the runtime task onto a specific device (robot execution
+   * environment), bypassing the default project/standalone device pick. */
+  deviceId?: string | null
+  /** Keep task-scoped automation out of the global conversation sidebar. */
+  hiddenFromSidebar?: boolean
+  /** Keep the underlying Codex thread durable so a follow-up can resume the
+   * same executor session after an app restart, even while hidden. */
+  continuable?: boolean
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
@@ -139,7 +165,12 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    composerError?: string | null
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    hasConversationContext?: boolean
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -154,6 +185,7 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -186,6 +218,7 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
@@ -327,6 +360,10 @@ export interface WorkbenchContextValue {
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
   createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createEphemeralRuntimeTask: (
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>

@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { terminalOutputToText } from '@/lib/terminal-text'
+import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -156,7 +157,10 @@ export function ToolBlockItem({
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
             type="button"
-            onClick={() => onOpenWorkspaceFile(workspaceFilePath)}
+            onClick={() => {
+              onOpenWorkspaceFile(workspaceFilePath)
+              track('ai_output_action_completed', { action: 'open_file', source: 'chat' })
+            }}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
@@ -544,9 +548,10 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
     wasRunning.current = isRunning
   }, [isRunning])
 
+  const durationStartedAt = fallbackEndAt === undefined ? anchoredStartedAt : startedAt
   const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
   if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
-  return `${(Math.max(0, endedAt - anchoredStartedAt) / 1000).toFixed(1)}s`
+  return `${(Math.max(0, endedAt - durationStartedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(
@@ -584,14 +589,35 @@ function InlineDiffPreview({
   const { t } = useTranslation('chat')
   const previewRef = useLockedMessageContentVisibility()
   const [copied, setCopied] = useState(false)
+  const copyResetTimerRef = useRef<number | null>(null)
+  const isDisposedRef = useRef(false)
   const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
   const truncated = lines.length > INLINE_DIFF_MAX_LINES
   const copyText = formatDiffPreviewCopyText(visibleLines, truncated)
 
+  useEffect(() => {
+    isDisposedRef.current = false
+    return () => {
+      isDisposedRef.current = true
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current)
+        copyResetTimerRef.current = null
+      }
+    }
+  }, [])
+
   const handleCopy = async () => {
     await copyCodeText(copyText)
+    if (isDisposedRef.current) return
+    track('ai_output_action_completed', { action: 'copy', source: 'chat' })
     setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopied(false)
+      copyResetTimerRef.current = null
+    }, 1500)
   }
 
   return (

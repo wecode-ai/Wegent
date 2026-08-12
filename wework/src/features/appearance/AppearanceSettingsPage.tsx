@@ -7,6 +7,7 @@ import {
   SettingsSwitch,
 } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
 import { useAppearance } from './useAppearance'
 import type { AppearanceMode, WorkbenchBackgroundConfig } from './types'
 import {
@@ -243,7 +244,10 @@ export function AppearanceSettingsPage() {
                 key={item.mode}
                 type="button"
                 data-testid={`appearance-mode-${item.mode}`}
-                onClick={() => setAppearance({ mode: item.mode })}
+                onClick={() => {
+                  setAppearance({ mode: item.mode })
+                  track('setting_changed', { setting: 'appearance_mode', value: item.mode })
+                }}
                 className={[
                   'flex h-11 items-center justify-center gap-2 rounded-md border text-sm font-medium transition-colors',
                   active
@@ -296,6 +300,12 @@ export function AppearanceSettingsPage() {
                     type="color"
                     value={appearance.accentColor}
                     onChange={event => setAppearance({ accentColor: event.target.value })}
+                    onBlur={() =>
+                      track('setting_changed', {
+                        setting: 'accent_color',
+                        value: appearance.accentColor,
+                      })
+                    }
                     className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
                   />
                   <span className="w-20 font-mono text-xs text-text-secondary">

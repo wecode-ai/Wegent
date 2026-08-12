@@ -23,6 +23,14 @@ import {
 } from './ArchivedConversationsSettingsContent'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type { ArchivedConversationItem } from '@/types/api'
+import { track } from '@/telemetry/client'
+import {
+  deleteArchivedLocalHarnessSession,
+  listArchivedLocalHarnessSessions,
+  notifyLocalHarnessSessionsChanged,
+  unarchiveLocalHarnessSession,
+  type LocalHarnessSessionDescriptor,
+} from '@/lib/local-terminal'
 
 type PendingDelete =
   | { type: 'single'; item: ArchivedConversationItem }
@@ -81,6 +89,45 @@ function archivedConversationAddress(item: ArchivedConversationItem) {
     taskId: item.taskId,
     ...(item.threadId ? { threadId: item.threadId } : {}),
     ...(item.runtimeHandle ? { runtimeHandle: item.runtimeHandle } : {}),
+  }
+}
+
+function localHarnessSessionId(item: ArchivedConversationItem): string | null {
+  const handle = item.runtimeHandle
+  if (!handle || handle.kind !== 'local_harness_session' || typeof handle.sessionId !== 'string') {
+    return null
+  }
+  return handle.sessionId
+}
+
+function localHarnessArchivedItem(
+  session: LocalHarnessSessionDescriptor
+): ArchivedConversationItem {
+  const normalizedPath = session.cwd.replace(/[\\/]+$/, '')
+  const projectName = normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || session.cwd
+  return {
+    id: `local-harness:${session.session_id}`,
+    taskId: session.session_id,
+    title: session.title,
+    projectId: session.project_id,
+    projectKey:
+      session.project_id === null
+        ? `local-harness-workspace:${session.cwd}`
+        : `project:${session.project_id}`,
+    projectName,
+    workspacePath: session.cwd,
+    workspaceKind: 'chat',
+    runtimeHandle: {
+      kind: 'local_harness_session',
+      sessionId: session.session_id,
+      harnessId: session.harness_id,
+    },
+    deviceId: 'local-harness',
+    deviceName: 'OpenCode',
+    source: 'local',
+    runtime: session.harness_id,
+    createdAt: new Date(session.created_at).toISOString(),
+    updatedAt: new Date(session.archived_at ?? session.created_at).toISOString(),
   }
 }
 
@@ -281,12 +328,20 @@ export function ArchivedConversationsSettingsPage({
 
   const api = useMemo(() => injectedApi ?? createSettingsRuntimeWorkApi(), [injectedApi])
 
+  const fetchArchivedConversations = useCallback(async () => {
+    const [response, localHarnessSessions] = await Promise.all([
+      api.listArchivedConversations(),
+      listArchivedLocalHarnessSessions(),
+    ])
+    return [...response.items, ...localHarnessSessions.map(localHarnessArchivedItem)]
+  }, [api])
+
   const loadArchivedConversations = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await api.listArchivedConversations()
-      setItems(response.items.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
+      const archivedItems = await fetchArchivedConversations()
+      setItems(archivedItems.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
       setOperationError(null)
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : ''
@@ -302,7 +357,7 @@ export function ArchivedConversationsSettingsPage({
     } finally {
       setLoading(false)
     }
-  }, [api, t])
+  }, [fetchArchivedConversations, t])
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => {
@@ -385,11 +440,22 @@ export function ArchivedConversationsSettingsPage({
     setBusyKey(key)
     setError(null)
     try {
-      await api.unarchiveConversation(archivedConversationAddress(item))
+      const harnessSessionId = localHarnessSessionId(item)
+      if (harnessSessionId) {
+        await unarchiveLocalHarnessSession(harnessSessionId)
+        notifyLocalHarnessSessionsChanged()
+      } else {
+        await api.unarchiveConversation(archivedConversationAddress(item))
+      }
       await onRefreshWorkLists?.()
       setLastUnarchived(item)
       await loadArchivedConversations()
+      track('feature_action_completed', {
+        domain: 'archived_conversation',
+        action: 'restore',
+      })
     } catch (unarchiveError) {
+      track('operation_failed', { operation: 'archived_conversation_action' })
       const message = unarchiveError instanceof Error ? unarchiveError.message : ''
       setError(
         message
@@ -402,10 +468,17 @@ export function ArchivedConversationsSettingsPage({
   }
 
   const openLastUnarchived = async () => {
-    if (!lastUnarchived || !onOpenRuntimeTask) return
+    if (!lastUnarchived) return
     setBusyKey(`open:${lastUnarchived.id}`)
     setError(null)
     try {
+      const harnessSessionId = localHarnessSessionId(lastUnarchived)
+      if (harnessSessionId) {
+        notifyLocalHarnessSessionsChanged(harnessSessionId)
+        onLeaveSettings?.()
+        return
+      }
+      if (!onOpenRuntimeTask) return
       await onRefreshWorkLists?.()
       await onOpenRuntimeTask(archivedConversationAddress(lastUnarchived))
       onLeaveSettings?.()
@@ -436,8 +509,17 @@ export function ArchivedConversationsSettingsPage({
       setArchivedBulkDeleteProgress({ completed: 0, total: deleteItems.length, running: true })
       try {
         const cleanupErrors: string[] = []
-        let completed = 0
+        const harnessItems = deleteItems.filter(item => localHarnessSessionId(item))
+        for (const item of harnessItems) {
+          await deleteArchivedLocalHarnessSession(localHarnessSessionId(item)!)
+        }
+        const deletedHarnessKeys = new Set(harnessItems.map(itemAddressKey))
+        notifyArchivedBulkDeleteDeleted(deletedHarnessKeys)
+        deleteItems = deleteItems.filter(item => !localHarnessSessionId(item))
+        let completed = harnessItems.length
         let total = deleteItems.length
+        total += harnessItems.length
+        setArchivedBulkDeleteProgress({ completed, total, running: true })
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
           const localItems = deleteItems.filter(item => item.source === 'local')
           const cloudItems = deleteItems.filter(item => item.source === 'cloud')
@@ -468,8 +550,8 @@ export function ArchivedConversationsSettingsPage({
             })
           }
 
-          const refreshed = await api.listArchivedConversations()
-          const remainingItems = refreshed.items.filter(
+          const refreshedItems = await fetchArchivedConversations()
+          const remainingItems = refreshedItems.filter(
             item => !hasArchivedBulkDeletedKey(itemAddressKey(item))
           )
           setItems(remainingItems)
@@ -497,7 +579,12 @@ export function ArchivedConversationsSettingsPage({
           total,
           running: false,
         })
+        track('feature_action_completed', {
+          domain: 'archived_conversation',
+          action: 'delete',
+        })
       } catch (deleteError) {
+        track('operation_failed', { operation: 'archived_conversation_action' })
         const message = deleteError instanceof Error ? deleteError.message : ''
         setOperationError(
           message
@@ -519,17 +606,31 @@ export function ArchivedConversationsSettingsPage({
     const key = `delete:${item.id}`
     setBusyKey(key)
     try {
-      const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
-      const cleanupText = cleanupErrorsFromResults([response as unknown as Record<string, unknown>])
-      if (cleanupText) {
-        setOperationError(
-          t('workbench.archived_cleanup_partial_failed', '部分文件清理失败: {{message}}', {
-            message: cleanupText,
-          })
-        )
+      const harnessSessionId = localHarnessSessionId(item)
+      if (harnessSessionId) {
+        await deleteArchivedLocalHarnessSession(harnessSessionId)
+      } else {
+        const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
+        const cleanupText = cleanupErrorsFromResults([
+          response as unknown as Record<string, unknown>,
+        ])
+        if (cleanupText) {
+          setOperationError(
+            t('workbench.archived_cleanup_partial_failed', '部分文件清理失败: {{message}}', {
+              message: cleanupText,
+            })
+          )
+        }
       }
       setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
       setPendingDelete(null)
+      track('feature_action_completed', {
+        domain: 'archived_conversation',
+        action: 'delete',
+      })
+    } catch (deleteError) {
+      track('operation_failed', { operation: 'archived_conversation_action' })
+      throw deleteError
     } finally {
       setBusyKey(null)
     }
@@ -576,7 +677,7 @@ export function ArchivedConversationsSettingsPage({
           className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-text-primary"
         >
           <span>{t('workbench.archived_unarchive_success', { title: lastUnarchived.title })}</span>
-          {onOpenRuntimeTask && (
+          {(onOpenRuntimeTask || localHarnessSessionId(lastUnarchived)) && (
             <button
               type="button"
               data-testid="archived-view-now-button"

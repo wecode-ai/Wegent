@@ -18,7 +18,6 @@ import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
-import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -30,6 +29,7 @@ import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
+import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
@@ -43,7 +43,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { KnowledgeBase, KnowledgeBaseWithGroupInfo, SummaryModelRef } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -192,22 +192,6 @@ export function KnowledgeDocumentPageDesktop({
   const knowledgeDefaultTeamId = knowledgeTeamInfo.id
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
-  const saveSummaryModelToPreference = useCallback(
-    (summaryModelRef: SummaryModelRef | null | undefined) => {
-      if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
-
-      const preference: ModelPreference = {
-        modelName: summaryModelRef.name,
-        modelType: summaryModelRef.type,
-        forceOverride: true,
-        updatedAt: Date.now(),
-      }
-
-      saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
-    },
-    [knowledgeDefaultTeamId]
-  )
-
   // URL sync and navigation
   const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
     initialKbNamespace,
@@ -238,7 +222,6 @@ export function KnowledgeDocumentPageDesktop({
   // Dialog management
   const dialogs = useKnowledgeBaseDialogs({
     sidebar,
-    saveSummaryModelToPreference,
     reloadGroupKbs,
   })
 
@@ -471,6 +454,16 @@ export function KnowledgeDocumentPageDesktop({
     }
 
     if (sidebar.selectedKb) {
+      // A code wiki is a knowledge base like any other and lives at the same URL.
+      // What differs is how it is read: a page tree, a page, and its outline, rather
+      // than a document workspace. Deciding that here rather than on a route of its
+      // own is what keeps one knowledge base from having two addresses — the second
+      // one needed a redirect, and that redirect lost a race with this page's own
+      // history.pushState and rendered the wiki as a notebook anyway.
+      if (sidebar.selectedKb.kb_type === 'code_wiki') {
+        return <CodeWikiReader key={sidebar.selectedKb.id} wiki={sidebar.selectedKb} />
+      }
+
       return (
         <KnowledgeDetailPanel
           key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}

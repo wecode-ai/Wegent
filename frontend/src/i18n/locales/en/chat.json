@@ -420,6 +420,7 @@
     "attachment": "Attachment",
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, XMind, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
     "image_tooltip": "Supported file types: Images (JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nUpload reference images for generation",
+    "model_material_tooltip": "Formats supported by the current model: {{formats}}\nMaterials are validated for count, size, resolution, and duration after selection",
     "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
@@ -662,11 +663,47 @@
   },
   "generate": {
     "mode_selector": "Generation Type",
-    "max_attachments": "Upload up to {{count}} attachments as reference",
-    "attachment_limit_reached": "Attachment limit reached"
+    "max_attachments": "Upload up to {{count}} reference materials",
+    "max_material_type": "Upload up to {{count}} materials of this type",
+    "attachment_limit_reached": "Material limit reached",
+    "material_errors": {
+      "mode_image_only": "First/last frame mode only accepts image materials",
+      "mode_video": "The current generation mode does not support reference video",
+      "mode_audio": "The current generation mode does not support reference audio",
+      "model_image": "The current model does not support reference images",
+      "model_video": "The current model does not support reference video",
+      "model_audio": "The current model does not support reference audio",
+      "material_type": "The current model only accepts image, video, or audio materials",
+      "format": "{{format}} is unsupported. Upload one of: {{formats}}",
+      "max_size": "File size is {{current}} MB; this model allows up to {{max}} MB",
+      "image_metadata_unreadable": "Unable to read image dimensions",
+      "image_dimension": "Image width and height must be between {{min}} and {{max}} pixels (current: {{width}}×{{height}})",
+      "image_aspect_ratio": "Image aspect ratio must be between {{min}} and {{max}} (current: {{width}}×{{height}})",
+      "video_metadata_unreadable": "Unable to read video dimensions or frame rate",
+      "video_dimension": "Video width and height must be between {{min}} and {{max}} pixels (current: {{width}}×{{height}})",
+      "duration_unreadable": "Unable to read material duration",
+      "duration_range": "Material duration must be between {{min}} and {{max}} seconds (current: {{current}} seconds)",
+      "video_pixels": "Video pixel count must be between {{min}} and {{max}} (current: {{width}}×{{height}}, {{current}})",
+      "video_aspect_ratio": "Video aspect ratio must be between {{min}} and {{max}} (current: {{width}}×{{height}})",
+      "video_fps_unreadable": "Unable to read video frame rate",
+      "video_fps": "Video frame rate must be between {{min}} and {{max}} FPS (current: {{current}} FPS)",
+      "mode_switch": "Existing materials are incompatible with this mode. Remove excess materials first.",
+      "model_switch": "Existing materials are incompatible with this model. Remove them first.",
+      "model_required": "Select a generation model first",
+      "attachment_uploading": "Materials are still uploading or processing. Try again shortly.",
+      "first_frame_required": "First/last frame mode requires a first-frame image",
+      "reference_image_required": "The current mode requires a reference image",
+      "reference_material_required": "The current mode requires at least one reference material",
+      "unlimited": "unlimited"
+    }
   },
   "video": {
     "title": "Video Generation",
+    "first_frame": "First frame",
+    "remove_frame": "Remove {{frame}}",
+    "swap_frames": "Swap first and last frames",
+    "last_frame": "Last frame",
+    "upload_frame": "Upload {{frame}}",
     "model_selector": "Select Video Model",
     "search_model": "Search video models...",
     "resolution_selector": "Select Resolution",
@@ -692,13 +729,19 @@
     "failed": "Video generation failed",
     "download": "Download Video",
     "reference_image": "Reference Image (Optional)",
-    "no_models": "No video models available"
+    "no_models": "No video models available",
+    "ratio_section": "Aspect ratio",
+    "duration_section": "Duration",
+    "resolution_section": "Resolution"
   },
   "image": {
     "title": "Image Generation",
     "model_selector": "Select Image Model",
     "search_model": "Search image models...",
     "size_selector": "Select Size",
+    "ratio_section": "Aspect ratio",
+    "resolution_section": "Resolution",
+    "size_section": "Size",
     "size": {
       "1024x1024": "1K (1024×1024)",
       "2048x2048": "2K (2048×2048)",
@@ -793,7 +836,7 @@
     "wikispaceSync": "Sync",
     "wikispaceSyncing": "Syncing...",
     "wikispaceEmpty": "No knowledge base content",
-    "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+    "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
     "wikispaceLastSynced": "Last synced: {{time}}",
     "wikispaceNeverSynced": "Never synced"
   }

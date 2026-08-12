@@ -23,11 +23,18 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import {
+  getRuntimeConversationCacheStats,
+  getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
+import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import type { LocalHarnessId } from '@/lib/local-harness'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -299,11 +306,15 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
           },
           {
             id: 'desktop-e2e-vision-main',
-            displayName: 'Desktop E2E Vision Main',
-            modelId: 'desktop-e2e-local-vision-main-upstream',
+            providerProfileId: 'deepseek' as const,
+            displayName: 'Desktop E2E DeepSeek Pro Vision Main',
+            modelId: 'deepseek-v4-pro',
             apiFormat: 'openai-responses' as const,
             toolProfile: 'custom' as const,
             requestPath: '/v1/responses',
+            contextWindow: 1_048_576,
+            webSearchMode: 'live' as const,
+            codexCatalogModelId: 'wework-deepseek-v4-pro',
             visionModelConfigId: 'desktop-e2e-vision',
             catalogReady: true,
           },
@@ -838,6 +849,42 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       return ''
+    case 'reconcileLegacyRuntimeAssistantSnapshot': {
+      const payload = JSON.parse(command.value ?? '{}') as {
+        address: RuntimeTaskAddress
+        content: string
+        itemId: string
+      }
+      const targetMessage = getRuntimeConversationMessages(payload.address)
+        .toReversed()
+        .find(
+          message =>
+            message.role === 'assistant' &&
+            (message.content === payload.content ||
+              message.blocks?.some(
+                block => block.type === 'text' && block.content === payload.content
+              ))
+        )
+      const turnId = targetMessage?.turnId ?? targetMessage?.subtaskId
+      if (!turnId) {
+        throw new Error('Unable to find the runtime turn for the legacy assistant snapshot')
+      }
+      reconcileRuntimeConversationSnapshot(payload.address, [
+        {
+          id: turnId,
+          items: [
+            {
+              id: payload.itemId,
+              type: 'assistant_text',
+              content: payload.content,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          status: 'done',
+        },
+      ])
+      return turnId
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
@@ -854,6 +901,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         params: { proxyUrl: proxyUrl || null },
       })
       return JSON.stringify(config)
+    }
+    case 'setLocalHarnessExecutablePaths': {
+      const executablePaths = JSON.parse(command.value ?? '{}') as Partial<
+        Record<LocalHarnessId, string>
+      >
+      const preferences = await getAppPreferences()
+      const updated = await updateAppPreferences({
+        localHarnesses: preferences.localHarnesses.map(preference => ({
+          ...preference,
+          executablePath: executablePaths[preference.id]?.trim() || null,
+        })),
+      })
+      return JSON.stringify(updated.localHarnesses)
     }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })

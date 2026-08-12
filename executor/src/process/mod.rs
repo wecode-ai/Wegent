@@ -41,9 +41,9 @@ use crate::{
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
         collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_child_blocks,
-        extract_claude_subagent_update, extract_claude_tool_results, extract_claude_tool_uses,
-        extract_reasoning, extract_text, ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer,
-        ClaudeStdoutJsonError, ClaudeToolUse,
+        extract_claude_result_error, extract_claude_subagent_update, extract_claude_tool_results,
+        extract_claude_tool_uses, extract_reasoning, extract_text, ClaudeAsyncTaskTracker,
+        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
     },
 };
 
@@ -611,18 +611,17 @@ async fn handle_deferred_mcp_loop(
         let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
             return summary.outcome;
         };
-        // After draining an already answered form, a non-empty final answer is
-        // authoritative; a leftover deferred form is stale Claude session state.
-        if stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request).is_some()
+        let answered_tool_use_id = answered_interactive_form_tool_use_id(&request);
+        if answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
             && completed_with_content(&summary.outcome)
         {
-            log_executor_event("ignoring stale deferred form after answered drain", &fields);
+            log_executor_event("ignoring stale deferred form after answer", &fields);
             return summary.outcome;
         }
         if !stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request)
-                .is_some_and(|tool_use_id| tool_use_id == deferred_tool_use.id)
+            && answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
         {
             stale_answer_defer_drained = true;
             log_executor_event("draining stale answered interactive form defer", &fields);
@@ -1599,11 +1598,15 @@ fn debug_claude_stdout_path(task_id: Option<&str>, subtask_id: Option<&str>) -> 
 }
 
 fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
+    let stdout = decode_output(stdout);
+    if let Some(message) = extract_claude_result_error(&stdout) {
+        return message;
+    }
     let stderr = decode_output(stderr);
     if !stderr.is_empty() {
         return stderr;
     }
-    decode_output(stdout)
+    stdout
 }
 
 fn decode_output(bytes: Vec<u8>) -> String {
@@ -1814,5 +1817,40 @@ mod tests {
         });
 
         assert!(fields.contains(&("stderr_preview", "first line\\nsecond line".to_owned())));
+    }
+
+    #[test]
+    fn failure_message_extracts_claude_terminal_error_from_stdout() {
+        let stdout = concat!(
+            r#"{"type":"system","subtype":"hook_started"}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","is_error":true,"result":"API Error: 502 Bad Gateway"}"#,
+        );
+
+        assert_eq!(
+            failure_message(Vec::new(), stdout.as_bytes().to_vec()),
+            "API Error: 502 Bad Gateway"
+        );
+    }
+
+    #[test]
+    fn failure_message_keeps_stderr_without_terminal_result() {
+        assert_eq!(
+            failure_message(
+                b"command timed out after 300s".to_vec(),
+                br#"{"type":"assistant","message":{"content":[{"text":"partial"}]}}"#.to_vec(),
+            ),
+            "command timed out after 300s"
+        );
+    }
+
+    #[test]
+    fn failure_message_prefers_terminal_result_over_stderr_warning() {
+        let stdout = br#"{"type":"result","is_error":true,"result":"Invalid model ID"}"#.to_vec();
+
+        assert_eq!(
+            failure_message(b"startup hook warning".to_vec(), stdout),
+            "Invalid model ID"
+        );
     }
 }

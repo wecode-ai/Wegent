@@ -186,7 +186,7 @@ class SitesService:
 
         while len(items) < limit:
             params: dict[str, Any] = {"username": username, "limit": 100}
-            if handler.app_type != "site":
+            if handler.app_type != "web":
                 params["app_type"] = handler.app_type
             if query:
                 params["sitename"] = query

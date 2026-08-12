@@ -16,6 +16,10 @@ import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
+import type {
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
@@ -38,6 +42,13 @@ import type {
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
+import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import type {
+  LocalHarnessModelLaunchConfig,
+  LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
+import type { LocalHarnessId } from '@/lib/local-harness'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -114,10 +125,23 @@ export interface WorkbenchServices {
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
+    uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
   }
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  projectChatClient?: ProjectChatClient
+  localProjectChatClient?: ProjectChatClient
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
+  localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
+  localHarnessModelApi?: {
+    resolveLaunch: (
+      harnessId: LocalHarnessId,
+      option: LocalHarnessModelOption | null
+    ) => Promise<LocalHarnessModelLaunchConfig | null>
+    unregisterProxy: (token: string) => Promise<void>
+  }
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {

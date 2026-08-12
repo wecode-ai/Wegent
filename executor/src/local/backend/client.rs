@@ -115,6 +115,15 @@ where
         self.transport.emit(event, payload).await
     }
 
+    pub async fn call_raw_event(
+        &self,
+        event: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        self.transport.call(event, payload, timeout).await
+    }
+
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
         I: IntoIterator<Item = String>,

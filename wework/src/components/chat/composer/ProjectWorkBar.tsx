@@ -101,9 +101,14 @@ interface ProjectWorkBarProps {
   buttonClassName?: string
   menuClassName?: string
   emptyLabel?: string
+  // When false, the desktop trigger shows a static folder icon instead of the
+  // hover-to-clear button (used when the current project is a default the user
+  // cannot clear from here).
+  showClearButton?: boolean
   projectMenuOpenSignal?: number
   externalMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
+  trailingContext?: ReactNode
 }
 
 export function ProjectWorkBar({
@@ -134,9 +139,11 @@ export function ProjectWorkBar({
   buttonClassName,
   menuClassName,
   emptyLabel,
+  showClearButton = true,
   projectMenuOpenSignal,
   externalMenuOpenSignal,
   projectMenuAnchorElement = null,
+  trailingContext,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -579,7 +586,10 @@ export function ProjectWorkBar({
   }
 
   return (
-    <div className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}>
+    <div
+      data-testid="project-work-bar"
+      className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+    >
       <div
         ref={containerRef}
         className={cn('relative min-w-0', !isMobile && 'max-w-[18rem] shrink')}
@@ -922,17 +932,26 @@ export function ProjectWorkBar({
           </button>
         ) : currentProject ? (
           <div className="flex h-8 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
-            <button
-              type="button"
-              data-testid="clear-project-button"
-              onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
-              title={t('workbench.no_project', '不使用项目')}
-              aria-label={t('workbench.no_project', '不使用项目')}
-              className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-            >
-              <ProjectFolderIcon project={currentProject} className="h-4 w-4 group-hover:hidden" />
-              <X className="hidden h-4 w-4 group-hover:block" />
-            </button>
+            {showClearButton ? (
+              <button
+                type="button"
+                data-testid="clear-project-button"
+                onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
+                title={t('workbench.no_project', '不使用项目')}
+                aria-label={t('workbench.no_project', '不使用项目')}
+                className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              >
+                <ProjectFolderIcon
+                  project={currentProject}
+                  className="h-4 w-4 group-hover:hidden"
+                />
+                <X className="hidden h-4 w-4 group-hover:block" />
+              </button>
+            ) : (
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
+              </span>
+            )}
             <button
               ref={triggerButtonRef}
               type="button"
@@ -977,6 +996,7 @@ export function ProjectWorkBar({
           </button>
         )}
       </div>
+      {trailingContext}
       {projectExecutionUi.canShowModeControl && (
         <div
           ref={executionModeContainerRef}

@@ -13,9 +13,20 @@ export interface ComposerSubmitOptions {
   interruptWhenBusy?: boolean
 }
 
+export interface ComposerExternalMentionCandidate {
+  id: string
+  type: 'agent' | 'user'
+  title: string
+  metaLabel: string
+  searchAliases?: string[]
+  testId?: string
+}
+
 export interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   canSend: boolean
   disabled?: boolean
@@ -35,6 +46,8 @@ export interface ComposerTextareaProps {
   conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>

@@ -22,9 +22,17 @@ Run focused tests before committing:
 
 ```bash
 pnpm --filter wework test
+pnpm --filter wework test <test-file>
 pnpm --filter wework exec prettier --check <changed-files>
 pnpm --filter wework exec eslint <changed-files>
 ```
+
+- Pass Vitest file paths and filters directly after `test`. Never insert an
+  extra `--` (for example, do not run
+  `pnpm --filter wework test -- <test-file>`), because Vitest can ignore the
+  intended filter and collect the full suite. When running a focused test,
+  confirm the initial collection output matches the requested files and stop
+  the run immediately if it starts collecting unrelated tests.
 
 Direct debug Cargo builds create marked, unavailable stubs for ignored bundled
 sidecars when their real binaries have not been prepared. Do not prepare DWS
@@ -39,6 +47,7 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 - Reuse the existing `e2e:desktop` command and its established CI variants. Do not add a package script or GitHub Actions command for each scenario; extend the desktop runner or its scenario discovery instead. Add a new command only when the test requires a genuinely different CI environment or job boundary.
 - Register long main-runner sections in the ordered desktop checkpoint list. `--segment <checkpoint>` must run that checkpoint alone after common bootstrap; `--from-segment <checkpoint>` must run it and every later checkpoint. Each checkpoint must create its own minimal fixtures when an earlier checkpoint is skipped, and must never silently rely on task IDs, model state, or UI state produced only by a previous checkpoint.
 - Ordinary desktop E2E UI actions and waits use the shared 10-second step timeout. Pass an explicit `timeoutMs` only for a genuinely slow operation such as application startup, workbench reconnection, or a deliberately held model response; do not restore a broad 120-second default.
+- In virtualized content, do not rely on test-added DOM attributes across scrolling or rendering updates. Locate the element with stable product selectors and text first, wait for layout to settle, then add any temporary marker needed by later assertions.
 - E2E coverage complements, but never replaces, verification in the real Tauri application.
 
 ## Real desktop verification

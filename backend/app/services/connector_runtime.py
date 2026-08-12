@@ -26,6 +26,8 @@ from app.services.connector_apps import (
     ConnectorAppService,
     _decrypt_json,
 )
+from app.services.connector_connections import connector_connection_service
+from app.services.connector_oauth import connector_oauth_service
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -92,7 +94,7 @@ class ConnectorRuntimeService:
         allowlist = set(app.tool_allowlist or [])
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
-        config = await ConnectorRuntimeService._server_config(app, user)
+        config = await ConnectorRuntimeService._server_config(db, app, user)
         if app.transport == "http":
             definition = ConnectorRuntimeService._http_tool_definition(
                 app, upstream_name
@@ -116,14 +118,49 @@ class ConnectorRuntimeService:
         except HTTPException:
             raise
         except Exception as exc:
+            ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc)
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
                 "Connector tool execution failed",
             ) from exc
 
     @staticmethod
+    def _mark_expired_on_auth_error(
+        db: Session,
+        app: ConnectorApp,
+        user: User,
+        error: Exception,
+    ) -> None:
+        if app.auth_type == "none":
+            return
+        message = str(error).lower()
+        if not any(
+            marker in message for marker in ("401", "403", "unauthorized", "forbidden")
+        ):
+            return
+        connection = connector_connection_service.get(
+            db,
+            slug=app.slug,
+            user_id=user.id,
+        )
+        if connection:
+            connector_connection_service.set_status(db, connection, "expired")
+
+    @staticmethod
     def _connected_apps(db: Session, user: User) -> list[ConnectorApp]:
-        return ConnectorAppService.list_visible_apps(db, user)
+        connected: list[ConnectorApp] = []
+        for app in ConnectorAppService.list_visible_apps(db, user):
+            if app.auth_type == "none":
+                connected.append(app)
+                continue
+            connection = connector_connection_service.get(
+                db,
+                slug=app.slug,
+                user_id=user.id,
+            )
+            if connector_connection_service.response(connection).status == "connected":
+                connected.append(app)
+        return connected
 
     @staticmethod
     def _http_tools(app: ConnectorApp) -> list[ConnectorTool]:
@@ -213,7 +250,7 @@ class ConnectorRuntimeService:
         user: User,
     ) -> list[Any]:
         try:
-            config = await ConnectorRuntimeService._server_config(app, user)
+            config = await ConnectorRuntimeService._server_config(db, app, user)
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 return await ConnectorRuntimeService._list_all_tools(session)
         except Exception as exc:
@@ -407,9 +444,41 @@ class ConnectorRuntimeService:
 
     @staticmethod
     async def _server_config(
-        app: ConnectorApp, user: User | None = None
+        db: Session,
+        app: ConnectorApp,
+        user: User | None = None,
     ) -> dict[str, Any]:
         headers = _decrypt_json(app.provider_headers_encrypted)
+        if user and app.auth_type != "none":
+            connection = connector_connection_service.get(
+                db,
+                slug=app.slug,
+                user_id=user.id,
+            )
+            if (
+                connection
+                and connector_connection_service.response(connection).status
+                == "expired"
+            ):
+                connection = await connector_oauth_service.refresh_connection(
+                    db, connection
+                )
+            if (
+                not connection
+                or connector_connection_service.response(connection).status
+                != "connected"
+            ):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' requires authorization",
+                )
+            access_token = connection.access_token()
+            if not access_token:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' authorization is unavailable",
+                )
+            headers["Authorization"] = f"Bearer {access_token}"
         if user:
             headers["X-Wegent-Username"] = user.user_name
             headers["X-Wegent-User-Id"] = str(user.id)

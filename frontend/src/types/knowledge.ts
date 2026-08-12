@@ -315,7 +315,28 @@ export interface SummaryModelRef {
 // opening view, not a resource capability boundary.
 // - notebook: default to Notebook workspace view
 // - classic: default to document management view
-export type KnowledgeBaseType = 'notebook' | 'classic'
+/**
+ * How a knowledge base is filled and read.
+ *
+ * `code_wiki` is generated from a repository by an agent rather than filled by hand,
+ * and is read through its own three-pane reader. It is otherwise an ordinary
+ * knowledge base: same ownership, same ACL, same listing.
+ */
+export type KnowledgeBaseType = 'notebook' | 'classic' | 'code_wiki'
+
+/**
+ * The two views a document knowledge base can open in.
+ *
+ * Deliberately narrower than `KnowledgeBaseType`: a code wiki has neither view, it
+ * has a reader of its own. Components that render one or the other take this type so
+ * that a code wiki cannot be handed to them without the conversion being visible.
+ */
+export type DocumentViewType = 'notebook' | 'classic'
+
+/** The view to open a knowledge base in, or `null` when it is not a document one. */
+export function documentViewOf(kbType?: KnowledgeBaseType | null): DocumentViewType | null {
+  return kbType === 'notebook' || kbType === 'classic' ? kbType : null
+}
 export type KnowledgeView = 'documents' | 'notebook'
 export type RagConfigMode = 'auto' | 'disabled'
 export type DirectAccessRequirement = 'read' | 'edit'
@@ -331,8 +352,21 @@ export interface KnowledgeBase {
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
+  /** Repository a code wiki documents. Absent for every other kind. */
+  source?: {
+    sourceType?: string
+    sourceUrl?: string
+    sourceDomain?: string
+    projectName?: string
+  }
+  /** Language a code wiki's pages are generated in. */
+  language?: string
+  /** Whether a code wiki's generation runs appear in the conversation list. */
+  show_generation_task?: boolean
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Which model this knowledge base's own generation runs on. */
+  execution_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
   /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
@@ -373,6 +407,22 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
+  /** Only for `kb_type: 'code_wiki'` — which platform hosts the repository. */
+  source_type?: 'github' | 'gitlab' | 'gitea'
+  /** Only for `kb_type: 'code_wiki'` — the repository to document. */
+  source_url?: string
+  /** Only for `kb_type: 'code_wiki'` — what language to generate the pages in. */
+  language?: string
+  /** What the provider calls the repository, used when the name is left blank. */
+  resolved_name?: string
+  /** What the provider says the repository is, used when no description is given. */
+  resolved_description?: string
+  /**
+   * Only for `kb_type: 'code_wiki'` — which model the generation agent runs on.
+   * Required by the server there: a wiki reads a whole repository, so which model
+   * sees it is the creator's choice rather than the team bot's default.
+   */
+  execution_model_ref?: SummaryModelRef | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
@@ -408,7 +458,11 @@ export interface KnowledgeBaseUpdate {
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Editable: applies to the next run, not one already going. */
+  execution_model_ref?: SummaryModelRef | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
+  /** Only for a code wiki: whether its generation runs are listed as conversations. */
+  show_generation_task?: boolean
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number

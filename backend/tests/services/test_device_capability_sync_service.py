@@ -175,7 +175,7 @@ def _create_installed_plugin(
 
 
 @pytest.mark.anyio
-async def test_build_desired_capabilities_includes_only_enabled_installed_items(
+async def test_build_desired_capabilities_keeps_disabled_plugins_installed(
     test_db, test_user
 ):
     skill = _create_skill(test_db, test_user.id)
@@ -190,7 +190,9 @@ async def test_build_desired_capabilities_includes_only_enabled_installed_items(
     enabled_mcp = _create_installed_mcp(test_db, test_user.id)
     _create_installed_mcp(test_db, test_user.id, name="disabled", enabled=False)
     enabled_plugin = _create_installed_plugin(test_db, test_user.id)
-    _create_installed_plugin(test_db, test_user.id, name="disabled", enabled=False)
+    disabled_plugin = _create_installed_plugin(
+        test_db, test_user.id, name="disabled", enabled=False
+    )
 
     service = DeviceCapabilitySyncService()
 
@@ -202,12 +204,12 @@ async def test_build_desired_capabilities_includes_only_enabled_installed_items(
     assert payload["skills"][0]["skill_id"] == skill.id
     assert payload["skills"][0]["name"] == skill.name
     assert [item["installed_mcp_id"] for item in payload["mcps"]] == [enabled_mcp.id]
-    assert [item["installed_plugin_id"] for item in payload["plugins"]] == [
-        enabled_plugin.id
-    ]
-    assert payload["plugins"][0]["name"] == "context7"
-    assert payload["plugins"][0]["marketplace"] == "claude-plugins-official"
-    assert payload["plugins"][0]["version"] == "1057d02c5307"
+    plugins_by_id = {item["installed_plugin_id"]: item for item in payload["plugins"]}
+    assert plugins_by_id[enabled_plugin.id]["name"] == "context7"
+    assert plugins_by_id[enabled_plugin.id]["enabled"] is True
+    assert plugins_by_id[disabled_plugin.id]["enabled"] is False
+    assert plugins_by_id[enabled_plugin.id]["marketplace"] == "claude-plugins-official"
+    assert plugins_by_id[enabled_plugin.id]["version"] == "1057d02c5307"
     assert payload["mode"] == "replace"
 
 

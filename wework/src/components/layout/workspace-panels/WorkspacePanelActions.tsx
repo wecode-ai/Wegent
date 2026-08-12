@@ -310,7 +310,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         <div
           data-testid="local-workspace-titlebar-control"
           className={cn(
-            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-background text-[#6b7280] transition-colors hover:border-border/80 hover:bg-background focus-within:ring-2 focus-within:ring-primary/25',
+            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-muted text-text-secondary transition-colors hover:border-border/80 focus-within:ring-2 focus-within:ring-focus/70',
             ideLoading && 'cursor-wait opacity-70'
           )}
         >
@@ -320,7 +320,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             onClick={() => void handleOpenLocalWorkspace()}
             disabled={ideLoading || (openerAvailability !== null && defaultOpener === null)}
             className={cn(
-              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
+              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-text-primary/[0.06] active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {
@@ -342,7 +342,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             optionTestIdPrefix="open-local-workspace-option"
             disabled={ideLoading}
             buttonClassName={cn(
-              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b7280] transition-colors hover:bg-black/[0.06] hover:text-[#374151] active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
+              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
               ideLoading && 'cursor-wait opacity-70'
             )}
             availability={
@@ -386,7 +386,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanelExpanded}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  rightPanelExpanded && 'bg-black/[0.10] text-[#374151]'
+                  rightPanelExpanded && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelExpandedTitle}
                 aria-pressed={rightPanelExpanded}
@@ -407,7 +407,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleBottomPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                  bottomPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={bottomPanelTitle}
               >
@@ -427,7 +427,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                  rightPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelTitle}
               >

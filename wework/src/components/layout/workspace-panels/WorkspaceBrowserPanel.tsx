@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
+  EllipsisVertical,
   ExternalLink,
   Globe2,
   CircleAlert,
@@ -17,12 +18,16 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import {
   canUseEmbeddedBrowser,
+  clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
   listenEmbeddedBrowserAgentState,
+  listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowser,
@@ -30,6 +35,9 @@ import {
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
   listenEmbeddedBrowserInvalidTlsCertificates,
+  listenEmbeddedBrowserLocalFilePreview,
+  listenEmbeddedBrowserPageStateChanges,
+  isEmbeddedBrowserLabelTransferred,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -40,6 +48,7 @@ import {
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserAgentStateEvent,
+  type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
@@ -66,13 +75,15 @@ import {
   DEFAULT_UI_FONT_SIZE,
   resolveUiTypographyVariables,
 } from '@/features/appearance/typography'
+import { track } from '@/telemetry/client'
 
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
-const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
-const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
+const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
+const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
+const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 350
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
@@ -82,19 +93,32 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   return true;
 })()`
 
-interface WorkspaceBrowserPanelProps {
+export interface WorkspaceBrowserPanelProps {
   active: boolean
   label?: string
-  openRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
+  onNativeLabelChange?: (nativeLabel: string | null) => void
+  onDownloadActivityChange?: (hasActiveDownload: boolean) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
 
+export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
+
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
 type BrowserAgentState = EmbeddedBrowserAgentStateEvent
+type BrowserOpenDiagnosticStage =
+  | 'request_consumed'
+  | 'host_ready'
+  | 'host_waiting'
+  | 'host_visible'
+  | 'native_open_started'
+  | 'native_open_succeeded'
+  | 'native_open_failed'
+  | 'lifecycle_cancelled'
 type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
 type BrowserAnnotationTarget = {
   inspectId?: string
@@ -124,6 +148,14 @@ function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
 function getFallbackBrowserTitle(url: string) {
   try {
     const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') {
+      const pathname = decodeURIComponent(parsedUrl.pathname)
+      const normalizedPath = pathname.replace(/\/+$/, '')
+      if (parsedUrl.pathname.endsWith('/')) {
+        return `Index of ${normalizedPath || '/'}`
+      }
+      return normalizedPath.split('/').filter(Boolean).pop() || normalizedPath || url
+    }
     return parsedUrl.hostname.replace(/^www\./, '') || url
   } catch {
     return url
@@ -132,7 +164,9 @@ function getFallbackBrowserTitle(url: string) {
 
 function getFallbackFaviconUrl(url: string) {
   try {
-    return new URL('/favicon.ico', url).toString()
+    const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') return null
+    return new URL('/favicon.ico', parsedUrl).toString()
   } catch {
     return null
   }
@@ -169,44 +203,58 @@ function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
   }
 }
 
-function waitForElementBounds(
+async function waitForVisibleBrowserHost(
   getElement: () => HTMLElement | null,
-  isDisposed: () => boolean
-): Promise<EmbeddedBrowserBounds> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now()
-    let timer: number | null = null
-    const finish = (callback: () => void) => {
-      if (timer !== null) {
-        window.clearTimeout(timer)
-        timer = null
-      }
-      callback()
+  isAbandoned: () => boolean,
+  isActive: () => boolean,
+  onPending: (detail: Record<string, unknown>) => void
+): Promise<EmbeddedBrowserBounds | null> {
+  const startedAt = Date.now()
+  let lastDiagnosticAt = 0
+  while (!isAbandoned()) {
+    if (!isActive()) return null
+    const element = getElement()
+    const bounds = element ? getElementBounds(element) : null
+    if (bounds) return bounds
+    const now = Date.now()
+    if (now - lastDiagnosticAt >= 1_000) {
+      const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
+      const rect = element?.getBoundingClientRect()
+      onPending({
+        elapsedMs: now - startedAt,
+        hostConnected: element?.isConnected ?? false,
+        hostExists: Boolean(element),
+        hostRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+        paneActive: pane?.dataset.activeWorkbenchPane ?? null,
+        paneHidden: pane?.hidden ?? null,
+      })
+      lastDiagnosticAt = now
     }
-
-    const check = () => {
-      if (isDisposed()) {
-        finish(() => reject(new Error('Embedded browser open was cancelled')))
-        return
-      }
-
-      const element = getElement()
-      const bounds = element ? getElementBounds(element) : null
-      if (bounds) {
-        finish(() => resolve(bounds))
-        return
-      }
-
-      if (Date.now() - startedAt >= EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS) {
-        finish(() => reject(new Error('Timed out waiting for embedded browser host bounds')))
-        return
-      }
-
-      timer = window.setTimeout(check, EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS)
+    if (now - startedAt >= EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS) {
+      throw new Error('Timed out waiting to show the embedded browser')
     }
+    await new Promise<void>(resolve =>
+      window.setTimeout(resolve, EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS)
+    )
+  }
+  throw new Error('Embedded browser open was cancelled')
+}
 
-    timer = window.setTimeout(check, 0)
-  })
+function browserOpenErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function logBrowserOpenDiagnostic(
+  stage: BrowserOpenDiagnosticStage,
+  detail: Record<string, unknown>
+) {
+  console.info('[Wework] Embedded browser open diagnostic', JSON.stringify({ stage, ...detail }))
 }
 
 function observeElementIfPresent(observer: ResizeObserver, element: Element | null) {
@@ -695,12 +743,14 @@ function browserAnnotationContext(
   }
 }
 
-export function WorkspaceBrowserPanel({
+export function WorkspaceBrowserTabPanel({
   active,
   label = 'workspace-browser',
   openRequest,
   codeCommentCount = 0,
   onAddCodeComment,
+  onNativeLabelChange,
+  onDownloadActivityChange,
   onFaviconChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
@@ -708,6 +758,7 @@ export function WorkspaceBrowserPanel({
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
+  const nativeBrowserOpeningRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
   const addressEditingRef = useRef(false)
@@ -719,10 +770,13 @@ export function WorkspaceBrowserPanel({
   const activeRef = useRef(active)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
+  const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
+  const activeDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
-  const handledOpenRequestIdRef = useRef<number | null>(null)
+  const handledOpenRequestIdRef = useRef<string | null>(null)
+  const activeOpenRequestIdRef = useRef<string | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
@@ -731,6 +785,7 @@ export function WorkspaceBrowserPanel({
   const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -738,6 +793,16 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
+    id: number
+    message: string
+  } | null>(null)
+  const [clearDataNotice, setClearDataNotice] = useState<{
+    id: number
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
@@ -758,11 +823,20 @@ export function WorkspaceBrowserPanel({
     setDownloadsOpen(true)
   }, [])
 
-  const reconcileDownloadSnapshot = useCallback((nativeLabel: string) => {
-    const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
-    setDownloads(snapshot)
-    setDownloadsOpen(snapshot.length > 0)
-  }, [])
+  const reconcileDownloadSnapshot = useCallback(
+    (nativeLabel: string) => {
+      const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
+      setDownloads(snapshot)
+      setDownloadsOpen(snapshot.length > 0)
+      activeDownloadIdsRef.current = new Set(
+        snapshot
+          .filter(download => download.status === 'started' || download.status === 'progress')
+          .map(download => download.id)
+      )
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+    },
+    [onDownloadActivityChange]
+  )
 
   const adoptNativeLabel = useCallback(
     (nativeLabel: string, logicalLabel: string) => {
@@ -775,30 +849,58 @@ export function WorkspaceBrowserPanel({
 
       nativeLabelRef.current = nativeLabel
       adoptedDownloadOwnerLabelRef.current = logicalLabel
+      onNativeLabelChange?.(nativeLabel)
       reconcileDownloadSnapshot(nativeLabel)
     },
-    [reconcileDownloadSnapshot]
+    [onNativeLabelChange, reconcileDownloadSnapshot]
   )
 
   useLayoutEffect(() => {
     mountedRef.current = true
-    currentLabelRef.current = label
-    activeRef.current = active
-    pageStateRequestGenerationRef.current += 1
-    annotationRequestGenerationRef.current += 1
     return () => {
       mountedRef.current = false
       pageStateRequestGenerationRef.current += 1
       annotationRequestGenerationRef.current += 1
     }
+  }, [])
+
+  useLayoutEffect(() => {
+    currentLabelRef.current = label
+    activeRef.current = active
+    pageStateRequestGenerationRef.current += 1
+    annotationRequestGenerationRef.current += 1
   }, [active, label])
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
-      if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
-      applyDownloadEvent(download)
+      if (download.nativeLabel !== nativeLabelRef.current) return
+      if (download.status === 'started' || download.status === 'progress') {
+        activeDownloadIdsRef.current.add(download.id)
+      } else {
+        activeDownloadIdsRef.current.delete(download.id)
+      }
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+      if (activeRef.current) {
+        applyDownloadEvent(download)
+      }
+      if (
+        (download.status === 'finished' ||
+          download.status === 'failed' ||
+          download.status === 'deleted') &&
+        !trackedTerminalDownloadIdsRef.current.has(download.id)
+      ) {
+        trackedTerminalDownloadIdsRef.current.add(download.id)
+        track('browser_download_completed', {
+          result:
+            download.status === 'finished'
+              ? 'success'
+              : download.status === 'failed'
+                ? 'failure'
+                : 'cancelled',
+        })
+      }
     })
-  }, [applyDownloadEvent])
+  }, [applyDownloadEvent, onDownloadActivityChange])
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserAgentState(event => {
@@ -847,6 +949,96 @@ export function WorkspaceBrowserPanel({
   }, [])
 
   useEffect(() => {
+    const listener = listenEmbeddedBrowserLocalFilePreview(event => {
+      if (!activeRef.current || event.nativeLabel !== nativeLabelRef.current) return
+      setLocalFilePreviewToast({
+        id: Date.now(),
+        message: t('workbench.browser_local_file_notice'),
+      })
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) {
+        nextUnlisten()
+        return
+      }
+      unlisten = nextUnlisten
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [t])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserCloseRequests(event => {
+      if (!activeRef.current || event.label !== currentLabelRef.current) return
+      if (nativeLabelRef.current && event.nativeLabel !== nativeLabelRef.current) {
+        console.info(
+          '[Wework] Embedded browser close ignored',
+          JSON.stringify({
+            currentNativeLabel: nativeLabelRef.current,
+            eventNativeLabel: event.nativeLabel,
+            label: event.label,
+          })
+        )
+        return
+      }
+      console.info(
+        '[Wework] Embedded browser close consumed',
+        JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
+      )
+      nativeBrowserOpenRef.current = false
+      nativeLabelRef.current = null
+      adoptedDownloadOwnerLabelRef.current = null
+      activeDownloadIdsRef.current = new Set()
+      onNativeLabelChange?.(null)
+      onDownloadActivityChange?.(false)
+      currentUrlRef.current = null
+      activePageUrlRef.current = null
+      annotationModeRef.current = false
+      pageStateRequestGenerationRef.current += 1
+      annotationRequestGenerationRef.current += 1
+      setCurrentUrl(null)
+      setPageUrl(null)
+      setAddress('')
+      setStatus('ready')
+      setError(null)
+      setInvalidTlsCertificate(null)
+      setAnnotationMode(false)
+      setAnnotations([])
+      setDownloads([])
+      setDownloadsOpen(false)
+      setLocalFilePreviewToast(null)
+      setClearDataNotice(null)
+      setClearingDataKind(null)
+      setAgentState(null)
+      onTitleChange?.(null)
+      onFaviconChange?.(null)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser close requests:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
+
+  useEffect(() => {
     if (!active || !nativeLabelRef.current) return
     reconcileDownloadSnapshot(nativeLabelRef.current)
   }, [active, reconcileDownloadSnapshot])
@@ -868,9 +1060,47 @@ export function WorkspaceBrowserPanel({
     [onFaviconChange, onTitleChange]
   )
 
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+      if (!activeRef.current || pageState.nativeLabel !== nativeLabelRef.current) return
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+      const nextUrl = pageState.url || currentUrlRef.current
+      updatePageUrl(nextUrl)
+      if (nextUrl) {
+        onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
+        onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
+      }
+      setStatus('ready')
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser page state changes:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [onFaviconChange, onTitleChange, updatePageUrl])
+
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+      if (
+        !embeddedBrowserAvailable ||
+        !nativeBrowserOpenRef.current ||
+        isEmbeddedBrowserLabelTransferred(label)
+      ) {
+        return
+      }
       const host = browserHostRef.current
       if (!host) {
         if (!visible) {
@@ -891,7 +1121,13 @@ export function WorkspaceBrowserPanel({
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
-    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+    if (
+      !embeddedBrowserAvailable ||
+      !nativeBrowserOpenRef.current ||
+      isEmbeddedBrowserLabelTransferred(label)
+    ) {
+      return
+    }
     await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
   }, [embeddedBrowserAvailable, label])
 
@@ -1146,59 +1382,168 @@ export function WorkspaceBrowserPanel({
   }, [currentUrl])
 
   useEffect(() => {
-    if (!active || !embeddedBrowserAvailable || !currentUrl) return
+    if (!embeddedBrowserAvailable || !currentUrl) return
     if (nativeBrowserOpenRef.current) {
       schedulePostOpenBoundsSync(active)
       return
     }
+    if (nativeBrowserOpeningRef.current) return
 
-    let disposed = false
     let readyTimer: number | null = null
+    const requestId = activeOpenRequestIdRef.current
+    const openingLabel = label
+    const openingUrl = currentUrl
+    const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
+    nativeBrowserOpeningRef.current = true
 
     setStatus('loading')
+    const revealHiddenBrowser = async (visible: boolean) => {
+      if (visible || !active) return
+      const visibleBounds = await waitForVisibleBrowserHost(
+        () => browserHostRef.current,
+        isAbandoned,
+        () => activeRef.current,
+        detail =>
+          logBrowserOpenDiagnostic('host_waiting', {
+            ...detail,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
+      )
+      if (visibleBounds) {
+        await setEmbeddedBrowserBounds(visibleBounds, true, openingLabel)
+        logBrowserOpenDiagnostic('host_visible', {
+          bounds: visibleBounds,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+        })
+        return
+      }
+      await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, openingLabel, true)
+    }
+    const recoverBrowserFromPageState = async () => {
+      const recoveryDelays = [0, 120, 300, 600]
+      for (const delay of recoveryDelays) {
+        if (delay > 0) {
+          await new Promise<void>(resolve => window.setTimeout(resolve, delay))
+        }
+        try {
+          const pageState = await readEmbeddedBrowserPageState(openingLabel)
+          if (isAbandoned()) return true
+          adoptNativeLabel(pageState.nativeLabel, openingLabel)
+          setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+          nativeBrowserOpenRef.current = true
+          updatePageUrl(pageState.url || openingUrl)
+          schedulePostOpenBoundsSync(activeRef.current)
+          setStatus('ready')
+          return true
+        } catch {
+          // No existing browser state to recover yet.
+        }
+      }
+      return false
+    }
     const openWhenHostIsReady = async () => {
+      console.info('[Wework][browser-open] nativeOpenStart', {
+        label,
+        currentUrl,
+        active,
+      })
       try {
-        const bounds = await waitForElementBounds(
-          () => browserHostRef.current,
-          () => disposed
-        )
-        if (disposed) return
+        const host = browserHostRef.current
+        const measuredBounds = active && host ? getElementBounds(host) : null
+        const visible = measuredBounds !== null
+        const bounds = measuredBounds ?? { x: 0, y: 0, width: 1, height: 1 }
+        if (isAbandoned()) return
 
+        logBrowserOpenDiagnostic('host_ready', {
+          active,
+          bounds,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+          visible,
+        })
         readyTimer = window.setTimeout(() => {
-          if (!disposed) setStatus('ready')
+          if (!isAbandoned()) setStatus('ready')
         }, EMBEDDED_BROWSER_READY_TIMEOUT_MS)
 
-        const pageState = await openEmbeddedBrowser(currentUrl, bounds, label)
-        if (disposed) {
-          await closeEmbeddedBrowser(label).catch(() => undefined)
+        logBrowserOpenDiagnostic('native_open_started', {
+          active,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+          visible,
+        })
+        const pageState = visible
+          ? await openEmbeddedBrowser(openingUrl, bounds, openingLabel)
+          : await openEmbeddedBrowser(openingUrl, bounds, openingLabel, false, !active)
+        if (isAbandoned()) {
+          await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
+          logBrowserOpenDiagnostic('lifecycle_cancelled', {
+            active,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
           return
         }
-        adoptNativeLabel(pageState.nativeLabel, label)
+        adoptNativeLabel(pageState.nativeLabel, openingLabel)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
-        updatePageUrl(pageState.url || currentUrl)
-        schedulePostOpenBoundsSync(active)
+        updatePageUrl(pageState.url || openingUrl)
+        await revealHiddenBrowser(visible)
+        schedulePostOpenBoundsSync(activeRef.current)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
+        logBrowserOpenDiagnostic('native_open_succeeded', {
+          active,
+          label: openingLabel,
+          nativeLabel: pageState.nativeLabel,
+          requestId,
+          url: pageState.url || openingUrl,
+        })
       } catch (error) {
-        console.error('Failed to open embedded browser:', error)
-        if (!disposed) {
+        const message = browserOpenErrorMessage(error)
+        const abandoned = isAbandoned()
+        console.error(
+          '[Wework] Embedded browser open failed',
+          JSON.stringify({
+            active,
+            disposed: abandoned,
+            error: message,
+            label: openingLabel,
+            requestId,
+            url: openingUrl,
+          })
+        )
+        logBrowserOpenDiagnostic('native_open_failed', {
+          active,
+          disposed: abandoned,
+          error: message,
+          label: openingLabel,
+          requestId,
+          url: openingUrl,
+        })
+        if (!abandoned) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
+          if (await recoverBrowserFromPageState()) return
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
         }
+      } finally {
+        if (readyTimer !== null) window.clearTimeout(readyTimer)
+        nativeBrowserOpeningRef.current = false
       }
     }
 
     void openWhenHostIsReady()
-
-    return () => {
-      disposed = true
-      if (readyTimer !== null) window.clearTimeout(readyTimer)
-    }
   }, [
     active,
     adoptNativeLabel,
+    browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1425,11 +1770,18 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     return () => {
+      // Do NOT close the native embedded browser here. React StrictMode double-invokes
+      // effects in development (mount -> unmount -> remount), so this cleanup runs once
+      // for a "fake" unmount immediately before the real mount. Closing the native
+      // webview here tears down the very browser the remounted panel is about to open,
+      // which resets the panel back to the empty start page (blank address bar).
+      // The native browser lifecycle is owned by the explicit close-tab action
+      // (closeRightPanelTab -> closeEmbeddedBrowsers), not by component unmount.
+      // Here we only clear local references so a remount re-adopts the existing browser.
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
-      void closeEmbeddedBrowser(label).catch(() => undefined)
     }
   }, [label])
 
@@ -1553,9 +1905,18 @@ export function WorkspaceBrowserPanel({
 
   const reloadCurrentUrl = useCallback(
     (url: string) => {
-      if (!embeddedBrowserAvailable) {
+      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
+        setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+        return
+      }
+
+      if (!nativeBrowserOpenRef.current) {
+        setStatus('loading')
+        setError(null)
+        setCurrentUrl(url)
+        setBrowserOpenAttempt(attempt => attempt + 1)
         return
       }
 
@@ -1575,6 +1936,7 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
+      setLocalFilePreviewToast(null)
       setInvalidTlsCertificate(certificate =>
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
       )
@@ -1585,7 +1947,6 @@ export function WorkspaceBrowserPanel({
       }
 
       if (nextUrl === activePageUrl) {
-        setStatus('ready')
         updatePageUrl(nextUrl)
         reloadCurrentUrl(nextUrl)
         return
@@ -1597,12 +1958,14 @@ export function WorkspaceBrowserPanel({
         setStatus('loading')
         void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
           setCurrentUrl(nextUrl)
+          track('browser_navigation_completed', { runtime: 'embedded' })
         })
         return
       }
 
       setCurrentUrl(nextUrl)
       setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+      track('browser_navigation_completed', { runtime: 'fallback' })
     },
     [
       activePageUrl,
@@ -1619,14 +1982,32 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     if (!openRequest?.url) return
-    if (openRequest.label && openRequest.label !== label) return
+    if (openRequest.label && openRequest.label !== label) {
+      console.info('[Wework][browser-open] openRequestLabelMismatch', {
+        requestId: openRequest.id,
+        requestLabel: openRequest.label,
+        panelLabel: label,
+      })
+      return
+    }
     if (handledOpenRequestIdRef.current === openRequest.id) return
     handledOpenRequestIdRef.current = openRequest.id
+    activeOpenRequestIdRef.current = openRequest.id
+    logBrowserOpenDiagnostic('request_consumed', {
+      active,
+      label,
+      requestId: openRequest.id,
+      requestLabel: openRequest.label,
+      url: openRequest.url,
+    })
     openBrowserUrl(openRequest.url)
-  }, [label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
+  }, [active, label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    addressEditingRef.current = false
+    const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
+    urlInput?.blur()
     openBrowserUrl(address)
   }
 
@@ -1639,6 +2020,39 @@ export function WorkspaceBrowserPanel({
     if (!activePageUrl || internalDesktopPage) return
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
+
+  const clearBrowserData = useCallback(
+    async (kinds: EmbeddedBrowserDataKind[]) => {
+      if (clearingDataKind) return
+      setClearingDataKind(kinds[0] ?? null)
+      setClearDataNotice({
+        id: Date.now(),
+        message: t('workbench.browser_clear_started'),
+        tone: 'success',
+      })
+      await new Promise<void>(resolve =>
+        window.setTimeout(resolve, BROWSER_CLEAR_STARTED_NOTICE_MIN_MS)
+      )
+      try {
+        await clearEmbeddedBrowserData(kinds)
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_completed'),
+          tone: 'success',
+        })
+      } catch (error) {
+        console.error('Failed to clear embedded browser data:', error)
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_failed'),
+          tone: 'error',
+        })
+      } finally {
+        setClearingDataKind(null)
+      }
+    },
+    [clearingDataKind, t]
+  )
 
   const setAgentControlPaused = useCallback(
     (paused: boolean) => {
@@ -1712,9 +2126,13 @@ export function WorkspaceBrowserPanel({
     return state.approval.reason || state.message || t('workbench.browser_agent_approval_reason')
   }
 
+  const clearLocalFilePreviewToast = useCallback(() => setLocalFilePreviewToast(null), [])
+  const clearClearDataNotice = useCallback(() => setClearDataNotice(null), [])
+
   return (
     <div
       data-testid="workspace-browser-panel"
+      data-embedded-browser-label={label}
       className={cn(
         'flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
         !active && 'hidden'
@@ -1795,6 +2213,7 @@ export function WorkspaceBrowserPanel({
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
             <input
+              name="url"
               data-testid="workspace-browser-url-input"
               value={address}
               onChange={event => setAddress(event.target.value)}
@@ -1840,6 +2259,36 @@ export function WorkspaceBrowserPanel({
           >
             <ExternalLink className="h-4 w-4" />
           </BrowserToolbarButton>
+          {embeddedBrowserAvailable ? (
+            <ActionMenu
+              ariaLabel={t('workbench.browser_more_actions')}
+              testId="workspace-browser-more-button"
+              icon={EllipsisVertical}
+              placement="bottom-end"
+              triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.browser_clear_data'),
+                  testId: 'workspace-browser-clear-data-item',
+                  disabled: Boolean(clearingDataKind),
+                  children: [
+                    {
+                      label: t('workbench.browser_clear_cookies'),
+                      testId: 'workspace-browser-clear-cookies-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData(['cookies']),
+                    },
+                    {
+                      label: t('workbench.browser_clear_cache'),
+                      testId: 'workspace-browser-clear-cache-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData(['cache', 'storage']),
+                    },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
         </div>
       )}
       {shouldShowAgentState(agentState) ? (
@@ -2011,6 +2460,18 @@ export function WorkspaceBrowserPanel({
           )}
         </div>
       ) : null}
+      <TransientNotice
+        key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
+        message={localFilePreviewToast?.message ?? null}
+        tone="error"
+        onClear={clearLocalFilePreviewToast}
+      />
+      <TransientNotice
+        key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
+        message={clearDataNotice?.message ?? null}
+        tone={clearDataNotice?.tone}
+        onClear={clearClearDataNotice}
+      />
       {invalidTlsCertificate ? (
         <div
           data-testid="workspace-browser-invalid-tls-warning"

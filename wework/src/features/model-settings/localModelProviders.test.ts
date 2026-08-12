@@ -59,7 +59,10 @@ describe('localModelProviders', () => {
         webSearchMode: 'disabled',
         contextWindow: 1_000_000,
         modelDefaults: {
-          'kimi-k3': { contextWindow: 1_000_000 },
+          'kimi-k3': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-kimi-k3',
+          },
           'kimi-k2.6': { contextWindow: 262_144 },
           'moonshot-v1-8k': { contextWindow: 8_192 },
           'moonshot-v1-32k': { contextWindow: 32_768 },
@@ -75,13 +78,17 @@ describe('localModelProviders', () => {
         apiFormat: 'openai-responses',
         requestPath: '/responses',
         toolProfile: 'custom',
-        allowedModelIds: ['deepseek-v4-flash'],
+        allowedModelIds: ['deepseek-v4-flash', 'deepseek-v4-pro'],
         contextWindow: 1_048_576,
         webSearchMode: 'live',
         modelDefaults: {
           'deepseek-v4-flash': {
             contextWindow: 1_048_576,
             codexCatalogModelId: 'wework-deepseek-v4-flash',
+          },
+          'deepseek-v4-pro': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-deepseek-v4-pro',
           },
         },
       },
@@ -99,13 +106,90 @@ describe('localModelProviders', () => {
         modelDefaults: { 'glm-5.2': { contextWindow: 1_000_000 } },
       },
     ],
+    [
+      'minimax',
+      {
+        displayName: 'MiniMax (China mainland)',
+        displayNameKey: 'workbench.local_model_provider_minimax_cn',
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        group: 'MiniMax',
+        apiFormat: 'anthropic-messages',
+        requestPath: '/v1/messages',
+        modelsPath: '/v1/models',
+        modelsApiKeyHeader: 'X-Api-Key',
+        toolProfile: 'function',
+        webSearchMode: 'disabled',
+        contextWindow: 204_800,
+        modelDefaults: {
+          'MiniMax-M2.7': { contextWindow: 204_800 },
+          'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.5': { contextWindow: 204_800 },
+          'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.1': { contextWindow: 204_800 },
+          'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2': { contextWindow: 204_800 },
+        },
+      },
+    ],
+    [
+      'minimax-global',
+      {
+        displayName: 'MiniMax (Global)',
+        displayNameKey: 'workbench.local_model_provider_minimax_global',
+        baseUrl: 'https://api.minimax.io/anthropic',
+        group: 'MiniMax',
+        apiFormat: 'anthropic-messages',
+        requestPath: '/v1/messages',
+        modelsPath: '/v1/models',
+        modelsApiKeyHeader: 'X-Api-Key',
+        toolProfile: 'function',
+        webSearchMode: 'disabled',
+        contextWindow: 204_800,
+        modelDefaults: {
+          'MiniMax-M2.7': { contextWindow: 204_800 },
+          'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.5': { contextWindow: 204_800 },
+          'MiniMax-M2.5-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2.1': { contextWindow: 204_800 },
+          'MiniMax-M2.1-highspeed': { contextWindow: 204_800 },
+          'MiniMax-M2': { contextWindow: 204_800 },
+        },
+      },
+    ],
   ] as const)('defines the %s official provider profile', (profileId, expected) => {
     expect(findLocalModelProviderProfile(profileId)).toMatchObject({
       ...expected,
-      modelsPath: '/models',
+      modelsPath: 'modelsPath' in expected ? expected.modelsPath : '/models',
       imageGenerationEnabled: false,
     })
   })
+
+  it.each([
+    ['minimax', 'https://api.minimaxi.com/anthropic/v1/models'],
+    ['minimax-global', 'https://api.minimax.io/anthropic/v1/models'],
+  ] as const)(
+    'uses the MiniMax API key header when discovering models for %s',
+    async (profileId, modelsUrl) => {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+
+      await expect(
+        discoverProviderModels(findLocalModelProviderProfile(profileId), 'secret-key', { fetcher })
+      ).resolves.toEqual([{ id: 'MiniMax-M2.7', displayName: 'MiniMax-M2.7' }])
+
+      expect(fetcher).toHaveBeenCalledWith(
+        modelsUrl,
+        expect.objectContaining({
+          method: 'GET',
+          headers: { 'X-Api-Key': 'secret-key' },
+        })
+      )
+    }
+  )
 
   it('only exposes models supported by the DeepSeek Codex integration', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -119,7 +203,10 @@ describe('localModelProviders', () => {
 
     await expect(
       discoverProviderModels(findLocalModelProviderProfile('deepseek'), 'secret-key', { fetcher })
-    ).resolves.toEqual([{ id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' }])
+    ).resolves.toEqual([
+      { id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
+      { id: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' },
+    ])
   })
 
   it('recognizes a Kimi Coding K3 model saved with a stale provider profile', () => {

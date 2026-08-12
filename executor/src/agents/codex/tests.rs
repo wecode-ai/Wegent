@@ -7,6 +7,36 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn codex_request_preparation_stops_when_cancelled() {
+    let (cancel_tx, mut cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+
+    let result =
+        prepare_codex_execution_request(ExecutionRequest::default(), Some(&mut cancellation)).await;
+
+    assert!(matches!(
+        result,
+        Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED
+    ));
+}
+
+#[test]
+fn codex_turn_start_rejects_completed_cancellation() {
+    let (cancel_tx, cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+    let mut cancellation = Some(cancellation);
+
+    assert_eq!(
+        ensure_codex_turn_not_cancelled(&mut cancellation).unwrap_err(),
+        CODEX_APP_SERVER_TURN_CANCELLED
+    );
+}
+
+#[tokio::test]
 async fn active_thread_tracking_counts_each_thread_independently() {
     let client = CodexAppServerClient::new("codex-active-thread-test");
 
@@ -492,7 +522,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn native_responses_upstream_preserves_custom_tools_by_default() {
+fn explicit_third_party_responses_upstream_bridges_app_tools_by_default() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -503,6 +533,25 @@ fn native_responses_upstream_preserves_custom_tools_by_default() {
     );
 
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+}
+
+#[test]
+fn explicit_upstream_reads_native_app_tool_capabilities() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "native-responses-model",
+            "upstream_api_format": "openai-responses",
+            "native_tool_search": true,
+            "native_namespace_tools": true
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
 }
 
 #[test]
@@ -773,7 +822,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_provider_preserves_native_responses_tools() {
+fn user_configured_third_party_responses_provider_bridges_app_tools() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -797,6 +846,31 @@ fn user_configured_provider_preserves_native_responses_tools() {
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_honors_native_app_tool_capabilities() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-openai-native-app-tools");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"native-responses\"\n[model_providers.native-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = true\nnative_namespace_tools = true\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream =
+        configured_codex_provider("native-responses", None).expect("configured provider");
+
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1021,6 +1095,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
         skill_identity_token: Some("skill-jwt".to_owned()),
         user_name: Some("alice".to_owned()),
         prompt: Value::String("create a file".to_owned()),
@@ -1040,6 +1115,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
     assert!(!launch_config
         .env
         .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));
@@ -1053,6 +1129,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         "task-jwt"
     );
     assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
         "skill-jwt"
     );
@@ -1060,6 +1140,57 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
     );
+}
+
+#[test]
+fn turn_start_params_refreshes_task_identity_shell_environment() {
+    let request = ExecutionRequest {
+        task_id: "task-525".to_owned(),
+        auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
+        skill_identity_token: Some("skill-jwt".to_owned()),
+        user_name: Some("alice".to_owned()),
+        prompt: Value::String("continue".to_owned()),
+        model_config: json!({
+            "model_id": "gpt-5.5-codex",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let mut launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    launch_config
+        .config_overrides
+        .push("model_provider=wework-router".to_owned());
+
+    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("turn config should include shell env");
+
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
+    assert!(config.contains_key("shell_environment_policy.set.PATH"));
+    assert!(config.get("model_provider").is_none());
 }
 
 #[test]
@@ -1072,6 +1203,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "mcp_servers.wework.command=\"node\"".to_owned(),
             "shell_environment_policy.set.WEGENT_TASK_ID=\"task-525\"".to_owned(),
             "shell_environment_policy.set.AUTH_TOKEN=\"task-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN=\"runtime-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
         ],
@@ -1098,6 +1230,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     for key in [
         "WEGENT_TASK_ID",
         "AUTH_TOKEN",
+        "WEGENT_RUNTIME_AUTH_TOKEN",
         "WEGENT_SKILL_IDENTITY_TOKEN",
         "WEGENT_SKILL_USER_NAME",
     ] {
@@ -1133,7 +1266,7 @@ fn persistent_process_does_not_inherit_request_model_overrides() {
 }
 
 #[test]
-fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
+fn codex_run_state_uses_commentary_agent_delta_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1160,13 +1293,13 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
 
 #[test]
-fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+fn codex_run_state_uses_reclassified_commentary_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     for message in [
@@ -1217,13 +1350,13 @@ fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
 
 #[test]
-fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
     let mut state = CodexRunState::default();
 
     for message in [
@@ -1262,13 +1395,13 @@ fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: "Final answer.".to_owned()
+            content: "I will inspect.".to_owned()
         }
     );
 }
 
 #[test]
-fn goal_created_during_turn_keeps_notification_reader_alive() {
+fn goal_created_during_turn_allows_the_current_run_to_settle() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1290,7 +1423,8 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
         }))
         .expect("turn completion should produce an outcome");
 
-    assert!(should_wait_for_goal_continuation(&outcome, &state));
+    assert!(!should_wait_for_goal_continuation(&outcome, &state, false));
+    assert!(should_wait_for_goal_continuation(&outcome, &state, true));
 }
 
 #[test]
@@ -1362,7 +1496,7 @@ fn item_notification_cannot_replace_the_active_turn() {
 }
 
 #[test]
-fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
+fn codex_run_state_uses_commentary_channel_delta_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 
     assert!(state
@@ -1389,7 +1523,7 @@ fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
-            content: String::new()
+            content: "I will inspect.".to_owned()
         }
     );
 }
@@ -1742,10 +1876,136 @@ fn turn_start_params_includes_output_schema() {
 }
 
 #[test]
-fn thread_start_uses_codex_default_history_mode() {
+fn thread_start_uses_paginated_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
-    assert!(params.get("historyMode").is_none());
+    assert_eq!(params["historyMode"], "paginated");
+}
+
+#[test]
+fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
+    let plan = codex_thread_plan(
+        Some("  direct-thread  "),
+        Some("fork-thread"),
+        Some("/tmp/fork.jsonl"),
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Direct(thread_id) => assert_eq!(thread_id, "direct-thread"),
+        CodexThreadStart::Request { operation, .. } => {
+            panic!("expected direct thread, got {operation}")
+        }
+    }
+    assert!(plan.fork_requested);
+    assert!(plan.resume_requested);
+}
+
+#[test]
+fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
+    let plan = codex_thread_plan(
+        Some("   "),
+        Some("fork-thread"),
+        Some("/tmp/fork.jsonl"),
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/fork");
+            assert_eq!(params["threadId"], "fork-thread");
+            assert_eq!(params["path"], "/tmp/fork.jsonl");
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected fork request, got direct thread {thread_id}")
+        }
+    }
+}
+
+#[test]
+fn codex_thread_plan_selects_resume_when_fork_is_absent() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        Some("resume-thread"),
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/resume");
+            assert_eq!(params["threadId"], "resume-thread");
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected resume request, got direct thread {thread_id}")
+        }
+    }
+    assert!(plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
+fn codex_thread_plan_starts_new_thread_without_identifiers() {
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        None,
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    );
+
+    match plan.start {
+        CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected start request, got direct thread {thread_id}")
+        }
+    }
+    assert!(!plan.resume_requested);
+    assert!(!plan.fork_requested);
+}
+
+#[test]
+fn thread_id_from_response_validates_provider_and_requires_thread_id() {
+    assert_eq!(
+        thread_id_from_response(
+            "thread/start",
+            &json!({
+                "thread": {
+                    "id": "thread-1",
+                    "modelProvider": "provider-1"
+                }
+            }),
+            Some("provider-1"),
+        )
+        .unwrap(),
+        "thread-1"
+    );
+    assert!(thread_id_from_response(
+        "thread/resume",
+        &json!({"thread": {"modelProvider": "provider-1"}}),
+        Some("provider-1"),
+    )
+    .unwrap_err()
+    .contains("did not return thread.id"));
+    assert!(thread_id_from_response(
+        "thread/fork",
+        &json!({
+            "thread": {
+                "id": "thread-2",
+                "modelProvider": "provider-2"
+            }
+        }),
+        Some("provider-1"),
+    )
+    .unwrap_err()
+    .contains("unexpected model provider"));
 }
 
 #[test]
@@ -1775,7 +2035,7 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
-fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
+fn codex_full_access_permission_profile_is_applied_by_default() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
     let thread_start = thread_start_params(&request, &launch_config);
@@ -1788,9 +2048,29 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
+        assert_eq!(params["approvalPolicy"], "never");
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_workspace_permission_profile_is_applied_when_requested() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_WORKSPACE_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], "on-request");
     }
 }
 
@@ -1810,7 +2090,254 @@ fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
         turn_start_params("thread-1", &request, &launch_config, Vec::new()),
     ] {
         assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
+        assert_eq!(params["approvalPolicy"], "on-request");
+    }
+}
+
+#[test]
+fn codex_command_approval_response_preserves_user_decision() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_once"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "accept"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "acceptForSession"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["cancel"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "cancel"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["unknown"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "decline"})
+    );
+    assert_eq!(
+        codex_approval_result(&message, &json!({})).unwrap(),
+        json!({"decision": "decline"})
+    );
+}
+
+#[test]
+fn codex_command_approval_response_preserves_structured_decisions() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+            "itemId": "command-1",
+            "proposedExecpolicyAmendment": ["git", "push"],
+            "availableDecisions": [
+                "accept",
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["git", "push"]
+                    }
+                },
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["cargo", "publish"]
+                    }
+                },
+                {
+                    "applyNetworkPolicyAmendment": {
+                        "network_policy_amendment": {
+                            "host": "github.com",
+                            "action": "allow"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_execpolicy:2"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": ["cargo", "publish"]
+                }
+            }
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["apply_network_policy:3"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": {
+                        "host": "github.com",
+                        "action": "allow"
+                    }
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn codex_command_approval_rejects_missing_structured_decision_payloads() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    for answer in ["allow_execpolicy", "apply_network_policy:0"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({"decision": "decline"})
+        );
+    }
+}
+
+#[test]
+fn codex_permissions_approval_returns_requested_profile_and_scope() {
+    let message = json!({
+        "method": "item/permissions/requestApproval",
+        "params": {
+            "itemId": "permissions-1",
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            }
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "session",
+            "strictAutoReview": false
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["allow_turn_strict_review"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "turn",
+            "strictAutoReview": true
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["decline"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {},
+            "scope": "turn",
+            "strictAutoReview": false
+        })
+    );
+    for answer in ["cancel", "unknown"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({
+                "permissions": {},
+                "scope": "turn",
+                "strictAutoReview": false
+            })
+        );
     }
 }
 
@@ -1831,10 +2358,7 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(
-            params["approvalPolicy"]["granular"]["mcp_elicitations"],
-            true
-        );
+        assert_eq!(params["approvalPolicy"], "never");
     }
 }
 
@@ -1975,6 +2499,79 @@ fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
 }
 
 #[test]
+fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
+    let root = unique_test_path("managed-plugin-skill-input");
+    let codex_home = root.join("codex");
+    let manifest_path = root.join("capabilities/manifest.json");
+    let plugin_root = codex_home.join("plugins/cache/wegent/dingtalk/0.2.0");
+    let skill_path = plugin_root.join("skills/dws/SKILL.md");
+    fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
+        .expect("skill directory should be created");
+    fs::create_dir_all(plugin_root.join(".codex-plugin"))
+        .expect("plugin manifest directory should be created");
+    fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
+    )
+    .expect("plugin manifest should be written");
+    fs::write(
+        &skill_path,
+        "---\nname: dws\ndescription: DingTalk workspace\n---\n\n# DWS\n",
+    )
+    .expect("skill should be written");
+    fs::create_dir_all(
+        manifest_path
+            .parent()
+            .expect("capability manifest parent should exist"),
+    )
+    .expect("capability manifest directory should be created");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&json!({
+            "plugins": {
+                "dingtalk@wegent": {
+                    "enabled": true,
+                    "marketplace": "wegent",
+                    "name": "dingtalk",
+                    "version": "0.2.0"
+                }
+            }
+        }))
+        .expect("capability manifest should serialize"),
+    )
+    .expect("capability manifest should be written");
+
+    let plugin_skills = PluginSkillResolver::load(&codex_home, &manifest_path);
+    let input = turn_input_with_plugin_skills(
+        &Value::String("[$钉钉](plugin://dingtalk@wegent) 检查我有哪些文档？".to_owned()),
+        &plugin_skills,
+    );
+
+    assert_eq!(
+        input,
+        vec![
+            json!({
+                "type": "text",
+                "text": "@钉钉 检查我有哪些文档？",
+                "text_elements": [],
+            }),
+            json!({
+                "type": "mention",
+                "name": "钉钉",
+                "path": "plugin://dingtalk@wegent",
+            }),
+            json!({
+                "type": "skill",
+                "name": "dingtalk:dws",
+                "path": skill_path.display().to_string(),
+            }),
+        ]
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn turn_input_converts_composer_file_references_to_plain_paths() {
     let input = turn_input(&Value::String(
         "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
@@ -2031,10 +2628,7 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         ])
     );
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
-    assert_eq!(
-        config["features.code_mode.direct_only_tool_namespaces"],
-        json!([WEWORK_BROWSER_MCP_SERVER_NAME])
-    );
+    assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.command"],
         env::current_exe().unwrap().display().to_string()

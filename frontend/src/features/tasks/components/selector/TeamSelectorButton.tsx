@@ -13,7 +13,7 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Cog6ToothIcon, SparklesIcon, Squares2X2Icon } from '@heroicons/react/24/outline'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -26,10 +26,17 @@ import type { Team, TaskDetail } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 import TeamSelectorList from './TeamSelectorList'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
-import { filterTeamsByMode, getRecentTeams, getTeamDisplayName } from './team-selector-utils'
+import {
+  buildTeamTargetHref,
+  filterTeamsByMode,
+  getRecentTeams,
+  getTeamDisplayName,
+  getTeamTargetPage,
+} from './team-selector-utils'
 import type { TeamModeFilter } from './team-selector-utils'
 import { useTeamFavorites } from './useTeamFavorites'
 import { useRecentTeams } from './useRecentTeams'
+import { getCurrentTargetPageByMode } from '../chat/quick-launch/launch-intent'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -64,6 +71,7 @@ export default function TeamSelectorButton({
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation('tasks')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [open, setOpen] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
   const {
@@ -73,20 +81,36 @@ export default function TeamSelectorButton({
     quickAccessMetaLoaded,
     systemRecommendedTeamIdSet,
   } = useTeamFavorites()
-  const { recentTeamIds, refreshRecentTeams } = useRecentTeams()
+  const { recentTeamIds, refreshRecentTeams } = useRecentTeams(currentMode)
 
-  // Filter teams by bind_mode based on current mode
-  const filteredTeamsByMode = useMemo(
-    () => filterTeamsByMode(teams, currentMode),
+  const recentTeamCandidates = useMemo(
+    () =>
+      currentMode === 'code'
+        ? filterTeamsByMode(teams, 'code')
+        : filterTeamsByMode(teams, 'all').filter(
+            team => !team.bind_mode || team.bind_mode.some(mode => mode !== 'code')
+          ),
     [teams, currentMode]
   )
 
   const recentTeams = useMemo(
-    () => getRecentTeams(filteredTeamsByMode, recentTeamIds),
-    [filteredTeamsByMode, recentTeamIds]
+    () => getRecentTeams(recentTeamCandidates, recentTeamIds),
+    [recentTeamCandidates, recentTeamIds]
   )
 
   const handleSelectTeam = (team: Team) => {
+    const targetPage = getTeamTargetPage(team, 'all')
+    const currentPage = getCurrentTargetPageByMode(currentMode)
+    if (targetPage !== currentPage) {
+      const targetParams = new URLSearchParams({ teamId: String(team.id) })
+      for (const param of ['projectId', 'deviceId', 'device_id']) {
+        const value = searchParams.get(param)
+        if (value) targetParams.set(param, value)
+      }
+      router.push(buildTeamTargetHref(targetPage, targetParams))
+      setOpen(false)
+      return
+    }
     setSelectedTeam(team)
     setOpen(false)
   }

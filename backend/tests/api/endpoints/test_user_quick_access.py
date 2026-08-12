@@ -55,6 +55,7 @@ def _task(
     updated_offset: int = 0,
     team_name: str | None = None,
     team_owner_id: int | None = None,
+    task_type: str = "chat",
 ) -> TaskResource:
     return TaskResource(
         id=task_id,
@@ -64,7 +65,11 @@ def _task(
         namespace="default",
         json={
             "kind": "Task",
-            "metadata": {"name": f"task-{task_id}", "namespace": "default"},
+            "metadata": {
+                "name": f"task-{task_id}",
+                "namespace": "default",
+                "labels": {"taskType": task_type},
+            },
             "spec": {
                 "teamRef": {
                     "name": team_name or f"team-{task_id}",
@@ -84,8 +89,17 @@ def _team_kind(
     name: str,
     *,
     updated_offset: int = 0,
+    bot_name: str | None = None,
 ) -> Kind:
     timestamp = datetime(2026, 1, 1) + timedelta(days=updated_offset)
+    members = []
+    if bot_name:
+        members.append(
+            {
+                "name": bot_name,
+                "botRef": {"name": bot_name, "namespace": "default"},
+            }
+        )
     return Kind(
         user_id=user_id,
         kind="Team",
@@ -100,7 +114,7 @@ def _team_kind(
                 "displayName": name.title(),
             },
             "spec": {
-                "members": [],
+                "members": members,
                 "collaborationModel": "pipeline",
                 "bind_mode": ["chat"],
             },
@@ -209,9 +223,9 @@ def test_recent_teams_are_deduplicated_and_filled_by_latest(test_db):
     test_db.add_all(
         [
             *teams,
-            _task(8101, team_name="team-2"),
-            _task(8102, team_name="team-2"),
-            _task(8103, team_name="team-1"),
+            _task(8101, team_name="team-2", updated_offset=9),
+            _task(8102, team_name="team-2", updated_offset=8),
+            _task(8103, team_name="team-1", updated_offset=7),
             _message(8201, task_id=8101, created_offset=9),
             _message(8202, task_id=8102, created_offset=8),
             _message(8203, task_id=8103, created_offset=7),
@@ -247,6 +261,100 @@ def test_no_history_returns_five_latest_accessible_teams(test_db):
     ]
 
 
+def test_recent_teams_distinguish_code_tasks(test_db):
+    chat_team = _team_kind(7, "chat-team")
+    code_team = _team_kind(7, "code-team")
+    test_db.add_all(
+        [
+            chat_team,
+            code_team,
+            _task(8101, team_name=chat_team.name, task_type="chat"),
+            _task(
+                8102,
+                team_name=code_team.name,
+                task_type="code",
+                updated_offset=1,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    chat_result = team_kinds_service.get_recent_accessible_teams(
+        test_db,
+        user_id=7,
+        is_code=False,
+        limit=1,
+    )
+    code_result = team_kinds_service.get_recent_accessible_teams(
+        test_db,
+        user_id=7,
+        is_code=True,
+        limit=1,
+    )
+
+    assert [team["name"] for team in chat_result] == ["chat-team"]
+    assert [team["name"] for team in code_result] == ["code-team"]
+
+
+def test_five_recent_teams_skip_accessible_team_fallback(test_db, monkeypatch):
+    teams = [_team_kind(7, f"recent-{index}") for index in range(5)]
+    test_db.add_all(
+        [
+            *teams,
+            *[
+                _task(
+                    8300 + index,
+                    team_name=team.name,
+                    updated_offset=index,
+                )
+                for index, team in enumerate(teams)
+            ],
+        ]
+    )
+    test_db.commit()
+
+    monkeypatch.setattr(
+        team_kinds_service,
+        "_build_accessible_teams_query",
+        lambda *args, **kwargs: pytest.fail("fallback query should not run"),
+    )
+
+    result = team_kinds_service.get_recent_accessible_teams(
+        test_db,
+        user_id=7,
+        limit=5,
+    )
+
+    assert [team["name"] for team in result] == [
+        "recent-4",
+        "recent-3",
+        "recent-2",
+        "recent-1",
+        "recent-0",
+    ]
+
+
+def test_quick_access_teams_use_team_rows_only():
+    teams = [
+        _team_kind(7, f"team-{index}", bot_name=f"bot-{index}") for index in range(5)
+    ]
+    rows = [
+        SimpleNamespace(
+            team_id=index + 1,
+            team_user_id=team.user_id,
+            team_name=team.name,
+            team_namespace=team.namespace,
+            team_json=team.json,
+            context_user_id=7,
+        )
+        for index, team in enumerate(teams)
+    ]
+    result = team_kinds_service._quick_access_team_dicts(rows)
+
+    assert [team["name"] for team in result] == [f"team-{index}" for index in range(5)]
+    assert [team["agent_type"] for team in result] == [None] * 5
+
+
 def test_recent_teams_deduplicate_system_and_personal_copies(test_db):
     system_team = _team_kind(0, "wegent-chat", updated_offset=1)
     personal_team = _team_kind(7, "wegent-chat", updated_offset=2)
@@ -262,11 +370,13 @@ def test_recent_teams_deduplicate_system_and_personal_copies(test_db):
                 8101,
                 team_name="wegent-chat",
                 team_owner_id=0,
+                updated_offset=9,
             ),
             _task(
                 8102,
                 team_name="wegent-chat",
                 team_owner_id=7,
+                updated_offset=8,
             ),
             _message(8201, task_id=8101, created_offset=9),
             _message(8202, task_id=8102, created_offset=8),

@@ -256,6 +256,35 @@ describe('DesktopSettingsMenu', () => {
     expect(screen.getByTestId('app-update-download-progress')).toHaveTextContent('正在下载更新 50%')
   })
 
+  test('keeps download progress directly below the update action', () => {
+    mockUpdateState = {
+      ...mockUpdateState,
+      availableUpdate: {
+        currentVersion: '0.1.0',
+        version: '0.1.1',
+      },
+      status: 'installing',
+      downloadProgress: {
+        downloadedBytes: 50,
+        totalBytes: 100,
+      },
+    }
+
+    renderMenu()
+
+    const menu = screen.getByTestId('settings-menu')
+    const updateButton = screen.getByTestId('check-app-update-button')
+    const progress = screen.getByTestId('app-update-download-progress')
+    const aboutButton = screen.getByTestId('about-menu-button')
+
+    expect(
+      Array.from(menu.children).indexOf(updateButton) < Array.from(menu.children).indexOf(progress)
+    ).toBe(true)
+    expect(
+      Array.from(menu.children).indexOf(progress) < Array.from(menu.children).indexOf(aboutButton)
+    ).toBe(true)
+  })
+
   test('shows usage reset times in the expanded usage panel', async () => {
     renderMenu()
 
@@ -336,5 +365,7 @@ describe('DesktopSettingsMenu', () => {
     )
     expect(await screen.findByText('1,126.7 / 1,042 元')).toBeInTheDocument()
     expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toBeInTheDocument()
+    expect(screen.getByText('1,126.7 / 1,042 元')).toHaveClass('break-words')
+    expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toHaveClass('break-words')
   })
 })

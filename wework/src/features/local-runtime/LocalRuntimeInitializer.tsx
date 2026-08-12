@@ -31,8 +31,8 @@ import {
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
-    ? '%USERPROFILE%\\.wegent-executor\\logs\\executor.log'
-    : '~/.wegent-executor/logs/executor.log'
+    ? '%USERPROFILE%\\.wework\\logs\\executor.log'
+    : '~/.wework/logs/executor.log'
 }
 const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 

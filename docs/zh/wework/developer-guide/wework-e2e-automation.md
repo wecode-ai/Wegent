@@ -109,14 +109,16 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 `e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先让同一个 assistant item 以 `final_answer` 开始流式输出、再以 `commentary` 完成，验证 Executor 通过 `response.block.created.replacesItemId` 通知前端把已显示正文原子迁移到过程块，页面只保留一份过程文本且最终回答区为空。随后场景验证流式推理显示“正在思考 · 摘要”，并在响应完成后移除推理摘要及其占位，再启动长命令，确认工具行耗时在切换任务后连续递增，同时工具分组标题不显示整轮累计耗时。场景还会构造超过虚拟化阈值的多轮长对话，验证“正在思考”位置、用户滚动锚点、流式增长和任务重开后的视口稳定性。它通过 `scrollFromBottomAsUser` 模拟用户从底部上划固定距离，并使用 `startScrollStabilitySampling` / `getScrollStabilitySample` 在流式分片期间联合记录锚点几何位置、DOM 变化和真实 `scroll` 事件；门禁要求锚点没有往返位移，且用户停住后不再发生程序化滚动事件。响应完成后，场景还会确认等待状态消失。该场景会保存阶段改判、推理、工具计时、就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
 
-`e2e:desktop:embedded-browser` 通过场景模块运行内置浏览器 Agent 操作回归。它使用真实 Tauri WebView、Executor、Codex app-server 和 browser MCP server，打开本地 fixture 页面并通过当前 WKWebView bridge 验证浏览器控制链路。场景覆盖 bridge identity 读取、认证 bridge 请求、打开页面、结构化 `inspect`、`fill`、`click`、`wait`、`scroll`、`screenshot`、`capabilities`、高风险动作确认，以及 MCP 组合工具 `open_and_inspect` 和 `wait_and_inspect`。它还会启动一个长时间 `waitFor`，再验证独立 `click` 不会被阻塞，用于防止 bridge 并发退化。测试结果会写入 `embedded-browser-agent-result.json`。
+`e2e:desktop:embedded-browser` 通过场景模块运行内置浏览器 Agent 操作回归。它使用真实 Tauri WebView、Executor、Codex app-server 和 browser MCP server，打开本地 fixture 页面并通过当前 WKWebView bridge 验证浏览器控制链路。场景覆盖 bridge identity 读取、认证 bridge 请求、打开页面、结构化 `inspect`、`fill`、`click`、`wait`、`scroll`、`screenshot`、`capabilities`、高风险动作确认，以及 MCP 组合工具 `open_and_inspect` 和 `wait_and_inspect`。它还会启动一个长时间 `waitFor`，再验证独立 `click` 不会被阻塞，用于防止 bridge 并发退化。新增本地文件能力时，该场景还会通过 bridge 打开 `file://` HTML fixture、Markdown/无扩展名文本 fixture 和本机目录 fixture，并验证无法预览的本地文件会弹出 toast 而不是进入下载列表。测试结果会写入 `embedded-browser-agent-result.json`。
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`workspace-tabs`、`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、
-`resilience`、`conversation-state`、`workspace-attachments` 和
-`rendering-extensions`。
+`workspace-tabs`、`priority-filter`、`telemetry-consent`、
+`automation-lifecycle`、`model-routing`、`core-task-flow`、
+`window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
+`conversation-state`、`workspace-attachments`、`rendering-extensions`、
+`browser-multi-tabs` 和 `embedded-browser`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
@@ -134,15 +136,25 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
+pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
 
+`automation-lifecycle` 独立覆盖自动化创建、立即执行、固定既有任务以及定时继续
+会话；`model-routing` 独立覆盖六种本地协议切换方向、跨 provider 重试、视觉
+sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因此不会拉长
+`core-task-flow` 的任务创建、追问和后台计划关键路径。无参数运行完整桌面流程时，
+这些场景仍会执行，不会因为分段而减少覆盖。
+
 插件桌面套件也复用同一套分段参数，但保持独立的 Codex Home 初始化环境。插件
 segment 依次为 `plugin-lifecycle`、`skill-mention-rendering` 和
 `sites-plugin-auto-install`。每个 segment 都会建立自身所需的最小插件 fixture，
-可以单独运行，也可以从指定功能继续执行后续插件功能：
+可以单独运行，也可以从指定功能继续执行后续插件功能。`plugin-lifecycle` 额外覆盖：
+卸载后 Composer 插件选择器不再列出该插件，以及助手消息携带无匹配身份的
+`need_login` / `connector_auth_required` 时不误弹本地授权卡。
 
 ```bash
 pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
@@ -168,13 +180,13 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 在 macOS 上，桌面 E2E 会通过临时 `.app` bundle 和 `open -g` 在后台启动。测试专用的 `WEWORK_E2E_BACKGROUND_WINDOW=1` 会让 Tauri 保持主窗口隐藏、禁止应用激活并隐藏 Dock 图标；隐藏 WebView 会关闭后台节流，因此 DOM 控制、计时器和截图仍正常工作。runner 在连接控制器后还会断言测试应用不是当前前台进程，防止窗口抢焦点行为回归。该环境变量只由桌面 E2E runner 注入，不改变正常开发或生产启动行为。
 
-云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。为缩短冷启动时间，Executor 构建与 Backend/Redis/数据库准备并行，远端 Executor 注册与 Tauri 应用构建并行；应用启动前仍必须同时等待两组前置任务完成。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
 
 GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright 缓存后加载预构建 Docker 镜像。该 job 必须先删除不使用的 hosted-runner SDK（.NET、Android、GHC 和 CodeQL）并记录磁盘用量，为镜像解压保留稳定空间；清理逻辑不得删除正在运行的 MySQL 或 Redis service 镜像。
 
-插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
+插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、安装时本地授权对话框、在对话编辑器中插入插件引用、无匹配 resume 不弹本地授权卡、卸载后 Composer 过滤及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 
 内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
 

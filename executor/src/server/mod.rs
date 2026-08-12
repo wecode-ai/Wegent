@@ -39,8 +39,12 @@ use crate::{
     envd::archive::{
         create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
     },
-    heartbeat::start_heartbeat_from_env,
+    heartbeat::{
+        executor_warm_pool_mode_enabled, start_heartbeat_from_env, TaskHeartbeatActivationError,
+        TaskHeartbeatController,
+    },
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
+    process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
 };
@@ -71,11 +75,27 @@ impl RunnerResult {
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
     runner: R,
+    task_heartbeat: Option<TaskHeartbeatController>,
 }
 
 impl<R> AppState<R> {
     pub fn new(runner: R) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            task_heartbeat: None,
+        }
+    }
+
+    pub fn with_dynamic_task_heartbeat(mut self) -> Self {
+        self.task_heartbeat = Some(TaskHeartbeatController::default());
+        self
+    }
+
+    fn activate_task_heartbeat(&self, task_id: &str) -> Result<(), HttpError> {
+        let Some(controller) = &self.task_heartbeat else {
+            return Ok(());
+        };
+        controller.activate(task_id).map_err(HttpError::from)
     }
 }
 
@@ -96,7 +116,12 @@ where
             local_model_proxy::TOKEN_ROUTE,
             local_model_proxy::token_route(),
         )
+        .route(
+            local_model_proxy::HARNESS_MESSAGES_ROUTE,
+            local_model_proxy::harness_messages_route(),
+        )
         .route("/v1/attachments/sync", post(sync_attachments))
+        .route("/v1/skills/sync", post(sync_skills))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
         .route(
@@ -150,12 +175,35 @@ async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<
     ))
 }
 
+async fn sync_skills(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    let required_count = request
+        .extra
+        .get("required_skills")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    fields.push(("required_skill_count", required_count.to_string()));
+    log_executor_event("sandbox skill sync request received", &fields);
+    runtime_capabilities::sync_skills_for_request(request)
+        .await
+        .map(Json)
+        .map_err(|detail| HttpError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            detail,
+        })
+}
+
 pub fn create_docker_router_from_env() -> Result<Router, String> {
     let engine = AgentProcessEngine::new(AgentCommandPlanner::from_env());
     let sink = CallbackSink::new(env::var("CALLBACK_URL").unwrap_or_default())?;
-    Ok(create_router(AppState::new(BackgroundTaskRunner::new(
-        engine, sink,
-    ))))
+    let state = AppState::new(BackgroundTaskRunner::new(engine, sink));
+    let state = if executor_warm_pool_mode_enabled() {
+        state.with_dynamic_task_heartbeat()
+    } else {
+        state
+    };
+    Ok(create_router(state))
 }
 
 pub async fn serve(config: ServerConfig) -> Result<(), String> {
@@ -790,6 +838,7 @@ where
     let request = OpenAIResponsesRequest::from_value(payload)?;
     let background = request.background();
     let execution_request = request.to_execution_request();
+    state.activate_task_heartbeat(&execution_request.task_id)?;
     let response_id = format!("resp_{}", execution_request.subtask_id);
     let mut fields = task_fields(&execution_request.task_id, &execution_request.subtask_id);
     fields.push((
@@ -1303,11 +1352,19 @@ fn workspace_root() -> PathBuf {
 }
 
 async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
+    let requested_environment = request
+        .process
+        .envs
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let process_environment = process_environment::process_env(&requested_environment);
     let mut command = Command::new(&request.process.cmd);
     crate::process::hide_windows_console(&mut command);
     command
         .args(&request.process.args)
-        .envs(&request.process.envs)
+        .env_clear()
+        .envs(process_environment)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -1831,6 +1888,21 @@ impl From<ProtocolError> for HttpError {
     }
 }
 
+impl From<TaskHeartbeatActivationError> for HttpError {
+    fn from(error: TaskHeartbeatActivationError) -> Self {
+        let status = match &error {
+            TaskHeartbeatActivationError::EmptyTaskId => StatusCode::BAD_REQUEST,
+            TaskHeartbeatActivationError::TaskConflict { .. } => StatusCode::CONFLICT,
+            TaskHeartbeatActivationError::MissingEndpoint
+            | TaskHeartbeatActivationError::StateUnavailable => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            detail: error.to_string(),
+        }
+    }
+}
+
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         log_executor_event(
@@ -1848,6 +1920,25 @@ impl IntoResponse for HttpError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn envd_process_filters_exported_bash_functions() {
+        let request = ProcessStartRequest {
+            process: ProcessStartConfig {
+                cmd: "/bin/bash".to_owned(),
+                args: vec!["-c".to_owned(), "printf ready".to_owned()],
+                envs: HashMap::from([("BASH_FUNC_which%%".to_owned(), "() {".to_owned())]),
+                cwd: None,
+            },
+        };
+
+        let output = run_envd_process(&request).await;
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.stdout, b"ready");
+        assert!(output.stderr.is_empty());
+    }
 
     #[test]
     fn sanitized_json_preview_redacts_nested_secrets() {

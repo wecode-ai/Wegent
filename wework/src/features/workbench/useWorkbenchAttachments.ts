@@ -6,6 +6,7 @@ import {
   uploadAttachment as defaultUploadAttachment,
 } from '@/api/attachments'
 import { readTextAttachmentMetadata, releaseAttachmentPreview } from '@/lib/attachments'
+import { track } from '@/telemetry/client'
 
 interface UseWorkbenchAttachmentsOptions {
   uploadAttachment?: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
@@ -68,8 +69,10 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
     async (files: File | File[]) => {
       const fileList = Array.isArray(files) ? files : [files]
 
-      for (const file of fileList) {
-        const fileId = file.name
+      for (const [index, file] of fileList.entries()) {
+        // file.name alone collides when the same file name is selected twice;
+        // include size/lastModified and the in-batch index for a stable key.
+        const fileId = `${file.name}:${file.size}:${file.lastModified}:${index}`
 
         if (!isValidFileSize(file.size)) {
           updateScopeState(current => {
@@ -117,7 +120,9 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
               uploadingFiles,
             }
           })
+          track('feature_action_completed', { domain: 'attachment', action: 'upload' })
         } catch (error) {
+          track('operation_failed', { operation: 'attachment_action' })
           updateScopeState(current => {
             const uploadingFiles = new Map(current.uploadingFiles)
             const errors = new Map(current.errors)
@@ -145,9 +150,15 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
         ...current,
         attachments: current.attachments.filter(attachment => !idsToRemove.has(attachment.id)),
       }))
-      await Promise.all(
-        attachmentsToRemove.filter(item => item.id > 0).map(item => deleteAttachment(item.id))
-      )
+      try {
+        await Promise.all(
+          attachmentsToRemove.filter(item => item.id > 0).map(item => deleteAttachment(item.id))
+        )
+        track('feature_action_completed', { domain: 'attachment', action: 'delete' })
+      } catch (error) {
+        track('operation_failed', { operation: 'attachment_action' })
+        throw error
+      }
     },
     [deleteAttachment, state.attachments, updateScopeState]
   )

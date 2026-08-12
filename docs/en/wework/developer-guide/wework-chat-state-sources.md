@@ -167,6 +167,12 @@ A Codex web search may not include its query action in `item/started`; the final
 
 The Wework presentation layer accepts both Responses API snake_case action names (`open_page`, `find_in_page`) and Codex app-server camelCase names (`openPage`, `findInPage`). Normalize this naming difference at the tool-detail parsing boundary; do not mask missing completion events with UI placeholder content or status fallbacks.
 
+### Tool Call Duration
+
+Tool start time, completion time, and duration come from the Codex item lifecycle forwarded by the executor. This lifecycle is the shared authoritative source for both the live stream and historical transcript. The executor must preserve millisecond-precision `createdAt`, `completedAt`, and `durationMs` fields in started/completed events and transcript projections, and merge the function call, command execution, and output for one invocation into a single block.
+
+Pane caches and React components only restore and present those timing fields. A running local timer may temporarily anchor the start time from its first render to avoid jumps during incremental updates. Once the executor supplies a completion time or duration, the completed presentation must use the current block's authoritative fields. Switching panes, refreshing the transcript, or reusing a component must not retain a local completion time or start anchor from the previous pane state.
+
 ### Tool Activity Preview Scrolling
 
 The collapsed tool activity preview shows at most three rows and follows the latest activity while no tool detail is expanded. Auto-scroll must react both to changes in the tool row count and to the bottom “Thinking” row appearing or disappearing. When a tool completes without changing the row count, the thinking row must remain inside the inner scroll area's visible range. Expanding a detail removes the preview height limit, so forced scrolling must not override the user's reading position in that state.
@@ -262,6 +268,15 @@ The server-provided `messageIndex` is the only ordering authority for the persis
 
 While the current pane has a live turn that the transcript has not covered yet, the UI may keep displaying that pane's stream projection as a whole. Once the Provider covers the same turn, the pane switches to the transcript as a whole instead of taking the union of both message sets. Transcript-page deduplication uses only stable Provider message ids and must not infer identity from content, role, or subtask.
 
+Codex may filter the initial user input from the Provider transcript `items`,
+while Wework still retains the visible text that the user submitted in
+`RuntimeTaskLink.userMessagePresentations`. When the executor restores such a
+message, it must bind it to the next Provider turn on the timeline and write
+the canonical `turnId` and `subtaskId`. If the user input and the first
+assistant message share a timestamp, the user input must remain first.
+Canonical `turns` are the frontend transcript's only input, so restoring a
+message only in the compatibility `messages` array is insufficient.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
@@ -288,12 +303,13 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This task does not enter the left task list and does not navigate the main pane.
 - Follow-up messages must continue the already loaded temporary thread. The Codex app-server path uses `direct_thread_id` and calls `turn/start` directly; it must not use the normal `resume_thread_id` / `thread/resume` path, because temporary threads do not have rollout mappings and would otherwise fail with `no rollout found`.
+- `TemporaryChatPanel` must preserve the running-send options supplied by `BufferedChatInput`. When the user selects **Guide current response** or sends a queued row as guidance, the temporary chat must call `runtime.tasks.guidance` and settle the matching queue item by `clientGuidanceId`; it must not downgrade guidance to a regular follow-up after the active turn.
 - Temporary chats reuse only the current workspace and current thread context. If no main thread source is available, sending should be blocked and the user should be asked to open an existing conversation first.
 - After a runtime-work refresh, the reducer must hydrate the current task address with the authoritative `threadId/runtimeHandle` from the same device and task. Keeping an optimistic address without its thread merely because the device is still online prevents the temporary chat from establishing `sideSource`.
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, verifies that the main composer never inherits that attachment, and confirms that a running temporary-chat follow-up enters the same active turn through guidance. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 

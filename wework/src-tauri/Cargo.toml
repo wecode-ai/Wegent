@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.10"
+version = "0.1.15-beta.1"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -39,9 +39,15 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.13", features = ["blocking", "multipart"] }
+sentry = { version = "0.49.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+encoding_rs = "0.8"
 getrandom = "0.2"
+infer = "0.19"
+mime_guess = "2"
 regex = "1"
+sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Keep Wry's devtools API available when its debug assertions are disabled below.
 wry = { version = "0.55.1", features = ["devtools"] }
@@ -57,12 +63,16 @@ core-graphics = "0.25.0"
 block2 = "0.6.2"
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSAttributedString", "NSBitmapImageRep", "NSColor", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStringDrawing", "NSView", "NSWindow", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSAttributedString", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSAttributedString", "NSData", "NSDate", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSOperation", "NSSet", "NSString", "NSURLCache", "std"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataRecord", "WKWebsiteDataStore", "block2", "objc2-app-kit", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38.2"
+windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
@@ -10,13 +11,18 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
+import {
+  deriveRuntimePaneStatus,
+  isRuntimeTaskBusyError,
+} from '@/features/workbench/runtimePaneStatus'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -25,17 +31,20 @@ import type {
   RuntimeTaskAddress,
   TurnFileChangesSummary,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+
+const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
+const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
 
 function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
   return action.type === 'assistant_chunk' || action.type === 'block_updated'
 }
 
-function createUserMessage(content: string): WorkbenchMessage {
+function createUserMessage(content: string, id = `side-user-${Date.now()}`): WorkbenchMessage {
   const createdAt = new Date().toISOString()
   return {
-    id: `side-user-${Date.now()}`,
+    id,
     role: 'user',
     content,
     status: 'done',
@@ -88,6 +97,7 @@ export function TemporaryChatPanel({
     projectChat,
     createTemporaryRuntimeTask,
     sendRuntimePaneMessage,
+    sendRuntimePaneGuidance,
     cancelRuntimePaneTask,
     subscribeRuntimeTaskStream,
     loadRuntimeTranscriptForPane,
@@ -116,6 +126,7 @@ export function TemporaryChatPanel({
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const taskLifecycle = useRuntimeTaskLifecycle(address)
@@ -131,6 +142,12 @@ export function TemporaryChatPanel({
   const busy = sending || paneStatus.isBusy
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
+  const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
+  const queuedMessagesRef = useRef(queuedMessages)
+
+  useEffect(() => {
+    queuedMessagesRef.current = queuedMessages
+  }, [queuedMessages])
 
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
@@ -256,6 +273,25 @@ export function TemporaryChatPanel({
       onMessageAction: dispatchMessages,
       onAssistantStart: () => setSending(false),
       onAssistantSettled: () => setSending(false),
+      onGuidanceApplied: payload => {
+        const guidanceMessage = queuedMessagesRef.current.find(
+          message =>
+            message.status === 'sending' &&
+            message.deliveryMode === 'guidance' &&
+            (message.id === payload.clientGuidanceId ||
+              (!payload.clientGuidanceId && message.content === payload.message))
+        )
+        if (!guidanceMessage) return
+        const remainingMessages = queuedMessagesRef.current.filter(
+          message => message.id !== guidanceMessage.id
+        )
+        queuedMessagesRef.current = remainingMessages
+        setQueuedMessages(remainingMessages)
+        setMessages(current => [
+          ...current.filter(message => message.id !== guidanceMessage.id),
+          createAppliedRuntimeGuidanceMessage(guidanceMessage, payload),
+        ])
+      },
     })
   }, [address, dispatchMessages, subscribeRuntimeTaskStream])
 
@@ -266,16 +302,160 @@ export function TemporaryChatPanel({
     return selectedModelExecutionFields(selectedModel, selectedModelOptions)
   }, [projectChat])
 
+  const sendQueuedMessage = useCallback(
+    async (queuedMessage: RuntimePaneQueuedMessage) => {
+      if (!address || queuedMessageSendInFlightIdsRef.current.has(queuedMessage.id)) return
+      queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
+      setQueuedMessages(messages =>
+        messages.map(message =>
+          message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
+        )
+      )
+
+      try {
+        for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
+          let sendError: string | null = null
+          const messageAttachments = queuedMessage.attachments ?? []
+          const attachmentIds = remoteAttachmentIds(messageAttachments)
+          const attachments = localRuntimeAttachments(messageAttachments)
+          const sent = await sendRuntimePaneMessage(
+            {
+              address,
+              message: queuedMessage.content,
+              clientUserMessageId: queuedMessage.id,
+              ...(sendEphemeral ? { ephemeral: true } : {}),
+              ...(queuedMessage.modelId
+                ? {
+                    modelId: queuedMessage.modelId,
+                    modelType: queuedMessage.modelType,
+                  }
+                : {}),
+              ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
+              ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+              ...(attachments.length > 0 ? { attachments } : {}),
+            },
+            {
+              onError: message => {
+                sendError = message
+              },
+            }
+          )
+          if (sent) {
+            setMessages(current => [
+              ...current,
+              createUserMessage(queuedMessage.content, queuedMessage.id),
+            ])
+            setQueuedMessages(messages =>
+              messages.filter(message => message.id !== queuedMessage.id)
+            )
+            return
+          }
+          if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
+            setQueuedMessages(messages =>
+              messages.map(message =>
+                message.id === queuedMessage.id
+                  ? { ...message, status: 'failed', error: sendError || '发送失败' }
+                  : message
+              )
+            )
+            return
+          }
+          await new Promise(resolve => window.setTimeout(resolve, QUEUED_MESSAGE_RETRY_DELAY_MS))
+        }
+      } finally {
+        queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
+      }
+    },
+    [address, sendEphemeral, sendRuntimePaneMessage]
+  )
+
+  useEffect(() => {
+    if (!address || busy) return
+    if (queuedMessages.some(message => message.status === 'sending')) return
+    const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+    if (!queuedMessage) return
+    void sendQueuedMessage(queuedMessage)
+  }, [address, busy, queuedMessages, sendQueuedMessage])
+
+  const sendQueuedMessageAsGuidance = useCallback(
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
+      if (!address || queuedMessage.status === 'sending') return false
+      if (!busy && !forceActiveTurn) {
+        await sendQueuedMessage(queuedMessage)
+        return true
+      }
+
+      const sendingMessages = queuedMessagesRef.current.map(message =>
+        message.id === queuedMessage.id
+          ? {
+              ...message,
+              status: 'sending' as const,
+              deliveryMode: 'guidance' as const,
+              error: undefined,
+              notice: '正在引导当前对话',
+            }
+          : message
+      )
+      queuedMessagesRef.current = sendingMessages
+      setQueuedMessages(sendingMessages)
+      const messageAttachments = queuedMessage.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
+      const result = await sendRuntimePaneGuidance({
+        address,
+        message: queuedMessage.content,
+        clientGuidanceId: queuedMessage.id,
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      })
+      if (result.sent) return true
+
+      const failedMessages = queuedMessagesRef.current.map(message =>
+        message.id === queuedMessage.id
+          ? {
+              ...message,
+              status: 'failed' as const,
+              deliveryMode: undefined,
+              notice: undefined,
+              error: result.error || '引导发送失败',
+            }
+          : message
+      )
+      queuedMessagesRef.current = failedMessages
+      setQueuedMessages(failedMessages)
+      return false
+    },
+    [address, busy, sendQueuedMessage, sendRuntimePaneGuidance]
+  )
+
   const send = useCallback(
-    async (valueOverride?: string) => {
+    async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const message = (valueOverride ?? input).trim()
-      if (!message) return
+      if (!message) return false
       setError(null)
-      setMessages(current => [...current, createUserMessage(message)])
       setInput('')
-      setSending(true)
 
       const currentAttachments = sideChatProjectChat.attachments
+      const queuedMessage: RuntimePaneQueuedMessage = {
+        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
+        content: message,
+        status: 'queued',
+        createdAt: new Date().toISOString(),
+        attachments: persistAttachmentReferences(currentAttachments),
+        ...selectedModelFields,
+      }
+      if (address && busy) {
+        const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
+        queuedMessagesRef.current = pendingMessages
+        setQueuedMessages(pendingMessages)
+        sideChatProjectChat.resetAttachments()
+        if (options.guideWhenBusy) {
+          return sendQueuedMessageAsGuidance(queuedMessage)
+        }
+        return true
+      }
+
+      setSending(true)
       const attachmentIds = remoteAttachmentIds(currentAttachments)
       const attachments = localRuntimeAttachments(currentAttachments)
       const handleError = (errorMessage: string) => {
@@ -284,9 +464,10 @@ export function TemporaryChatPanel({
         setSending(false)
       }
 
-      const targetAddress =
-        address ??
-        (createTask
+      let targetAddress: RuntimeTaskAddress | false | null = address
+      if (!targetAddress) {
+        setMessages(current => [...current, createUserMessage(message, queuedMessage.id)])
+        targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
               onError: handleError,
@@ -298,36 +479,61 @@ export function TemporaryChatPanel({
               attachments: currentAttachments,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: updateAddress,
-            }))
+            })
+      }
 
       if (!targetAddress) {
+        setMessages(current =>
+          current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
+        )
         setInput(current => current || message)
         updateAddress(null)
         setSending(false)
-        return
+        return false
       }
       if (!address) {
         updateAddress(targetAddress)
         sideChatProjectChat.resetAttachments()
-        return
+        return true
       }
 
+      let sendError: string | null = null
       const sent = await sendRuntimePaneMessage(
         {
           address: targetAddress,
           message,
+          clientUserMessageId: queuedMessage.id,
           ...(sendEphemeral ? { ephemeral: true } : {}),
           ...selectedModelFields,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
         },
-        { onError: handleError }
+        {
+          onError: errorMessage => {
+            sendError = errorMessage
+          },
+        }
       )
       if (sent) {
+        setMessages(current => [...current, createUserMessage(message, queuedMessage.id)])
         sideChatProjectChat.resetAttachments()
-      } else {
-        setSending(false)
+        return true
       }
+      if (isRuntimeTaskBusyError(sendError)) {
+        const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
+        queuedMessagesRef.current = pendingMessages
+        setQueuedMessages(pendingMessages)
+        sideChatProjectChat.resetAttachments()
+        if (options.guideWhenBusy) {
+          setSending(false)
+          return sendQueuedMessageAsGuidance(queuedMessage, true)
+        }
+      } else {
+        handleError(sendError || '发送失败')
+        return false
+      }
+      setSending(false)
+      return true
     },
     [
       address,
@@ -335,13 +541,43 @@ export function TemporaryChatPanel({
       createTemporaryRuntimeTask,
       currentProject,
       input,
+      busy,
+      queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
+      sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       source,
       sendEphemeral,
       updateAddress,
     ]
+  )
+
+  const cancelQueuedMessage = useCallback((id: string) => {
+    setQueuedMessages(messages =>
+      messages.filter(message => message.id !== id || message.status === 'sending')
+    )
+  }, [])
+
+  const editQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+      setInput(queuedMessage.content)
+      sideChatProjectChat.resetAttachments()
+      queuedMessage.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
+      setQueuedMessages(messages => messages.filter(message => message.id !== id))
+    },
+    [queuedMessages, sideChatProjectChat]
+  )
+
+  const guideQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find(message => message.id === id)
+      if (!queuedMessage) return
+      void sendQueuedMessageAsGuidance(queuedMessage, true)
+    },
+    [queuedMessages, sendQueuedMessageAsGuidance]
   )
 
   const pause = useCallback(() => {
@@ -398,13 +634,19 @@ export function TemporaryChatPanel({
           <BufferedChatInput
             value={input}
             onChange={setInput}
+            onDraftEdit={() => setError(null)}
             onSubmit={send}
             disabled={false}
+            pluginPickerIconOnly
             error={error}
             placeholder={placeholder}
             variant="desktop"
             projectChat={sideChatProjectChat}
             showProjectWorkBar={false}
+            queuedMessages={queuedMessages}
+            onCancelQueuedMessage={cancelQueuedMessage}
+            onSendQueuedAsGuidance={guideQueuedMessage}
+            onEditQueuedMessage={editQueuedMessage}
             isStreaming={busy}
             onPause={pause}
           />
