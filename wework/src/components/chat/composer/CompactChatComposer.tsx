@@ -10,6 +10,7 @@ import {
   Minimize2,
   Plus,
   Square,
+  ShieldCheck,
   Target,
   Zap,
 } from 'lucide-react'
@@ -50,6 +51,11 @@ import type {
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import {
+  RUNTIME_PERMISSION_MODE_OPTION,
+  runtimePermissionMode,
+} from '@/features/workbench/runtimePermissionMode'
 
 interface CompactChatComposerProps {
   value: string
@@ -91,6 +97,7 @@ interface CompactChatComposerProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   onSelectModel?: (model: UnifiedModel | null) => boolean | void
+  onSelectModelOption?: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   isModelSelectionReady?: boolean
   isStreaming?: boolean
@@ -139,6 +146,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       activeModel,
       selectedModelOptions = {},
       onSelectModel,
+      onSelectModelOption,
       onBlockedModelSelect,
       isModelSelectionReady = true,
       isStreaming = false,
@@ -530,6 +538,22 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   <span>{t('workbench.pursue_goal', '追求目标')}</span>
                 </button>
               )}
+              {onSelectModelOption ? (
+                <div
+                  data-testid="mobile-permission-mode-row"
+                  className="flex h-14 w-full items-center justify-between gap-4 rounded-2xl px-4 text-text-primary"
+                >
+                  <span className="flex min-w-0 items-center gap-4 text-base font-semibold">
+                    <ShieldCheck className="h-6 w-6 shrink-0 text-text-secondary" />
+                    <span>{t('workbench.permission_mode', '权限模式')}</span>
+                  </span>
+                  <PermissionModeSelector
+                    value={runtimePermissionMode(selectedModelOptions)}
+                    disabled={disabled}
+                    onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         )}

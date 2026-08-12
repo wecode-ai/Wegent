@@ -23,6 +23,7 @@ import {
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
   emptyAutomationDraft,
+  initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
   type AutomationDraft,
 } from '@/features/automations/automationDraft'
@@ -292,6 +293,7 @@ export function AutomationsPage() {
     if (!draft.name.trim() || !draft.prompt.trim()) {
       throw new Error(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
     }
+    const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
       throw new Error(t('workbench.automation_target_task_required', '请选择一个已固定的本地任务'))
     }
@@ -309,6 +311,7 @@ export function AutomationsPage() {
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),
+      ...(initialGoal ? { initialGoal } : {}),
       ...(draft.modelId
         ? {
             modelId: draft.modelId,
@@ -322,6 +325,7 @@ export function AutomationsPage() {
         ? {
             address: draft.continuationAddress,
             message: draft.prompt.trim(),
+            ...(initialGoal ? { initialGoal } : {}),
           }
         : null
     return {

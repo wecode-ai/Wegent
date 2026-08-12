@@ -47,7 +47,10 @@ import {
   updateLocalHarnessSessionTitle,
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
 } from '@/lib/local-terminal'
-import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -235,13 +238,18 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     },
     [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
-  const registerLocalHarnessSession = useCallback((session: LocalHarnessWorkbenchSession) => {
-    setLocalHarnessSessions(current => [
-      session,
-      ...current.filter(candidate => candidate.sessionId !== session.sessionId),
-    ])
-    setActiveLocalHarnessSessionId(session.sessionId)
-  }, [])
+  const registerLocalHarnessSession = useCallback(
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
+      setLocalHarnessSessions(current => [
+        session,
+        ...current.filter(candidate => candidate.sessionId !== session.sessionId),
+      ])
+      if (options?.activate !== false) {
+        setActiveLocalHarnessSessionId(session.sessionId)
+      }
+    },
+    []
+  )
   const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
     const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
     if (!normalized) return

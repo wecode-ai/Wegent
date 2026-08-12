@@ -7,6 +7,7 @@ core_segments=(
   priority-filter
   automation-lifecycle
   model-routing
+  permission-modes
   core-task-flow
   window-lifecycle
   goal-lifecycle

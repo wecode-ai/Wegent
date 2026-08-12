@@ -392,6 +392,7 @@ class DesktopE2EServer {
     this.goalRestartStage = 'initial'
     this.cloudGoalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
+    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -2591,14 +2592,39 @@ class DesktopE2EServer {
 
     if (this.scenario === 'automation') {
       this.recordScenarioRequest('automation', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(AUTOMATION_PROMPT),
-        'The automation prompt was lost before model execution'
+      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
+        assert.ok(
+          JSON.stringify(body).includes(AUTOMATION_PROMPT),
+          'The automation prompt was lost before model execution'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        const callId =
+          this.automationStage === 'manual_goal'
+            ? 'wework-e2e-automation-manual-goal'
+            : 'wework-e2e-automation-scheduled-goal'
+        this.automationStage =
+          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(callId, updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The automation Goal did not return its update_goal output'
       )
-      const requestNumber = this.scenarioRequests.get('automation').length
+      const manualRun = this.automationStage === 'manual_goal_output'
+      assert.ok(
+        manualRun || this.automationStage === 'scheduled_goal_output',
+        `Unexpected automation model stage: ${this.automationStage}`
+      )
+      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${requestNumber}`),
+        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return

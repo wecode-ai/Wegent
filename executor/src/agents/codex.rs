@@ -1863,6 +1863,20 @@ async fn read_shared_turn_notifications(
         if message
             .get("method")
             .and_then(Value::as_str)
+            .is_some_and(is_codex_approval_request_method)
+        {
+            spawn_shared_approval_response(
+                client,
+                &message,
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
+            continue;
+        }
+
+        if message
+            .get("method")
+            .and_then(Value::as_str)
             .is_some_and(|method| method == "mcpServer/elicitation/request")
         {
             spawn_shared_mcp_server_elicitation_response(
@@ -2020,6 +2034,192 @@ fn spawn_shared_request_user_input_response(
         }
     });
     Ok(())
+}
+
+fn is_codex_approval_request_method(method: &str) -> bool {
+    matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+    )
+}
+
+fn spawn_shared_approval_response(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
+    let correlation_key = request_user_input_answers
+        .as_ref()
+        .map(|_| {
+            interaction_value_key(&request_id)
+                .ok_or_else(|| "approval request has invalid JSON-RPC id".to_owned())
+        })
+        .transpose()?;
+    let client = client.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let response = if let (Some(receiver), Some(correlation_key)) =
+                (request_user_input_answers, correlation_key)
+            {
+                receiver
+                    .receive(correlation_key)
+                    .await?
+                    .unwrap_or_else(|| json!({}))
+            } else {
+                json!({})
+            };
+            let result = codex_approval_result(&message, &response)?;
+            client.send_response(request_id, result).await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
+}
+
+const CODEX_APPROVAL_QUESTION_ID: &str = "__codex_approval";
+
+fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, String> {
+    let answer = response
+        .get("answers")
+        .and_then(|answers| answers.get(CODEX_APPROVAL_QUESTION_ID))
+        .and_then(|answer| answer.get("answers"))
+        .and_then(Value::as_array)
+        .and_then(|answers| answers.first())
+        .and_then(Value::as_str)
+        .unwrap_or("decline");
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "approval request is missing method".to_owned())?;
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => Ok(json!({
+            "decision": codex_command_approval_decision(message, answer)
+        })),
+        "item/permissions/requestApproval" => {
+            if !matches!(
+                answer,
+                "allow_once" | "allow_turn_strict_review" | "allow_session"
+            ) {
+                return Ok(json!({
+                    "permissions": {},
+                    "scope": "turn",
+                    "strictAutoReview": false,
+                }));
+            }
+            let permissions = message_params(message)
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            Ok(json!({
+                "permissions": permissions,
+                "scope": if answer == "allow_session" { "session" } else { "turn" },
+                "strictAutoReview": answer == "allow_turn_strict_review",
+            }))
+        }
+        _ => Err(format!("unsupported approval request method: {method}")),
+    }
+}
+
+fn codex_command_approval_decision(message: &Value, answer: &str) -> Value {
+    match answer {
+        "allow_once" => json!("accept"),
+        "allow_session" => json!("acceptForSession"),
+        _ if answer == "allow_execpolicy" || answer.starts_with("allow_execpolicy:") => {
+            codex_execpolicy_approval_decision(message, answer)
+        }
+        "cancel" => json!("cancel"),
+        _ if answer.starts_with("apply_network_policy:") => {
+            codex_network_policy_approval_decision(message, answer)
+        }
+        _ => json!("decline"),
+    }
+}
+
+fn codex_execpolicy_approval_decision(message: &Value, answer: &str) -> Value {
+    let params = message_params(message);
+    if let Some(available) = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array)
+    {
+        let Some(index) = answer
+            .strip_prefix("allow_execpolicy:")
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            return json!("decline");
+        };
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("acceptWithExecpolicyAmendment")
+                    .or_else(|| decision.get("accept_with_execpolicy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"acceptWithExecpolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedExecpolicyAmendment")
+        .or_else(|| params.get("proposed_execpolicy_amendment"))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
+}
+
+fn codex_network_policy_approval_decision(message: &Value, answer: &str) -> Value {
+    let Some(index) = answer
+        .strip_prefix("apply_network_policy:")
+        .and_then(|index| index.parse::<usize>().ok())
+    else {
+        return json!("decline");
+    };
+    let params = message_params(message);
+    let available = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array);
+    if let Some(available) = available {
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("applyNetworkPolicyAmendment")
+                    .or_else(|| decision.get("apply_network_policy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"applyNetworkPolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedNetworkPolicyAmendments")
+        .or_else(|| params.get("proposed_network_policy_amendments"))
+        .and_then(Value::as_array)
+        .and_then(|amendments| amendments.get(index))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
 }
 
 fn spawn_shared_mcp_server_elicitation_response(
@@ -3920,32 +4120,30 @@ fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
-const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
-const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
-pub(crate) fn codex_runtime_approval_policy() -> Value {
-    json!({
-        "granular": {
-            "sandbox_approval": false,
-            "rules": false,
-            "skill_approval": false,
-            "request_permissions": false,
-            "mcp_elicitations": true,
-        }
-    })
+pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
+    match codex_runtime_permission_profile(request) {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => Value::String("never".to_owned()),
+        _ => Value::String("on-request".to_owned()),
+    }
 }
 
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
-    if request
+    match request
         .extra
         .get("runtime_permission_profile")
         .or_else(|| request.extra.get("runtimePermissionProfile"))
         .and_then(Value::as_str)
-        == Some(CODEX_READ_ONLY_PERMISSION_PROFILE)
     {
-        CODEX_READ_ONLY_PERMISSION_PROFILE
-    } else {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
+        Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
+        Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        }
+        _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
     }
 }
 
@@ -4019,7 +4217,10 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -4048,7 +4249,10 @@ fn thread_fork_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -4110,7 +4314,10 @@ fn thread_resume_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
 }
@@ -4191,7 +4398,10 @@ fn turn_start_params(
             Value::String(client_user_message_id.to_owned()),
         );
     }
-    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
+    params.insert(
+        "approvalPolicy".to_owned(),
+        codex_runtime_approval_policy(request),
+    );
     insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
