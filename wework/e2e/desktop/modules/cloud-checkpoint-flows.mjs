@@ -14,17 +14,13 @@ import {
 import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
-  verifyGoalRestartRecoveryLifecycle,
+  verifyCloudGoalRestartRecoveryLifecycle,
   verifyTaskSupervisorLifecycle,
 } from './goal-flows.mjs'
 
 import { verifyToolBlockChronologicalOrder } from './memory-tool-flows.mjs'
 
-import {
-  verifyDroppedWorkspacePaths,
-  verifyPastedWorkspacePaths,
-  verifyPastedZipAttachment,
-} from './path-attachment-flows.mjs'
+import { verifyPastedZipAttachment } from './path-attachment-flows.mjs'
 
 import {
   ensureExperimentalFeaturesEnabled,
@@ -52,8 +48,10 @@ import {
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
+  mkdir,
   resultDir,
   selectE2EModel,
+  writeFile,
 } from './shared.mjs'
 
 import { verifyBackgroundCompletionRestore, verifyPriorityFilter } from './task-state-flows.mjs'
@@ -84,6 +82,9 @@ const CLOUD_CHECKPOINTS = [
 ]
 
 async function createCloudProjectFixture(control, workspacePath) {
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const projectMenusBeforeCreate = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('project-menu-')
@@ -171,6 +172,49 @@ async function waitForCloudProject(control, previousProjectMenus, message) {
   throw new Error(message)
 }
 
+async function verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath }) {
+  const folderName = 'cloud-context-folder'
+  const folderPath = join(workspacePath, folderName)
+  await mkdir(folderPath, { recursive: true })
+  await writeFile(join(folderPath, 'nested.txt'), 'cloud workspace path context\n')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('fill', composerSelector, { value: `@${folderName}` })
+  await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-mention-option-0"]')
+  const folderChipSelector = `[data-testid="composer-path-chip-${folderName}"]`
+  await control.command('waitFor', folderChipSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', folderChipSelector, {
+      value: 'data-composer-path-kind',
+    }),
+    'folder',
+    'The cloud workspace folder mention was not rendered as a folder reference'
+  )
+
+  await control.command('fill', composerSelector, { value: '@auth' })
+  await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-mention-option-0"]')
+  const fileChipSelector = '[data-testid="composer-path-chip-auth-ts"]'
+  await control.command('waitFor', fileChipSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', fileChipSelector, {
+      value: 'data-composer-path-kind',
+    }),
+    'file',
+    'The cloud workspace file mention was not rendered as a file reference'
+  )
+}
+
 async function verifyCloudCheckpoint({
   app,
   appIdentifier,
@@ -252,10 +296,10 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-goal-idle-unread')
       await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath })
       setPhase('cloud-goal-restart-recovery')
-      await verifyGoalRestartRecoveryLifecycle({
+      await verifyCloudGoalRestartRecoveryLifecycle({
         composerSelector,
         control,
-        executorLogPath,
+        executorProcessId: cloudEnvironment.remoteExecutor.pid,
         restartDesktopApp,
       })
       return
@@ -302,10 +346,8 @@ async function verifyCloudCheckpoint({
       })
       setPhase('cloud-pasted-zip')
       await verifyPastedZipAttachment({ composerSelector, control })
-      setPhase('cloud-pasted-paths')
-      await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
-      setPhase('cloud-dropped-paths')
-      await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
+      setPhase('cloud-workspace-path-mentions')
+      await verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath })
       return
     case 'rendering-extensions':
       setPhase('cloud-tool-block-order')

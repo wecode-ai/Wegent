@@ -742,9 +742,139 @@ async function verifyGoalRestartRecoveryLifecycle({
   await captureVerificationScreenshot(control, 'goal-restart-06-completed-read.png')
 }
 
+async function verifyCloudGoalRestartRecoveryLifecycle({
+  composerSelector,
+  control,
+  executorProcessId,
+  restartDesktopApp,
+}) {
+  control.setScenario('goal_restart')
+  const taskRowsBeforeGoal = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await selectE2EModel(control)
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_RESTART_PROMPT,
+    'goal_restart'
+  )
+  const goalTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeGoal,
+    'WEWORK_DESKTOP_E2E_GOAL_RESTART'
+  )
+  const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
+  const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
+  const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_restart', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The cloud Goal did not enter automatic continuation before Wework restarted'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+    'The cloud Goal was not visibly running before Wework restarted'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  assert.equal(
+    processIsAlive(executorProcessId),
+    true,
+    'The cloud executor was not alive before Wework restarted'
+  )
+  await restartDesktopApp()
+  assert.equal(
+    processIsAlive(executorProcessId),
+    true,
+    'Restarting Wework stopped the independently running cloud executor'
+  )
+
+  await control.command('waitFor', `[data-testid="${goalTaskRowTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+    'The cloud Goal did not remain running after Wework restarted',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshotHasAssistantActivity(snapshot) &&
+      !snapshot.testIds.includes('send-message-button') &&
+      snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
+    'Wework did not reconnect to the running cloud Goal after restart',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  const runningDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.goal?.status === 'active',
+    'The running cloud Goal did not finish hydrating after Wework restarted'
+  )
+  assert.equal(
+    runningDebugSnapshot.pane?.goal?.status,
+    'active',
+    'Restarting Wework discarded the active cloud Goal'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  control.releaseGoalRestartResponse()
+  await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_RESTART_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('goal-status-bar'),
+    'The cloud Goal did not settle after completing across a Wework restart',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 export {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
+  verifyCloudGoalRestartRecoveryLifecycle,
   verifyTaskSupervisorLifecycle,
   verifyGoalRestartRecoveryLifecycle,
 }
