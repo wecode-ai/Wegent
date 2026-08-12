@@ -400,6 +400,8 @@ Wework 允许用户在发送首条消息前配置任务监督。该配置作为 
 
 监督评估器只能在 runtime session 已经建立后启动。任务创建和 Codex session 建立之间的窗口属于正常初始化状态，executor 应等待 session 就绪，而不是将其报告为监督异常。任务创建完成后，Wework 清除输入区的待生效提示，并从任务状态与右侧信息面板展示已启用的监督状态。
 
+监督评估是无状态模型判断，不是 Codex 编码任务。Wework 只允许为监督器选择 Backend 可解析完整资源身份的云端 Model，并把 `modelSelection` 持久化到本地任务状态；executor 通过认证后的 `/api/model-runtime/responses` 调用模型，Backend 负责解析 Model CRD 与上游凭据。该路径不得创建 Codex thread、启动临时 app-server turn，或加载 MCP、skill 与工具。评估失败时，executor 按监督间隔重试；调度器不得因缺少成功内容哈希而每个 tick 立即重试，否则上游异常会被放大为进程与请求风暴。
+
 
 Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
 
