@@ -189,7 +189,9 @@ impl RuntimeWorkRpcHandler {
                 request: request.clone(),
                 transcript: Arc::clone(&transcript),
             };
-            let _ = sink.send(builder.response_created(Some("ClaudeCode")));
+            let _ = sink
+                .send(builder.response_created(Some("ClaudeCode")))
+                .await;
 
             let outcome = tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {
@@ -231,7 +233,7 @@ impl RuntimeWorkRpcHandler {
                         }
                     }
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
-                    let _ = sink.send(builder.response_completed(content));
+                    let _ = sink.send(builder.response_completed(content)).await;
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
                     let blocks = transcript
@@ -247,7 +249,9 @@ impl RuntimeWorkRpcHandler {
                         None,
                     );
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
-                    let _ = sink.send(builder.response_waiting_for_user_input(stop_reason));
+                    let _ = sink
+                        .send(builder.response_waiting_for_user_input(stop_reason))
+                        .await;
                 }
                 ExecutionOutcome::Failed { message } => {
                     handler.persist_claude_assistant_message(
@@ -259,7 +263,7 @@ impl RuntimeWorkRpcHandler {
                         Some(message),
                     );
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
-                    let _ = sink.send(builder.error(message, "runtime_error"));
+                    let _ = sink.send(builder.error(message, "runtime_error")).await;
                 }
                 ExecutionOutcome::Cancelled { message } => {
                     handler.persist_claude_assistant_message(
