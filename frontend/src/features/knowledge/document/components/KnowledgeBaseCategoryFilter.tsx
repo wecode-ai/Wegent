@@ -34,7 +34,7 @@ export function KnowledgeBaseCategoryFilter({
   return (
     <div
       className="flex flex-wrap items-center gap-2"
-      role="tablist"
+      role="group"
       aria-label={t('document.knowledgeBase.categoryFilter.label')}
       data-testid="knowledge-category-filter"
     >

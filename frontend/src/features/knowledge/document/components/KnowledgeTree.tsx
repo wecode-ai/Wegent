@@ -9,7 +9,7 @@
 
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -93,6 +93,12 @@ export function KnowledgeTree({
     () => getRuntimeConfigSync().enableCodeWiki || hasCodeWiki(nodes),
     [nodes]
   )
+
+  useEffect(() => {
+    if (!showCodeCategory && category === 'code') {
+      setCategory('all')
+    }
+  }, [category, showCodeCategory])
 
   // Filter tree nodes by category before applying the name search.
   const filteredNodes = useMemo(() => {

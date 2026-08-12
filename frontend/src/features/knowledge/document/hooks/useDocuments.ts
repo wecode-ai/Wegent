@@ -633,6 +633,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     debouncedKeyword,
     sortBy,
     sortOrder,
+    origin,
     loadAll,
     fetchDocuments,
   ])

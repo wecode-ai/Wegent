@@ -31,7 +31,6 @@ type DocumentManagementView = KnowledgeContentOrigin | 'permissions'
 interface CodeWikiWorkspaceProps {
   wiki: KnowledgeBase
   view: CodeWikiView
-  canConfigure?: boolean
   onConfigure?: () => void
   groupInfo?: KbGroupInfo
   onGroupClick?: (groupId: string, groupType?: string) => void
@@ -46,7 +45,6 @@ interface CodeWikiWorkspaceProps {
 export function CodeWikiWorkspace({
   wiki,
   view,
-  canConfigure = false,
   onConfigure,
   groupInfo,
   onGroupClick,
@@ -119,7 +117,11 @@ export function CodeWikiWorkspace({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="code-wiki-workspace">
       {view === 'wiki' ? (
-        <CodeWikiReader wiki={wiki} canConfigure={canConfigure} onConfigure={onConfigure} />
+        <CodeWikiReader
+          wiki={wiki}
+          canConfigure={permissions.canManageKb}
+          onConfigure={onConfigure}
+        />
       ) : (
         <div
           className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"

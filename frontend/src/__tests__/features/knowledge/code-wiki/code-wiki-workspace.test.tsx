@@ -2,10 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import type { KnowledgeBase } from '@/types/knowledge'
+
+const mockCanManageKnowledgeBase = jest.fn()
+const mockCanManageKnowledgeBaseDocuments = jest.fn()
+const mockCanManageKnowledgeBasePermissions = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -27,13 +32,17 @@ jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () =>
 }))
 
 jest.mock('@/utils/namespace-permissions', () => ({
-  canManageKnowledgeBase: () => true,
-  canManageKnowledgeBaseDocuments: () => true,
-  canManageKnowledgeBasePermissions: () => true,
+  canManageKnowledgeBase: (...args: unknown[]) => mockCanManageKnowledgeBase(...args),
+  canManageKnowledgeBaseDocuments: (...args: unknown[]) =>
+    mockCanManageKnowledgeBaseDocuments(...args),
+  canManageKnowledgeBasePermissions: (...args: unknown[]) =>
+    mockCanManageKnowledgeBasePermissions(...args),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
-  CodeWikiReader: () => <div data-testid="mock-code-wiki-reader" />,
+  CodeWikiReader: ({ canConfigure }: { canConfigure: boolean }) => (
+    <div data-testid="mock-code-wiki-reader" data-can-configure={String(canConfigure)} />
+  ),
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
@@ -84,10 +93,21 @@ const wiki: KnowledgeBase = {
 }
 
 describe('CodeWikiWorkspace', () => {
-  it('renders the supplied top-level view and presents virtual roots in the document header', () => {
+  beforeEach(() => {
+    mockCanManageKnowledgeBase.mockReturnValue(true)
+    mockCanManageKnowledgeBaseDocuments.mockReturnValue(true)
+    mockCanManageKnowledgeBasePermissions.mockReturnValue(true)
+  })
+
+  it('renders the supplied top-level view and presents virtual roots in the document header', async () => {
+    const user = userEvent.setup()
     const { rerender } = render(<CodeWikiWorkspace wiki={wiki} view="wiki" />)
 
     expect(screen.getByTestId('mock-code-wiki-reader')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-code-wiki-reader')).toHaveAttribute(
+      'data-can-configure',
+      'true'
+    )
 
     rerender(
       <CodeWikiWorkspace
@@ -115,7 +135,7 @@ describe('CodeWikiWorkspace', () => {
       'default'
     )
 
-    fireEvent.mouseDown(screen.getByTestId('code-wiki-content-user'))
+    await user.click(screen.getByTestId('code-wiki-content-user'))
 
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-origin',
@@ -126,8 +146,24 @@ describe('CodeWikiWorkspace', () => {
       'false'
     )
 
-    fireEvent.mouseDown(screen.getByTestId('code-wiki-content-permissions'))
+    await user.click(screen.getByTestId('code-wiki-content-permissions'))
 
     expect(screen.getByTestId('mock-code-wiki-permissions')).toBeInTheDocument()
+  })
+
+  it('does not expose permission management or configuration without manage permission', () => {
+    mockCanManageKnowledgeBase.mockReturnValue(false)
+    mockCanManageKnowledgeBaseDocuments.mockReturnValue(false)
+    mockCanManageKnowledgeBasePermissions.mockReturnValue(false)
+
+    const { rerender } = render(<CodeWikiWorkspace wiki={wiki} view="documents" />)
+
+    expect(screen.queryByTestId('code-wiki-content-permissions')).not.toBeInTheDocument()
+
+    rerender(<CodeWikiWorkspace wiki={wiki} view="wiki" />)
+    expect(screen.getByTestId('mock-code-wiki-reader')).toHaveAttribute(
+      'data-can-configure',
+      'false'
+    )
   })
 })

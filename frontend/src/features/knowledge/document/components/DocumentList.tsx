@@ -628,6 +628,7 @@ export function DocumentList({
     void fetchFolders()
   }, [fetchFolders, refresh, refreshToken])
 
+  const canUploadDocuments = !readOnly && canUpload
   const canManageAnyDocuments = !readOnly && (canUpload || canManageAllDocuments)
   const canManageDocumentArea = canManageAnyDocuments
   const canManageFolderStructure = canManageDocumentArea && !sourceWorkspace
@@ -1146,7 +1147,7 @@ export function DocumentList({
 
       {sourceWorkspace && (
         <DocumentSourceWorkspaceHeader
-          canUpload={canUpload}
+          canUpload={canUploadDocuments}
           canToggleExpandAll={canToggleExpandAll}
           isExpandAllView={isExpandAllView}
           currentFolderId={currentFolderId}
@@ -1310,7 +1311,7 @@ export function DocumentList({
           )}
 
           {/* Upload button */}
-          {canUpload && (
+          {canUploadDocuments && (
             <Button variant="primary" size="sm" onClick={handleOpenUpload}>
               <Upload className="w-4 h-4 mr-1" />
               {t('document.document.upload')}
@@ -1557,7 +1558,7 @@ export function DocumentList({
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.empty')}</p>
         </div>
-      ) : canUpload ? (
+      ) : canUploadDocuments ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
           <FileUp className="w-16 h-16 mb-4 text-text-muted opacity-60" />
           <p className="text-base text-text-primary mb-2">{t('document.document.emptyHint')}</p>

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import {
@@ -125,6 +125,7 @@ describe('KnowledgeGroupListPage category filter', () => {
     )
 
     expect(screen.getByTestId('knowledge-category-code-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-category-filter')).toHaveAttribute('role', 'group')
 
     await user.click(screen.getByTestId('knowledge-category-code-filter'))
     expect(screen.queryByTestId('kb-row-1')).not.toBeInTheDocument()
@@ -166,5 +167,35 @@ describe('KnowledgeGroupListPage category filter', () => {
     )
 
     expect(screen.getByTestId('knowledge-category-code-filter')).toBeInTheDocument()
+  })
+
+  it('returns to all when the selected code category is no longer available', async () => {
+    const user = userEvent.setup()
+    const sharedProps = {
+      groupId: 'personal',
+      groupName: 'Personal',
+      isLoading: false,
+      onSelectKb: jest.fn(),
+    }
+    const { rerender } = render(
+      <KnowledgeGroupListPage
+        {...sharedProps}
+        knowledgeBases={[
+          createKnowledgeBase(1, 'Notebook', 'notebook'),
+          createKnowledgeBase(2, 'Code Wiki', 'code_wiki'),
+        ]}
+      />
+    )
+
+    await user.click(screen.getByTestId('knowledge-category-code-filter'))
+    rerender(
+      <KnowledgeGroupListPage
+        {...sharedProps}
+        knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('kb-row-1')).toBeInTheDocument())
+    expect(screen.queryByTestId('knowledge-category-code-filter')).not.toBeInTheDocument()
   })
 })

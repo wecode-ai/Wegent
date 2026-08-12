@@ -22,14 +22,11 @@ import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { getModelFromConfig } from '@/features/settings/services/bots'
-import { useUser } from '@/features/common/UserContext'
-import { canManageKnowledgeBase, canManageNamespace } from '@/utils/namespace-permissions'
+import { canManageNamespace } from '@/utils/namespace-permissions'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
-import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
-import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
@@ -64,9 +61,6 @@ export function KnowledgeDocumentPageMobile({
   onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
-  const { user } = useUser()
-  const namespaceRoleMap = useNamespaceRoleMap()
-
   // Knowledge tree hook
   const tree = useKnowledgeTree()
 
@@ -81,10 +75,6 @@ export function KnowledgeDocumentPageMobile({
   const [isUpdating, setIsUpdating] = useState(false)
   const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
   const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
-  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
-    kbId: detailKb?.id ?? 0,
-  })
-
   useEffect(() => {
     if (detailKb?.kb_type === 'code_wiki') {
       onKnowledgeViewStateChange?.({
@@ -118,23 +108,6 @@ export function KnowledgeDocumentPageMobile({
   useEffect(() => {
     setCodeWikiView('wiki')
   }, [detailKb?.id])
-
-  useEffect(() => {
-    if (detailKb?.kb_type === 'code_wiki' && user) {
-      void fetchMyPermission()
-    }
-  }, [detailKb?.kb_type, fetchMyPermission, user])
-
-  const canConfigureDetailCodeWiki = useMemo(() => {
-    if (!detailKb || detailKb.kb_type !== 'code_wiki' || !user) return false
-
-    return canManageKnowledgeBase({
-      currentUserId: user.id,
-      knowledgeBase: detailKb,
-      knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(detailKb.namespace),
-    })
-  }, [detailKb, user, myPermission?.role, namespaceRoleMap])
 
   const allLoadedKbs = useMemo((): KnowledgeBase[] => {
     const kbs: KnowledgeBase[] = []
@@ -301,6 +274,9 @@ export function KnowledgeDocumentPageMobile({
           } else {
             await tree.refreshPersonal()
           }
+          setCreateGroupName(undefined)
+          setCreateScope('personal')
+          setCreateKbType('notebook')
           router.push(buildKbUrl(namespace, wiki.name, false))
           return
         }
@@ -425,7 +401,6 @@ export function KnowledgeDocumentPageMobile({
                 key={detailKb!.id}
                 wiki={detailKb!}
                 view={codeWikiView}
-                canConfigure={canConfigureDetailCodeWiki}
                 onConfigure={() => setEditingKb(detailKb!)}
               />
             )}

@@ -25,7 +25,6 @@ import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
-import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
@@ -123,28 +122,6 @@ export function KnowledgeDocumentPageDesktop({
   }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
-  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
-    kbId: selectedKbId ?? 0,
-  })
-
-  useEffect(() => {
-    if (sidebar.selectedKb?.kb_type === 'code_wiki' && user) {
-      void fetchMyPermission()
-    }
-  }, [fetchMyPermission, sidebar.selectedKb?.kb_type, user])
-
-  const canConfigureSelectedCodeWiki = useMemo(() => {
-    const selectedKb = sidebar.selectedKb
-    if (!selectedKb || selectedKb.kb_type !== 'code_wiki' || !user) return false
-
-    return canManageKnowledgeBase({
-      currentUserId: user.id,
-      knowledgeBase: selectedKb,
-      knowledgeRole: myPermission?.role,
-      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
-    })
-  }, [sidebar.selectedKb, user, myPermission?.role, namespaceRoleMap])
-
   // Group KBs hook (extracted from inline logic)
   const {
     groupKbs,
@@ -516,7 +493,6 @@ export function KnowledgeDocumentPageDesktop({
             key={sidebar.selectedKb.id}
             wiki={sidebar.selectedKb}
             view={codeWikiView}
-            canConfigure={canConfigureSelectedCodeWiki}
             onConfigure={() => dialogs.setEditingKb(sidebar.selectedKb!)}
             groupInfo={selectedKbGroupInfo}
             onGroupClick={handleGroupClick}

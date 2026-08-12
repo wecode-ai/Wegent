@@ -45,6 +45,7 @@ describe('createCodeWiki', () => {
         namespace: 'team-a',
         source_type: 'github',
         source_url: 'https://github.com/wecode-ai/Wegent.git',
+        language: 'zh',
         execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
       })
     )
@@ -54,5 +55,19 @@ describe('createCodeWiki', () => {
     expect(codeWikiApi.create).not.toHaveBeenCalledWith(
       expect.objectContaining({ selectedGroupId: expect.anything() })
     )
+  })
+
+  it('rejects forms without the required repository or execution model', async () => {
+    await expect(
+      createCodeWiki({
+        namespace: 'team-a',
+        data: {
+          name: 'Wegent',
+          kb_type: 'code_wiki',
+          source_type: 'github',
+          source_url: '',
+        },
+      })
+    ).rejects.toThrow('Code Wiki creation requires a repository and execution model')
   })
 })

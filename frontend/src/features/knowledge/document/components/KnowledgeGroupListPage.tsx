@@ -13,7 +13,7 @@
 
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
@@ -210,6 +210,12 @@ export function KnowledgeGroupListPage({
       ].some(kb => kb.kb_type === 'code_wiki'),
     [dataSource, personalCreatedByMe, personalSharedWithMe, groupNativeKbs, groupSharedKbs]
   )
+
+  useEffect(() => {
+    if (!showCodeCategory && category === 'code') {
+      setCategory('all')
+    }
+  }, [category, showCodeCategory])
 
   const filterByCategory = useCallback(
     (kbs: KbDataItem[]) => kbs.filter(kb => isInKnowledgeBaseCategory(kb.kb_type, category)),

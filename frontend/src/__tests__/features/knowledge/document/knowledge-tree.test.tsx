@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { KnowledgeTree } from '@/features/knowledge/document/components/KnowledgeTree'
@@ -194,5 +194,76 @@ describe('KnowledgeTree category filter', () => {
     await user.click(screen.getByTestId('knowledge-category-document-filter'))
     expect(screen.getByTestId(`knowledge-tree-kb-${documentKb.id}`)).toBeInTheDocument()
     expect(screen.queryByTestId(`knowledge-tree-kb-${codeWiki.id}`)).not.toBeInTheDocument()
+  })
+
+  it('returns to all when the selected code category disappears', async () => {
+    const user = userEvent.setup()
+    const documentKb = createKnowledgeBase()
+    const codeWiki = { ...createKnowledgeBase(), id: 9, kb_type: 'code_wiki' as const }
+    const { rerender } = render(
+      <KnowledgeTree
+        nodes={[
+          {
+            id: 'personal',
+            type: 'category-root',
+            label: 'My Knowledge',
+            expanded: true,
+            children: [
+              {
+                id: `kb-${documentKb.id}`,
+                type: 'kb-leaf',
+                label: documentKb.name,
+                knowledgeBase: documentKb,
+              },
+              {
+                id: `kb-${codeWiki.id}`,
+                type: 'kb-leaf',
+                label: codeWiki.name,
+                knowledgeBase: codeWiki,
+              },
+            ],
+          },
+        ]}
+        selectedKbId={null}
+        loading={false}
+        expandState={{ personal: true }}
+        onToggleExpand={jest.fn()}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+      />
+    )
+
+    await user.click(screen.getByTestId('knowledge-category-code-filter'))
+    rerender(
+      <KnowledgeTree
+        nodes={[
+          {
+            id: 'personal',
+            type: 'category-root',
+            label: 'My Knowledge',
+            expanded: true,
+            children: [
+              {
+                id: `kb-${documentKb.id}`,
+                type: 'kb-leaf',
+                label: documentKb.name,
+                knowledgeBase: documentKb,
+              },
+            ],
+          },
+        ]}
+        selectedKbId={null}
+        loading={false}
+        expandState={{ personal: true }}
+        onToggleExpand={jest.fn()}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId(`knowledge-tree-kb-${documentKb.id}`)).toBeInTheDocument()
+    )
+    expect(screen.queryByTestId('knowledge-category-code-filter')).not.toBeInTheDocument()
   })
 })

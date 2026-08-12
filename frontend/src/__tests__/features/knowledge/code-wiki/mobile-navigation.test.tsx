@@ -175,6 +175,12 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(onConfigure).toHaveBeenCalledTimes(1)
   })
 
+  it('does not show the configuration control without manage permission', async () => {
+    await renderReader()
+
+    expect(screen.queryByTestId('code-wiki-configure')).not.toBeInTheDocument()
+  })
+
   it('returns to the unified knowledge-base list', async () => {
     await renderReader()
 
