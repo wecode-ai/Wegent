@@ -125,6 +125,22 @@ describe('KnowledgeTree permissions', () => {
 })
 
 describe('KnowledgeTree category filter', () => {
+  it('uses the generic empty state for the default all category', () => {
+    render(
+      <KnowledgeTree
+        nodes={[]}
+        selectedKbId={null}
+        loading={false}
+        expandState={{}}
+        onToggleExpand={jest.fn()}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+      />
+    )
+
+    expect(screen.getByText('暂无知识库')).toBeInTheDocument()
+  })
+
   it('filters the mobile tree by document or code category', async () => {
     const user = userEvent.setup()
     const documentKb = createKnowledgeBase()

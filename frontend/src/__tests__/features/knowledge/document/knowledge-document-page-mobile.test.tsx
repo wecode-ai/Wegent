@@ -378,6 +378,7 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
       expect(screen.getByTestId('mock-code-wiki-reader')).toHaveTextContent('Wegent')
     })
     expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-detail-back-button')).not.toBeInTheDocument()
     expect(onKnowledgeViewStateChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ visible: false })
     )

@@ -137,7 +137,9 @@ export function KnowledgeTree({
     ? t('document.tree.noResults')
     : category === 'code'
       ? t('document.knowledgeBase.categoryFilter.emptyCode')
-      : t('document.knowledgeBase.categoryFilter.emptyDocument')
+      : category === 'document'
+        ? t('document.knowledgeBase.categoryFilter.emptyDocument')
+        : t('document.knowledgeBase.empty', '暂无知识库')
 
   if (loading) {
     return (

@@ -961,6 +961,21 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.generation.user_id == test_user.id
 
 
+def test_an_inactive_wiki_owner_refuses_a_run_before_creating_a_task(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    test_user.is_active = False
+    test_db.flush()
+
+    with pytest.raises(CodeWikiRunError, match="no active owner"):
+        start_run(
+            test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+        )
+
+    assert tasks.created == []
+    assert test_db.query(WikiGeneration).count() == 0
+
+
 # --- going back to an earlier version ----------------------------------------
 
 

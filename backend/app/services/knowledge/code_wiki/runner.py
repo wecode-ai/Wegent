@@ -361,6 +361,10 @@ def _resolve_execution_context(
         raise CodeWikiRunError(
             f"Code wiki {knowledge_base.id} has no owner to execute its generation"
         )
+    if not task_user.is_active:
+        raise CodeWikiRunError(
+            f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
+        )
     team_name = wiki_settings.CODE_WIKI_TEAM_NAME
     if not team_name:
         raise CodeWikiRunError(
