@@ -268,6 +268,8 @@ append_matrix_entry() {
     "$id" "$name" "$command" "$segment"
   if [[ "$command" == "e2e:desktop" ]]; then
     core_matrix_entries+=("$entry")
+  elif [[ "$command" == "e2e:desktop:cloud" ]]; then
+    cloud_segment_entries+=("$segment")
   else
     other_matrix_entries+=("$entry")
   fi
@@ -275,6 +277,8 @@ append_matrix_entry() {
 
 build_matrix() {
   core_matrix_entries=()
+  cloud_segment_entries=()
+  cloud_matrix_entries=()
   other_matrix_entries=()
 
   local segment
@@ -305,13 +309,29 @@ build_matrix() {
 
   if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
     for segment in "${cloud_segments[@]}"; do
-      append_matrix_entry \
-        "cloud-$segment" \
-        "Cloud / $segment" \
-        e2e:desktop:cloud \
-        "$segment"
+      cloud_segment_entries+=("$segment")
     done
   fi
+
+  local shard
+  for shard in 0 1 2 3 4; do
+    local shard_segments=()
+    local index
+    for index in "${!cloud_segment_entries[@]}"; do
+      if ((index % 5 == shard)); then
+        shard_segments+=("${cloud_segment_entries[$index]}")
+      fi
+    done
+    if ((${#shard_segments[@]} > 0)); then
+      local segments_csv
+      local entry
+      segments_csv="$(IFS=,; printf '%s' "${shard_segments[*]}")"
+      printf -v entry \
+        '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
+        "$((shard + 1))" "$((shard + 1))" "$segments_csv"
+      cloud_matrix_entries+=("$entry")
+    fi
+  done
 }
 
 if [[ "${1:-}" == "--all" ]]; then
@@ -335,8 +355,10 @@ build_matrix
 core_matrix_json='{"include":[]}'
 other_matrix_json='{"include":[]}'
 run_core=false
+run_cloud=false
 run_other=false
 run_desktop=false
+cloud_matrix_json='{"include":[]}'
 
 if ((${#core_matrix_entries[@]} > 0)); then
   joined_core_entries="$(IFS=,; printf '%s' "${core_matrix_entries[*]}")"
@@ -350,12 +372,20 @@ if ((${#other_matrix_entries[@]} > 0)); then
   run_other=true
   run_desktop=true
 fi
+if ((${#cloud_matrix_entries[@]} > 0)); then
+  joined_cloud_entries="$(IFS=,; printf '%s' "${cloud_matrix_entries[*]}")"
+  cloud_matrix_json="{\"include\":[$joined_cloud_entries]}"
+  run_cloud=true
+  run_desktop=true
+fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
 {
   printf 'wework_desktop_e2e=%s\n' "$run_desktop"
   printf 'wework_desktop_core_e2e=%s\n' "$run_core"
   printf 'wework_desktop_core_e2e_matrix=%s\n' "$core_matrix_json"
+  printf 'wework_desktop_cloud_e2e=%s\n' "$run_cloud"
+  printf 'wework_desktop_cloud_e2e_matrix=%s\n' "$cloud_matrix_json"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
 } >> "$output_file"
