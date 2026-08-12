@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { ChevronDown, Code2, Folder, Monitor, SquareTerminal } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import {
@@ -8,7 +9,15 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react'
-import { LOCAL_WORKSPACE_OPENERS, type LocalWorkspaceOpenerId } from '@/lib/local-workspace-openers'
+import {
+  visibleOpenersForPlatform,
+  type LocalWorkspaceOpenerDef,
+  type LocalWorkspaceOpenerId,
+  type OpenerCategory,
+} from '@/lib/local-workspace-openers'
+import { fileManagerAppLabel, terminalAppLabel } from '@/lib/file-manager'
+import { getPlatform } from '@/lib/platform'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 const MENU_GAP = 8
@@ -20,6 +29,26 @@ interface MenuPosition {
   top: number
 }
 
+interface OpenerGroup {
+  labelKey: string
+  categories: OpenerCategory[]
+}
+
+const OPENER_GROUPS: OpenerGroup[] = [
+  {
+    labelKey: 'workbench.opener_group_general',
+    categories: ['general'],
+  },
+  {
+    labelKey: 'workbench.opener_group_system',
+    categories: ['fileManager', 'terminal'],
+  },
+  {
+    labelKey: 'workbench.opener_group_platform',
+    categories: ['macOnly', 'winOnly'],
+  },
+]
+
 interface LocalWorkspaceOpenerPickerProps {
   ariaLabel: string
   buttonTestId?: string
@@ -29,6 +58,8 @@ interface LocalWorkspaceOpenerPickerProps {
   buttonClassName: string
   preferredPlacement?: 'above' | 'below'
   align?: 'start' | 'end'
+  availability: Record<LocalWorkspaceOpenerId, boolean | undefined>
+  onLocate?: (opener: LocalWorkspaceOpenerId) => void | Promise<void>
   onSelect: (opener: LocalWorkspaceOpenerId) => void | Promise<void>
 }
 
@@ -41,8 +72,11 @@ export function LocalWorkspaceOpenerPicker({
   buttonClassName,
   preferredPlacement = 'below',
   align = 'end',
+  availability,
+  onLocate,
   onSelect,
 }: LocalWorkspaceOpenerPickerProps) {
+  const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -130,6 +164,18 @@ export function LocalWorkspaceOpenerPicker({
     await onSelect(opener)
   }
 
+  const platform = getPlatform()
+  const openers = visibleOpenersForPlatform(platform)
+  const groups = OPENER_GROUPS.map(group => ({
+    ...group,
+    items: openers.filter(opener => group.categories.includes(opener.category)),
+  })).filter(group => group.items.length > 0)
+
+  const locateOpener = async (opener: LocalWorkspaceOpenerId) => {
+    if (!onLocate) return
+    await onLocate(opener)
+  }
+
   return (
     <>
       <button
@@ -158,24 +204,65 @@ export function LocalWorkspaceOpenerPicker({
             }}
             className="fixed z-system-popover max-h-[520px] w-[280px] overflow-y-auto rounded-2xl border border-border bg-popover p-2 text-text-primary shadow-[0_18px_54px_rgba(0,0,0,0.16)] ring-1 ring-black/5"
           >
-            {LOCAL_WORKSPACE_OPENERS.map(opener => (
-              <button
-                key={opener.id}
-                type="button"
-                role="menuitem"
-                data-testid={optionTestIdPrefix ? `${optionTestIdPrefix}-${opener.id}` : undefined}
-                onClick={() => void selectOpener(opener.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-primary transition-colors hover:bg-muted"
-              >
-                <LocalWorkspaceOpenerIcon opener={opener.id} className="h-5 w-5 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{opener.label}</span>
-              </button>
+            {groups.map(group => (
+              <div key={group.labelKey} className="py-1">
+                <div className="px-2.5 pb-1 pt-0.5 text-xs font-medium text-text-secondary">
+                  {t(group.labelKey)}
+                </div>
+                {group.items.map(opener => {
+                  const openerId = opener.id as LocalWorkspaceOpenerId
+                  const available = availability[openerId] === true
+                  const showLocate = onLocate != null && platform === 'win' && !available
+                  return (
+                    <div key={openerId} className="flex items-center">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-testid={
+                          optionTestIdPrefix ? `${optionTestIdPrefix}-${openerId}` : undefined
+                        }
+                        onClick={() => void selectOpener(openerId)}
+                        disabled={!available}
+                        className={cn(
+                          'flex h-10 min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
+                          showLocate && 'rounded-r-none'
+                        )}
+                      >
+                        <LocalWorkspaceOpenerIcon opener={openerId} className="h-5 w-5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {openerDisplayLabel(opener, t)}
+                        </span>
+                      </button>
+                      {showLocate && (
+                        <button
+                          type="button"
+                          data-testid={
+                            optionTestIdPrefix
+                              ? `${optionTestIdPrefix}-${openerId}-locate`
+                              : undefined
+                          }
+                          onClick={() => void locateOpener(openerId)}
+                          className="ml-1 h-8 shrink-0 rounded-md px-2 text-xs font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+                        >
+                          {t('workbench.opener_locate')}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             ))}
           </div>,
           document.body
         )}
     </>
   )
+}
+
+function openerDisplayLabel(opener: LocalWorkspaceOpenerDef, t: TFunction): string {
+  if (opener.id === 'file-manager') return fileManagerAppLabel(t)
+  if (opener.id === 'terminal') return terminalAppLabel(t)
+  return opener.label
 }
 
 export function LocalWorkspaceOpenerIcon({
@@ -223,9 +310,11 @@ function openerIconBackground(opener: LocalWorkspaceOpenerId): string {
       return 'bg-[#5b5f64] text-[#ffb64a]'
     case 'windsurf':
       return 'bg-[#f7f7f4] text-[#4d4d4d]'
-    case 'finder':
+    case 'file-manager':
       return 'bg-[#5aa9ff] text-white'
     case 'terminal':
+    case 'cmd':
+    case 'powershell':
       return 'bg-[#525252] text-white'
     case 'iterm2':
       return 'bg-[#3a3541] text-[#67e887]'
@@ -246,9 +335,11 @@ function openerIconBackground(opener: LocalWorkspaceOpenerId): string {
 
 function openerIconContent(opener: LocalWorkspaceOpenerId): ReactNode {
   switch (opener) {
-    case 'finder':
+    case 'file-manager':
       return <Folder className="h-3.5 w-3.5" />
     case 'terminal':
+    case 'cmd':
+    case 'powershell':
     case 'iterm2':
     case 'ghostty':
     case 'warp':

@@ -521,29 +521,32 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
-        .arg(reference)
-        .output()
-        .map_err(|error| error.to_string())?;
+        .arg(reference);
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("--git-dir")
         .arg(git_common_dir)
-        .args(["update-ref", "-d", reference])
-        .output()
-        .map_err(|error| error.to_string())?;
+        .args(["update-ref", "-d", reference]);
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = Command::new("git");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1214,6 +1217,7 @@ mod tests {
 
     fn run_git(path: &Path, args: &[&str]) {
         let mut command = Command::new("git");
+        crate::process::hide_windows_console(&mut command);
         command
             .arg("-c")
             .arg("core.bare=false")

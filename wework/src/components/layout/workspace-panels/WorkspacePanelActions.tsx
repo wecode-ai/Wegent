@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
@@ -10,9 +10,16 @@ import {
 } from '@/lib/device-capabilities'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
+  LOCAL_WORKSPACE_OPENERS,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
-import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  isLocalTerminalAvailable,
+  listLocalWorkspaceOpeners,
+  openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
+  type LocalWorkspaceOpenerAvailability,
+} from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
@@ -106,6 +113,10 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
+  const [openerAvailability, setOpenerAvailability] = useState<Record<
+    LocalWorkspaceOpenerId,
+    boolean | undefined
+  > | null>(null)
   const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
   const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
   const showBottomPanelToggle =
@@ -146,9 +157,48 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     (projectUsesLocalWorkspace ||
       (codeServerDevice && supportsLocalTerminalLaunch(codeServerDevice)))
   )
+
+  const buildAvailabilityMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
+    Object.fromEntries(availability.map(item => [item.id, item.available])) as Record<
+      LocalWorkspaceOpenerId,
+      boolean | undefined
+    >
+
+  useEffect(() => {
+    if (!localWorkspaceEnabled) return
+    let cancelled = false
+    void (async () => {
+      const availability = await listLocalWorkspaceOpeners()
+      if (!cancelled) setOpenerAvailability(buildAvailabilityMap(availability))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [localWorkspaceEnabled])
+
+  const availableOpenerIds = openerAvailability
+    ? (Object.keys(openerAvailability) as LocalWorkspaceOpenerId[]).filter(
+        id => openerAvailability[id] === true
+      )
+    : []
+  const defaultOpener = openerAvailability
+    ? (availableOpenerIds[0] ?? null)
+    : DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+  const defaultOpenerLabel =
+    LOCAL_WORKSPACE_OPENERS.find(opener => opener.id === (defaultOpener ?? 'vscode'))?.label ??
+    'VS Code'
+
+  const handleLocateOpener = async (opener: LocalWorkspaceOpenerId) => {
+    const picked = await pickLocalWorkspaceOpenerExe(opener)
+    if (picked) {
+      const availability = await listLocalWorkspaceOpeners()
+      setOpenerAvailability(buildAvailabilityMap(availability))
+    }
+  }
+
   const ideTitle = localWorkspaceEnabled
     ? t('workbench.open_project_ide_with', {
-        opener: 'VS Code',
+        opener: defaultOpenerLabel,
       })
     : codeServerEnabled
       ? t('workbench.open_project_ide')
@@ -201,19 +251,19 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenLocalWorkspace = async (
-    opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+    opener: LocalWorkspaceOpenerId = defaultOpener ?? DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   ) => {
     if (!localWorkspacePath || ideLoading || !localWorkspaceEnabled) return
     setIdeLoading(true)
-    setIdeError(null)
     try {
       await openLocalWorkspace({
         opener,
         path: localWorkspacePath,
       })
     } catch (error) {
+      // Unavailable openers are grayed out before launch, so this only logs
+      // unexpected launch failures instead of showing a modal.
       console.error('Failed to open local workspace:', error)
-      setIdeError(getStartFailedMessage(error))
     } finally {
       setIdeLoading(false)
     }
@@ -258,20 +308,20 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             type="button"
             data-testid="open-code-server-titlebar-button"
             onClick={() => void handleOpenLocalWorkspace()}
-            disabled={ideLoading}
+            disabled={ideLoading || (openerAvailability !== null && defaultOpener === null)}
             className={cn(
               'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {
-              opener: 'VS Code',
+              opener: defaultOpenerLabel,
             })}
             title={ideTitle}
           >
             {ideLoading ? (
               <Loader2 className="animate-spin" />
             ) : (
-              <LocalWorkspaceOpenerIcon opener="vscode" className="h-4 w-4" />
+              <LocalWorkspaceOpenerIcon opener={defaultOpener ?? 'vscode'} className="h-4 w-4" />
             )}
             <span className="whitespace-nowrap">{t('workbench.open_workspace_location')}</span>
           </button>
@@ -285,6 +335,10 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b7280] transition-colors hover:bg-black/[0.06] hover:text-[#374151] active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
               ideLoading && 'cursor-wait opacity-70'
             )}
+            availability={
+              (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
+            }
+            onLocate={handleLocateOpener}
             onSelect={handleOpenLocalWorkspace}
           />
         </div>

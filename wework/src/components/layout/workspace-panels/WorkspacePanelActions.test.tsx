@@ -4,12 +4,19 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
-import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  isLocalTerminalAvailable,
+  listLocalWorkspaceOpeners,
+  openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
+} from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
 
 vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
+  listLocalWorkspaceOpeners: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  pickLocalWorkspaceOpenerExe: vi.fn(),
 }))
 
 vi.mock('@/lib/external-links', () => ({
@@ -18,7 +25,25 @@ vi.mock('@/lib/external-links', () => ({
 
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const listLocalWorkspaceOpenersMock = vi.mocked(listLocalWorkspaceOpeners)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
+const pickLocalWorkspaceOpenerExeMock = vi.mocked(pickLocalWorkspaceOpenerExe)
+
+const defaultOpenersAvailability = [
+  { id: 'vscode', category: 'general', available: true },
+  { id: 'vscode-insiders', category: 'general', available: true },
+  { id: 'cursor', category: 'general', available: true },
+  { id: 'sublime-text', category: 'general', available: true },
+  { id: 'windsurf', category: 'general', available: true },
+  { id: 'intellij-idea', category: 'general', available: true },
+  { id: 'android-studio', category: 'general', available: true },
+  { id: 'file-manager', category: 'fileManager', available: true },
+  { id: 'terminal', category: 'terminal', available: true },
+  { id: 'xcode', category: 'macOnly', available: true },
+  { id: 'iterm2', category: 'macOnly', available: true },
+  { id: 'ghostty', category: 'macOnly', available: true },
+  { id: 'warp', category: 'macOnly', available: true },
+] as const
 const startProjectCodeServerMock = vi.fn()
 const startDeviceCodeServerMock = vi.fn()
 const workspaceSessionApi: WorkspaceSessionApi = {
@@ -70,6 +95,8 @@ describe('WorkspacePanelActions', () => {
     setWindowWidth(originalInnerWidth)
     isLocalTerminalAvailableMock.mockReturnValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    listLocalWorkspaceOpenersMock.mockResolvedValue([...defaultOpenersAvailability])
+    pickLocalWorkspaceOpenerExeMock.mockResolvedValue(null)
     startProjectCodeServerMock.mockResolvedValue({
       session_id: 'ide-1',
       project_id: 7,

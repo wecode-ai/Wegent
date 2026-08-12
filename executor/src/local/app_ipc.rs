@@ -1457,14 +1457,15 @@ fn git_is_worktree(path: &str) -> bool {
 
 #[cfg(windows)]
 fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .arg("-C")
         .arg(path)
         .args(args)
         .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
+        .envs(build_env(&HashMap::new()));
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

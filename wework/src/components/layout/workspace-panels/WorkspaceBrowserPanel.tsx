@@ -51,6 +51,7 @@ import {
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
+import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import {
@@ -1954,7 +1955,7 @@ export function WorkspaceBrowserPanel({
                         className="shrink-0 rounded-md px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
                         onClick={() => void revealLocalFile(download.path ?? undefined)}
                       >
-                        {t('workbench.browser_download_reveal')}
+                        {fileManagerRevealLabel(t)}
                       </button>
                     ) : null}
                     {downloading ? (

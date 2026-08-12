@@ -9,8 +9,13 @@ mod embedded_browser_tls;
 mod feedback;
 mod local_executor;
 mod local_terminal;
+mod local_workspace_openers;
+#[cfg(target_os = "windows")]
+mod opener_store;
+mod platform_fs;
 #[cfg(desktop)]
 mod popout_window;
+mod process;
 mod process_environment;
 #[cfg(desktop)]
 mod storage_maintenance;
@@ -491,34 +496,7 @@ fn open_app_log_directory(app: tauri::AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&log_directory)
         .map_err(|error| format!("Failed to create app log directory: {error}"))?;
 
-    #[cfg(target_os = "macos")]
-    let output = std::process::Command::new("open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("explorer")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run Windows explorer command: {error}"))?;
-
-    #[cfg(target_os = "linux")]
-    let output = std::process::Command::new("xdg-open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run xdg-open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open app log directory".to_string())
-    } else {
-        Err(stderr)
-    }
+    platform_fs::open_directory(&log_directory.to_string_lossy())
 }
 
 #[cfg(not(desktop))]
@@ -1855,10 +1833,10 @@ fn process_config_arg(tokens: &[&str]) -> Option<std::path::PathBuf> {
 }
 
 fn read_executor_process_device_id(expected_backend_url: Option<&str>) -> Option<String> {
-    let output = std::process::Command::new("ps")
-        .args(["eww", "-axo", "pid=,command="])
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new("ps");
+    command.args(["eww", "-axo", "pid=,command="]);
+    process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1956,27 +1934,8 @@ fn get_local_path_kind(path: String) -> Option<&'static str> {
     }
 }
 
-fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
-    match opener {
-        "vscode" => Some("Visual Studio Code"),
-        "vscode-insiders" => Some("Visual Studio Code - Insiders"),
-        "cursor" => Some("Cursor"),
-        "sublime-text" => Some("Sublime Text"),
-        "windsurf" => Some("Windsurf"),
-        "finder" => Some("Finder"),
-        "terminal" => Some("Terminal"),
-        "iterm2" => Some("iTerm"),
-        "ghostty" => Some("Ghostty"),
-        "warp" => Some("Warp"),
-        "xcode" => Some("Xcode"),
-        "android-studio" => Some("Android Studio"),
-        "intellij-idea" => Some("IntelliJ IDEA"),
-        _ => None,
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
     let output = std::process::Command::new("open")
         .args(["-a", app_name, path])
         .output()
@@ -1995,47 +1954,25 @@ fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), Strin
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
     Err("Opening a local workspace is only supported on macOS".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn open_local_file_with_default_app(path: &str) -> Result<(), String> {
-    let output = std::process::Command::new("open")
-        .arg(path)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open local file".to_string())
-    } else {
-        Err(stderr)
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn open_local_file_with_default_app(_path: &str) -> Result<(), String> {
-    Err("Opening a local file is only supported on macOS".to_string())
-}
-
 #[tauri::command]
-fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
+fn open_local_workspace(
+    app: tauri::AppHandle,
+    opener: String,
+    path: String,
+) -> Result<(), String> {
     let opener =
         normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
     let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
-    let app_name = local_workspace_opener_app_name(&opener)
-        .ok_or_else(|| format!("Unsupported workspace opener: {opener}"))?;
 
     if !std::path::Path::new(&path).exists() {
         return Err("Workspace path does not exist".to_string());
     }
 
-    open_local_workspace_with_app(app_name, &path)
+    local_workspace_openers::launch_opener(&app, &opener, &path)
 }
 
 #[tauri::command]
@@ -2046,7 +1983,7 @@ fn open_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    open_local_file_with_default_app(&path)
+    platform_fs::open_with_default_app(&path)
 }
 
 #[tauri::command]
@@ -2056,20 +1993,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let status = std::process::Command::new("open")
-            .args(["-R", &path])
-            .status()
-            .map_err(|error| format!("Failed to reveal local file: {error}"))?;
-        if !status.success() {
-            return Err("Failed to reveal local file".to_string());
-        }
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    Err("Revealing local files is only supported on macOS".to_string())
+    platform_fs::reveal_file_in_manager(&path)
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -4645,6 +4569,8 @@ pub fn run() {
             open_local_file_with_application,
             get_local_file_opener_icon,
             open_local_workspace,
+            local_workspace_openers::list_local_workspace_openers,
+            local_workspace_openers::pick_local_workspace_opener_exe,
             read_dropped_files,
             save_local_attachment_file,
             todo_store::ensure_todo_work_directory,

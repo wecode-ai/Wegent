@@ -194,6 +194,7 @@ async fn clone_repo(
 
     let clone_url = authenticated_clone_url(git_url, credentials.as_ref());
     let mut command = Command::new("git");
+    crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
     if let Some(branch) = branch.as_deref() {
@@ -310,7 +311,9 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
         return;
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
-        let _ = Command::new("git")
+        let mut command = Command::new("git");
+        crate::process::hide_windows_console(&mut command);
+        let _ = command
             .arg("-C")
             .arg(project_path)
             .arg("config")

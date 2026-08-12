@@ -1610,17 +1610,17 @@ fn decode_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
 }
 
-pub fn hide_windows_console(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = command;
-    }
+#[cfg(windows)]
+pub fn hide_windows_console<C>(command: &mut C)
+where
+    C: std::os::windows::process::CommandExt,
+{
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
 }
+
+#[cfg(not(windows))]
+pub fn hide_windows_console<C>(_command: &mut C) {}
 
 #[cfg(test)]
 mod tests {

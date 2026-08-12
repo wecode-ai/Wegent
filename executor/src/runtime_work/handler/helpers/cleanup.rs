@@ -292,9 +292,10 @@ fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
 
 fn remove_git_worktree_best_effort(path: &Path) {
     let path = path.to_string_lossy().to_string();
-    let _ = std::process::Command::new("git")
-        .args(["-C", &path, "worktree", "remove", "--force", &path])
-        .output();
+    let mut command = std::process::Command::new("git");
+    command.args(["-C", &path, "worktree", "remove", "--force", &path]);
+    crate::process::hide_windows_console(&mut command);
+    let _ = command.output();
 }
 
 fn path_size(path: &Path) -> Option<u64> {

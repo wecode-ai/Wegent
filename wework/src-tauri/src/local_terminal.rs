@@ -301,13 +301,10 @@ fn resolve_windows_shell() -> String {
 
 #[cfg(target_os = "windows")]
 fn which_shell(name: &str) -> bool {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    std::process::Command::new("where")
-        .arg(name)
-        .creation_flags(CREATE_NO_WINDOW)
+    let mut command = std::process::Command::new("where");
+    command.arg(name);
+    crate::process::hide_windows_console(&mut command);
+    command
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
