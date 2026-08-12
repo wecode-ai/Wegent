@@ -396,9 +396,11 @@ fn stale_execution_cannot_finish_its_replacement() {
 }
 
 #[test]
-fn provider_turn_keeps_task_active_when_execution_control_settles_first() {
+fn provider_turn_registers_when_execution_control_settles_first() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let execution_id = start_test_execution(&handler, "task-1");
+
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
     handler.record_active_codex_turn(
         "task-1",
         execution_id,
@@ -406,11 +408,39 @@ fn provider_turn_keeps_task_active_when_execution_control_settles_first() {
         "turn-1".to_owned(),
     );
 
-    assert!(handler.finish_local_task_execution("task-1", execution_id));
     assert!(handler.is_active_local_task("task-1"));
 
     handler.clear_active_codex_turn("task-1", execution_id);
     assert!(!handler.is_active_local_task("task-1"));
+}
+
+#[test]
+fn stale_provider_turn_cannot_replace_the_current_execution() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let stale_execution_id = start_test_execution(&handler, "task-1");
+    assert!(handler.finish_local_task_execution("task-1", stale_execution_id));
+    let current_execution_id = start_test_execution(&handler, "task-1");
+
+    handler.record_active_codex_turn(
+        "task-1",
+        stale_execution_id,
+        "stale-thread".to_owned(),
+        "stale-turn".to_owned(),
+    );
+    assert!(handler.active_codex_turn("task-1").is_none());
+
+    handler.record_active_codex_turn(
+        "task-1",
+        current_execution_id,
+        "current-thread".to_owned(),
+        "current-turn".to_owned(),
+    );
+    let current_turn = handler
+        .active_codex_turn("task-1")
+        .expect("current execution should register its provider turn");
+    assert_eq!(current_turn.execution_id, current_execution_id);
+    assert_eq!(current_turn.thread_id, "current-thread");
+    assert_eq!(current_turn.turn_id, "current-turn");
 }
 
 #[test]
