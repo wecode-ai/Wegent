@@ -1872,10 +1872,7 @@ mod tests {
     #[test]
     fn runtime_project_ui_id_matches_the_wework_project_id() {
         assert_eq!(
-            runtime_project_ui_id(
-                "local-device",
-                "local-709d7906a4d8eb2000f25236e148ca82",
-            ),
+            runtime_project_ui_id("local-device", "local-709d7906a4d8eb2000f25236e148ca82",),
             573_677_101
         );
     }

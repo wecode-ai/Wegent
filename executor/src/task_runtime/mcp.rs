@@ -44,7 +44,10 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
                 bound_project_id.as_deref().unwrap_or("").to_owned(),
             ),
             ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
-            ("shell_type", request.resolved_shell_type().unwrap_or_default()),
+            (
+                "shell_type",
+                request.resolved_shell_type().unwrap_or_default(),
+            ),
         ],
     );
     if bound_project_id.is_none() && !prompt_has_cloud_ref {
@@ -1006,6 +1009,7 @@ fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
                         .get("creator_user_id")
                         .and_then(Value::as_i64)
                         .map_or(true, |id| task["created_by_user_id"] == id)
+                    && matches_filter(task, arguments, "parent_id")
             })
             .take(limit)
             .collect(),

@@ -267,11 +267,7 @@ impl AgentEngine for AgentProcessEngine {
         // Project-space MCP servers belong to Codex runs only; coding agents
         // such as Claude Code must not receive them.
         let agent_kind = request.resolved_agent_kind();
-        let bot_count = request
-            .bot
-            .as_array()
-            .map(|bots| bots.len())
-            .unwrap_or(0);
+        let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
             "agent dispatch kind",
             &[
@@ -382,11 +378,7 @@ impl AgentEngine for AgentProcessEngine {
         // Project-space MCP servers belong to Codex runs only; coding agents
         // such as Claude Code must not receive them.
         let agent_kind = request.resolved_agent_kind();
-        let bot_count = request
-            .bot
-            .as_array()
-            .map(|bots| bots.len())
-            .unwrap_or(0);
+        let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
             "agent dispatch kind",
             &[
