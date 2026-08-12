@@ -99,6 +99,15 @@ import {
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
+async function waitForControlText(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if ((await control.command('getText', selector)).trim() === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function writeCodexConfig(
   codexHome,
   modelServerUrl,
@@ -829,10 +838,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Creating another cloud project restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${replacementProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${replacementProjectId}"]`,
     'replacement-workspace',
     'Creating another cloud project restored the removed project instead of the replacement'
   )
@@ -868,10 +876,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Restarting Wework restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${restartedProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${restartedProjectId}"]`,
     'replacement-workspace',
     'Restarting Wework restored the removed project instead of the replacement'
   )
