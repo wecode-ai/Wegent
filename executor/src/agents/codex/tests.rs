@@ -2321,6 +2321,24 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
             "strictAutoReview": false
         })
     );
+    for answer in ["cancel", "unknown"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({
+                "permissions": {},
+                "scope": "turn",
+                "strictAutoReview": false
+            })
+        );
+    }
 }
 
 #[test]

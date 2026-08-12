@@ -2105,7 +2105,10 @@ fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, Str
             "decision": codex_command_approval_decision(message, answer)
         })),
         "item/permissions/requestApproval" => {
-            if answer == "decline" {
+            if !matches!(
+                answer,
+                "allow_once" | "allow_turn_strict_review" | "allow_session"
+            ) {
                 return Ok(json!({
                     "permissions": {},
                     "scope": "turn",
