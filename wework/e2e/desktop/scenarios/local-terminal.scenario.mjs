@@ -921,9 +921,7 @@ export async function createDesktopScenario({
         text: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
       })
-      const multiSessionSnapshot = JSON.parse(
-        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-      )
+      const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         multiSessionSnapshot.testIds.filter(testId =>
           testId.startsWith('local-harness-session-row-local-harness-')
