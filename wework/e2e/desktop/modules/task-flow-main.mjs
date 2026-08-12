@@ -583,6 +583,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
         cloudEnvironment?.authToken ??
