@@ -30,6 +30,16 @@ class RuntimeTaskAddress(BaseModel):
     )
 
 
+class RuntimeModelSelection(BaseModel):
+    """Model selection persisted with a device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_name: str = Field(..., alias="modelName", min_length=1)
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
     """Request a page of a device-local runtime transcript."""
 
@@ -427,6 +437,10 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     source: Optional[RuntimeMessageSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
@@ -571,6 +585,10 @@ class BindRuntimeTaskIMSessionsRequest(BaseModel):
 
     address: RuntimeTaskAddress
     session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
 
 
 class BindRuntimeTaskIMSessionsResponse(BaseModel):
@@ -735,6 +753,10 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_options: dict[str, Any] = Field(
         default_factory=dict,
         alias="modelOptions",
+    )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
     )
     additional_skills: list[Any] = Field(
         default_factory=list,

@@ -54,6 +54,7 @@ from app.schemas.runtime_work import (
     RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
+    RuntimeModelSelection,
     RuntimeProjectRef,
     RuntimeProjectWork,
     RuntimeSendRequest,
@@ -113,6 +114,20 @@ RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
 DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
+CLOUD_MODEL_TYPES = {"public", "user", "group"}
+CLOUD_MODEL_NAMESPACE_OPTION = "weworkCloudModelNamespace"
+CLOUD_MODEL_RESOURCE_USER_ID_OPTION = "weworkCloudModelResourceUserId"
+CLOUD_MODEL_CONTEXT_WINDOW_OPTION = "weworkCloudModelContextWindow"
+CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = "weworkCloudModelMaxOutputTokens"
+CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = "weworkCloudModelUpstreamApiFormat"
+CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION = "weworkCloudModelCodexCatalogModelId"
+CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = "weworkCloudModelNativeToolSearch"
+CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = "weworkCloudModelNativeNamespaceTools"
+RUNTIME_PERMISSION_MODE_OPTIONS = {
+    "read-only": ":read-only",
+    "workspace-write": ":workspace",
+    "full-access": ":danger-full-access",
+}
 WORKTREE_ROOT_DIR = "worktrees"
 CHAT_WORKSPACE_DIR = "chats"
 EXECUTOR_WORKSPACE_DIR = "workspace"
@@ -634,7 +649,8 @@ async def _dispatch_runtime_send(
     The executor requires ``executionRequest`` to spawn a new turn (it carries
     model config, user info, skills, etc.). The Wework frontend builds this
     client-side for direct local sends; the IM continuation path flows through
-    the backend RPC, so we build it here from the default task-mode team.
+    the backend RPC, so we rebuild it from the default task-mode team while
+    preserving the model selected for the bound runtime task.
     Request-user-input responses use a dedicated executor channel and do not
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
@@ -646,6 +662,7 @@ async def _dispatch_runtime_send(
                 address=address,
                 message=request.message,
                 attachment_ids=request.attachment_ids,
+                model_selection=request.model_selection,
                 additional_context=request.additional_context,
             )
         except HTTPException:
@@ -659,6 +676,10 @@ async def _dispatch_runtime_send(
                 detail="Failed to build runtime execution request",
             ) from exc
         payload["executionRequest"] = execution_request.to_dict()
+    if request.model_selection:
+        payload["modelSelection"] = request.model_selection.model_dump(
+            by_alias=True,
+        )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -730,6 +751,10 @@ async def bind_runtime_task_to_im_sessions(
         session_keys=request.session_keys,
     )
     runtime_task = _runtime_task_address_payload(address)
+    if request.model_selection:
+        runtime_task["modelSelection"] = request.model_selection.model_dump(
+            by_alias=True,
+        )
     for session in sessions:
         await im_session_service.bind_active_runtime_task(
             db,
@@ -1175,6 +1200,10 @@ async def create_runtime_task(
         "title": _runtime_task_title(request),
         "executionRequest": execution_request.to_dict(),
     }
+    if request.model_selection:
+        payload["modelSelection"] = request.model_selection.model_dump(
+            by_alias=True,
+        )
     if request.local_task_id:
         payload["taskId"] = request.local_task_id
     try:
@@ -3777,7 +3806,118 @@ def _runtime_model_override(
             user_id=user_id,
         )
         return config, None, False
+    if request.runtime == "codex" and request.model_type in CLOUD_MODEL_TYPES:
+        from app.services.chat.trigger.unified import (
+            _build_cloud_gateway_model_config,
+        )
+
+        namespace, resource_user_id = _runtime_cloud_model_identity(
+            request.model_options
+        )
+        config = _build_cloud_gateway_model_config(
+            db,
+            model_name=request.model_id,
+            creator=_get_user(db, user_id),
+            upstream_api_format=_string_model_option(
+                request.model_options,
+                CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+            )
+            or "openai-responses",
+            model_type=request.model_type,
+            namespace=namespace,
+            resource_user_id=resource_user_id,
+        )
+        if config is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Cloud model gateway is not configured",
+            )
+        _apply_runtime_cloud_model_options(config, request.model_options)
+        return config, None, False
     return None, request.model_id, True
+
+
+def _runtime_cloud_model_identity(
+    model_options: dict[str, Any],
+) -> tuple[str, int]:
+    namespace = _string_model_option(
+        model_options,
+        CLOUD_MODEL_NAMESPACE_OPTION,
+    )
+    raw_resource_user_id = model_options.get(CLOUD_MODEL_RESOURCE_USER_ID_OPTION)
+    try:
+        resource_user_id = int(raw_resource_user_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cloud model identity is incomplete",
+        ) from exc
+    if not namespace or resource_user_id < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cloud model identity is incomplete",
+        )
+    return namespace, resource_user_id
+
+
+def _string_model_option(model_options: dict[str, Any], key: str) -> Optional[str]:
+    value = model_options.get(key)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _positive_int_model_option(
+    model_options: dict[str, Any],
+    key: str,
+) -> Optional[int]:
+    value = model_options.get(key)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _true_model_option(model_options: dict[str, Any], key: str) -> bool:
+    value = model_options.get(key)
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def _apply_runtime_cloud_model_options(
+    config: dict[str, Any],
+    model_options: dict[str, Any],
+) -> None:
+    config["wework_model_kind"] = "cloud"
+    config["tool_profile"] = "custom"
+    config["codex_responses_compat_proxy"] = True
+    config["native_tool_search"] = _true_model_option(
+        model_options,
+        CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+    )
+    config["native_namespace_tools"] = _true_model_option(
+        model_options,
+        CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+    )
+    context_window = _positive_int_model_option(
+        model_options,
+        CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+    )
+    if context_window is not None:
+        config["model_context_window"] = context_window
+    max_output_tokens = _positive_int_model_option(
+        model_options,
+        CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
+    )
+    if max_output_tokens is not None:
+        config["max_output_tokens"] = max_output_tokens
+    catalog_model_id = _string_model_option(
+        model_options,
+        CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
+    )
+    if catalog_model_id:
+        config["codex_catalog_model_id"] = catalog_model_id
 
 
 def _apply_runtime_task_target(
@@ -3822,6 +3962,17 @@ def _apply_runtime_model_options(
     service_tier = _service_tier_from_model_options(payload)
     if service_tier:
         execution_request.model_config["service_tier"] = service_tier
+    permission_mode = payload.model_options.get("permissionMode")
+    if permission_mode is None:
+        permission_mode = payload.model_options.get("permission_mode")
+    if permission_mode is not None:
+        permission_profile = RUNTIME_PERMISSION_MODE_OPTIONS.get(permission_mode)
+        if permission_profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid runtime permission mode",
+            )
+        execution_request.runtime_permission_profile = permission_profile
     _apply_user_runtime_config(db, execution_request, user)
     execution_request.reasoning_config = (
         reasoning_config or execution_request.model_config.get("reasoning")
@@ -3932,6 +4083,7 @@ def _build_runtime_send_execution_request(
     address: RuntimeTaskAddress,
     message: str,
     attachment_ids: list[int],
+    model_selection: Optional[RuntimeModelSelection] = None,
     additional_context: Optional[dict[str, dict[str, Any]]] = None,
 ):
     """Build an executor request for an IM continuation send.
@@ -3941,7 +4093,8 @@ def _build_runtime_send_execution_request(
     skills, workspace, etc.). The Wework frontend constructs this
     client-side for direct local sends; the IM continuation path flows
     through the backend RPC, so we synthesize one here from the default
-    task-mode team — the same agent the workbench uses.
+    task-mode team — the same agent the workbench uses — and apply the bound
+    runtime task's model selection when available.
     """
     team = _get_task_mode_team(db, user_id)
     if team is None:
@@ -3961,6 +4114,9 @@ def _build_runtime_send_execution_request(
         teamId=team.id,
         runtime="codex",
         message=message,
+        modelId=model_selection.model_name if model_selection else None,
+        modelType=model_selection.model_type if model_selection else None,
+        modelOptions=model_selection.options if model_selection else {},
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
     )

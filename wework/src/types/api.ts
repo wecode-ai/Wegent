@@ -923,6 +923,7 @@ export interface RuntimeTaskPinRequest {
 export interface BindRuntimeTaskIMSessionsRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface BindRuntimeTaskIMSessionsResponse {

@@ -1741,6 +1741,33 @@ last_updated = "2026-07-30T00:00:00Z"`
         taskRowTestId,
         userText: TASK_PROMPT,
       })
+      phase = 'private-im-model-binding'
+      await control.command('click', '[data-testid="continue-in-im-button"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="continue-im-session-desktop-e2e-im-session"]',
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command('clickWhenEnabled', '[data-testid="continue-im-submit-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await withTimeout(
+        (async () => {
+          while (control.runtimeImBindingRequests.length === 0) {
+            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+          }
+        })(),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The runtime task was not bound to the private IM session'
+      )
+      const runtimeImBinding = control.runtimeImBindingRequests.at(-1)
+      assert.equal(
+        runtimeImBinding?.modelSelection?.modelName,
+        DEFAULT_MODEL_ID,
+        'The private IM binding did not preserve the active runtime model'
+      )
       if (associatedTaskTabTestId) {
         phase = 'project-space-selected-task-tracked'
         await verifyExplicitlyTrackedTask(control, associatedTaskTabTestId)

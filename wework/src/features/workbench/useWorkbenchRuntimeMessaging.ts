@@ -888,14 +888,13 @@ export function useWorkbenchRuntimeMessaging({
             : {}),
         },
         modelSelection:
-          options?.modelSelection ??
-          (selectedModel
+          selectedModel && executionModel.modelId
             ? {
-                modelName: selectedModel.name,
-                modelType: selectedModel.type,
-                options: selectedModelOptions,
+                modelName: executionModel.modelId,
+                modelType: executionModel.modelType ?? selectedModel.type,
+                options: executionModel.modelOptions ?? {},
               }
-            : null),
+            : (options?.modelSelection ?? null),
         ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: preparedAttachments.attachmentIds,

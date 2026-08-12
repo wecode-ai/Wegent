@@ -460,6 +460,11 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
             "localTaskId": "codex-1",
+            "modelSelection": {
+                "modelName": "gpt-5.6-luna",
+                "modelType": "public",
+                "options": {"reasoningEffort": "low"},
+            },
         },
     )
     calls: dict[str, Any] = {}
@@ -492,6 +497,11 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
     assert calls["callback"]["callback_info"].conversation_id == "conv-private"
     assert calls["send"]["request"].source.source == "im"
+    assert calls["send"]["request"].model_selection.model_name == "gpt-5.6-luna"
+    assert calls["send"]["request"].model_selection.model_type == "public"
+    assert calls["send"]["request"].model_selection.options == {
+        "reasoningEffort": "low"
+    }
 
 
 @pytest.mark.asyncio
