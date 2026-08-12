@@ -790,6 +790,8 @@ async function verifyCloudProjectFlow(
   )
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 
+  const replacementWorkspacePath = join(dirname(workspacePath), 'replacement-workspace')
+  await mkdir(replacementWorkspacePath, { recursive: true })
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
@@ -805,19 +807,36 @@ async function verifyCloudProjectFlow(
     'The duplicate regression remote picker did not load the cloud executor home'
   )
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
-    value: workspacePath,
+    value: replacementWorkspacePath,
   })
   await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
-  await waitForFolderPathReady(control, workspacePath)
+  await waitForFolderPathReady(control, replacementWorkspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  await waitForSnapshot(
+  const replacementProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
     'The duplicate regression cloud project was not created'
   )
+  const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(replacementProjectMenuTestId, 'The replacement cloud project identity was not found')
+  const replacementProjectId = replacementProjectMenuTestId.slice('project-menu-'.length)
+  assert.notEqual(
+    replacementProjectId,
+    currentProjectId,
+    'Creating another cloud project restored the removed project identity'
+  )
+  assert.equal(
+    (
+      await control.command('getText', `[data-testid="project-title-${replacementProjectId}"]`)
+    ).trim(),
+    'replacement-workspace',
+    'Creating another cloud project restored the removed project instead of the replacement'
+  )
 
   await cloudEnvironment.aliasCloudDeviceToCurrentApp()
-  await createSingleRootLocalProject(control, workspacePath, 'workspace')
+  await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
@@ -827,11 +846,28 @@ async function verifyCloudProjectFlow(
   await captureVerificationScreenshot(control, 'cloud-08-local-project-deduplicated.png')
 
   await restartDesktopApp()
-  await waitForSnapshot(
+  const restartedProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
+  )
+  const restartedProjectMenuTestId = restartedProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(restartedProjectMenuTestId, 'The restarted replacement project identity was not found')
+  const restartedProjectId = restartedProjectMenuTestId.slice('project-menu-'.length)
+  assert.notEqual(
+    restartedProjectId,
+    currentProjectId,
+    'Restarting Wework restored the removed project identity'
+  )
+  assert.equal(
+    (
+      await control.command('getText', `[data-testid="project-title-${restartedProjectId}"]`)
+    ).trim(),
+    'replacement-workspace',
+    'Restarting Wework restored the removed project instead of the replacement'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
 }

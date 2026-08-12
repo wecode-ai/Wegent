@@ -6645,6 +6645,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('does not restore a removed runtime project from an in-flight cloud refresh', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
+    writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(staleRuntimeWork),
     })
@@ -6666,6 +6667,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
+    expect(
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+        .runtimeWork.projects
+    ).toEqual([])
 
     await act(async () => {
       cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
@@ -6730,6 +6735,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('renames and removes remote projects from both the remote executor and local Codex index', async () => {
+    const initialRemoteProjectSync = deferred<{ accepted: boolean; deviceId: string }>()
     const remoteRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -6764,6 +6770,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+      syncRuntimeRemoteProjects: vi
+        .fn()
+        .mockImplementationOnce(() => initialRemoteProjectSync.promise)
+        .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
     })
     const services = createWorkbenchServices({
       deviceApi: {
@@ -6792,7 +6802,19 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeProjectMutationProbe />, services)
 
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
     await userEvent.click(await screen.findByText('rename runtime project'))
+    await waitFor(() => expect(runtimeWorkApi.renameRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.renameRuntimeWorkspace).toHaveBeenNthCalledWith(1, {
+      deviceId: 'remote-device',
+      projectKey: '/srv/project-alpha',
+      workspacePath: '/srv/project-alpha',
+      runtime: 'codex',
+      name: 'Hello project',
+    })
+    await act(async () => {
+      initialRemoteProjectSync.resolve({ accepted: true, deviceId: 'local-device' })
+    })
     await waitFor(() => expect(runtimeWorkApi.renameRuntimeWorkspace).toHaveBeenCalledTimes(2))
     expect(runtimeWorkApi.renameRuntimeWorkspace).toHaveBeenNthCalledWith(1, {
       deviceId: 'remote-device',
@@ -6823,6 +6845,65 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/srv/project-alpha',
       runtime: 'codex',
     })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projects: [],
+    })
+  })
+
+  test('does not treat a local-only empty remote view as an authoritative deletion', async () => {
+    const remoteRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: '/srv/project-alpha',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Wegent',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              workspacePath: '/srv/project-alpha',
+              workspaceSource: 'remote',
+              mapped: true,
+              available: false,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'local-device', device_type: 'local' }),
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeProjectMutationProbe />, services)
+
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
   })
 
   test('archives a worktree task without prompting and preserves a snapshot', async () => {
