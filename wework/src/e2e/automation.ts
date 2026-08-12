@@ -497,22 +497,6 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
 }
 
 function desktopControlElementVisible(element: HTMLElement): boolean {
-  const rect = element.getBoundingClientRect()
-  if (
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    rect.bottom <= 0 ||
-    rect.right <= 0 ||
-    rect.top >= window.innerHeight ||
-    rect.left >= window.innerWidth
-  ) {
-    return false
-  }
-
-  let visibleTop = rect.top
-  let visibleRight = rect.right
-  let visibleBottom = rect.bottom
-  let visibleLeft = rect.left
   let current: HTMLElement | null = element
   while (current) {
     const style = window.getComputedStyle(current)
@@ -523,19 +507,18 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
     ) {
       return false
     }
-    if (current !== element && ['auto', 'hidden', 'clip', 'scroll'].includes(style.overflow)) {
-      const ancestorRect = current.getBoundingClientRect()
-      visibleTop = Math.max(visibleTop, ancestorRect.top)
-      visibleRight = Math.min(visibleRight, ancestorRect.right)
-      visibleBottom = Math.min(visibleBottom, ancestorRect.bottom)
-      visibleLeft = Math.max(visibleLeft, ancestorRect.left)
-      if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
-        return false
-      }
-    }
     current = current.parentElement
   }
-  return true
+
+  const rect = element.getBoundingClientRect()
+  return !(
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    rect.bottom <= 0 ||
+    rect.right <= 0 ||
+    rect.top >= window.innerHeight ||
+    rect.left >= window.innerWidth
+  )
 }
 
 async function expandDesktopProcessingSummaries(): Promise<string> {
