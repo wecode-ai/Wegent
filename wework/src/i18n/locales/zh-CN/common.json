@@ -181,6 +181,7 @@
     "harness_model_selector": "选择编码工具模型",
     "harness_model_unspecified": "不指定模型",
     "harness_model_required": "请选择 Wework 模型",
+    "harness_resume_workspace_missing": "原工作区不存在，无法恢复会话：{{path}}",
     "harness_model_source_local": "本地",
     "harness_model_source_cloud": "云端",
     "harness_default_args": "默认参数",
