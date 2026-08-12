@@ -65,7 +65,10 @@ describe('attachment API', () => {
 
     const attachment = await uploadAttachment(file, progress)
 
-    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({ baseUrl: '/api' })
+    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({
+      baseUrl: '/api',
+      getToken: expect.any(Function),
+    })
     expect(post).toHaveBeenCalledWith('/attachments/upload', expect.any(FormData))
     expect((post.mock.calls[0][1] as FormData).get('file')).toBe(file)
     expect(progress).toHaveBeenNthCalledWith(1, 0)
@@ -86,7 +89,10 @@ describe('attachment API', () => {
 
     await deleteAttachment(12)
 
-    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({ baseUrl: '/api' })
+    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({
+      baseUrl: '/api',
+      getToken: expect.any(Function),
+    })
     expect(deleteRequest).toHaveBeenCalledWith('/attachments/12')
   })
 })

@@ -6,6 +6,9 @@ import { resolve } from 'node:path'
 
 const COMMIT_FIELD_SEPARATOR = '\u001f'
 const PULL_REQUEST_SUFFIX = /\s+\(#(\d+)\)$/
+const VERSION_BUMP_SUBJECT = /^chore\(wework\): bump app version to (.+)$/
+const EMPTY_RELEASE_NOTES =
+  '- No Wework app bundle changes detected under `wework/` or `executor/` since the previous Wework release.'
 
 export function parseReleaseCommits(output) {
   return output
@@ -38,22 +41,47 @@ export function formatReleaseNote({ sha, subject, authorLogin = '' }) {
   return `- ${title}${attribution} (${sha.slice(0, 7)})`
 }
 
-function readReleaseCommits(previousTag, releaseSha) {
-  const range = previousTag ? `${previousTag}..${releaseSha}` : releaseSha
-  const output = execFileSync(
+export function readReleaseCommits(previousRef, releaseSha, runCommand = execFileSync) {
+  const range = previousRef ? `${previousRef}..${releaseSha}` : releaseSha
+  const output = runCommand(
     'git',
-    [
-      'log',
-      '--no-merges',
-      `--pretty=format:%H%x1f%s`,
-      range,
-      '--',
-      'wework/',
-      'executor/',
-    ],
+    ['log', '--no-merges', `--pretty=format:%H%x1f%s`, range, '--', 'wework/', 'executor/'],
     { encoding: 'utf8' }
   )
   return parseReleaseCommits(output)
+}
+
+export function findPreviousReleaseRef(releaseVersion, releaseSha, runCommand = execFileSync) {
+  if (!releaseVersion) return ''
+
+  const output = runCommand(
+    'git',
+    [
+      'log',
+      '--pretty=format:%H%x1f%s',
+      releaseSha,
+      '--',
+      'wework/package.json',
+      'wework/src-tauri/tauri.conf.json',
+    ],
+    { encoding: 'utf8' }
+  )
+  const releaseCommits = parseReleaseCommits(output)
+    .map(commit => ({
+      ...commit,
+      version: commit.subject.match(VERSION_BUMP_SUBJECT)?.[1] ?? '',
+    }))
+    .filter(commit => commit.version)
+  const currentReleaseIndex = releaseCommits.findIndex(commit => commit.version === releaseVersion)
+  const stableRelease = !releaseVersion.includes('-beta.')
+  const previousRelease = releaseCommits
+    .slice(currentReleaseIndex === -1 ? 0 : currentReleaseIndex + 1)
+    .find(
+      commit =>
+        commit.version !== releaseVersion && (!stableRelease || !commit.version.includes('-beta.'))
+    )
+
+  return previousRelease?.sha ?? ''
 }
 
 export function readGitHubAuthorLogin(repo, sha, runCommand = execFileSync) {
@@ -78,15 +106,24 @@ export function generateReleaseNotes(commits, resolveAuthorLogin) {
     .join('\n')
 }
 
-function main() {
-  const releaseSha = process.env.RELEASE_SHA
-  const repo = process.env.GH_REPO
-  if (!releaseSha) throw new Error('RELEASE_SHA is required')
-  if (!repo) throw new Error('GH_REPO is required')
+export function formatReleaseNotesDocument(notes) {
+  return `## Changes\n\n${notes || EMPTY_RELEASE_NOTES}`
+}
 
-  const commits = readReleaseCommits(process.env.PREVIOUS_TAG || '', releaseSha)
-  const notes = generateReleaseNotes(commits, sha => readGitHubAuthorLogin(repo, sha))
-  if (notes) process.stdout.write(`${notes}\n`)
+function main() {
+  const releaseSha =
+    process.env.RELEASE_SHA ||
+    execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  const repo = process.env.GH_REPO
+  const previousRef =
+    process.env.PREVIOUS_TAG ||
+    findPreviousReleaseRef(process.env.RELEASE_VERSION || '', releaseSha)
+
+  const commits = readReleaseCommits(previousRef, releaseSha)
+  const notes = generateReleaseNotes(commits, sha => (repo ? readGitHubAuthorLogin(repo, sha) : ''))
+  const output =
+    process.env.RELEASE_NOTES_FORMAT === 'markdown' ? formatReleaseNotesDocument(notes) : notes
+  if (output) process.stdout.write(`${output}\n`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

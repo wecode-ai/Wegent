@@ -204,7 +204,7 @@ fn user_codex_auth_path() -> Option<PathBuf> {
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
 }
 
-fn executor_home() -> PathBuf {
+pub(crate) fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

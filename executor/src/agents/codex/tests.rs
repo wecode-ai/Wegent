@@ -7,6 +7,36 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn codex_request_preparation_stops_when_cancelled() {
+    let (cancel_tx, mut cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+
+    let result =
+        prepare_codex_execution_request(ExecutionRequest::default(), Some(&mut cancellation)).await;
+
+    assert!(matches!(
+        result,
+        Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED
+    ));
+}
+
+#[test]
+fn codex_turn_start_rejects_completed_cancellation() {
+    let (cancel_tx, cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+    let mut cancellation = Some(cancellation);
+
+    assert_eq!(
+        ensure_codex_turn_not_cancelled(&mut cancellation).unwrap_err(),
+        CODEX_APP_SERVER_TURN_CANCELLED
+    );
+}
+
+#[tokio::test]
 async fn active_thread_tracking_counts_each_thread_independently() {
     let client = CodexAppServerClient::new("codex-active-thread-test");
 

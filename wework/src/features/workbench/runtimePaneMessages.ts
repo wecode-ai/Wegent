@@ -411,6 +411,8 @@ export function createRuntimeTaskStreamHandlers(
         hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
         hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
+        hasCompletedAt: payload.completedAt !== undefined,
+        hasDurationMs: payload.durationMs !== undefined,
       })
       const fileChanges = normalizeTurnFileChanges(payload.fileChanges)
       if (fileChanges) {
@@ -442,6 +444,8 @@ export function createRuntimeTaskStreamHandlers(
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
           ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
+          ...(payload.completedAt !== undefined && { completedAt: payload.completedAt }),
+          ...(payload.durationMs !== undefined && { durationMs: payload.durationMs }),
         },
       })
     },
@@ -999,10 +1003,28 @@ function normalizeProcessingBlock(
     block.timestamp ?? block.created_at ?? block.createdAt,
     fallbackTimestamp
   )
+  const explicitCompletedAt = block.completedAt ?? block.completed_at
+  const durationMs =
+    typeof block.durationMs === 'number' && Number.isFinite(block.durationMs)
+      ? Math.max(0, block.durationMs)
+      : typeof block.duration_ms === 'number' && Number.isFinite(block.duration_ms)
+        ? Math.max(0, block.duration_ms)
+        : undefined
+  const completedAt =
+    durationMs !== undefined
+      ? timestamp + durationMs
+      : explicitCompletedAt !== undefined
+        ? getBlockTimestamp(explicitCompletedAt, timestamp)
+        : undefined
   const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
-
+  const timing = {
+    status,
+    createdAt: timestamp,
+    completedAt,
+    ...(durationMs !== undefined && { durationMs }),
+  }
   if (block.type === 'tool') {
     const id =
       typeof block.id === 'string'
@@ -1042,8 +1064,7 @@ function normalizeProcessingBlock(
             ? block.tool_output_original_bytes
             : undefined,
       renderPayload: normalizeToolRenderPayload(block),
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1061,8 +1082,7 @@ function normalizeProcessingBlock(
         ...(typeof block.revised_prompt === 'string' && { revisedPrompt: block.revised_prompt }),
         ...(typeof block.saved_path === 'string' && { savedPath: block.saved_path }),
       },
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1086,8 +1106,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1117,8 +1136,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1148,8 +1166,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 
@@ -1163,8 +1180,7 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'file_changes',
       fileChanges,
-      status,
-      createdAt: timestamp,
+      ...timing,
     }
   }
 

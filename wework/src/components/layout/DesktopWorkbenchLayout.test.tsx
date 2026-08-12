@@ -17,16 +17,22 @@ import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   closeLocalTerminal,
   getLocalPathKind,
   getLocalExecutorDeviceId,
+  isLocalHarnessAvailable,
   isLocalTerminalAvailable,
+  listLocalHarnesses,
+  listLocalHarnessSessions,
   localPathExists,
   openLocalWorkspace,
+  startLocalHarness,
   startLocalTerminal,
+  updateLocalHarnessSessionTitle,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
@@ -278,10 +284,16 @@ vi.mock('@/lib/local-terminal', () => ({
   closeLocalTerminal: vi.fn(),
   getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
+  isLocalHarnessAvailable: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
+  listLocalHarnesses: vi.fn().mockResolvedValue([]),
+  listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
   localPathExists: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  resolveLocalHarnessPluginRoots: vi.fn().mockResolvedValue([]),
+  startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
+  updateLocalHarnessSessionTitle: vi.fn(),
 }))
 
 vi.mock('@pierre/diffs/react', async () => {
@@ -454,10 +466,17 @@ const createProjectApiMock = vi.mocked(createProjectApi)
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalHarnessAvailableMock = vi.mocked(isLocalHarnessAvailable)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const listLocalHarnessesMock = vi.mocked(listLocalHarnesses)
+const listLocalHarnessSessionsMock = vi.mocked(listLocalHarnessSessions)
 const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
+const startLocalHarnessMock = vi.mocked(startLocalHarness)
+const updateLocalHarnessSessionTitleMock = vi.mocked(updateLocalHarnessSessionTitle)
+const resolveLocalHarnessLaunchMock = vi.fn()
+const unregisterHarnessProxyMock = vi.fn()
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
@@ -466,6 +485,10 @@ const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const createTemporaryRuntimeTaskMock = vi.fn()
 const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
+const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
+  sent: true,
+  turnId: 'runtime-side-chat-turn',
+})
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
@@ -601,10 +624,39 @@ describe('DesktopWorkbenchLayout', () => {
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
+    isLocalHarnessAvailableMock.mockImplementation(() => isLocalTerminalAvailableMock())
+    listLocalHarnessesMock.mockResolvedValue([])
+    listLocalHarnessSessionsMock.mockResolvedValue([])
     getLocalPathKindMock.mockResolvedValue('file')
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    startLocalHarnessMock.mockResolvedValue('local-harness-1')
+    updateLocalHarnessSessionTitleMock.mockResolvedValue(undefined)
+    resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
+      modelId:
+        harnessId === 'claude_code'
+          ? 'wework-selected'
+          : harnessId === 'kimi_code'
+            ? '__kimi_env_model__'
+            : 'wework-messages/wework-selected',
+      proxyToken: 'proxy-token',
+      env:
+        harnessId === 'claude_code'
+          ? {
+              ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+              ANTHROPIC_API_KEY: 'wework-local-router',
+            }
+          : harnessId === 'kimi_code'
+            ? {
+                KIMI_MODEL_NAME: 'wework-selected',
+                KIMI_MODEL_PROVIDER_TYPE: 'anthropic',
+                KIMI_MODEL_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+                KIMI_MODEL_API_KEY: 'wework-local-router',
+              }
+            : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
+    }))
+    unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
@@ -647,6 +699,11 @@ describe('DesktopWorkbenchLayout', () => {
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
     sendRuntimePaneMessageMock.mockReset()
     sendRuntimePaneMessageMock.mockResolvedValue(true)
+    sendRuntimePaneGuidanceMock.mockReset()
+    sendRuntimePaneGuidanceMock.mockResolvedValue({
+      sent: true,
+      turnId: 'runtime-side-chat-turn',
+    })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
@@ -751,6 +808,20 @@ describe('DesktopWorkbenchLayout', () => {
     onRequestUserInputSubmit: vi.fn().mockResolvedValue(true),
     onLogout: vi.fn(),
   }
+  const harnessTestModel = {
+    name: 'local-model:test',
+    type: 'runtime' as const,
+    provider: 'local',
+    displayName: 'Test Model',
+    modelId: 'test-model',
+    config: { weworkModelKind: 'model-interface' },
+  }
+  const secondHarnessTestModel = {
+    ...harnessTestModel,
+    name: 'local-model:second',
+    displayName: 'Second Test Model',
+    modelId: 'second-test-model',
+  }
 
   const activeProjectState = {
     ...baseProps.state,
@@ -830,6 +901,7 @@ describe('DesktopWorkbenchLayout', () => {
     codeCommentContexts?: unknown[]
     subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
+    runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
     isRuntimeTranscriptLoading?: boolean
@@ -1052,6 +1124,11 @@ describe('DesktopWorkbenchLayout', () => {
           startDeviceCodeServer: startDeviceCodeServerSessionMock,
           createRemoteTerminalClient: createRemoteTerminalClientMock,
         },
+        localHarnessModelApi: {
+          resolveLaunch: resolveLocalHarnessLaunchMock,
+          unregisterProxy: unregisterHarnessProxyMock,
+        },
+        ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },
       state,
       isStartupReady: true,
@@ -1143,6 +1220,7 @@ describe('DesktopWorkbenchLayout', () => {
       createEnvironmentBranch:
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
       sendRuntimePaneMessage: sendRuntimePaneMessageMock,
+      sendRuntimePaneGuidance: sendRuntimePaneGuidanceMock,
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
@@ -1812,6 +1890,13 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.getAttribute('data-testid') === 'composer-toolbar') {
+        return createRect({ left: 0, top: 0, width: 600, height: 32 })
+      }
+      return createRect({ left: 0, top: 0, width: 0, height: 0 })
+    })
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1852,6 +1937,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7', 'w-7')
+    expect(screen.queryByTestId('composer-plugin-preview-icons')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
     expect(paneTitle).toHaveClass('truncate', 'text-sm', 'text-text-primary')
@@ -1933,6 +2020,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
   test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
@@ -3114,6 +3202,601 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('overflow-hidden')
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('overflow-y-auto')
+  })
+
+  test('replaces the central message area with an OpenCode harness session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalHarnessMock
+      .mockResolvedValueOnce('local-harness-1')
+      .mockResolvedValueOnce('local-harness-2')
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+    const listLocalSkills = vi.fn().mockResolvedValue([
+      {
+        name: 'github',
+        description: 'GitHub plugin',
+        path: '/Users/test/.wework/plugins/github/1.0.0/skills/github/SKILL.md',
+        source: 'codex',
+        plugin_name: 'github',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '检查当前项目' }}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [harnessTestModel, secondHarnessTestModel],
+          listLocalSkills,
+        }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('workbench-harness-experimental-badge')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    await waitFor(() => expect(openCodeOption).not.toBeDisabled())
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
+    await userEvent.click(openCodeOption)
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('OpenCode')
+    expect(screen.getByTestId('project-work-bar')).toContainElement(
+      screen.getByTestId('workbench-harness-selector')
+    )
+    await userEvent.click(screen.getByTestId('workbench-harness-model-selector'))
+    await userEvent.click(screen.getByTestId('workbench-harness-model-option-opencode-1'))
+    expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent(
+      'Second Test Model'
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(resolveLocalHarnessLaunchMock).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          label: 'Second Test Model',
+          model: expect.objectContaining({ modelId: 'second-test-model' }),
+        })
+      )
+    )
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '检查当前项目',
+        isPrimary: true,
+        projectId: 1,
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: ['--model', 'wework-messages/wework-selected'],
+        pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
+        proxyToken: 'proxy-token',
+        modelKey: 'wework:runtime:::local-model%3Asecond',
+        resumeSessionId: undefined,
+        env: {
+          OPENCODE_CONFIG_CONTENT: '{"provider":{}}',
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
+      })
+    )
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(listLocalSkills).toHaveBeenCalled()
+    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-harness-1'
+    )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('检查当前项目')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('close-local-harness-session-local-harness-1')
+    ).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-harness-option')).toHaveTextContent(
+      '新建编码会话 · 实验性'
+    )
+
+    fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
+    expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: '/workspace/github_wegent',
+          diagnosticContext: expect.objectContaining({
+            workspacePath: '/workspace/github_wegent',
+          }),
+        })
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    expect(screen.getByTestId('harness-session-picker')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('harness-session-picker-option-opencode'))
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          harnessId: 'opencode',
+          prompt: '',
+          isPrimary: false,
+          projectId: 1,
+          cwd: '/workspace/github_wegent',
+          pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
+        })
+      )
+    )
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
+    expect(screen.getByTestId('local-harness-session-row-local-harness-2')).toBeInTheDocument()
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      await screen.findByTestId('local-harness-session-row-local-harness-1')
+    )
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      screen.getByTestId('local-harness-session-row-local-harness-2')
+    )
+    expect(screen.getByTestId('runtime-chat-section')).not.toContainElement(
+      screen.getByTestId('local-harness-session-row-local-harness-1')
+    )
+    expect(
+      screen.getAllByTestId('embedded-local-terminal').find(element => !element.hidden)
+    ).toHaveAttribute('data-session-id', 'local-harness-2')
+    expect(screen.getByTestId('central-harness-close-button')).toBeInTheDocument()
+    expect(screen.getByTestId('close-local-harness-session-local-harness-2')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('central-harness-close-button'))
+
+    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-2'))
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
+  })
+
+  test('prepares a project worktree before starting the primary OpenCode session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+    const prepareWorktree = vi.fn().mockResolvedValue({
+      success: true,
+      deviceId: 'device-1',
+      path: '/workspace/worktrees/harness-1/github_wegent',
+      worktree: {
+        deviceId: 'device-1',
+        worktreeId: 'harness-1',
+        path: '/workspace/worktrees/harness-1/github_wegent',
+        repositoryName: 'github_wegent',
+        sourcePath: '/workspace/github_wegent',
+        state: 'active',
+        conversations: [],
+      },
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '在独立工作树中修复问题' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+        projectWork={{
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/harness-runtime',
+        }}
+        runtimeWorkApi={
+          { prepareWorktree } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+        }
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    await userEvent.click(screen.getByTestId('workbench-harness-option-opencode'))
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(prepareWorktree).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        sourcePath: '/workspace/github_wegent',
+        worktreeId: expect.stringMatching(/^harness-/),
+        ref: 'feature/harness-runtime',
+      })
+    )
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          harnessId: 'opencode',
+          prompt: '在独立工作树中修复问题',
+          isPrimary: true,
+          projectId: 1,
+          cwd: '/workspace/worktrees/harness-1/github_wegent',
+        })
+      )
+    )
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
+      await screen.findByTestId('local-harness-session-row-local-harness-1')
+    )
+  })
+
+  test('restores active native harness sessions after a WebView reload', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-terminal-restored',
+        harness_id: 'claude_code',
+        title: '继续修复测试',
+        cwd: '/workspace/github_wegent',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: 'wework:runtime:::local-model%3Atest',
+      },
+    ])
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(
+      await screen.findByTestId('local-harness-session-row-local-terminal-restored')
+    ).toHaveTextContent('继续修复测试')
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('继续修复测试')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-restored'
+    )
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+  })
+
+  test('keeps Codex and harness session selection exclusive without reopening the loaded task', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-restored',
+        harness_id: 'opencode',
+        title: 'OpenCode 会话',
+        cwd: '/workspace/project-alpha',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: harnessTestModel.key,
+      },
+    ])
+    const currentRuntimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-loaded',
+    }
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'chat',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-loaded',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Codex 会话',
+                    runtime: 'codex',
+                    createdAt: '2026-08-11T00:00:00.000Z',
+                    updatedAt: '2026-08-11T00:00:00.000Z',
+                    running: false,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+          currentRuntimeTask,
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    const harnessRow = await screen.findByTestId('local-harness-session-row-local-harness-restored')
+    const codexRow = screen.getByTestId('runtime-local-task-row-runtime-loaded')
+    expect(harnessRow).toHaveAttribute('aria-current', 'page')
+    expect(codexRow).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(codexRow)
+
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(
+      screen.getByTestId('local-harness-session-row-local-harness-restored')
+    ).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-restored'))
+
+    expect(screen.getByTestId('local-harness-session-row-local-harness-restored')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).not.toHaveAttribute(
+      'aria-current'
+    )
+  })
+
+  test('reopens the loaded Codex task when switching back from another page', async () => {
+    window.history.pushState({}, '', '/automations')
+    const currentRuntimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-loaded',
+    }
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'chat',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-loaded',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Codex 会话',
+                    runtime: 'codex',
+                    createdAt: '2026-08-11T00:00:00.000Z',
+                    updatedAt: '2026-08-11T00:00:00.000Z',
+                    running: false,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+          currentRuntimeTask,
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-runtime-loaded'))
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledOnce()
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(currentRuntimeTask)
+  })
+
+  test('resumes an inactive persisted harness session with the same Wework session id', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    const listLocalSkills = vi.fn().mockRejectedValue(new Error('must not reload plugins'))
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.18.16',
+      },
+    ])
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-persisted',
+        harness_id: 'opencode',
+        title: '重启后继续修复',
+        cwd: '/workspace/github_wegent',
+        created_at: 1234,
+        is_primary: true,
+        project_id: 1,
+        active: false,
+        model_key: harnessTestModel.key,
+        plugin_roots: ['/Users/test/.wework/plugins/github/1.0.0'],
+      },
+    ])
+    startLocalHarnessMock.mockResolvedValue('local-harness-persisted')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel], listLocalSkills }}
+      />
+    )
+
+    expect(
+      await screen.findByTestId('local-harness-session-row-local-harness-persisted')
+    ).toHaveTextContent('重启后继续修复')
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '',
+        isPrimary: true,
+        projectId: 1,
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: [],
+        pluginRoots: ['/Users/test/.wework/plugins/github/1.0.0'],
+        proxyToken: undefined,
+        modelKey: null,
+        resumeSessionId: 'local-harness-persisted',
+        env: {
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
+      })
+    )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
+    expect(listLocalSkills).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('central-harness-terminal')).toBeVisible()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-harness-persisted'
+    )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('重启后继续修复')
+  })
+
+  test('starts Claude Code without overriding its native model by default', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'claude_code',
+        installed: true,
+        executable_path: '/usr/local/bin/claude',
+        version: '2.1.0',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const claudeCodeOption = screen.getByTestId('workbench-harness-option-claude_code')
+    await waitFor(() => expect(claudeCodeOption).not.toBeDisabled())
+    await userEvent.click(claudeCodeOption)
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Claude Code')
+    expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent('不指定模型')
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'claude_code',
+        prompt: '分析并修复测试失败',
+        isPrimary: true,
+        projectId: 1,
+        cwd: '/workspace/github_wegent',
+        executablePath: null,
+        args: [],
+        pluginRoots: [],
+        proxyToken: undefined,
+        modelKey: null,
+        resumeSessionId: undefined,
+        env: {
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
+      })
+    )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+  })
+
+  test('starts OpenCode from the Wework dev workspace without selecting a project', async () => {
+    vi.stubEnv('VITE_WEWORK_DEV_TITLE', 'OpenCode harness development')
+    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '/workspace/current-wework')
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.0.0',
+      },
+    ])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, input: '检查当前工作区' }}
+        projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+      />
+    )
+
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    await waitFor(() => expect(openCodeOption).not.toBeDisabled())
+    await userEvent.click(openCodeOption)
+
+    const input = screen.getByTestId('chat-message-input')
+    const form = input.closest('form')
+    if (!form) throw new Error('Workbench composer form was not rendered')
+    fireEvent.submit(form)
+
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith({
+        harnessId: 'opencode',
+        prompt: '检查当前工作区',
+        isPrimary: true,
+        projectId: null,
+        cwd: '/workspace/current-wework',
+        executablePath: null,
+        args: [],
+        pluginRoots: [],
+        proxyToken: undefined,
+        modelKey: null,
+        resumeSessionId: undefined,
+        env: {
+          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
+        },
+      })
+    )
+    expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
+
+    expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-1'))
+
+    await waitFor(() => expect(screen.getByTestId('central-harness-terminal')).toBeVisible())
+
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('close-local-harness-session-local-harness-1')
+    ).not.toBeInTheDocument()
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
   })
 
   test('closes the settings menu when clicking outside it', async () => {
@@ -5181,6 +5864,77 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
+    )
+  }, 15_000)
+
+  test('temporary chat sends a busy follow-up as guidance when selected', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-guidance',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'guide the current response')
+    await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
+    await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
+
+    await waitFor(() => expect(sendRuntimePaneGuidanceMock).toHaveBeenCalledTimes(1))
+    expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
+    const guidanceRequest = sendRuntimePaneGuidanceMock.mock.calls[0]?.[0]
+    expect(guidanceRequest).toMatchObject({
+      address,
+      message: 'guide the current response',
+    })
+    expect(guidanceRequest.clientGuidanceId).toEqual(expect.any(String))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'guide the current response'
+    )
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent('引导中')
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | {
+          onGuidanceApplied?: (payload: {
+            taskId: string
+            subtaskId: string
+            deviceId: string
+            guidanceId: string
+            clientGuidanceId: string
+            message: string
+            appliedAtMs: number
+          }) => void
+        }
+      | undefined
+    act(() =>
+      streamHandlers?.onGuidanceApplied?.({
+        taskId: address.taskId,
+        subtaskId: 'runtime-side-chat-turn',
+        deviceId: address.deviceId,
+        guidanceId: 'runtime-guidance',
+        clientGuidanceId: guidanceRequest.clientGuidanceId,
+        message: 'guide the current response',
+        appliedAtMs: Date.now(),
+      })
+    )
+
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'guide the current response'
     )
   }, 15_000)
 
@@ -7705,7 +8459,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
   })
 
-  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+  test('shows the sent message with status while an optimistic worktree is being created', () => {
     const runtimeTask = {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
@@ -7761,9 +8515,13 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    const creationStatus = screen.getByTestId('worktree-creation-status')
+    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(screen.getByTestId('desktop-chat-scroll-content')).toContainElement(creationStatus)
+    expect(screen.queryByTestId('desktop-chat-scroll-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
-    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+    expect(screen.getByText('Implement the feature')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
   test('loads environment info automatically for the current project workspace', async () => {

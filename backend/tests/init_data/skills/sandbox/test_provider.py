@@ -25,3 +25,21 @@ def test_prepare_base_params_includes_skill_identity_token():
     params = provider._prepare_base_params(context, {})
 
     assert params["skill_identity_token"] == "skill-jwt"
+
+
+def test_prepare_base_params_includes_load_skill_tool():
+    """Sandbox provider should expose active Skill state to sandbox creation."""
+    provider = SandboxToolProvider()
+    load_skill_tool = object()
+    context = SkillToolContext(
+        task_id=1,
+        subtask_id=2,
+        user_id=3,
+        db_session=None,
+        ws_emitter=None,
+        load_skill_tool=load_skill_tool,
+    )
+
+    params = provider._prepare_base_params(context, {})
+
+    assert params["load_skill_tool"] is load_skill_tool

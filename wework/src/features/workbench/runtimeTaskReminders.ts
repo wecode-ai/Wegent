@@ -17,6 +17,7 @@ import {
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
 import { sendRuntimeTaskCompletionNotification } from './runtimeTaskSystemNotifications'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
@@ -122,6 +123,13 @@ export function useRuntimeTaskReminders({
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set())
   const previousUnreadTaskKeysRef = useRef<ReadonlySet<string>>(new Set())
+  const windowFocusedRef = useRef(isMainWindowFocused())
+
+  useEffect(() => {
+    return subscribeMainWindowFocus(focused => {
+      windowFocusedRef.current = focused
+    })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -159,6 +167,7 @@ export function useRuntimeTaskReminders({
       notifiedTaskKeysRef.current.delete(key)
     }
     if (!preferences.taskCompletionNotificationsEnabled) return
+    if (windowFocusedRef.current) return
     for (const item of newlyUnreadItems) {
       if (notifiedTaskKeysRef.current.has(item.key)) continue
       notifiedTaskKeysRef.current.add(item.key)

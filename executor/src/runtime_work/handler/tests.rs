@@ -107,6 +107,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/started",
             "params": {
                 "turnId": "turn-1",
+                "startedAtMs": 1_780_000_001_250_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -123,6 +124,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/completed",
             "params": {
                 "turnId": "turn-1",
+                "completedAtMs": 1_780_000_004_750_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -156,6 +158,14 @@ fn active_codex_items_replace_stale_paginated_items() {
     assert_eq!(
         thread["turns"][0]["items"][0]["changes"][0]["path"],
         Value::String("/tmp/result.txt".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["createdAt"],
+        1_780_000_001_250_i64
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["completedAt"],
+        1_780_000_004_750_i64
     );
     let messages = transcript_messages(&thread, "device-1");
     assert_eq!(messages.len(), 1);

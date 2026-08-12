@@ -1,8 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  findPreviousReleaseRef,
   formatReleaseNote,
+  formatReleaseNotesDocument,
   generateReleaseNotes,
   parseReleaseCommits,
+  readReleaseCommits,
   readGitHubAuthorLogin,
 } from './generate-release-notes.mjs'
 
@@ -62,12 +65,7 @@ describe('generate release notes', () => {
     expect(readGitHubAuthorLogin('example/repo', '1234567', runCommand)).toBe('contributor')
     expect(runCommand).toHaveBeenCalledWith(
       'gh',
-      [
-        'api',
-        'repos/example/repo/commits/1234567',
-        '--jq',
-        '.author.login // empty',
-      ],
+      ['api', 'repos/example/repo/commits/1234567', '--jq', '.author.login // empty'],
       {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'inherit'],
@@ -112,5 +110,83 @@ describe('generate release notes', () => {
       ].join('\n')
     )
     expect(resolveAuthorLogin).toHaveBeenCalledTimes(2)
+  })
+
+  test('reads commits after the previous release reference', () => {
+    const runCommand = vi.fn(() => '1234567890abcdef\u001ffeat(wework): add changelog')
+
+    expect(readReleaseCommits('previous-release', 'release-sha', runCommand)).toEqual([
+      {
+        sha: '1234567890abcdef',
+        subject: 'feat(wework): add changelog',
+      },
+    ])
+    expect(runCommand).toHaveBeenCalledWith(
+      'git',
+      [
+        'log',
+        '--no-merges',
+        '--pretty=format:%H%x1f%s',
+        'previous-release..release-sha',
+        '--',
+        'wework/',
+        'executor/',
+      ],
+      { encoding: 'utf8' }
+    )
+  })
+
+  test('finds the previous stable release for a stable version', () => {
+    const runCommand = vi.fn(() =>
+      [
+        'current\u001fchore(wework): bump app version to 0.1.14',
+        'duplicate\u001fchore(wework): bump app version to 0.1.14',
+        'beta\u001fchore(wework): bump app version to 0.1.14-beta.1',
+        'previous\u001fchore(wework): bump app version to 0.1.13',
+      ].join('\n')
+    )
+
+    expect(findPreviousReleaseRef('0.1.14', 'release-sha', runCommand)).toBe('previous')
+    expect(runCommand).toHaveBeenCalledWith(
+      'git',
+      [
+        'log',
+        '--pretty=format:%H%x1f%s',
+        'release-sha',
+        '--',
+        'wework/package.json',
+        'wework/src-tauri/tauri.conf.json',
+      ],
+      { encoding: 'utf8' }
+    )
+  })
+
+  test('finds the previous beta release for a beta version', () => {
+    expect(
+      findPreviousReleaseRef('0.1.14-beta.2', 'release-sha', () =>
+        [
+          'current\u001fchore(wework): bump app version to 0.1.14-beta.2',
+          'previous\u001fchore(wework): bump app version to 0.1.14-beta.1',
+          'stable\u001fchore(wework): bump app version to 0.1.13',
+        ].join('\n')
+      )
+    ).toBe('previous')
+  })
+
+  test('uses the latest version bump when the requested version has not been committed', () => {
+    expect(
+      findPreviousReleaseRef(
+        '0.1.15-beta.1',
+        'release-sha',
+        () => 'previous\u001fchore(wework): bump app version to 0.1.14'
+      )
+    ).toBe('previous')
+  })
+
+  test('formats generated changes as the MinIO changelog document', () => {
+    expect(formatReleaseNotesDocument('- feat(wework): add changelog')).toBe(
+      '## Changes\n\n- feat(wework): add changelog'
+    )
+    expect(formatReleaseNotesDocument('')).toContain('No Wework app bundle changes detected')
   })
 })
