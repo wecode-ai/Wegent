@@ -897,7 +897,7 @@ def test_todo_lifecycle_and_multiple_local_tasks(
         headers=_auth(test_token),
         json={"version": current_item["version"], "status": "in_progress"},
     )
-    assert started.status_code == 200
+    assert started.status_code == 200, started.text
     assert started.json()["version"] == current_item["version"] + 1
 
     stale = test_client.patch(
@@ -1098,6 +1098,175 @@ def test_cloud_project_robot_binds_local_project(
     )
     assert cleared.status_code == 200
     assert cleared.json()["localProjectId"] is None
+
+
+def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="automation-cloud-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "cloud"},
+                "metadata": {"name": "automation-cloud-device"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "automation", "name": "Project automation"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Project assistant",
+            "runtime": "codex",
+            "executionEnvironment": "cloud",
+            "executionDeviceId": "automation-cloud-device",
+        },
+    ).json()
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Daily project summary",
+            "prompt": "Summarize yesterday's completed work.",
+            "cronExpression": "0 3 * * *",
+            "timezone": "Asia/Shanghai",
+            "agentId": agent["id"],
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201
+    rule = created.json()
+    assert rule["agentId"] == agent["id"]
+    assert rule["executionEnvironment"] == "cloud"
+    assert rule["nextRunAt"] is not None
+    assert rule["nextRunAt"].endswith("Z")
+
+    started = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
+        headers=_auth(test_token),
+    )
+    assert started.status_code == 200, started.text
+    run = started.json()
+    assert run["status"] == "running"
+    assert run["taskId"]
+    assert run["timezone"] == "Asia/Shanghai"
+    assert run["scheduledFor"].endswith("Z")
+
+    task = test_client.get(
+        f"/api/v1/loop-items/{run['taskId']}", headers=_auth(test_token)
+    )
+    assert task.status_code == 200
+    assert task.json()["assignee_agent_id"] == agent["id"]
+    assert task.json()["automation"]["run_id"] == run["id"]
+    assert task.json()["description"] == "Summarize yesterday's completed work."
+    assert task.json()["tags"] == ["automation"]
+
+
+def test_cloud_project_manual_automation_starts_when_local_device_claims(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="automation-local-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "local"},
+                "metadata": {"name": "automation-local-device"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "autolocal", "name": "Local automation"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Local bug fixer",
+            "runtime": "codex",
+            "executionEnvironment": "local",
+            "executionDeviceId": "automation-local-device",
+        },
+    ).json()
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Local scan",
+            "prompt": "Scan bugs.",
+            "cronExpression": "0 3 * * *",
+            "timezone": "Asia/Shanghai",
+            "agentId": agent["id"],
+            "enabled": True,
+        },
+    ).json()
+
+    started = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
+        headers=_auth(test_token),
+    )
+    assert started.status_code == 200, started.text
+    run = started.json()
+    assert run["status"] == "waiting_device"
+    assert run["taskId"] is None
+    assert run["expiresAt"] is None
+
+    claimed = test_client.post(
+        "/api/v1/loop-item-executions/claim-my-next",
+        headers=_auth(test_token),
+        json={
+            "executionDeviceId": "automation-local-device",
+            "deviceCapacity": 1,
+            "leaseSeconds": 300,
+        },
+    )
+    assert claimed.status_code == 200, claimed.text
+    execution = claimed.json()
+    assert execution["executionDeviceId"] == "automation-local-device"
+    assert execution["status"] == "running"
+
+    started_runtime = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
+        headers=_auth(test_token),
+        json={
+            "runtime_device_id": "automation-local-device",
+            "runtime_task_id": execution["runtimeTaskId"],
+            "prompt": "Scan bugs.",
+        },
+    )
+    assert started_runtime.status_code == 200, started_runtime.text
+
+    runs = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
+        headers=_auth(test_token),
+    )
+    assert runs.status_code == 200, runs.text
+    activated = runs.json()[0]
+    assert activated["status"] == "running"
+    assert activated["taskId"]
 
 
 def test_cloud_project_owner_can_manage_members(

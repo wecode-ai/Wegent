@@ -32,8 +32,14 @@ export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boo
   if (item.installedPluginId === null || item.installedPluginId === undefined) {
     return false
   }
-  if (!item.installed) return true
+  // A matching Codex/App Server install is stronger evidence than a stale cloud
+  // device state. Never reinstall a package that is already present locally.
+  if (item.installedLocally) return false
   const state = item.currentDeviceInstallation?.state
+  // Preserve failed manual updates when an older release is still usable, while
+  // allowing a normal pending update to materialize after this device reconnects.
+  if (item.currentDeviceInstallation?.actualReleaseId && state === 'failed') return false
+  if (!item.installed) return true
   return state === 'failed' || state === 'pending'
 }
 

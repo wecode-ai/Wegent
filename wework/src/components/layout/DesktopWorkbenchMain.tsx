@@ -898,7 +898,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
   const supervisorModels = projectChat.models.filter(
-    model => model.isActive !== false && !model.compatibilityDisabled
+    model =>
+      model.isActive !== false &&
+      !model.compatibilityDisabled &&
+      ['public', 'user', 'group'].includes(model.type) &&
+      Boolean(model.namespace) &&
+      model.resourceUserId !== undefined
   )
 
   const runtimeWorkApi = services?.runtimeWorkApi
@@ -909,7 +914,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         address,
         mode: config.mode,
         instructions: config.instructions,
-        modelId: config.modelId,
+        modelSelection: config.modelSelection,
         intervalSeconds: config.intervalSeconds,
       })
       if (!response.accepted) {
@@ -997,13 +1002,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     async (
       mode: RuntimeSupervisorMode,
       instructions: string,
-      modelId: string | null,
+      modelSelection: ModelSelectionConfig | null,
       intervalSeconds: number
     ) => {
       const config = {
         mode,
         instructions,
-        modelId,
+        modelSelection,
         intervalSeconds,
       }
       if (!currentRuntimeTask) {

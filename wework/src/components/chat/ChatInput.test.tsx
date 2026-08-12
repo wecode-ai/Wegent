@@ -334,6 +334,31 @@ describe('ChatInput', () => {
     expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
+  test('keeps the plugin picker above runtime plan progress', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        taskPlan={{
+          plan: [
+            { step: 'Inspect', status: 'inProgress' },
+            { step: 'Implement', status: 'pending' },
+          ],
+        }}
+        projectChat={projectChatControls()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+
+    expect(screen.getByTestId('runtime-plan-progress')).toHaveClass('z-0')
+    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass('z-10')
+    expect(await screen.findByTestId('composer-plugin-picker')).toHaveClass('z-popover')
+  })
+
   test('shows the plan mode pill when plan mode is selected', async () => {
     const setSelectedModelOption = vi.fn()
     render(
@@ -4102,7 +4127,7 @@ describe('ChatInput', () => {
     expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
   })
 
-  test('shows one recommended plugin task and keeps other tasks secondary', async () => {
+  test('shows three common plugin tasks and keeps additional tasks secondary', async () => {
     const applyTrialTemplate = vi.fn()
     const dismissTrialGuide = vi.fn()
     const onSubmit = vi.fn()
@@ -4118,6 +4143,12 @@ describe('ChatInput', () => {
         onSubmit={onSubmit}
         projectChat={projectChatControls({
           trialPluginName: 'Documents',
+          trialPluginApp: {
+            id: 'plugin:documents',
+            name: 'Documents',
+            pluginKey: 'documents',
+            logoUrl: 'https://example.com/documents.png',
+          },
           trialTemplates,
           applyTrialTemplate,
           dismissTrialGuide,
@@ -4126,8 +4157,14 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
+    expect(screen.getByText('Documents 可以这样用')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-plugin-icon').querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/documents.png'
+    )
     expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 1')
-    expect(screen.queryByTestId('plugin-trial-template-card')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(2)
+    expect(screen.queryByText('Scenario 4')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugin-trial-other-tasks-toggle'))
 
@@ -4135,15 +4172,56 @@ describe('ChatInput', () => {
     expect(screen.getByText('Scenario 4')).toBeInTheDocument()
 
     await userEvent.click(screen.getByText('Scenario 4'))
-    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 4')
-    expect(screen.queryByTestId('plugin-trial-other-tasks')).not.toBeInTheDocument()
+    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
 
     await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
-    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(applyTrialTemplate).toHaveBeenLastCalledWith(trialTemplates[0])
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
     expect(dismissTrialGuide).toHaveBeenCalledOnce()
+  })
+
+  test('places the caret after the task text when applying a plugin suggestion', async () => {
+    const template = {
+      name: 'Checkout flow',
+      path: 'checkout-flow',
+      description: 'Test my checkout flow on localhost',
+    }
+    const pluginReference = '[$Browser](plugin://browser@openai-bundled)'
+
+    function Harness() {
+      const [value, setValue] = useState(`${pluginReference} `)
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            trialPluginName: 'Browser',
+            trialTemplates: [template],
+            applyTrialTemplate: selectedTemplate =>
+              setValue(`${pluginReference} ${selectedTemplate.description} `),
+          })}
+        />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    await waitFor(() => {
+      expect(editor.value).toBe(`${pluginReference} ${template.description} `)
+      expect(editor).toHaveFocus()
+    })
+
+    const trailingText = editor.querySelector('p')?.lastChild
+    expect(trailingText?.textContent).toBe(`${template.description} `)
+    expect(window.getSelection()?.anchorNode).toBe(trailingText)
+    expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
 
   test('does not show plugin guidance without a selected plugin', () => {
@@ -4194,7 +4272,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByText('Documents 使用建议')).toBeInTheDocument()
+    expect(screen.getByText('Documents 可以这样用')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
       'Project memo'
     )

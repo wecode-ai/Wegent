@@ -211,6 +211,11 @@ function services(): WorkbenchServices {
         { device_id: 'local-device', device_type: 'local', status: 'online' },
       ]),
     },
+    modelApi: {
+      listModels: vi.fn(async () => ({
+        data: [{ name: 'gpt-5-codex', type: 'runtime', displayName: 'GPT-5 Codex' }],
+      })),
+    },
   } as unknown as WorkbenchServices
 }
 
@@ -678,6 +683,29 @@ describe('CloudTodoWorkspace', () => {
 
     expect((await screen.findAllByText('Wegent V4')).length).toBeGreaterThan(0)
     expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
+  })
+
+  it('renders an empty board after a successful zero-item response', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [] }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.listLoopItems).toHaveBeenCalledWith(project.id)
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('顶层任务')).toBeInTheDocument()
+    expect(screen.getByText('0 个任务')).toBeInTheDocument()
   })
 
   it('clears the previous project items and shows a skeleton while switching projects', async () => {
@@ -1285,7 +1313,7 @@ describe('CloudTodoWorkspace', () => {
         projectId: project.id,
         name: '新 AI',
         runtime: 'codex',
-        model: null,
+        model: 'gpt-5-codex',
         systemPrompt: '',
         status: 'active',
         version: 1,
@@ -1306,15 +1334,23 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
-    await screen.findByRole('option', { name: /local-device/ })
-    await userEvent.selectOptions(
-      screen.getByTestId('cloud-project-chat-agent-device'),
-      'local-device'
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
-    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ model: 'gpt-5-codex' })
+      )
+    )
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toBeInTheDocument()
   })
 
@@ -1345,7 +1381,7 @@ describe('CloudTodoWorkspace', () => {
         projectId: project.id,
         name: '项目 AI',
         runtime: 'codex',
-        model: null,
+        model: 'gpt-5-codex',
         systemPrompt: '',
         status: 'active',
         visibility: 'creator_admin',
@@ -1377,10 +1413,13 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(addButton).not.toBeDisabled()
     await userEvent.click(addButton)
-    await screen.findByRole('option', { name: /local-device/ })
-    await userEvent.selectOptions(
-      screen.getByTestId('cloud-project-chat-agent-device'),
-      'local-device'
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
     await waitFor(() =>
@@ -1683,6 +1722,56 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
     expect(screen.getByTestId('aitable-dws-login')).toHaveTextContent('等待浏览器授权…')
     expect(screen.getByTestId('aitable-dws-login')).toBeDisabled()
+  })
+
+  it('shows the DingTalk connect prompt on the board when dws is not authenticated', async () => {
+    const workbenchServices = services()
+    const aitableProject = {
+      ...project,
+      task_provider: 'dingtalk_aitable' as const,
+      provider_config: {
+        base_id: 'base-1',
+        table_id: 'table-1',
+        credential_configured: true,
+      },
+    }
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [aitableProject],
+    }))
+    let authCalls = 0
+    workbenchServices.dwsApi = {
+      authStatus: vi.fn(async () => {
+        authCalls += 1
+        return authCalls === 1
+          ? { authenticated: false, token_valid: false }
+          : { authenticated: true, token_valid: true, corp_name: '测试组织' }
+      }),
+      login: vi.fn(async () => undefined),
+      logout: vi.fn(async () => undefined),
+    }
+    workbenchServices.deliveryApi!.listLoopItems = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('DWS request failed: resolve access token ...'))
+      .mockResolvedValueOnce({ items: [] })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    const connectButton = await screen.findByTestId('aitable-board-dws-login')
+    expect(connectButton).toHaveTextContent('连接钉钉')
+
+    await userEvent.click(connectButton)
+    await waitFor(() => expect(workbenchServices.dwsApi!.login).toHaveBeenCalledOnce())
+    await waitFor(
+      () => expect(screen.queryByTestId('aitable-board-dws-login')).not.toBeInTheDocument(),
+      { timeout: 5000 }
+    )
   })
 
   it('keeps the project header above the macOS drag region and opens new TODO', async () => {

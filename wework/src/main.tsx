@@ -45,7 +45,7 @@ function renderApp(): void {
   )
 }
 
-renderApp()
 if (!isSystemDragPanel) {
-  void installWeworkAutomationBridge()
+  await installWeworkAutomationBridge()
 }
+renderApp()

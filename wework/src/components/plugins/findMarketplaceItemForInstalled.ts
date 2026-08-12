@@ -1,4 +1,4 @@
-import type { PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
@@ -9,41 +9,44 @@ function normalizedMarketplaceId(value: string | null | undefined): string {
   return isWegentCloudMarketplace(trimmed) ? 'wegent' : trimmed
 }
 
-function pluginKey(plugin: InstalledPluginItem): string {
-  return String(plugin.raw.spec.source.pluginKey || plugin.raw.metadata.name || '')
+function installedPluginKey(plugin: InstalledPlugin): string {
+  return String(plugin.spec.source.pluginKey || plugin.metadata.name || '')
     .trim()
     .toLowerCase()
 }
 
 /**
- * Resolve the marketplace catalog row for an installed plugin so the installed
- * strip can open the same enriched detail path as the market list.
+ * Resolve the marketplace catalog row for an installed plugin so UI can reuse
+ * package logos / detail already resolved for the market list.
  *
  * Match order: installedPluginId → cloud pluginId → pluginKey@marketplace.
  */
-export function findMarketplaceItemForInstalled(
-  plugin: InstalledPluginItem,
-  items: PluginMarketplaceItem[]
+export function findMarketplaceItemForInstalledPlugin(
+  plugin: InstalledPlugin,
+  items: PluginMarketplaceItem[],
+  installedId?: string | number | null
 ): PluginMarketplaceItem | null {
   if (items.length === 0) return null
 
-  const installedId = String(plugin.id)
-  const byInstalledPluginId = items.find(
-    item =>
-      item.installedPluginId !== null &&
-      item.installedPluginId !== undefined &&
-      String(item.installedPluginId) === installedId
-  )
-  if (byInstalledPluginId) return byInstalledPluginId
+  if (installedId !== null && installedId !== undefined && String(installedId).trim()) {
+    const id = String(installedId)
+    const byInstalledPluginId = items.find(
+      item =>
+        item.installedPluginId !== null &&
+        item.installedPluginId !== undefined &&
+        String(item.installedPluginId) === id
+    )
+    if (byInstalledPluginId) return byInstalledPluginId
+  }
 
-  const cloudPluginId = plugin.raw.spec.pluginId
+  const cloudPluginId = plugin.spec.pluginId
   if (typeof cloudPluginId === 'number') {
     const byPluginId = items.find(item => String(item.id) === String(cloudPluginId))
     if (byPluginId) return byPluginId
   }
 
-  const key = pluginKey(plugin)
-  const marketplace = normalizedMarketplaceId(installedPluginMarketplaceId(plugin.raw))
+  const key = installedPluginKey(plugin)
+  const marketplace = normalizedMarketplaceId(installedPluginMarketplaceId(plugin))
   if (!key || !marketplace) return null
 
   return (
@@ -56,4 +59,11 @@ export function findMarketplaceItemForInstalled(
       return itemMarketplace === marketplace
     }) ?? null
   )
+}
+
+export function findMarketplaceItemForInstalled(
+  plugin: InstalledPluginItem,
+  items: PluginMarketplaceItem[]
+): PluginMarketplaceItem | null {
+  return findMarketplaceItemForInstalledPlugin(plugin.raw, items, plugin.id)
 }

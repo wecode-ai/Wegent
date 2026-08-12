@@ -5,6 +5,7 @@ import {
   filterLocalRequirements,
   findLocalConnectorsForMessage,
   listLocalConnectors,
+  listMentionedPluginNames,
   messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
@@ -181,6 +182,15 @@ describe('localConnectorAuthGate', () => {
     expect(items[0]?.connectorSlug).toBe('weibo-wiki')
   })
 
+  test('lists mentioned plugin names from plugin:// uris', () => {
+    expect(
+      listMentionedPluginNames(
+        '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show'
+      )
+    ).toEqual(['weibo-api-wiki'])
+    expect(listMentionedPluginNames('继续分析这个问题')).toEqual([])
+  })
+
   test('enriches installed plugins that omit localAuth connectors', async () => {
     const bare = pluginWithLocalQr({
       spec: {
@@ -201,6 +211,56 @@ describe('localConnectorAuthGate', () => {
     })
     const readDetail = vi.fn(async () => pluginWithLocalQr())
     const enriched = await enrichInstalledPluginsForLocalAuth([bare], readDetail)
+    expect(readDetail).toHaveBeenCalledTimes(1)
+    expect(listLocalConnectors(enriched)).toHaveLength(1)
+  })
+
+  test('skips detail reads for plugins outside the enrich allow-list', async () => {
+    const bare = pluginWithLocalQr({
+      spec: {
+        ...pluginWithLocalQr().spec,
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          apps: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+      },
+    })
+    const other = pluginWithLocalQr({
+      metadata: { name: 'documents', namespace: 'wegent', labels: { id: '2' } },
+      spec: {
+        ...pluginWithLocalQr().spec,
+        source: {
+          type: 'marketplace',
+          providerKey: 'marketplace',
+          pluginKey: 'documents',
+        },
+        displayName: 'Documents',
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          apps: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+      },
+    })
+    const readDetail = vi.fn(async () => pluginWithLocalQr())
+    const enriched = await enrichInstalledPluginsForLocalAuth([bare, other], readDetail, {
+      shouldEnrich: plugin => plugin.spec.source.pluginKey === 'weibo-api-wiki',
+    })
     expect(readDetail).toHaveBeenCalledTimes(1)
     expect(listLocalConnectors(enriched)).toHaveLength(1)
   })

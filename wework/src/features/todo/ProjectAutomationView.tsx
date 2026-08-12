@@ -1,9 +1,10 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
 import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
+import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -11,10 +12,12 @@ export function ProjectAutomationView({
   api,
   project,
   projectChatAgentApi,
+  projectAutomationApi,
   executionApi,
   deviceApi,
   modelApi,
   localProjects,
+  runtimeWork,
   currentUserId,
   canManageAgents,
   onOpenTask,
@@ -22,10 +25,12 @@ export function ProjectAutomationView({
   api: DeliveryApi
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
+  projectAutomationApi?: WorkbenchServices['projectAutomationApi']
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
   localProjects: ProjectWithTasks[]
+  runtimeWork?: RuntimeWorkListResponse | null
   currentUserId?: string | number
   canManageAgents: boolean
   onOpenTask?: (item: CloudLoopItem) => void
@@ -41,12 +46,23 @@ export function ProjectAutomationView({
           <h2 className="text-heading-md font-semibold">{t('workbench.automation_title')}</h2>
           <p className="mt-1 text-sm text-text-muted">{t('workbench.automation_description')}</p>
         </header>
+        <ProjectAutomationRulesSection
+          projectId={project.id}
+          api={project.task_provider === 'local' ? projectAutomationApi : undefined}
+          agentApi={projectChatAgentApi}
+          canManage={canManageAgents}
+          deviceApi={deviceApi}
+          onOpenTask={taskId => {
+            void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
+          }}
+        />
         <ProjectChatAgentsSection
           project={project}
           projectChatAgentApi={projectChatAgentApi}
           deviceApi={deviceApi}
           modelApi={modelApi}
           localProjects={localProjects}
+          runtimeWork={runtimeWork}
           canManage={canManageAgents}
         />
         <section className="mt-8 border-t border-border pt-6">

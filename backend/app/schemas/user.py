@@ -60,6 +60,13 @@ class UserRuntimeConfigPreference(BaseModel):
     use_proxy: bool = False
 
 
+class UserProjectWorkPreference(BaseModel):
+    """Per-project Wework execution preference."""
+
+    executionMode: Literal["current_workspace", "git_worktree"] = "current_workspace"
+    worktreeBranch: Optional[str] = None
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -79,6 +86,9 @@ class UserPreferences(BaseModel):
     )
     sina_mail: Optional[SinaMailPreferences] = None
     weibo_binding: Optional[WeiboBindingPreferences] = None
+    wework_project_work_preferences: dict[str, UserProjectWorkPreference] = Field(
+        default_factory=dict
+    )
     runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
         default_factory=dict
     )

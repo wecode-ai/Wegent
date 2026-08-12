@@ -279,7 +279,17 @@ impl AgentEngine for AgentProcessEngine {
     fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
         // Project-space MCP servers belong to Codex runs only; coding agents
         // such as Claude Code must not receive them.
-        if request.resolved_agent_kind() == AgentKind::CodeX {
+        let agent_kind = request.resolved_agent_kind();
+        let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
+        log_executor_event(
+            "agent dispatch kind",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("agent_kind", format!("{agent_kind:?}")),
+                ("bot_count", bot_count.to_string()),
+            ],
+        );
+        if agent_kind == AgentKind::CodeX {
             crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         }
         let planner = self.planner.clone();
@@ -380,7 +390,17 @@ impl AgentEngine for AgentProcessEngine {
     {
         // Project-space MCP servers belong to Codex runs only; coding agents
         // such as Claude Code must not receive them.
-        if request.resolved_agent_kind() == AgentKind::CodeX {
+        let agent_kind = request.resolved_agent_kind();
+        let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
+        log_executor_event(
+            "agent dispatch kind",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("agent_kind", format!("{agent_kind:?}")),
+                ("bot_count", bot_count.to_string()),
+            ],
+        );
+        if agent_kind == AgentKind::CodeX {
             crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         }
         let planner = self.planner.clone();

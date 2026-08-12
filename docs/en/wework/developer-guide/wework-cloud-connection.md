@@ -55,6 +55,8 @@ Workbench services have three layers:
 
 When disconnected, Wework continues to use local services only. When connected, models, devices, and runtime work lists are merged; execution and stream subscriptions route to local IPC or Backend relay by device or source.
 
+New-chat composer preferences follow the same connection ownership. When disconnected, the selected model, reasoning effort, collaboration mode, and each project's current-workspace/worktree mode are written to the local Wework user preferences. Once cloud is connected, those selections are written through the Backend user API to the current cloud account and restored from that account after restart. Backend stores the model and its `options` in `wework_new_chat_model_selection`, and stores `executionMode` plus `worktreeBranch` per `project:<id>` in `wework_project_work_preferences`. Hybrid services must not keep writing connected-account preferences to local user storage; doing so makes the current window appear updated while a restart restores the cloud account's stale or default values.
+
 ## Cloud Runtime IPC Relay
 
 Wework cloud runtime execution uses the same app IPC protocol as local mode. The frontend connects to the Backend `/wework-runtime` Socket.IO namespace and wraps `runtime.*` requests as `{ id, method, params, device_id }` frames. Backend only authenticates the user, verifies the online target device, and forwards the request to the matching executor; it does not translate this Wework runtime path into `chat:*` events.
