@@ -45,6 +45,13 @@ class UserRuntimeConfigPreference(BaseModel):
     use_proxy: bool = False
 
 
+class UserProjectWorkPreference(BaseModel):
+    """Per-project Wework execution preference."""
+
+    executionMode: Literal["current_workspace", "git_worktree"] = "current_workspace"
+    worktreeBranch: Optional[str] = None
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -60,6 +67,9 @@ class UserPreferences(BaseModel):
     wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
     wework_project_execution_mode: Literal["current_workspace", "git_worktree"] = (
         "current_workspace"
+    )
+    wework_project_work_preferences: dict[str, UserProjectWorkPreference] = Field(
+        default_factory=dict
     )
     runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
         default_factory=dict
