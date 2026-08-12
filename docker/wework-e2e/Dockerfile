@@ -10,6 +10,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
+        libmagic1 \
         sudo \
         tar \
         unzip \
