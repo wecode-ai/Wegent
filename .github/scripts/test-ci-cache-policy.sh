@@ -222,15 +222,26 @@ if ! ruby "$script_dir/lib/validate-ci-cache-policy.rb" docker-sha \
   fail "Docker actions introduced by cache workflows must be pinned by SHA"
 fi
 
+claude_cli_manifest=".github/claude-code-cli/package.json"
 claude_cli_lock=".github/claude-code-cli/package-lock.json"
-claude_cli_key="node-24-claude-code-cli-v3-\${{ hashFiles('$claude_cli_lock') }}"
+claude_cli_key="node-24-local-harness-clis-v2-\${{ hashFiles('$claude_cli_manifest', '$claude_cli_lock') }}"
+claude_cli_verify=".github/scripts/verify-local-harness-clis.sh"
 if [[ ! -f "$script_dir/../claude-code-cli/package.json" ]] ||
   [[ ! -f "$script_dir/../claude-code-cli/package-lock.json" ]] ||
+  [[ ! -x "$script_dir/verify-local-harness-clis.sh" ]] ||
   ! grep -Fq "$claude_cli_key" "$warmup_workflow" ||
   ! grep -Fq "$claude_cli_key" "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq "$claude_cli_key" "$workflow_dir/wework-e2e.yml" ||
+  ! grep -Fq "$claude_cli_verify" "$warmup_workflow" ||
+  ! grep -Fq "$claude_cli_verify" "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq "$claude_cli_verify" "$workflow_dir/wework-e2e.yml" ||
+  [[ "$(grep -Fl 'npm ci --prefix .github/claude-code-cli --strict-allow-scripts' \
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml" \
+    "$workflow_dir/wework-e2e.yml" | wc -l)" -ne 3 ]] ||
   grep -Eq 'npm install -g .*claude-code' \
-    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
-  fail "Claude Code CLI caches must use the shared integrity-locked npm graph"
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml" \
+    "$workflow_dir/wework-e2e.yml"; then
+  fail "Local harness CLI caches must use the shared integrity-locked npm graph"
 fi
 
 for workflow in "${pr_workflows[@]}" ci-cache-warmup.yml; do
