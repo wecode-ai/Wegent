@@ -166,6 +166,53 @@ async def test_syncs_attachment_before_sandbox_tools_can_read_it(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_backend_url_with_api_suffix_is_not_doubled(monkeypatch) -> None:
+    sandbox = _FakeSandbox()
+    manager = _FakeManager(sandbox)
+    monkeypatch.setattr(
+        SandboxManager,
+        "get_instance",
+        classmethod(lambda cls, **kwargs: manager),
+    )
+    monkeypatch.setattr(sandbox_attachment_sync.httpx, "AsyncClient", _FakeAsyncClient)
+
+    path = build_sandbox_path(100, 201, "report.csv")
+    request = ExecutionRequest(
+        task_id=100,
+        subtask_id=202,
+        user_subtask_id=201,
+        user_id=3,
+        user_name="alice",
+        prompt=f"File Path(already in sandbox): {path}",
+        skill_names=["sandbox"],
+        auth_token="task-token",
+        backend_url="http://backend:8000/api",
+        attachments=[
+            {
+                "id": 77,
+                "original_filename": "report.csv",
+                "file_size": 19,
+                "subtask_id": 201,
+            }
+        ],
+    )
+
+    await sync_chat_attachments_to_sandbox(request)
+
+    assert _FakeAsyncClient.calls == [
+        (
+            "http://backend:8000/api/attachments/task/100/all",
+            {"Authorization": "Bearer task-token"},
+        ),
+        (
+            "http://backend:8000/api/attachments/77/executor-download",
+            {"Authorization": "Bearer task-token"},
+        ),
+    ]
+    assert request.attachments[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_failed_sync_stops_claiming_attachment_is_in_sandbox(monkeypatch) -> None:
     manager = _FakeManager(None, "sandbox unavailable")
     monkeypatch.setattr(

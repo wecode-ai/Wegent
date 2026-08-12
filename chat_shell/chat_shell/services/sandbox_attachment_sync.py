@@ -56,9 +56,17 @@ def _sandbox_skill_config(request: ExecutionRequest) -> dict[str, Any]:
 
 
 def _backend_url(request: ExecutionRequest) -> str:
-    """Resolve the Backend base URL without its internal API suffix."""
-    url = request.backend_url or settings.REMOTE_STORAGE_URL
-    return url.rstrip("/").removesuffix("/api/internal")
+    """Resolve the Backend base URL without any trailing API suffix.
+
+    Callers append ``/api/attachments/...`` themselves, so the base must not
+    already carry an ``/api`` or ``/api/internal`` suffix; otherwise the request
+    doubles up to ``/api/api/...`` and returns 404.
+    """
+    url = (request.backend_url or settings.REMOTE_STORAGE_URL).rstrip("/")
+    for suffix in ("/api/internal", "/api"):
+        if url.endswith(suffix):
+            return url[: -len(suffix)]
+    return url
 
 
 def _integer(value: Any, default: int = 0) -> int:
