@@ -536,6 +536,32 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
       true,
       'The supervisor correction had a live executor response but task execution was idle'
     )
+    const updatedSupervisorPrinciples = `${SUPERVISOR_PRINCIPLES}\n运行中更新监督配置。`
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
+    )
+    await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+    await control.command('fill', '[data-testid="task-supervisor-instructions"]', {
+      value: updatedSupervisorPrinciples,
+    })
+    await control.command('click', '[data-testid="task-supervisor-save-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('task-supervisor-dialog-overlay'),
+      'The supervisor dialog remained open after updating a running task'
+    )
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
+    )
+    await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+    assert.equal(
+      await control.command('getValue', '[data-testid="task-supervisor-instructions"]'),
+      updatedSupervisorPrinciples,
+      'The running task did not retain the saved supervisor configuration'
+    )
+    await control.command('click', '[data-testid="task-supervisor-close-button"]')
     await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
   } finally {
     control.releaseSupervisorCorrectionResponse()

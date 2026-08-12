@@ -730,6 +730,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    refreshWorkLists,
     startNewChat,
   } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
@@ -915,9 +916,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (!response.accepted) {
         throw new Error(response.error || t('workbench.supervisor_set_failed'))
       }
+      await refreshWorkLists({ syncCloud: false })
       return response.supervisor
     },
-    [runtimeWorkApi, t]
+    [refreshWorkLists, runtimeWorkApi, t]
   )
 
   const sendPaneInputWithContext = useCallback(
@@ -1027,7 +1029,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!response.accepted) {
       throw new Error(response.error || t('workbench.supervisor_clear_failed'))
     }
-  }, [currentRuntimeTask, runtimeWorkApi, setPendingSupervisorConfig, t])
+    await refreshWorkLists({ syncCloud: false })
+  }, [currentRuntimeTask, refreshWorkLists, runtimeWorkApi, setPendingSupervisorConfig, t])
 
   const resolveTaskSupervisorSuggestion = useCallback(
     async (suggestion: RuntimeSupervisorSuggestion, status: 'accepted' | 'dismissed') => {
@@ -1043,8 +1046,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (!response.accepted) {
         throw new Error(response.error || t('workbench.supervisor_resolve_failed'))
       }
+      await refreshWorkLists({ syncCloud: false })
     },
-    [currentRuntimeTask, runtimeWorkApi, submitPaneInput, t]
+    [currentRuntimeTask, refreshWorkLists, runtimeWorkApi, submitPaneInput, t]
   )
 
   const projectWork = useWorkbenchProjectWorkControls({
