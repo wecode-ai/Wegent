@@ -24,12 +24,13 @@ export function WorkbenchHarnessSelector({
 }: WorkbenchHarnessSelectorProps) {
   const { t } = useTranslation('common')
   const selectedLabel = runtime === 'codex' ? 'Codex' : localHarnessLabel(runtime)
+  const conversationRuntime = runtime === 'codex' || runtime === 'claude_code'
 
   return (
     <ActionMenu
       ariaLabel={t('workbench.harness_selector', '选择编码工具')}
       testId="workbench-harness-selector"
-      icon={runtime === 'codex' ? Bot : SquareTerminal}
+      icon={conversationRuntime ? Bot : SquareTerminal}
       triggerLabel={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="max-w-40 truncate">{selectedLabel}</span>
@@ -74,7 +75,7 @@ export function WorkbenchHarnessSelector({
                 <ExperimentalBadge testId={`workbench-harness-option-${harnessId}-badge`} />
               </>
             ),
-            icon: SquareTerminal,
+            icon: harnessId === 'claude_code' ? Bot : SquareTerminal,
             testId: `workbench-harness-option-${harnessId}`,
             disabled: loading || detectionFailed || !installed,
             onSelect: () => onRuntimeChange(harnessId),
