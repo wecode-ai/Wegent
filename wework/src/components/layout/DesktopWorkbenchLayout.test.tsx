@@ -3523,7 +3523,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
   })
 
-  test('keeps Codex and harness session selection exclusive without reopening the loaded task', async () => {
+  test('keeps the loaded Codex session above and selected before a restored harness session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessSessionsMock.mockResolvedValue([
       {
@@ -3582,29 +3582,54 @@ describe('DesktopWorkbenchLayout', () => {
 
     const harnessRow = await screen.findByTestId('local-harness-session-row-local-harness-restored')
     const codexRow = screen.getByTestId('runtime-local-task-row-runtime-loaded')
+    const sessionRows = [
+      ...screen
+        .getByTestId('runtime-chat-section')
+        .querySelectorAll(
+          '[data-testid^="runtime-local-task-row-"], [data-testid^="local-harness-session-row-"]'
+        ),
+    ]
+    expect(sessionRows.map(row => row.getAttribute('data-testid'))).toEqual([
+      'runtime-local-task-row-runtime-loaded',
+      'local-harness-session-row-local-harness-restored',
+    ])
+    expect(codexRow).toHaveAttribute('aria-current', 'page')
+    expect(harnessRow).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(harnessRow)
+
     expect(harnessRow).toHaveAttribute('aria-current', 'page')
     expect(codexRow).not.toHaveAttribute('aria-current')
 
     await userEvent.click(codexRow)
 
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(codexRow).toHaveAttribute('aria-current', 'page')
+    expect(harnessRow).not.toHaveAttribute('aria-current')
+  })
+
+  test('restores a harness session when no Codex session is loaded', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-restored',
+        harness_id: 'opencode',
+        title: 'OpenCode 会话',
+        cwd: '/workspace/project-alpha',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: harnessTestModel.key,
+      },
+    ])
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
     expect(
-      screen.getByTestId('local-harness-session-row-local-harness-restored')
-    ).not.toHaveAttribute('aria-current')
-
-    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-restored'))
-
-    expect(screen.getByTestId('local-harness-session-row-local-harness-restored')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
-    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).not.toHaveAttribute(
-      'aria-current'
-    )
+      await screen.findByTestId('local-harness-session-row-local-harness-restored')
+    ).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
   })
 
   test('reopens the loaded Codex task when switching back from another page', async () => {

@@ -2572,16 +2572,6 @@ function ProjectItem({
       >
         <div className="min-h-0 overflow-hidden">
           <div className="space-y-0.5">
-            {localHarnessSessions.map(session => (
-              <LocalHarnessSessionRow
-                key={session.sessionId}
-                session={session}
-                selected={activeLocalHarnessSessionId === session.sessionId}
-                indentClassName="pl-9"
-                onOpen={onOpenLocalHarnessSession}
-                onClose={onCloseLocalHarnessSession}
-              />
-            ))}
             {runtimeTaskItems.length === 0 && localHarnessSessions.length === 0 ? (
               <div
                 data-testid={`project-local-tasks-empty-${project.id}`}
@@ -2649,6 +2639,16 @@ function ProjectItem({
                     />
                   )}
                 />
+                {localHarnessSessions.map(session => (
+                  <LocalHarnessSessionRow
+                    key={session.sessionId}
+                    session={session}
+                    selected={activeLocalHarnessSessionId === session.sessionId}
+                    indentClassName="pl-9"
+                    onOpen={onOpenLocalHarnessSession}
+                    onClose={onCloseLocalHarnessSession}
+                  />
+                ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
                     {hasHiddenRuntimeTasks ? (
@@ -4095,15 +4095,6 @@ export function DesktopSidebar({
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
-                      {standaloneLocalHarnessSessions.map(session => (
-                        <LocalHarnessSessionRow
-                          key={session.sessionId}
-                          session={session}
-                          selected={activeLocalHarnessSessionId === session.sessionId}
-                          onOpen={onOpenLocalHarnessSession}
-                          onClose={onCloseLocalHarnessSession}
-                        />
-                      ))}
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
                         <div
@@ -4170,6 +4161,15 @@ export function DesktopSidebar({
                           )}
                         />
                       ) : null}
+                      {standaloneLocalHarnessSessions.map(session => (
+                        <LocalHarnessSessionRow
+                          key={session.sessionId}
+                          session={session}
+                          selected={activeLocalHarnessSessionId === session.sessionId}
+                          onOpen={onOpenLocalHarnessSession}
+                          onClose={onCloseLocalHarnessSession}
+                        />
+                      ))}
                     </div>
                   )}
                 </section>
