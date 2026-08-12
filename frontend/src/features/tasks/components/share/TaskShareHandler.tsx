@@ -251,6 +251,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         share_token: shareToken,
         team_id: selectedTeamId,
         model_id: modelId,
+        model_namespace: modelId ? selectedModel?.namespace : undefined,
         force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
         git_repo_id: selectedRepo?.git_repo_id,

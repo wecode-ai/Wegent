@@ -29,6 +29,7 @@ export interface CreateTaskRequest {
   user_id: number
   user_name: string
   model_id?: string
+  model_namespace?: string
   force_override_bot_model?: boolean
 }
 
@@ -114,6 +115,7 @@ export interface JoinSharedTaskRequest {
   share_token: string
   team_id?: number // Optional: if not provided, backend will use user's first team
   model_id?: string // Model name (not database ID)
+  model_namespace?: string // Model resource namespace
   force_override_bot_model?: boolean // Force override bot's predefined model
   force_override_bot_model_type?: string // Model type: 'public', 'user', 'group'
   // Complete repository information (for code tasks)

@@ -86,6 +86,8 @@ export interface ModelSelectorProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  taskModelNamespace?: string | null
+  taskModelType?: string | null
   /** Initial force override value when restoring a persisted non-task selection */
   initialForceOverride?: boolean
   /** Model category type for filtering and display (default: 'llm') */
@@ -96,9 +98,9 @@ export interface ModelSelectorProps {
 // Helper Functions
 // ============================================================================
 
-/** Get unique key for model (name + type) */
+/** Get unique key for model (name + type + namespace) */
 function getModelKey(model: Model): string {
-  return `${model.name}:${model.type || ''}`
+  return `${model.name}:${model.type || ''}:${model.namespace || 'default'}`
 }
 
 /** Get a stable sync key for comparing models across component boundaries */
@@ -165,6 +167,8 @@ export default function ModelSelector({
   teamId,
   taskId,
   taskModelId,
+  taskModelNamespace,
+  taskModelType,
   initialForceOverride,
   modelCategoryType = 'llm',
 }: ModelSelectorProps) {
@@ -178,6 +182,8 @@ export default function ModelSelector({
     teamId: teamId ?? null,
     taskId: taskId ?? null,
     taskModelId,
+    taskModelNamespace,
+    taskModelType,
     initialForceOverride,
     selectedTeam,
     disabled,

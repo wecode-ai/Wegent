@@ -442,6 +442,7 @@ class KnowledgeOrchestrator:
 
         Labels used:
         - modelId: Model name
+        - modelNamespace: Model namespace
         - forceOverrideBotModelType: Model type (user/public/group)
 
         Args:
@@ -461,8 +462,40 @@ class KnowledgeOrchestrator:
         if not model_id:
             return None
 
-        # Get model type from labels, default to "public"
-        model_type = labels.get("forceOverrideBotModelType", "public")
+        model_type = labels.get("forceOverrideBotModelType")
+        model_namespace = labels.get("modelNamespace")
+
+        if model_namespace:
+            from app.services.chat.config.model_resolver import (
+                _find_model_with_namespace,
+            )
+
+            _model_kind, model_spec = _find_model_with_namespace(
+                db,
+                model_id,
+                user_id,
+                namespace=model_namespace,
+                model_type=model_type,
+            )
+            if not model_spec:
+                logger.warning(
+                    "[Orchestrator] Exact task model reference was not found: "
+                    "modelId=%s, namespace=%s, type=%s, user_id=%s",
+                    model_id,
+                    model_namespace,
+                    model_type,
+                    user_id,
+                )
+                return None
+            return {
+                "name": model_id,
+                "namespace": model_namespace,
+                "type": model_type,
+            }
+
+        # Legacy tasks did not persist a model namespace. Keep their existing
+        # lookup behavior so old task history remains executable.
+        model_type = model_type or "public"
         namespace = task_crd.metadata.namespace or "default"
 
         logger.debug(

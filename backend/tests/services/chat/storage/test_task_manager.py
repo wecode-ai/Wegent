@@ -316,6 +316,36 @@ def test_create_new_task_uses_auto_delete_executor_label(
     assert task.json["metadata"]["labels"]["autoDeleteExecutor"] == "true"
 
 
+def test_create_new_task_persists_full_model_reference(
+    test_db: Session,
+    test_user: User,
+):
+    """A task model override must retain its namespace and scope for execution."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="run tests",
+        model_id="shared-model",
+        model_namespace="team-platform",
+        force_override_bot_model_type="group",
+    )
+
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    labels = task.json["metadata"]["labels"]
+    assert labels["modelId"] == "shared-model"
+    assert labels["modelNamespace"] == "team-platform"
+    assert labels["forceOverrideBotModelType"] == "group"
+
+
 def test_create_new_task_writes_execution_workspace(
     test_db: Session,
     test_user: User,

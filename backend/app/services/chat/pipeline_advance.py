@@ -145,6 +145,7 @@ async def advance_pipeline_stage_and_send(
         message=handoff_message,
         title=getattr(payload, "title", None),
         model_id=getattr(payload, "force_override_bot_model", None),
+        model_namespace=getattr(payload, "force_override_bot_model_namespace", None),
         force_override_bot_model=getattr(payload, "force_override_bot_model", None)
         is not None,
         force_override_bot_model_type=getattr(

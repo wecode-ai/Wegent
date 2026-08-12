@@ -449,6 +449,9 @@ def _resolve_model_for_bot(
     user_id: int,
     override_model_name: Optional[str] = None,
     force_override: bool = False,
+    *,
+    override_model_namespace: Optional[str] = None,
+    override_model_type: Optional[str] = None,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
     """
     Resolve model Kind and spec for a bot.
@@ -466,6 +469,8 @@ def _resolve_model_for_bot(
         bot: The Bot Kind object
         user_id: User ID for querying user-specific models
         override_model_name: Optional model name to override
+        override_model_namespace: Namespace of the task-level override
+        override_model_type: Scope of the task-level override
         force_override: If True, override_model_name takes highest priority
 
     Returns:
@@ -481,10 +486,12 @@ def _resolve_model_for_bot(
     raw_agent_config = bot_spec.get("agent_config", {})
 
     model_name = None
+    uses_task_override = False
 
     # Priority 1: Force override from task
     if force_override and override_model_name:
         model_name = override_model_name
+        uses_task_override = True
         logger.info(f"Using task model (force override): {model_name}")
     else:
         # Priority 2: Bot's agent_config.bind_model
@@ -501,6 +508,7 @@ def _resolve_model_for_bot(
         # Priority 4: Task-level override (fallback)
         if not model_name and override_model_name:
             model_name = override_model_name
+            uses_task_override = True
             logger.info(f"Using task model (fallback): {model_name}")
 
     if not model_name:
@@ -532,7 +540,18 @@ def _resolve_model_for_bot(
     # Find the model Kind object, following any bind_model pointer chain
     # (e.g. a Bot's private Model that only carries an allowed_models
     # whitelist and points onward to the model with the real env config).
-    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    model_lookup_kwargs: dict[str, Optional[str]] = {}
+    if uses_task_override and override_model_namespace is not None:
+        model_lookup_kwargs = {
+            "namespace": override_model_namespace,
+            "model_type": override_model_type,
+        }
+    model_kind, model_spec = _find_model_with_namespace(
+        db,
+        model_name,
+        user_id,
+        **model_lookup_kwargs,
+    )
     model_kind, model_spec = _resolve_bind_model_pointer(
         db, user_id, model_kind, model_spec
     )
@@ -545,6 +564,9 @@ def build_agent_config_for_bot(
     user_id: int,
     override_model_name: Optional[str] = None,
     force_override: bool = False,
+    *,
+    override_model_namespace: Optional[str] = None,
+    override_model_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Build agent_config for a bot based on its model binding.
@@ -561,7 +583,13 @@ def build_agent_config_for_bot(
             return raw_agent_config
 
     model_kind, model_spec, model_name, raw_agent_config = _resolve_model_for_bot(
-        db, bot, user_id, override_model_name, force_override
+        db,
+        bot,
+        user_id,
+        override_model_name=override_model_name,
+        force_override=force_override,
+        override_model_namespace=override_model_namespace,
+        override_model_type=override_model_type,
     )
 
     if not model_spec:
@@ -594,6 +622,9 @@ def get_model_config_for_bot(
     user_id: int,
     override_model_name: Optional[str] = None,
     force_override: bool = False,
+    *,
+    override_model_namespace: Optional[str] = None,
+    override_model_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get model configuration for a Bot (flat format for Chat Shell).
@@ -613,7 +644,13 @@ def get_model_config_for_bot(
         ValueError: If no model is configured or model not found
     """
     model_kind, model_spec, model_name, _ = _resolve_model_for_bot(
-        db, bot, user_id, override_model_name, force_override
+        db,
+        bot,
+        user_id,
+        override_model_name=override_model_name,
+        force_override=force_override,
+        override_model_namespace=override_model_namespace,
+        override_model_type=override_model_type,
     )
 
     if not model_name:
@@ -657,10 +694,19 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
 
 def _find_model_with_namespace(
-    db: Session, model_name: str, user_id: int
+    db: Session,
+    model_name: str,
+    user_id: int,
+    *,
+    namespace: Optional[str] = None,
+    model_type: Optional[str] = None,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
     """
     Find model by name and return both the Kind object and spec.
+
+    A task that stores both ``namespace`` and ``model_type`` is resolved as an
+    exact Model reference. Older tasks have no namespace label and retain the
+    legacy visibility-based lookup order below.
 
     Search order:
     1. User's private models (kinds table)
@@ -672,10 +718,21 @@ def _find_model_with_namespace(
         db: Database session
         model_name: Model name to find
         user_id: User ID for private model lookup
+        namespace: Explicit Model namespace from a task label
+        model_type: Explicit Model scope from a task label
 
     Returns:
         Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
     """
+    if namespace is not None:
+        return _find_model_by_exact_reference(
+            db,
+            model_name=model_name,
+            user_id=user_id,
+            namespace=namespace,
+            model_type=model_type,
+        )
+
     # Search user's private models first
     user_model = (
         db.query(Kind)
@@ -761,6 +818,124 @@ def _find_model_with_namespace(
         return None, runtime_model_spec
 
     logger.warning(f"Model '{model_name}' not found in any source")
+    return None, None
+
+
+def _find_model_by_exact_reference(
+    db: Session,
+    *,
+    model_name: str,
+    user_id: int,
+    namespace: str,
+    model_type: Optional[str],
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
+    """Resolve a persisted Task model reference without cross-scope fallback."""
+    normalized_namespace = namespace.strip() or "default"
+    normalized_type = (model_type or "").strip().lower()
+
+    if normalized_type == "runtime":
+        runtime_model_spec = get_enabled_codex_runtime_model_spec(
+            db, user_id, model_name
+        )
+        if runtime_model_spec:
+            return None, runtime_model_spec
+        return None, None
+
+    if normalized_type == "public":
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == normalized_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+    elif normalized_type == "user":
+        if normalized_namespace != "default":
+            logger.warning(
+                "Model '%s' has an invalid user namespace '%s'",
+                model_name,
+                normalized_namespace,
+            )
+            return None, None
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == normalized_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not model:
+            model = get_referenced_capability(
+                db,
+                kind="Model",
+                name=model_name,
+                user_id=user_id,
+                namespace=normalized_namespace,
+            )
+    elif normalized_type == "group":
+        from app.services.group_permission import get_user_groups
+
+        if normalized_namespace == "default":
+            logger.warning("Model '%s' has no group namespace", model_name)
+            return None, None
+        if normalized_namespace not in get_user_groups(db, user_id):
+            logger.warning(
+                "Model '%s' is not available in requested group namespace '%s'",
+                model_name,
+                normalized_namespace,
+            )
+            return None, None
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id != 0,
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == normalized_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not model:
+            model = get_referenced_capability(
+                db,
+                kind="Model",
+                name=model_name,
+                user_id=user_id,
+                namespace=normalized_namespace,
+            )
+    else:
+        logger.warning(
+            "Model '%s' has incomplete task reference: namespace=%s, type=%s",
+            model_name,
+            normalized_namespace,
+            model_type,
+        )
+        return None, None
+
+    if model and model.json:
+        logger.info(
+            "Found model '%s' from exact task reference (namespace: %s, type: %s)",
+            model_name,
+            normalized_namespace,
+            normalized_type,
+        )
+        return model, model.json.get("spec", {})
+
+    logger.warning(
+        "Model '%s' not found from exact task reference (namespace: %s, type: %s)",
+        model_name,
+        normalized_namespace,
+        normalized_type,
+    )
     return None, None
 
 

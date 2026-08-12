@@ -24,7 +24,13 @@ def test_resolve_generation_model_uses_available_category_fallback() -> None:
         patch(
             "app.services.execution.agents.generation_context."
             "model_aggregation_service.list_available_models",
-            return_value=[{"name": "image-model", "type": "public"}],
+            return_value=[
+                {
+                    "name": "image-model",
+                    "namespace": "team-platform",
+                    "type": "group",
+                }
+            ],
         ) as list_models,
         patch(
             "app.services.execution.agents.generation_context."
@@ -48,6 +54,8 @@ def test_resolve_generation_model_uses_available_category_fallback() -> None:
     assert result["modelType"] == "image"
     assert list_models.call_args.kwargs["model_category_type"] == "image"
     assert build_request.call_args.kwargs["override_model_name"] == "image-model"
+    assert build_request.call_args.kwargs["override_model_namespace"] == "team-platform"
+    assert build_request.call_args.kwargs["override_model_type"] == "group"
     assert build_request.call_args.kwargs["force_override"] is True
 
 

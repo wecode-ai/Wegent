@@ -46,6 +46,7 @@ def _get_model_selection_labels(task_crd: Task) -> Dict[str, Any]:
 
     return {
         "model_id": labels.get("modelId") if labels else None,
+        "model_namespace": labels.get("modelNamespace") if labels else None,
         "force_override_bot_model_type": (
             labels.get("forceOverrideBotModelType") if labels else None
         ),

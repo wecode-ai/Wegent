@@ -82,6 +82,8 @@ def resolve_generation_context(
         context=(user, task, subtask, team),
         prompt=prompt,
         override_model_name=labels.get("modelId"),
+        override_model_namespace=labels.get("modelNamespace"),
+        override_model_type=labels.get("forceOverrideBotModelType"),
         force_override=labels.get("forceOverrideBotModel") == "true",
     )
     return GenerationContext(
@@ -111,16 +113,13 @@ def resolve_generation_model(
         model_category_type=model_type,
     )
     default_model_name = _get_default_generation_model_name(model_type)
+    selected_model: dict[str, Any] | None = None
     if default_model_name:
-        model_name = next(
-            (
-                model.get("name")
-                for model in models
-                if model.get("name") == default_model_name
-            ),
+        selected_model = next(
+            (model for model in models if model.get("name") == default_model_name),
             None,
         )
-        if not model_name:
+        if not selected_model:
             raise ValueError(
                 f"Configured default {model_type} model "
                 f"'{default_model_name}' is not available"
@@ -134,19 +133,20 @@ def resolve_generation_model(
                 str(model.get("name", "")),
             ),
         )
-        model_name = next(
+        selected_model = next(
             (
-                model.get("name")
+                model
                 for model in candidates
                 if isinstance(model.get("name"), str) and model.get("name")
             ),
             None,
         )
-    if not model_name:
+    if not selected_model:
         raise ValueError(
             f"No available {model_type} model was found. "
             f"Please configure a {model_type} model and retry."
         )
+    model_name = str(selected_model["name"])
 
     request = _build_request(
         db=db,
@@ -154,6 +154,8 @@ def resolve_generation_model(
         prompt=prompt,
         override_model_name=model_name,
         force_override=True,
+        override_model_namespace=selected_model.get("namespace"),
+        override_model_type=selected_model.get("type"),
     )
     model_config = dict(request.model_config or {})
     if model_config.get("modelType") != model_type:
@@ -176,6 +178,8 @@ def _build_request(
     prompt: str,
     override_model_name: str | None,
     force_override: bool,
+    override_model_namespace: str | None = None,
+    override_model_type: str | None = None,
 ) -> ExecutionRequest:
     user, task, subtask, team = context
     return TaskRequestBuilder(db).build(
@@ -189,5 +193,7 @@ def _build_request(
         enable_clarification=False,
         enable_deep_thinking=False,
         override_model_name=override_model_name,
+        override_model_namespace=override_model_namespace,
+        override_model_type=override_model_type,
         force_override=force_override,
     )

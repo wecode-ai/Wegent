@@ -777,14 +777,19 @@ def test_the_run_uses_the_model_the_wiki_was_created_with(
     _set_spec(
         test_db,
         knowledge_base,
-        executionModelRef={"name": "claude-opus-5", "type": "public"},
+        executionModelRef={
+            "name": "claude-opus-5",
+            "namespace": "code-wiki-models",
+            "type": "group",
+        },
     )
 
     start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
 
     created = tasks.created[0]
     assert created.model_id == "claude-opus-5"
-    assert created.force_override_bot_model_type == "public"
+    assert created.model_namespace == "code-wiki-models"
+    assert created.force_override_bot_model_type == "group"
     # Set by TaskCreate itself from model_id. Without it the executor reads the
     # choice as advisory and the bot's own model wins anyway.
     assert created.force_override_bot_model is True
@@ -853,6 +858,22 @@ def test_a_stored_type_that_is_not_a_model_scope_falls_back_whole(
     assert tasks.created[0].force_override_bot_model is False
 
 
+def test_a_group_model_without_a_group_namespace_falls_back_whole(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A group scope without its namespace cannot name one exact Model."""
+    _set_spec(
+        test_db,
+        knowledge_base,
+        executionModelRef={"name": "claude-opus-5", "type": "group"},
+    )
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].model_id is None
+    assert tasks.created[0].force_override_bot_model is False
+
+
 def test_a_stored_type_of_spaces_reaches_the_task_as_no_type_at_all(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
 ):
@@ -873,6 +894,7 @@ def test_a_stored_type_of_spaces_reaches_the_task_as_no_type_at_all(
 
     created = tasks.created[0]
     assert created.model_id == "claude-opus-5"
+    assert created.model_namespace is None
     assert created.force_override_bot_model_type is None
 
 

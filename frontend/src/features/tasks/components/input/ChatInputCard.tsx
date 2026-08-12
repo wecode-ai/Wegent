@@ -832,6 +832,8 @@ export function ChatInputCard({
             teamId={teamId}
             taskId={taskId}
             taskModelId={selectedTaskDetail?.model_id}
+            taskModelNamespace={selectedTaskDetail?.model_namespace}
+            taskModelType={selectedTaskDetail?.force_override_bot_model_type}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}

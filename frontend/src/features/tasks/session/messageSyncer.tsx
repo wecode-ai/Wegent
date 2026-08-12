@@ -48,6 +48,8 @@ export interface ChatMessageRequest {
   title?: string
   /** Model ID override (optional) */
   model_id?: string
+  /** Model namespace for the override */
+  model_namespace?: string
   /** Force override bot's default model */
   force_override_bot_model?: boolean
   /** Model type for override (public/user/group) */
@@ -734,6 +736,7 @@ export function useMessageSyncer({
         enable_clarification: request.enable_clarification,
         enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,
+        force_override_bot_model_namespace: request.model_namespace,
         force_override_bot_model_type: request.force_override_bot_model_type,
         is_group_chat: request.is_group_chat,
         contexts: request.contexts,

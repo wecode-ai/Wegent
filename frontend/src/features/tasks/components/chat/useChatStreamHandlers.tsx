@@ -683,6 +683,7 @@ export function useChatStreamHandlers({
         team_id: selectedTeam?.id ?? 0,
         task_id: currentTaskId ?? undefined,
         model_id: modelId,
+        model_namespace: selectedModel?.namespace,
         force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
         attachment_ids: [...snapshotAttachments.map(a => a.id), ...queueAttachmentIds],
@@ -1452,6 +1453,7 @@ export function useChatStreamHandlers({
             team_id: selectedTeam?.id ?? 0,
             task_id: currentTaskId ?? undefined,
             model_id: modelId,
+            model_namespace: modelOverride.namespace,
             force_override_bot_model: true, // Always force override when using model override
             force_override_bot_model_type: modelOverride.type,
             attachment_ids: attachmentIds,
@@ -1600,12 +1602,14 @@ export function useChatStreamHandlers({
           try {
             const modelId =
               selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
+            const modelNamespace = modelId ? selectedModel?.namespace : undefined
             const modelType = modelId ? selectedModel?.type : undefined
 
             const result = await retryMessage(
               currentTaskId,
               message.subtaskId!,
               modelId,
+              modelNamespace,
               modelType,
               Boolean(modelId)
             )
@@ -1651,6 +1655,7 @@ export function useChatStreamHandlers({
           currentTaskId,
           message.subtaskId,
           model.name,
+          model.namespace,
           model.type,
           true // forceOverride = true to permanently switch in task metadata
         )

@@ -112,6 +112,7 @@ export interface ChatSendPayload {
   search_engine?: string
   enable_clarification?: boolean
   force_override_bot_model?: string
+  force_override_bot_model_namespace?: string
   force_override_bot_model_type?: string
   is_group_chat?: boolean
   contexts?: Array<{

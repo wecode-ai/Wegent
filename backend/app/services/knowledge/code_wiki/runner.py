@@ -476,6 +476,13 @@ def _create_task(
                 # the team's bot supply the model as it always has. TaskCreate turns
                 # a model_id into an override on its own.
                 model_id=(model_ref or {}).get("name"),
+                # A historical ref may have a name but no scope. Preserve its
+                # name-only lookup instead of persisting a partial exact reference.
+                model_namespace=(
+                    ((model_ref or {}).get("namespace") or "default")
+                    if (model_ref or {}).get("type")
+                    else None
+                ),
                 force_override_bot_model_type=(model_ref or {}).get("type"),
             ),
             user=task_user,

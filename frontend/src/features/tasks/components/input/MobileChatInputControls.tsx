@@ -70,6 +70,8 @@ export interface MobileChatInputControlsProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  taskModelNamespace?: string | null
+  taskModelType?: string | null
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -159,6 +161,8 @@ export function MobileChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  taskModelNamespace,
+  taskModelType,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -559,6 +563,8 @@ export function MobileChatInputControls({
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}
+              taskModelNamespace={taskModelNamespace}
+              taskModelType={taskModelType}
             />
           </div>
         )}

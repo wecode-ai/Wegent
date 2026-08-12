@@ -373,6 +373,50 @@ class TestBuildExecutionRequestUserSubtaskId:
         assert mock_builder.build.call_args.kwargs["override_model_name"] is None
         assert mock_builder.build.call_args.kwargs["force_override"] is False
 
+    async def test_task_model_override_passes_namespace_and_type_to_request_builder(
+        self,
+    ):
+        """New task labels must keep the complete Model identity through execution."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = ExecutionRequest(task_id=1, subtask_id=2)
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "same-name-model",
+                    "modelNamespace": "team-platform",
+                    "forceOverrideBotModel": "true",
+                    "forceOverrideBotModelType": "group",
+                }
+            }
+        }
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                )
+
+        build_kwargs = mock_builder.build.call_args.kwargs
+        assert build_kwargs["override_model_name"] == "same-name-model"
+        assert build_kwargs["override_model_namespace"] == "team-platform"
+        assert build_kwargs["override_model_type"] == "group"
+
     async def test_runtime_task_model_override_uses_codex_runtime_config(self):
         """Wework runtime model labels should execute through Codex auth config."""
         from app.services.chat.trigger import unified as trigger_unified

@@ -228,11 +228,21 @@ def _task_model_override_available(
     *,
     model_name: str,
     user_id: int,
+    model_namespace: str | None = None,
+    model_type: str | None = None,
 ) -> bool:
     """Return whether the task-level model override resolves as a Model CRD."""
     from app.services.chat.config.model_resolver import _find_model_with_namespace
 
-    _model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    model_lookup_kwargs: dict[str, str | None] = {}
+    if model_namespace is not None:
+        model_lookup_kwargs = {
+            "namespace": model_namespace,
+            "model_type": model_type,
+        }
+    _model_kind, model_spec = _find_model_with_namespace(
+        db, model_name, user_id, **model_lookup_kwargs
+    )
     return model_spec is not None
 
 
@@ -705,6 +715,7 @@ async def build_execution_request(
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
         override_model_name = None
+        override_model_namespace = None
         override_model_type = None
         force_override = False
         runtime_model_config = None
@@ -716,12 +727,15 @@ async def build_execution_request(
         task_labels = labels if isinstance(labels, dict) else {}
         if task_labels:
             override_model_name = task_labels.get("modelId")
+            override_model_namespace = task_labels.get("modelNamespace")
             override_model_type = task_labels.get("forceOverrideBotModelType")
             force_override = task_labels.get("forceOverrideBotModel") == "true"
             logger.info(
                 "[build_execution_request] Extracted model override from task labels: "
-                "modelId=%s, forceOverrideBotModel=%s, forceOverrideBotModelType=%s",
+                "modelId=%s, modelNamespace=%s, forceOverrideBotModel=%s, "
+                "forceOverrideBotModelType=%s",
                 override_model_name,
+                override_model_namespace,
                 force_override,
                 override_model_type,
             )
@@ -764,6 +778,8 @@ async def build_execution_request(
                 db,
                 model_name=override_model_name,
                 user_id=user.id,
+                model_namespace=override_model_namespace,
+                model_type=override_model_type,
             )
         ):
             logger.info(
@@ -772,6 +788,7 @@ async def build_execution_request(
                 override_model_name,
             )
             override_model_name = None
+            override_model_namespace = None
             force_override = False
 
         request = builder.build(
@@ -788,6 +805,8 @@ async def build_execution_request(
             history_limit=history_limit,
             is_subscription=is_subscription,
             override_model_name=override_model_name,
+            override_model_namespace=override_model_namespace,
+            override_model_type=override_model_type,
             force_override=force_override,
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,

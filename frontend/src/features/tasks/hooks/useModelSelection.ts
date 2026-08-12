@@ -67,6 +67,10 @@ export interface Model {
 /** Special constant for default model option */
 export const DEFAULT_MODEL_NAME = '__default__'
 
+function modelReferenceKey(model: Model): string {
+  return `${model.name}:${model.type || ''}:${model.namespace || 'default'}`
+}
+
 /** Extended Team type with bot details */
 export interface TeamWithBotDetails extends Team {
   bots: Array<{
@@ -85,6 +89,10 @@ export interface UseModelSelectionOptions {
   taskId: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Task model namespace used to distinguish same-named models */
+  taskModelNamespace?: string | null
+  /** Task model scope used to distinguish same-named models */
+  taskModelType?: string | null
   /** Initial force override value when restoring a persisted non-task selection */
   initialForceOverride?: boolean
   /** Currently selected team with bot details */
@@ -195,6 +203,8 @@ export function useModelSelection({
   teamId,
   taskId,
   taskModelId,
+  taskModelNamespace,
+  taskModelType,
   selectedTeam,
   modelCategoryType = 'llm',
 }: UseModelSelectionOptions): UseModelSelectionReturn {
@@ -262,7 +272,7 @@ export function useModelSelection({
       })
       .filter((model): model is Model => Boolean(model))
 
-    const uniqueKeys = new Set(configuredModels.map(model => `${model.name}:${model.type || ''}`))
+    const uniqueKeys = new Set(configuredModels.map(model => modelReferenceKey(model)))
     if (uniqueKeys.size !== 1) {
       return null
     }
@@ -408,7 +418,13 @@ export function useModelSelection({
       // Priority 1: Use taskModelId from API (if exists and not default)
       // Search in ALL models, not just filtered ones, since task already has a recorded model
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
+        const foundModel = models.find(model => {
+          if (model.name !== taskModelId && model.displayName !== taskModelId) return false
+          if (taskModelNamespace && (model.namespace || 'default') !== taskModelNamespace) {
+            return false
+          }
+          return !taskModelType || model.type === taskModelType
+        })
         if (foundModel) {
           restoredModel = foundModel
           restoredForceOverride = true
@@ -483,7 +499,11 @@ export function useModelSelection({
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
       const isStillCompatible = selectableModels.some(m => {
         if (selectedModel.type) {
-          return m.name === selectedModel.name && m.type === selectedModel.type
+          return (
+            m.name === selectedModel.name &&
+            m.type === selectedModel.type &&
+            (m.namespace || 'default') === (selectedModel.namespace || 'default')
+          )
         }
         return m.name === selectedModel.name
       })
@@ -500,6 +520,8 @@ export function useModelSelection({
     teamId,
     taskId,
     taskModelId,
+    taskModelNamespace,
+    taskModelType,
     compatibleProvider,
   ])
 
@@ -546,7 +568,7 @@ export function useModelSelection({
     setForceOverrideState(Boolean(model && model.name !== DEFAULT_MODEL_NAME))
   }, [])
 
-  /** Select model by key (format: "modelName:modelType") */
+  /** Select model by its full name, scope, and namespace identity. */
   const selectModelByKey = useCallback(
     (key: string) => {
       if (key === DEFAULT_MODEL_NAME) {
@@ -556,8 +578,7 @@ export function useModelSelection({
         return
       }
 
-      const [modelName, modelType] = key.split(':')
-      const model = filteredModels.find(m => m.name === modelName && m.type === modelType)
+      const model = filteredModels.find(model => modelReferenceKey(model) === key)
       if (model) {
         setSelectedModel(model)
         if (model.isAdvanced) {
@@ -593,9 +614,9 @@ export function useModelSelection({
   // Display Helpers
   // -------------------------------------------------------------------------
 
-  /** Get unique key for model (name + type) */
+  /** Get unique key for model (name + type + namespace) */
   const getModelKey = useCallback((model: Model): string => {
-    return `${model.name}:${model.type || ''}`
+    return modelReferenceKey(model)
   }, [])
 
   /** Get display text for a model */

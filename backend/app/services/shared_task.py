@@ -296,6 +296,7 @@ class SharedTaskService:
         new_user_id: int,
         new_team_id: int,
         model_id: Optional[str] = None,
+        model_namespace: Optional[str] = None,
         force_override_bot_model: bool = False,
         force_override_bot_model_type: Optional[str] = None,
         git_repo_id: Optional[int] = None,
@@ -473,6 +474,8 @@ class SharedTaskService:
         # This ensures imported tasks don't inherit the original task's model selection
         if task_crd.metadata.labels and "modelId" in task_crd.metadata.labels:
             del task_crd.metadata.labels["modelId"]
+        if task_crd.metadata.labels and "modelNamespace" in task_crd.metadata.labels:
+            del task_crd.metadata.labels["modelNamespace"]
 
         # Remove forceOverrideBotModel and forceOverrideBotModelType from original task as well
         if (
@@ -492,6 +495,8 @@ class SharedTaskService:
                 task_crd.metadata.labels = {}
             if model_id:
                 task_crd.metadata.labels["modelId"] = model_id
+            if model_id and model_namespace and force_override_bot_model_type:
+                task_crd.metadata.labels["modelNamespace"] = model_namespace
             if should_force_override_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if force_override_bot_model_type:
@@ -588,6 +593,7 @@ class SharedTaskService:
         user_id: int,
         team_id: int,
         model_id: Optional[str] = None,
+        model_namespace: Optional[str] = None,
         force_override_bot_model: bool = False,
         force_override_bot_model_type: Optional[str] = None,
         git_repo_id: Optional[int] = None,
@@ -659,6 +665,7 @@ class SharedTaskService:
             new_user_id=user_id,
             new_team_id=team_id,
             model_id=model_id,
+            model_namespace=model_namespace,
             force_override_bot_model=force_override_bot_model,
             force_override_bot_model_type=force_override_bot_model_type,
             git_repo_id=git_repo_id,

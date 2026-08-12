@@ -183,6 +183,7 @@ def _build_task_creation_params(request: DeviceChatTaskRequest) -> TaskCreationP
         message=request.message,
         title=request.title,
         model_id=request.model_id,
+        model_namespace=request.model_namespace,
         force_override_bot_model=request.model_id is not None,
         force_override_bot_model_type=request.model_type,
         model_options=request.model_options,

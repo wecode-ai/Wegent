@@ -43,6 +43,11 @@ class DeviceChatTaskRequest(BaseModel):
         alias="modelType",
         description="Override model type, such as public/user/group/runtime",
     )
+    model_namespace: Optional[str] = Field(
+        default=None,
+        alias="modelNamespace",
+        description="Override model namespace",
+    )
     model_options: Optional[dict[str, Any]] = Field(
         default=None,
         alias="modelOptions",

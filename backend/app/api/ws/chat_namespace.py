@@ -908,6 +908,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=effective_message,
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
+                model_namespace=payload.force_override_bot_model_namespace,
                 force_override_bot_model=payload.force_override_bot_model is not None,
                 force_override_bot_model_type=payload.force_override_bot_model_type,
                 model_options=payload.model_options,
@@ -1838,19 +1839,25 @@ def _prepare_chat_retry_dispatch(
         return {"error": "User not found"}
 
     model_id = None
+    model_namespace = None
     model_type = None
 
     if payload.use_model_override:
         model_id = payload.force_override_bot_model
+        model_namespace = payload.force_override_bot_model_namespace
         model_type = payload.force_override_bot_model_type
         logger.info(
             f"[WS] chat:retry use_model_override=True, using model from payload: "
-            f"model_id={model_id}, model_type={model_type}"
+            f"model_id={model_id}, model_namespace={model_namespace}, "
+            f"model_type={model_type}"
         )
     else:
         task_model_id, force_override = extract_model_override_info(task)
         if force_override and task_model_id:
             model_id = task_model_id
+            labels = (task.json or {}).get("metadata", {}).get("labels", {})
+            model_namespace = labels.get("modelNamespace")
+            model_type = labels.get("forceOverrideBotModelType")
             logger.info(
                 f"[WS] chat:retry use_model_override=False, using model from task metadata: "
                 f"model_id={model_id}"
@@ -1866,6 +1873,10 @@ def _prepare_chat_retry_dispatch(
         labels = task_json.setdefault("metadata", {}).setdefault("labels", {})
         labels["modelId"] = model_id
         labels["forceOverrideBotModel"] = "true"
+        if model_namespace and model_type:
+            labels["modelNamespace"] = model_namespace
+        else:
+            labels.pop("modelNamespace", None)
         if model_type:
             labels["forceOverrideBotModelType"] = model_type
         else:
@@ -1875,7 +1886,7 @@ def _prepare_chat_retry_dispatch(
         db.refresh(task)
         logger.info(
             f"[WS] chat:retry updated task labels: modelId={model_id}, "
-            f"modelType={model_type}"
+            f"modelNamespace={model_namespace}, modelType={model_type}"
         )
     elif payload.use_model_override:
         # "Default Model" retry: clear stale override labels so the bot default is used.
@@ -1884,6 +1895,7 @@ def _prepare_chat_retry_dispatch(
         changed = False
         for key in (
             "modelId",
+            "modelNamespace",
             "forceOverrideBotModel",
             "forceOverrideBotModelType",
         ):
@@ -1917,6 +1929,7 @@ def _prepare_chat_retry_dispatch(
         attachment_id=attachment_id,
         generate_params=_get_retry_generate_params(user_subtask),
         force_override_bot_model=model_id,
+        force_override_bot_model_namespace=model_namespace,
         force_override_bot_model_type=model_type,
         is_group_chat=False,
     )

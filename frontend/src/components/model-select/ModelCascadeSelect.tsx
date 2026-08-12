@@ -69,7 +69,7 @@ interface GroupedModelSelectProps<T extends GroupableModel> extends Omit<
 }
 
 function defaultModelKey(model: GroupableModel): string {
-  return `${model.name}:${model.type || ''}`
+  return `${model.name}:${model.type || ''}:${model.namespace || 'default'}`
 }
 
 function sanitizeTestId(value: string): string {

@@ -453,6 +453,15 @@ class TaskOperationsMixin:
                     **({"is_api_call": "true"} if obj_in.source == "api" else {}),
                     **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                     **(
+                        {"modelNamespace": obj_in.model_namespace}
+                        if (
+                            obj_in.model_id
+                            and obj_in.model_namespace
+                            and obj_in.force_override_bot_model_type
+                        )
+                        else {}
+                    ),
+                    **(
                         {"forceOverrideBotModel": "true"}
                         if obj_in.force_override_bot_model
                         else {}

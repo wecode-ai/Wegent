@@ -126,6 +126,7 @@ interface SocketContextType {
     taskId: number,
     subtaskId: number,
     modelId?: string,
+    modelNamespace?: string,
     modelType?: string,
     forceOverride?: boolean
   ) => Promise<{ success: boolean; error?: string }>
@@ -538,6 +539,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       taskId: number,
       subtaskId: number,
       modelId?: string,
+      modelNamespace?: string,
       modelType?: string,
       forceOverride: boolean = false
     ): Promise<{ success: boolean; error?: string }> => {
@@ -551,6 +553,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         task_id: taskId,
         subtask_id: subtaskId,
         force_override_bot_model: modelId,
+        force_override_bot_model_namespace: modelNamespace,
         force_override_bot_model_type: modelType,
         use_model_override: forceOverride,
       }

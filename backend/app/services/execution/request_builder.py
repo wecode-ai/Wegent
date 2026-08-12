@@ -146,6 +146,8 @@ class TaskRequestBuilder:
         trace_context: Optional[dict] = None,
         # Model override (from ChatConfigBuilder)
         override_model_name: Optional[str] = None,
+        override_model_namespace: Optional[str] = None,
+        override_model_type: Optional[str] = None,
         force_override: bool = False,
         runtime_model_config: Optional[dict[str, Any]] = None,
         team_member_prompt: Optional[str] = None,
@@ -223,6 +225,8 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_name=user.user_name,
             override_model_name=override_model_name,
+            override_model_namespace=override_model_namespace,
+            override_model_type=override_model_type,
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
@@ -311,6 +315,8 @@ class TaskRequestBuilder:
             bot,
             user_id=user.id,
             override_model_name=override_model_name,
+            override_model_namespace=override_model_namespace,
+            override_model_type=override_model_type,
             force_override=force_override,
             runtime_model_config=runtime_model_config,
         )
@@ -855,6 +861,8 @@ class TaskRequestBuilder:
         user_id: int,
         user_name: str,
         override_model_name: str | None,
+        override_model_namespace: str | None,
+        override_model_type: str | None,
         force_override: bool,
         task_id: int,
         team_id: int,
@@ -876,6 +884,8 @@ class TaskRequestBuilder:
             user_id: User ID
             user_name: User name for placeholder replacement
             override_model_name: Optional model name override
+            override_model_namespace: Optional model namespace override
+            override_model_type: Optional model scope override
             force_override: Whether override takes priority
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
@@ -903,6 +913,8 @@ class TaskRequestBuilder:
             bot,
             user_id,
             override_model_name=override_model_name,
+            override_model_namespace=override_model_namespace,
+            override_model_type=override_model_type,
             force_override=force_override,
         )
 
@@ -1700,6 +1712,8 @@ Response template:
         first_bot: Kind,
         user_id: int,
         override_model_name: str | None = None,
+        override_model_namespace: str | None = None,
+        override_model_type: str | None = None,
         force_override: bool = False,
         runtime_model_config: dict[str, Any] | None = None,
     ) -> list[dict]:
@@ -1711,6 +1725,8 @@ Response template:
             first_bot: First bot Kind object (already resolved)
             user_id: User ID for model resolution
             override_model_name: Optional model name override from task
+            override_model_namespace: Optional model namespace override from task
+            override_model_type: Optional model scope override from task
             force_override: Whether override takes priority
             runtime_model_config: Optional already-resolved runtime model config
 
@@ -1796,6 +1812,8 @@ Response template:
                     bot,
                     user_id,
                     override_model_name=override_model_name,
+                    override_model_namespace=override_model_namespace,
+                    override_model_type=override_model_type,
                     force_override=force_override,
                 )
 

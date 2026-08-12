@@ -228,6 +228,9 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model: Optional[str] = Field(
         None, description="Override model name"
     )
+    force_override_bot_model_namespace: Optional[str] = Field(
+        None, description="Override model namespace"
+    )
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
@@ -320,6 +323,9 @@ class ChatRetryPayload(BaseModel):
     # Optional: Model to use for retry (overrides task metadata model if provided)
     force_override_bot_model: Optional[str] = Field(
         None, description="Model ID to override bot model for this retry"
+    )
+    force_override_bot_model_namespace: Optional[str] = Field(
+        None, description="Model namespace for the override model"
     )
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Model type (public/user) for the override model"

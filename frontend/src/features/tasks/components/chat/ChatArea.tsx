@@ -897,9 +897,15 @@ function ChatAreaContent({
         })
         return
       }
-      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`)
+      videoModelSelection.selectModelByKey(videoModelSelection.getModelKey(model))
     },
-    [chatState.attachmentState.attachments, t, toast, videoModelSelection.selectModelByKey]
+    [
+      chatState.attachmentState.attachments,
+      t,
+      toast,
+      videoModelSelection.getModelKey,
+      videoModelSelection.selectModelByKey,
+    ]
   )
 
   const effectiveTaskType = useMemo<TaskType>(() => {
@@ -2451,7 +2457,7 @@ function ChatAreaContent({
     // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
     selectedImageModel: imageModelSelection.selectedModel,
     onImageModelChange: (model: Model) =>
-      imageModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
+      imageModelSelection.selectModelByKey(imageModelSelection.getModelKey(model)),
     isImageModelsLoading: imageModelSelection.isLoading,
     selectedImageSize,
     onImageSizeChange: setSelectedImageSize,

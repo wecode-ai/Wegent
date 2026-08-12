@@ -30,7 +30,7 @@ function getModelDisplayText(model: Model): string {
 
 /** Get unique key for model */
 function getModelKey(model: Model): string {
-  return `${model.name}:${model.type || ''}`
+  return `${model.name}:${model.type || ''}:${model.namespace || 'default'}`
 }
 
 type MobileModelStep = 'primary' | 'secondary' | 'models'
@@ -54,6 +54,8 @@ interface MobileModelSelectorProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  taskModelNamespace?: string | null
+  taskModelType?: string | null
 }
 
 /**
@@ -71,6 +73,8 @@ export default function MobileModelSelector({
   teamId,
   taskId,
   taskModelId,
+  taskModelNamespace,
+  taskModelType,
 }: MobileModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -79,6 +83,8 @@ export default function MobileModelSelector({
     teamId: teamId ?? null,
     taskId: taskId ?? null,
     taskModelId,
+    taskModelNamespace,
+    taskModelType,
     selectedTeam,
     disabled,
   })

@@ -37,6 +37,7 @@ class JoinSharedTaskRequest(BaseModel):
     share_token: str
     team_id: Optional[int] = None  # Optional: if not provided, use user's first team
     model_id: Optional[str] = None  # Model name (not database ID)
+    model_namespace: Optional[str] = None
     force_override_bot_model: Optional[bool] = False
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'

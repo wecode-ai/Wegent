@@ -467,6 +467,74 @@ describe('useModelSelection', () => {
     )
   })
 
+  it('restores a task model by namespace and type when names collide', async () => {
+    const publicModel: Model = {
+      ...mockModel,
+      name: 'same-name-model',
+      modelId: 'public-provider-model',
+      namespace: 'default',
+      type: 'public',
+    }
+    const groupModel: Model = {
+      ...mockModel,
+      name: 'same-name-model',
+      modelId: 'group-provider-model',
+      namespace: 'team-platform',
+      type: 'group',
+    }
+    const modelLoad = mockDeferredModelsLoad([publicModel, groupModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: 'same-name-model',
+        taskModelNamespace: 'team-platform',
+        taskModelType: 'group',
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(groupModel))
+    })
+  })
+
+  it('selects a same-named model by its namespace-aware key', async () => {
+    const publicModel: Model = {
+      ...mockModel,
+      name: 'same-name-model',
+      modelId: 'public-provider-model',
+      namespace: 'default',
+      type: 'public',
+    }
+    const groupModel: Model = {
+      ...mockModel,
+      name: 'same-name-model',
+      modelId: 'group-provider-model',
+      namespace: 'team-platform',
+      type: 'group',
+    }
+    const modelLoad = mockDeferredModelsLoad([publicModel, groupModel])
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    act(() => {
+      result.current.selectModelByKey(result.current.getModelKey(groupModel))
+    })
+
+    expect(result.current.selectedModel).toEqual(expect.objectContaining(groupModel))
+  })
+
   it('shows advanced models when every compatible model is advanced', async () => {
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['openai'])
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()

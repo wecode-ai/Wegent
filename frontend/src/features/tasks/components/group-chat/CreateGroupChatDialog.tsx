@@ -101,9 +101,13 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             selectedModel?.name === DEFAULT_MODEL_NAME
               ? undefined
               : selectedModel?.name || undefined,
+          model_namespace:
+            selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.namespace,
           force_override_bot_model: Boolean(
             selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME
           ),
+          force_override_bot_model_type:
+            selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.type,
           is_group_chat: true, // Mark this as a group chat
         },
         {

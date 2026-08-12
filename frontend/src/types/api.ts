@@ -323,6 +323,8 @@ export interface TaskDetail {
   team: Team
   workbench?: WorkbenchData | null
   model_id?: string | null // Model name used for this task
+  model_namespace?: string | null // Model namespace used for this task
+  force_override_bot_model_type?: string | null // Model scope used for this task
   is_group_chat?: boolean // Whether this task is a group chat
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group

@@ -54,6 +54,7 @@ class TaskCreationParams:
     message: str
     title: Optional[str] = None
     model_id: Optional[str] = None
+    model_namespace: Optional[str] = None
     force_override_bot_model: bool = False
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
@@ -341,6 +342,15 @@ def create_new_task(
                 "source": params.source,
                 **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
+                **(
+                    {"modelNamespace": params.model_namespace}
+                    if (
+                        params.model_id
+                        and params.model_namespace
+                        and params.force_override_bot_model_type
+                    )
+                    else {}
+                ),
                 **(
                     {"forceOverrideBotModel": "true"}
                     if params.force_override_bot_model

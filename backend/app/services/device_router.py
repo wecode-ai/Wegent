@@ -123,9 +123,13 @@ async def route_task_to_device(
     task_json = local_task.json if local_task else {}
     task_labels = task_json.get("metadata", {}).get("labels", {})
     override_model_name = None
+    override_model_namespace = None
+    override_model_type = None
     force_override = False
     if task_labels.get("forceOverrideBotModel") == "true":
         override_model_name = task_labels.get("modelId")
+        override_model_namespace = task_labels.get("modelNamespace")
+        override_model_type = task_labels.get("forceOverrideBotModelType")
         force_override = True
         logger.info(
             f"[DeviceRouter] Extracted model override from task labels: "
@@ -148,6 +152,8 @@ async def route_task_to_device(
             else extract_display_prompt(fallback_prompt) or ""
         ),
         override_model_name=override_model_name,
+        override_model_namespace=override_model_namespace,
+        override_model_type=override_model_type,
         force_override=force_override,
         attachments=attachments,
     )
@@ -216,9 +222,13 @@ async def route_task_to_device_unified(
     task_json = task.json or {}
     task_labels = task_json.get("metadata", {}).get("labels", {})
     override_model_name = None
+    override_model_namespace = None
+    override_model_type = None
     force_override = False
     if task_labels.get("forceOverrideBotModel") == "true":
         override_model_name = task_labels.get("modelId")
+        override_model_namespace = task_labels.get("modelNamespace")
+        override_model_type = task_labels.get("forceOverrideBotModelType")
         force_override = True
         logger.info(
             f"[DeviceRouter] Extracted model override from task labels: "
@@ -234,6 +244,8 @@ async def route_task_to_device_unified(
         team=team,
         message=message,
         override_model_name=override_model_name,
+        override_model_namespace=override_model_namespace,
+        override_model_type=override_model_type,
         force_override=force_override,
     )
 

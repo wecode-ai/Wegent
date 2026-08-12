@@ -223,6 +223,8 @@ def validated_model_ref(
             f"expected one of {', '.join(MODEL_REF_TYPES)}"
         )
     namespace = (value.get("namespace") or "").strip()
+    if model_type == "group" and namespace in ("", "default"):
+        raise ValueError("group model reference requires a non-default namespace")
 
     # A blank optional string is dropped, not passed through. Spreading `value`
     # carries the original in, so a type of spaces -- which the check above reads as

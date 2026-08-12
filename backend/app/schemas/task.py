@@ -87,6 +87,7 @@ class TaskCreate(BaseModel):
     project_id: Optional[int] = 0
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
+    model_namespace: Optional[str] = None
     force_override_bot_model: Optional[bool] = False
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
@@ -186,6 +187,7 @@ class TaskDetail(BaseModel):
     team: Optional[TeamInDB] = None
     subtasks: Any = None
     model_id: Optional[str] = None
+    model_namespace: Optional[str] = None
     force_override_bot_model_type: Optional[str] = None
     model_options: Optional[dict[str, Any]] = None
     is_group_chat: bool = False  # Whether this is a group chat task

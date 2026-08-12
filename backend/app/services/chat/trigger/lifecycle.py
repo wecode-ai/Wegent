@@ -299,12 +299,21 @@ def prepare_execution_session(
                 task_crd.metadata.labels = {}
             if resolved_task_params.model_id:
                 task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
+                if (
+                    resolved_task_params.model_namespace
+                    and resolved_task_params.force_override_bot_model_type
+                ):
+                    task_crd.metadata.labels["modelNamespace"] = (
+                        resolved_task_params.model_namespace
+                    )
+                    task_crd.metadata.labels["forceOverrideBotModelType"] = (
+                        resolved_task_params.force_override_bot_model_type
+                    )
+                else:
+                    task_crd.metadata.labels.pop("modelNamespace", None)
+                    task_crd.metadata.labels.pop("forceOverrideBotModelType", None)
             if resolved_task_params.force_override_bot_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
-            if resolved_task_params.force_override_bot_model_type:
-                task_crd.metadata.labels["forceOverrideBotModelType"] = (
-                    resolved_task_params.force_override_bot_model_type
-                )
             if resolved_task_params.model_options:
                 task_crd.metadata.labels["modelOptions"] = json.dumps(
                     resolved_task_params.model_options

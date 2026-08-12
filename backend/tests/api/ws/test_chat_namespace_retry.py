@@ -99,6 +99,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
             "metadata": {
                 "labels": {
                     "modelId": "old-model",
+                    "modelNamespace": "team-platform",
                     "forceOverrideBotModel": "true",
                     "forceOverrideBotModelType": "public",
                 }
@@ -298,6 +299,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
             "metadata": {
                 "labels": {
                     "modelId": "old-model",
+                    "modelNamespace": "team-platform",
                     "forceOverrideBotModel": "true",
                     "forceOverrideBotModelType": "public",
                 }

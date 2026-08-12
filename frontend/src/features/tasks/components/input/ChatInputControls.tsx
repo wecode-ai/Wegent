@@ -73,6 +73,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  taskModelNamespace?: string | null
+  taskModelType?: string | null
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -211,6 +213,8 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  taskModelNamespace,
+  taskModelType,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -407,6 +411,8 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        taskModelNamespace={taskModelNamespace}
+        taskModelType={taskModelType}
         knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
@@ -672,6 +678,8 @@ export function ChatInputControls({
                 teamId={teamId}
                 taskId={taskId}
                 taskModelId={taskModelId}
+                taskModelNamespace={taskModelNamespace}
+                taskModelType={taskModelType}
               />
             )}
           </div>
