@@ -223,14 +223,14 @@ if ! ruby "$script_dir/lib/validate-ci-cache-policy.rb" docker-sha \
 fi
 
 claude_cli_lock=".github/claude-code-cli/package-lock.json"
-claude_cli_key="node-24-claude-code-cli-v3-\${{ hashFiles('$claude_cli_lock') }}"
+claude_cli_key="node-24-local-harness-clis-v1-\${{ hashFiles('$claude_cli_lock') }}"
 if [[ ! -f "$script_dir/../claude-code-cli/package.json" ]] ||
   [[ ! -f "$script_dir/../claude-code-cli/package-lock.json" ]] ||
   ! grep -Fq "$claude_cli_key" "$warmup_workflow" ||
   ! grep -Fq "$claude_cli_key" "$workflow_dir/e2e-tests.yml" ||
   grep -Eq 'npm install -g .*claude-code' \
     "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
-  fail "Claude Code CLI caches must use the shared integrity-locked npm graph"
+  fail "Local harness CLI caches must use the shared integrity-locked npm graph"
 fi
 
 for workflow in "${pr_workflows[@]}" ci-cache-warmup.yml; do

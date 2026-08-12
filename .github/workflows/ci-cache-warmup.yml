@@ -125,7 +125,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
-      - name: Add Claude Code CLI to PATH
+      - name: Add local harness CLIs to PATH
         run: |
           echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
@@ -134,13 +134,13 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .github/claude-code-cli/node_modules
-          key: ${{ runner.os }}-node-24-claude-code-cli-v3-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
+          key: ${{ runner.os }}-node-24-local-harness-clis-v1-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
 
-      - name: Install Claude Code CLI
+      - name: Install local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix .github/claude-code-cli
 
-      - name: Save shared Claude Code CLI
+      - name: Save shared local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
