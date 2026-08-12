@@ -201,6 +201,11 @@ if ! grep -qE '^pnpm --filter wecode-ai-assistant exec next typegen$' "$CALL_LOG
     exit 1
 fi
 
+if ! grep -qF 'rm -rf frontend/.next/types' "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh"; then
+    echo "Expected frontend checks to remove stale Next.js route types before regeneration."
+    exit 1
+fi
+
 if ! grep -qE '^pnpm --filter wecode-ai-assistant exec tsc --noEmit$' "$CALL_LOG"; then
     echo "Expected frontend changes to run the TypeScript check after route type generation."
     echo "Calls:"

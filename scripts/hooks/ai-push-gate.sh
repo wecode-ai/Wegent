@@ -333,6 +333,7 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         # Regenerate Next.js route types before TypeScript validation. Generated
         # files can otherwise retain imports for routes removed by a branch switch.
         echo -e "   Running TypeScript check..."
+        rm -rf frontend/.next/types
         pnpm --filter wecode-ai-assistant exec next typegen > "$TEMP_DIR/tsc.log" 2>&1
         TYPEGEN_EXIT=$?
         if [ $TYPEGEN_EXIT -eq 0 ]; then
