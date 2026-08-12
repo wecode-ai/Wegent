@@ -13,7 +13,7 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Cog6ToothIcon, SparklesIcon, Squares2X2Icon } from '@heroicons/react/24/outline'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -71,6 +71,7 @@ export default function TeamSelectorButton({
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation('tasks')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [open, setOpen] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
   const {
@@ -101,7 +102,12 @@ export default function TeamSelectorButton({
     const targetPage = getTeamTargetPage(team, 'all')
     const currentPage = getCurrentTargetPageByMode(currentMode)
     if (targetPage !== currentPage) {
-      router.push(buildTeamTargetHref(targetPage, new URLSearchParams({ teamId: String(team.id) })))
+      const targetParams = new URLSearchParams({ teamId: String(team.id) })
+      for (const param of ['projectId', 'deviceId', 'device_id']) {
+        const value = searchParams.get(param)
+        if (value) targetParams.set(param, value)
+      }
+      router.push(buildTeamTargetHref(targetPage, targetParams))
       setOpen(false)
       return
     }
