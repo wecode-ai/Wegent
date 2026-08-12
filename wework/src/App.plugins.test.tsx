@@ -448,7 +448,7 @@ function applicationTypesResponse() {
         app_type: 'web',
         enabled: true,
         order: 10,
-        capabilities: ['create', 'publish', 'delete'],
+        capabilities: ['create', 'publish', 'edit', 'delete'],
         create: {
           plugin_name: 'wegent-sites',
           marketplace_name: 'wegent',
@@ -924,7 +924,9 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '应用功能尚未推出'
     )
-    expect(fetch).not.toHaveBeenCalled()
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).startsWith('/api/sites'))
+    ).toBe(false)
     expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
   })
 
@@ -1114,6 +1116,7 @@ describe('App plugins route', () => {
         input:
           '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
         pluginName: '站点',
+        openInNewChat: true,
       }
     )
   })
@@ -1177,6 +1180,7 @@ describe('App plugins route', () => {
         input:
           '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
         pluginName: '微博小程序开发助手',
+        openInNewChat: true,
       }
     )
   })

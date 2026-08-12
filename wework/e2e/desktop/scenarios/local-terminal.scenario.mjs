@@ -10,6 +10,7 @@ const OPEN_CODE_PROXY_FILE = '.wework-opencode-e2e-proxy'
 const CLAUDE_CODE_ARGS_FILE = '.wework-claude-code-e2e-args'
 const CLAUDE_CODE_ENV_FILE = '.wework-claude-code-e2e-env'
 const CLAUDE_CODE_PROXY_FILE = '.wework-claude-code-e2e-proxy'
+const CLAUDE_CODE_PROXY_RESULT_FILE = '.wework-claude-code-e2e-proxy-result'
 const KIMI_CODE_ARGS_FILE = '.wework-kimi-code-e2e-args'
 const KIMI_CODE_ENV_FILE = '.wework-kimi-code-e2e-env'
 const KIMI_CODE_INPUT_FILE = '.wework-kimi-code-e2e-input'
@@ -58,15 +59,50 @@ async function createHarnessFixtures(homePath) {
       proxyFile: OPEN_CODE_PROXY_FILE,
       proxyVariable: 'OPENCODE_CONFIG_CONTENT',
     }),
-    createHarnessFixture({
-      executablePath: claudeCodeExecutable,
-      name: 'Claude Code',
-      version: 'claude-code-e2e 2.0.0',
-      argsFile: CLAUDE_CODE_ARGS_FILE,
-      envFile: CLAUDE_CODE_ENV_FILE,
-      proxyFile: CLAUDE_CODE_PROXY_FILE,
-      proxyVariable: 'ANTHROPIC_BASE_URL',
-    }),
+    (async () => {
+      await mkdir(dirname(claudeCodeExecutable), { recursive: true })
+      await writeFile(
+        claudeCodeExecutable,
+        `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'claude-code-e2e 2.0.0\\n'
+  exit 0
+fi
+args_file="$HOME/${CLAUDE_CODE_ARGS_FILE}"
+printf 'CALL\\n' >> "$args_file"
+for arg in "$@"; do
+  printf '%s\\n' "$arg" >> "$args_file"
+done
+printf '%s\\n' "$WEWORK_HARNESS_E2E" > "$HOME/${CLAUDE_CODE_ENV_FILE}"
+printf '%s\\n' "$ANTHROPIC_BASE_URL" > "$HOME/${CLAUDE_CODE_PROXY_FILE}"
+case " $* " in
+  *" --output-format stream-json "*)
+    case "$ANTHROPIC_BASE_URL" in
+      *"/harness-router/"*)
+        proxy_result_file="$HOME/${CLAUDE_CODE_PROXY_RESULT_FILE}"
+        proxy_body_file="$proxy_result_file.body"
+        proxy_status="$(curl -sS -o "$proxy_body_file" -w '%{http_code}' \
+          -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
+          -H 'content-type: application/json' \
+          -H 'x-api-key: wework-local-router' \
+          -H 'anthropic-version: 2023-06-01' \
+          --data '{"model":"wework-selected","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"WEWORK_HARNESS_CLAUDE_RESPONSES_PROXY"}]}')"
+        printf '%s\\n' "$proxy_status" > "$proxy_result_file"
+        cat "$proxy_body_file" >> "$proxy_result_file"
+        ;;
+    esac
+    printf '%s\\n' '{"type":"system","subtype":"init","session_id":"claude-code-e2e-session"}'
+    printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Claude Code ordinary conversation reply"}]}}'
+    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"claude-code-e2e-session"}'
+    exit 0
+    ;;
+esac
+printf '\\033[2J\\033[HClaude Code E2E harness\\r\\n'
+exec sleep 600
+`
+      )
+      await chmod(claudeCodeExecutable, 0o755)
+    })(),
     (async () => {
       await mkdir(dirname(kimiCodeExecutable), { recursive: true })
       await writeFile(
@@ -137,6 +173,24 @@ async function waitForFileSatisfying(path, validate, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw lastError ?? new Error(`Timed out waiting for harness evidence in ${path}`)
+}
+
+async function waitForSnapshot(control, validate, message, timeoutMs) {
+  const startedAt = Date.now()
+  let lastSnapshot = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+    if (validate(lastSnapshot)) return lastSnapshot
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
+}
+
+function claudeArgumentCalls(value) {
+  return value
+    .split('CALL\n')
+    .slice(1)
+    .map(call => call.trim().split('\n').filter(Boolean))
 }
 
 async function probeMessagesProxy(url, prompt) {
@@ -292,6 +346,7 @@ async function startHarness({
   runtimeMenuScreenshot,
   modelMenuScreenshot,
   readyScreenshot,
+  presentation = 'terminal',
 }) {
   await control.command(
     'click',
@@ -338,10 +393,27 @@ async function startHarness({
       timeoutMs,
     }
   )
-  await control.command('fill', '[data-testid="chat-message-input"]', { value: prompt })
+  await control.command('fill', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`, {
+    value: prompt,
+  })
   await capturePage(control, readyScreenshot)
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', { timeoutMs })
-  await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { timeoutMs }
+  )
+  if (presentation === 'terminal') {
+    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
+  } else {
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      {
+        text: 'Claude Code ordinary conversation reply',
+        timeoutMs,
+      }
+    )
+  }
 }
 
 async function verifyHarnessWorkbenchChrome({
@@ -578,52 +650,190 @@ export async function createDesktopScenario({
         runtimeMenuScreenshot: 'local-harness-10-claude-code-runtime-menu.png',
         modelMenuScreenshot: 'local-harness-11-claude-code-model-menu.png',
         readyScreenshot: 'local-harness-12-claude-code-ready.png',
-      })
-      await captureWorkbench(control, 'local-harness-13-claude-code-running.png')
-      await verifyHarnessWorkbenchChrome({
-        control,
-        title: 'Review the current project',
-        timeoutMs: uiTimeoutMs,
-        captureWorkbench: capturePage,
-        screenshot: 'local-harness-14-claude-code-workbench-panels.png',
+        presentation: 'conversation',
       })
       await waitForFileSatisfying(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
         value => {
-          const args = value.trim().split('\n')
-          assert.deepEqual(args.slice(0, 5), [
-            '--permission-mode',
-            'plan',
-            '--verbose',
-            '--model',
-            'wework-selected',
-          ])
-          assert.equal(args[5], '--plugin-dir')
-          assert.match(
-            args[6],
-            /\/harness-adapters\/claude_code\/[0-9a-f]{16}$/,
-            'Claude Code did not receive its Agent Plugins adapter'
+          const [args] = claudeArgumentCalls(value)
+          assert.ok(args, 'Claude Code invocation was not recorded')
+          assert.ok(args.includes('Review the current project'))
+          assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json')
+          assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan')
+          assert.equal(args[args.indexOf('--model') + 1], 'deepseek-v4-pro')
+          assert.ok(
+            !args.includes('--plugin-dir'),
+            'Ordinary Claude conversation used the TUI adapter'
           )
-          assert.equal(args[7], '--session-id')
-          assert.match(
-            args[8],
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-            'Claude Code did not receive a resumable session UUID'
+          assert.ok(
+            !args.includes('--session-id'),
+            'Ordinary Claude conversation used TUI session flags'
           )
-          assert.equal(args[9], 'Review the current project')
-          assert.equal(args.length, 10)
         },
         uiTimeoutMs
       )
-      await waitForFile(join(homePath, CLAUDE_CODE_ENV_FILE), 'claude-settings\n', uiTimeoutMs)
       const claudeCodeBaseUrl = await readFileWhenReady(
         join(homePath, CLAUDE_CODE_PROXY_FILE),
         uiTimeoutMs
       )
-      await probeMessagesProxy(
-        `${claudeCodeBaseUrl}/v1/messages`,
-        'WEWORK_HARNESS_CLAUDE_RESPONSES_PROXY'
+      assert.match(
+        claudeCodeBaseUrl,
+        /\/v1\/harness-router\//,
+        'Claude Code did not receive the ordinary conversation model router'
       )
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_PROXY_RESULT_FILE),
+        value => {
+          assert.match(value, /^200\n/, 'Claude Code could not use its active model router')
+          assert.match(value, /event: message_start/, 'Claude proxy did not emit message_start')
+          assert.match(value, /event: message_stop/, 'Claude proxy did not emit message_stop')
+        },
+        uiTimeoutMs
+      )
+      const claudeConversationSnapshot = await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.includes('message-assistant') &&
+          !snapshot.testIds.includes('pause-response-button') &&
+          !snapshot.testIds.includes('thinking-indicator'),
+        'Claude Code ordinary turn did not settle before the follow-up',
+        uiTimeoutMs
+      )
+      await captureWorkbench(control, 'local-harness-13-claude-code-conversation.png')
+      assert.ok(
+        !claudeConversationSnapshot.testIds.includes('central-harness-terminal'),
+        'Claude Code still replaced the ordinary conversation with a terminal'
+      )
+      assert.ok(
+        claudeConversationSnapshot.testIds.includes('message-assistant'),
+        'Claude Code did not render its response in the ordinary conversation'
+      )
+      assert.ok(
+        !claudeConversationSnapshot.testIds.includes('fork-runtime-task-button'),
+        'Claude Code exposed the Codex-only task fork action'
+      )
+      await control.command(
+        'fill',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
+        {
+          value: 'Continue in the same Claude conversation',
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_ARGS_FILE),
+        value => {
+          const calls = claudeArgumentCalls(value)
+          assert.equal(calls.length, 2)
+          const args = calls[1]
+          assert.ok(args.includes('Continue in the same Claude conversation'))
+          assert.equal(args[args.indexOf('--resume') + 1], 'claude-code-e2e-session')
+        },
+        uiTimeoutMs
+      )
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          !snapshot.testIds.includes('pause-response-button') &&
+          !snapshot.testIds.includes('thinking-indicator'),
+        'Claude Code follow-up did not settle before Goal creation',
+        uiTimeoutMs
+      )
+      await captureWorkbench(control, 'local-harness-14-claude-code-follow-up.png')
+
+      await control.command(
+        'click',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
+      )
+      await control.command('click', '[data-testid="set-goal-button"]')
+      await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'fill',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
+        {
+          value: 'Finish the Claude goal verification',
+        }
+      )
+      await captureWorkbench(control, 'local-harness-15-claude-code-goal-draft.png')
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'Claude Code ordinary conversation reply',
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_ARGS_FILE),
+        value => {
+          const calls = claudeArgumentCalls(value)
+          assert.equal(calls.length, 3)
+          const args = calls[2]
+          assert.ok(args.includes('/goal Finish the Claude goal verification'))
+          assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan')
+        },
+        uiTimeoutMs
+      )
+      const claudeGoalSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        claudeGoalSnapshot.testIds.includes('user-message-goal-badge'),
+        'Claude Goal request was not presented as a Goal message'
+      )
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('goal-status-bar'),
+        'Claude Goal remained active after the native /goal turn completed',
+        uiTimeoutMs
+      )
+      await captureWorkbench(control, 'local-harness-16-claude-code-goal-complete.png')
+
+      await control.command(
+        'fill',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
+        {
+          value: '/compact',
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await waitForFileSatisfying(
+        join(homePath, CLAUDE_CODE_ARGS_FILE),
+        value => {
+          const calls = claudeArgumentCalls(value)
+          assert.equal(calls.length, 4)
+          const args = calls[3]
+          assert.ok(args.includes('/compact'))
+          assert.equal(args[args.indexOf('--resume') + 1], 'claude-code-e2e-session')
+        },
+        uiTimeoutMs
+      )
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          !snapshot.testIds.includes('pause-response-button') &&
+          !snapshot.testIds.includes('thinking-indicator'),
+        'Claude Code compact turn did not settle',
+        uiTimeoutMs
+      )
+      await captureWorkbench(control, 'local-harness-17-claude-code-compact.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
@@ -677,6 +887,9 @@ export async function createDesktopScenario({
       assert.deepEqual(harnessModelRequests, [
         { model: 'kimi-k3', protocol: 'chat' },
         { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
         { model: 'kimi-k3', protocol: 'chat' },
       ])
 
@@ -689,13 +902,23 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="harness-session-picker-option-opencode"]')
+      await control.command('waitFor', '[data-testid="harness-session-picker-model-selector"]', {
+        text: 'Desktop E2E Vision',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="harness-session-picker-create-button"]')
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
         '--model\nwework-messages/wework-selected\n',
         uiTimeoutMs
       )
+      await control.command(
+        'waitFor',
+        '[data-testid^="right-workspace-harness-tab-local-harness-"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', '[data-testid="workbench-pane-task-title"]', {
-        text: 'OpenCode',
+        text: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
       })
       const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -705,13 +928,48 @@ export async function createDesktopScenario({
         ).length >= 2,
         'The workspace did not retain multiple harness sessions'
       )
+      assert.ok(
+        multiSessionSnapshot.testIds.some(testId =>
+          testId.startsWith('right-workspace-harness-tab-local-harness-')
+        ),
+        'The additional harness session was not created in the right sidebar'
+      )
+      assert.ok(
+        !multiSessionSnapshot.testIds.includes('central-harness-close-button'),
+        'The right-sidebar harness session replaced the active primary session'
+      )
       await captureWorkbench(control, 'local-harness-20-multiple-sessions.png')
-      await control.command('click', '[data-testid="central-harness-close-button"]')
+      await control.command(
+        'click',
+        '[data-testid^="right-workspace-harness-tab-local-harness-"][data-testid$="-close-button"]'
+      )
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-launcher"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="workbench-pane-task-title"]', {
+        text: 'Inspect the project with Kimi',
+        timeoutMs: uiTimeoutMs,
+      })
+      const closedSidebarSessionSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        !closedSidebarSessionSnapshot.testIds.some(testId =>
+          testId.startsWith('right-workspace-harness-tab-local-harness-')
+        ),
+        'The closed right-sidebar harness tab remained mounted'
+      )
+      assert.ok(
+        !closedSidebarSessionSnapshot.testIds.includes('desktop-empty-composer-frame'),
+        'Closing the right-sidebar harness session replaced the active primary session'
+      )
+      await captureWorkbench(control, 'local-harness-21-session-closed.png')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await captureWorkbench(control, 'local-harness-21-session-closed.png')
-
       await control.command(
         'click',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
@@ -737,36 +995,35 @@ export async function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('fill', '[data-testid="chat-message-input"]', {
-        value: 'Use the native Claude model',
-      })
+      await control.command(
+        'fill',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
+        {
+          value: 'Use the native Claude model',
+        }
+      )
       await capturePage(control, 'local-harness-22-native-model-ready.png')
-      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, {
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'Claude Code ordinary conversation reply',
         timeoutMs: uiTimeoutMs,
       })
       await waitForFileSatisfying(
         join(homePath, CLAUDE_CODE_ARGS_FILE),
         value => {
-          const args = value.trim().split('\n')
-          assert.deepEqual(args.slice(0, 3), ['--permission-mode', 'plan', '--verbose'])
-          assert.equal(args[3], '--plugin-dir')
-          assert.match(
-            args[4],
-            /\/harness-adapters\/claude_code\/[0-9a-f]{16}$/,
-            'Claude Code did not receive its Agent Plugins adapter'
-          )
-          assert.equal(args[5], '--session-id')
-          assert.match(
-            args[6],
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-            'Claude Code did not receive a resumable session UUID'
-          )
-          assert.equal(args[7], 'Use the native Claude model')
-          assert.equal(args.length, 8)
+          const args = claudeArgumentCalls(value).at(-1)
+          assert.ok(args, 'Native Claude invocation was not recorded')
+          assert.ok(args.includes('Use the native Claude model'))
+          assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json')
+          assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan')
           assert.ok(!args.includes('--model'), 'Wework overrode the native Claude model')
+          assert.ok(!args.includes('--plugin-dir'), 'Native Claude used the TUI adapter')
         },
         uiTimeoutMs
       )
@@ -783,9 +1040,12 @@ export async function createDesktopScenario({
       assert.deepEqual(harnessModelRequests, [
         { model: 'kimi-k3', protocol: 'chat' },
         { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
+        { model: 'deepseek-v4-pro', protocol: 'responses' },
         { model: 'kimi-k3', protocol: 'chat' },
       ])
-      await captureWorkbench(control, 'local-harness-23-native-model-running.png')
+      await captureWorkbench(control, 'local-harness-23-native-model-conversation.png')
     },
 
     diagnostics() {
@@ -795,6 +1055,7 @@ export async function createDesktopScenario({
         claudeCodeArgsFile: join(homePath, CLAUDE_CODE_ARGS_FILE),
         claudeCodeEnvFile: join(homePath, CLAUDE_CODE_ENV_FILE),
         claudeCodeProxyFile: join(homePath, CLAUDE_CODE_PROXY_FILE),
+        claudeCodeProxyResultFile: join(homePath, CLAUDE_CODE_PROXY_RESULT_FILE),
         kimiCodeArgsFile: join(homePath, KIMI_CODE_ARGS_FILE),
         kimiCodeEnvFile: join(homePath, KIMI_CODE_ENV_FILE),
         kimiCodeInputFile: join(homePath, KIMI_CODE_INPUT_FILE),

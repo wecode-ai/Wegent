@@ -154,19 +154,17 @@ export class RuntimeTaskLifecycleStore {
       options.preserveActiveTurn === true &&
       (this.getTask(address)?.derived.isRunning ?? false)
 
-    if (transcript.running === true) {
+    if (hasStreamingTurn) {
       this.executorStarted(address)
-    } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
-      this.executorSettled(address)
-    }
-
-    if (hasStreamingTurn && transcript.running !== false) {
       this.dispatch(address, {
         type: 'turn_recovered',
         streaming: true,
         turnId: streamingTurn?.id,
       })
+    } else if (transcript.running === true) {
+      this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
+      this.executorSettled(address)
       this.turnSettled(address)
     }
   }
@@ -333,6 +331,7 @@ function getRuntimeTaskAddress(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
@@ -345,7 +344,7 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
     threadId: address.threadId,
     workspacePath: address.workspacePath ?? '',
     title: address.taskId,
-    runtime: 'codex',
+    runtime: address.runtime ?? 'codex',
     runtimeHandle: address.runtimeHandle,
   }
 }

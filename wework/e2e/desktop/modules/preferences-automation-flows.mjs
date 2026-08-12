@@ -225,6 +225,15 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   await control.command('fill', '[data-testid="automation-prompt-input"]', {
     value: AUTOMATION_PROMPT,
   })
+  await control.command('click', '[data-testid="automation-goal-switch"]')
+  await waitForAttribute(
+    control,
+    '[data-testid="automation-goal-switch"]',
+    'aria-checked',
+    'true',
+    'Enabling the automation goal was not persisted'
+  )
+  await captureVerificationScreenshot(control, 'automations-01-goal-configured.png')
   await control.command('click', '[data-testid="automation-project-select"]')
   await control.command('click', '[data-testid="automation-project-select-option-"]')
   const draftSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -297,13 +306,32 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     testId.startsWith('automation-detail-actions-')
   )
   assert.ok(automationActions, 'The automation detail did not expose its actions menu')
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="automation-goal-switch"]', {
+      value: 'aria-checked',
+    }),
+    'true',
+    'The persisted automation did not restore goal mode'
+  )
+  const automationStore = JSON.parse(
+    await readFile(join(executorHome, 'runtime-work', 'automations.json'), 'utf8')
+  )
+  const storedAutomation = Object.values(automationStore.automations ?? {}).find(
+    item => item.name === AUTOMATION_NAME
+  )
+  assert.equal(
+    storedAutomation?.taskPayload?.initialGoal?.objective,
+    AUTOMATION_PROMPT,
+    'The Executor did not persist the scheduled task goal in its runtime payload'
+  )
+  await captureVerificationScreenshot(control, 'automations-02-goal-persisted.png')
 
   const previousScenario = control.scenario
   control.setScenario('automation')
   try {
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
-    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+    await control.awaitScenarioRequestCount('automation', 2, WORKBENCH_READY_TIMEOUT_MS)
 
     const manualTaskSnapshot = await waitForSnapshot(
       control,
@@ -358,13 +386,6 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
     }
-    await control.command('click', `[data-testid="runtime-local-task-mark-${manualTaskId}"]`)
-    await waitForSnapshot(
-      control,
-      snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
-      'The automation task was not pinned before testing existing-task mode'
-    )
-
     await control.command('click', '[data-testid="automation-button"]')
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -378,6 +399,23 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       'The manual automation run did not update its run history to completed',
       WORKBENCH_READY_TIMEOUT_MS
     )
+    await captureVerificationScreenshot(control, 'automations-03-manual-goal-complete.png')
+    const manualTaskMark = `runtime-local-task-mark-${manualTaskId}`
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes(manualTaskMark) &&
+        snapshot.testIds.includes('send-message-button') &&
+        !snapshot.testIds.includes(`runtime-local-task-running-${manualTaskId}`),
+      'The completed automation task did not become available for pinning'
+    )
+    await control.command('click', `[data-testid="${manualTaskMark}"]`)
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
+      'The automation task was not pinned before testing existing-task mode'
+    )
+
     await control.command('click', '[data-testid="automation-conversation-mode"]')
     await control.command(
       'click',
@@ -412,7 +450,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     })
 
     const beforeScheduledRun = JSON.parse(await control.command('snapshot', 'body'))
-    await control.awaitScenarioRequestCount('automation', 2, AUTOMATION_SCHEDULE_TIMEOUT_MS)
+    await control.awaitScenarioRequestCount('automation', 4, AUTOMATION_SCHEDULE_TIMEOUT_MS)
     await waitForSnapshot(
       control,
       snapshot => {
@@ -430,7 +468,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       'The scheduled automation did not continue the pinned task after becoming due',
       AUTOMATION_SCHEDULE_TIMEOUT_MS
     )
-    await captureVerificationScreenshot(control, 'automations-02-scheduled-complete.png')
+    await captureVerificationScreenshot(control, 'automations-04-scheduled-goal-complete.png')
     await control.command('click', `[data-testid="${manualTaskRow}"]`)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: `${AUTOMATION_COMPLETION_TEXT}_2`,
@@ -443,7 +481,109 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       text: AUTOMATION_NAME,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    await captureVerificationScreenshot(control, 'automations-01-local-persisted.png')
+    await captureVerificationScreenshot(control, 'automations-05-local-persisted.png')
+  } finally {
+    control.setScenario(previousScenario)
+  }
+}
+
+async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('automation-button'),
+    'Automations remained hidden behind the experimental-features preference'
+  )
+  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="create-automation-button"]')
+  await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="automation-name-input"]', {
+    value: `${AUTOMATION_NAME} Cloud`,
+  })
+  await control.command('fill', '[data-testid="automation-prompt-input"]', {
+    value: AUTOMATION_PROMPT,
+  })
+
+  await control.command('click', '[data-testid="automation-source-select"]')
+  await control.command('click', '[data-testid="automation-source-select-option-cloud"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes('Wework E2E Cloud Device') &&
+      (snapshot.text.includes('云端') || snapshot.text.includes('Cloud')),
+    'The cloud automation source did not select the remote executor'
+  )
+
+  await control.command('click', '[data-testid="automation-device-select"]')
+  const deviceSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(`automation-device-select-option-${cloudDeviceId}`),
+    'The cloud automation device selector did not list the remote executor'
+  )
+  assert.ok(
+    deviceSnapshot.text.includes('Wework E2E Cloud Device'),
+    'The cloud automation device selector did not show the remote executor name'
+  )
+  await control.command('click', `[data-testid="automation-device-select-option-${cloudDeviceId}"]`)
+
+  await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const createdSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(`${AUTOMATION_NAME} Cloud`) &&
+      snapshot.testIds.some(testId => testId.startsWith('automation-open-')),
+    'The cloud automation was not persisted by the remote Executor'
+  )
+  const automationActions = createdSnapshot.testIds.find(testId =>
+    testId.startsWith('automation-detail-actions-')
+  )
+  assert.ok(automationActions, 'The cloud automation detail did not expose its actions menu')
+
+  const previousScenario = control.scenario
+  control.setScenario('automation')
+  try {
+    await control.command('click', `[data-testid="${automationActions}"]`)
+    await control.command('click', '[data-testid="automation-run-now-button"]')
+    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+
+    const taskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') &&
+            !initialSnapshot.testIds.includes(testId)
+        ),
+      'The cloud automation run did not expose its completed runtime task',
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    const taskRow = taskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
+    )
+    assert.ok(taskRow, 'The cloud automation run did not expose its runtime task')
+    if (!taskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
+      await control.command('click', `[data-testid="${taskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+    }
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    assert.equal(
+      debugSnapshot.workbench?.currentRuntimeTask?.deviceId,
+      cloudDeviceId,
+      'The cloud automation task ran on the local device'
+    )
+    await captureVerificationScreenshot(control, 'automations-03-cloud-complete.png')
   } finally {
     control.setScenario(previousScenario)
   }
@@ -743,6 +883,7 @@ export {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
+  verifyCloudAutomationLifecycle,
   verifySitesPluginAutoInstall,
   sitesMarketplacePlugin,
   installedSitesPlugin,

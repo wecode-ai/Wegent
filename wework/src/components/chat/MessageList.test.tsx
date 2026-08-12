@@ -70,6 +70,39 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders a ChatGPT visualize content reference from its absolute path', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-chatgpt-visualization',
+            role: 'assistant',
+            content: [
+              '已生成可视化。',
+              '',
+              'visualize{"path":"/tmp/codex/visualizations/latency.html","title":"Latency"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-08-12T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成可视化。')).toBeInTheDocument()
+    expect(screen.queryByText('visualize')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+        'src',
+        'blob:chatgpt-visualization'
+      )
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
@@ -4051,6 +4084,31 @@ describe('MessageList', () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith(
       'https://github.com/wecode-ai/Wegent/pull/2350'
     )
+  })
+
+  test('renders sent Wegent Sites project links like composer chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-sites-project-link',
+            role: 'user',
+            content: '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动',
+            status: 'done',
+            createdAt: '2026-07-30T10:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const message = screen.getByTestId('message-user')
+    const chip = within(message).getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('产品发布页')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'wegent-sites-project://prj_product')
+    expect(chip).toHaveAttribute('data-composer-link-provider', 'wegent-sites-project')
+    expect(chip.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(message).toHaveTextContent('产品发布页 请说出你要做的改动')
+    expect(message).not.toHaveTextContent('wegent-sites-project://prj_product')
   })
 
   test('renders GitHub link chips in the edit form and opens the link edit popover', async () => {

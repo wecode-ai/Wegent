@@ -8,10 +8,13 @@ import {
 import {
   sendPrompt,
   sendPromptWithButton,
+  verifyMultimodalVision,
   verifyVisionSidecar,
 } from './conversation-navigation.mjs'
 
 import { waitForScenarioRequestCount } from './memory-tool-flows.mjs'
+
+import { verifyActiveGoalIdleUnreadLifecycle, verifyBusyTurnGoalHandoff } from './goal-flows.mjs'
 
 import { verifyAnthropicEmptyResponseRecovery } from './resilience-flows.mjs'
 
@@ -33,8 +36,10 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_DEVICE_ID,
   CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
+  CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
@@ -347,7 +352,8 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
-        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
+        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
+          CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
@@ -443,16 +449,6 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
-  await verifyVisionSidecar({
-    composerSelector,
-    control,
-    modelCase: CLOUD_VISION_SIDECAR_CASE,
-    projectRowSelector: newConversationSelector.replace(
-      ' [data-testid="project-new-conversation-button"]',
-      ''
-    ),
-  })
-
   const currentProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -477,7 +473,29 @@ async function verifyConnectedModelsOnLocalExecution({
   )
 }
 
-async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath) {
+async function verifyCloudVisionFlows(control, composerSelector) {
+  const projectRowSelector = '[data-testid^="project-row-"]'
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: CLOUD_VISION_SIDECAR_CASE,
+    projectRowSelector,
+  })
+  await verifyMultimodalVision({
+    composerSelector,
+    control,
+    modelCase: CLOUD_MULTIMODAL_VISION_CASE,
+    projectRowSelector,
+  })
+}
+
+async function verifyCloudProjectFlow(
+  control,
+  cloudEnvironment,
+  restartDesktopApp,
+  workspacePath,
+  { visionOnly = false } = {}
+) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -607,6 +625,12 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+
+  if (visionOnly) {
+    await verifyCloudVisionFlows(control, composerSelector)
+    return
+  }
+
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
@@ -719,6 +743,19 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
+  await verifyActiveGoalIdleUnreadLifecycle({
+    composerSelector,
+    control,
+    executorLogPath: cloudEnvironment.remoteExecutorLogPath,
+  })
+  await verifyBusyTurnGoalHandoff({
+    composerSelector,
+    control,
+    executorLogPath: cloudEnvironment.remoteExecutorLogPath,
+  })
+
+  await verifyCloudVisionFlows(control, composerSelector)
+
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 
   await verifyModelProtocolMatrix({
@@ -760,6 +797,8 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
   )
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 
+  const replacementWorkspacePath = join(dirname(workspacePath), 'replacement-workspace')
+  await mkdir(replacementWorkspacePath, { recursive: true })
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
@@ -775,19 +814,36 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     'The duplicate regression remote picker did not load the cloud executor home'
   )
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
-    value: workspacePath,
+    value: replacementWorkspacePath,
   })
   await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
-  await waitForFolderPathReady(control, workspacePath)
+  await waitForFolderPathReady(control, replacementWorkspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  await waitForSnapshot(
+  const replacementProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
     'The duplicate regression cloud project was not created'
   )
+  const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(replacementProjectMenuTestId, 'The replacement cloud project identity was not found')
+  const replacementProjectId = replacementProjectMenuTestId.slice('project-menu-'.length)
+  assert.notEqual(
+    replacementProjectId,
+    currentProjectId,
+    'Creating another cloud project restored the removed project identity'
+  )
+  assert.equal(
+    (
+      await control.command('getText', `[data-testid="project-title-${replacementProjectId}"]`)
+    ).trim(),
+    'replacement-workspace',
+    'Creating another cloud project restored the removed project instead of the replacement'
+  )
 
   await cloudEnvironment.aliasCloudDeviceToCurrentApp()
-  await createSingleRootLocalProject(control, workspacePath, 'workspace')
+  await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
@@ -797,11 +853,28 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
   await captureVerificationScreenshot(control, 'cloud-08-local-project-deduplicated.png')
 
   await restartDesktopApp()
-  await waitForSnapshot(
+  const restartedProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
+  )
+  const restartedProjectMenuTestId = restartedProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(restartedProjectMenuTestId, 'The restarted replacement project identity was not found')
+  const restartedProjectId = restartedProjectMenuTestId.slice('project-menu-'.length)
+  assert.notEqual(
+    restartedProjectId,
+    currentProjectId,
+    'Restarting Wework restored the removed project identity'
+  )
+  assert.equal(
+    (
+      await control.command('getText', `[data-testid="project-title-${restartedProjectId}"]`)
+    ).trim(),
+    'replacement-workspace',
+    'Restarting Wework restored the removed project instead of the replacement'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
 }

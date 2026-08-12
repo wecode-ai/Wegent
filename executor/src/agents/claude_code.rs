@@ -319,7 +319,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         .arg("stream-json")
         .arg("--verbose")
         .arg("--permission-mode")
-        .arg("bypassPermissions");
+        .arg(claude_permission_mode(request));
 
     if let Some(system_prompt) = execution_system_prompt(request) {
         spec = spec.arg("--append-system-prompt").arg(system_prompt);
@@ -345,6 +345,20 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
     }
 
     spec
+}
+
+fn claude_permission_mode(request: &ExecutionRequest) -> &str {
+    request
+        .extra
+        .get("claude_permission_mode")
+        .and_then(Value::as_str)
+        .filter(|mode| {
+            matches!(
+                *mode,
+                "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions"
+            )
+        })
+        .unwrap_or("bypassPermissions")
 }
 
 pub(crate) fn prompt_text(prompt: &Value) -> String {
@@ -1193,6 +1207,48 @@ mod tests {
             task_backend_url(&request),
             Some("http://env-backend.local:8000".to_owned())
         );
+    }
+
+    #[test]
+    fn claude_command_uses_configured_desktop_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("plan".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "plan");
+    }
+
+    #[test]
+    fn claude_command_rejects_unknown_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("unsafe-custom-mode".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
     }
 
     #[test]

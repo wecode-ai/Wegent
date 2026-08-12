@@ -15,7 +15,7 @@ import {
 import type { DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
-import { joinPath } from './device-folder-path'
+import { basename, joinPath } from './device-folder-path'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
@@ -781,7 +781,11 @@ export function StandaloneFolderProjectDialog({
               onCancel={closeDialog}
               onConfirm={async result => {
                 if (usesRemoteFolderPicker) {
-                  await onOpenStandaloneWorkspace?.(result.deviceId, result.path)
+                  await onOpenStandaloneWorkspace?.(
+                    result.deviceId,
+                    result.path,
+                    basename(result.path)
+                  )
                   closeDialog()
                   return
                 }

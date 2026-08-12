@@ -3,6 +3,7 @@ import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.
 import {
   CLOUD_DEVICE_ID,
   CLOUD_MODEL_CASES,
+  CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -25,9 +26,10 @@ import {
 } from './shared.mjs'
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, workspacePath }) {
+  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
+    this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
   }
 
@@ -59,6 +61,7 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
+      FRONTEND_URL: this.modelServerUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
@@ -100,7 +103,7 @@ class RealCloudEnvironment {
   async startRemoteExecutor(executorBinary) {
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
@@ -252,6 +255,33 @@ class RealCloudEnvironment {
         apiFormat: 'responses',
         modelType: 'llm',
         isWeworkAvailable: true,
+      },
+    })
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: CLOUD_MULTIMODAL_VISION_CASE.mainOptionId,
+        namespace: 'default',
+        displayName: CLOUD_MULTIMODAL_VISION_CASE.mainLabel,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_MULTIMODAL_VISION_CASE.mainModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+        },
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: true,
+        },
       },
     })
   }

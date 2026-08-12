@@ -41,7 +41,11 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 jest.mock('@/features/knowledge/externalKnowledgeSourceRegistry', () => ({
-  getExternalKnowledgeSource: jest.fn(() => ({ shortLabel: 'AP' })),
+  useExternalKnowledgeSources: jest.fn(() => [{ providerId: 'ap', label: 'WeiboAP' }]),
+  getExternalKnowledgeSourceLabel: jest.fn(
+    (provider: string, source?: { shortLabel?: string; label?: string }) =>
+      source?.shortLabel ?? source?.label ?? provider
+  ),
 }))
 
 jest.mock('@/apis/task-knowledge-base', () => ({
@@ -114,7 +118,7 @@ describe('TaskKnowledgeBindingPanel', () => {
 
     expect(await screen.findByText('测试mcp')).toBeInTheDocument()
     expect(screen.getByText('测试1111')).toBeInTheDocument()
-    expect(screen.getByText('AP')).toBeInTheDocument()
+    expect(screen.getByText('WeiboAP')).toBeInTheDocument()
     expect(screen.getByText('External knowledge source')).toBeInTheDocument()
   })
 

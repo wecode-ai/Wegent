@@ -251,6 +251,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 export interface RuntimeTaskAddress {
   deviceId: string
   taskId: string
+  runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -963,6 +964,16 @@ export interface RuntimeGlobalIMNotificationUpdateRequest {
   sessionKey?: string | null
 }
 
+export interface RuntimeIMNotificationPresenceUpdateRequest {
+  clientId: string
+  away: boolean
+}
+
+export interface RuntimeIMNotificationPresenceResponse {
+  away: boolean
+  ttlSeconds: number
+}
+
 export interface RuntimeTaskIMNotificationSubscriptionRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
@@ -1170,6 +1181,8 @@ export interface RuntimeTaskCreateRequest {
   taskId?: string
   teamId: number
   runtime: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
   message: string
   bot?: Array<Record<string, unknown>>
   clientUserMessageId?: string
@@ -2282,6 +2295,8 @@ export interface ChatBlock {
   timestamp?: number | string | null
   created_at?: number | string | null
   createdAt?: number | string | null
+  completed_at?: number | string | null
+  completedAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -2307,6 +2322,8 @@ export interface ChatBlockUpdatedPayload {
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
+  completedAt?: number
+  durationMs?: number
   deviceId?: string
 }
 

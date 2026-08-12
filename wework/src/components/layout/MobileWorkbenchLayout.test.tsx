@@ -931,7 +931,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
-  test('shows a dedicated status page while an optimistic worktree is being created', () => {
+  test('shows the sent message with status while an optimistic worktree is being created', () => {
     const runtimeTask = {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
@@ -986,9 +986,13 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('worktree-creation-status')).toHaveTextContent('正在创建工作树')
+    const creationStatus = screen.getByTestId('worktree-creation-status')
+    expect(creationStatus).toHaveTextContent('正在搭建你的独立工作树')
+    expect(screen.getByTestId('chat-message-scroll-area-content')).toContainElement(creationStatus)
+    expect(screen.queryByTestId('chat-message-scroll-area-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-chat-input-dock')).not.toBeInTheDocument()
-    expect(screen.queryByText('Implement the feature')).not.toBeInTheDocument()
+    expect(screen.getByText('Implement the feature')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
   test('shows worktree branch selection in the mobile empty project controls', async () => {

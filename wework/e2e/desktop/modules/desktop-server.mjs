@@ -76,6 +76,7 @@ import {
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
+  CLOUD_MULTIMODAL_VISION_CASE,
   COMPLETION_TEXT,
   CONCURRENT_MEMORY_TASK_COUNT,
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
@@ -185,9 +186,10 @@ import {
   SEND_REJECTION_RUNNING_PROMPT,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
+  SIDE_CHAT_GUIDANCE_COMPLETION,
+  SIDE_CHAT_GUIDANCE_FOLLOW_UP,
+  SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
-  SIDE_CHAT_QUEUE_FOLLOW_UP,
-  SIDE_CHAT_QUEUE_INITIAL,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_CORRECTION,
   SUPERVISOR_CORRECTION_COMPLETION_TEXT,
@@ -205,6 +207,8 @@ import {
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_PROMPT,
+  MULTIMODAL_VISION_COMPLETION_TEXT,
+  MULTIMODAL_VISION_PROMPT,
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   WINDOW_LIFECYCLE_PROMPT,
   assert,
@@ -314,8 +318,8 @@ class DesktopE2EServer {
     this.queueManagementFirstCompletionRelease = new Promise(resolvePromise => {
       this.releaseQueueManagementFirstCompletion = resolvePromise
     })
-    this.sideChatQueueRelease = new Promise(resolvePromise => {
-      this.resolveSideChatQueueRelease = resolvePromise
+    this.sideChatGuidanceRelease = new Promise(resolvePromise => {
+      this.resolveSideChatGuidanceRelease = resolvePromise
     })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
@@ -386,13 +390,16 @@ class DesktopE2EServer {
     this.goalIdleStage = 'initial'
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
+    this.cloudGoalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
+    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
     this.visionSidecarRequests = []
+    this.multimodalVisionRequests = []
   }
 
   async start() {
@@ -564,6 +571,7 @@ class DesktopE2EServer {
         'goal_idle',
         'goal_busy_handoff',
         'goal_restart',
+        'cloud_goal_restart',
         'turn_navigation',
         'cancellation',
         'send_rejection',
@@ -583,12 +591,13 @@ class DesktopE2EServer {
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
-        'side_chat_queue',
+        'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
+        'multimodal_vision',
         'view_image',
         'tool_block_order',
         'official_plugin',
@@ -696,8 +705,8 @@ class DesktopE2EServer {
     this.releaseQueueManagementFirstCompletion()
   }
 
-  releaseSideChatQueueResponse() {
-    this.resolveSideChatQueueRelease()
+  releaseSideChatGuidanceResponse() {
+    this.resolveSideChatGuidanceRelease()
   }
 
   awaitReconnectResponseStarted() {
@@ -892,7 +901,7 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -1342,6 +1351,42 @@ class DesktopE2EServer {
         ])
         return
       }
+    }
+
+    if (this.scenario === 'multimodal_vision') {
+      const serialized = JSON.stringify(body)
+      assert.equal(
+        body.model,
+        CLOUD_MULTIMODAL_VISION_CASE.mainModelId,
+        `Unexpected multimodal vision model request: ${body.model}`
+      )
+      assert.equal(protocol, 'responses', 'The multimodal model used the wrong protocol')
+      if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
+        const responseId = `multimodal-vision-empty-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+        return
+      }
+      assert.ok(
+        serialized.includes(MULTIMODAL_VISION_PROMPT),
+        'The multimodal model did not receive the user prompt'
+      )
+      assert.ok(
+        serialized.includes('input_image'),
+        'The multimodal model did not receive the image'
+      )
+      assert.equal(
+        serialized.includes(VISION_SIDECAR_DESCRIPTION),
+        false,
+        'The multimodal model unexpectedly received a sidecar description'
+      )
+      this.multimodalVisionRequests.push(body)
+      const responseId = `multimodal-vision-main-${this.modelRequests.length}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MULTIMODAL_VISION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
     }
 
     const localModel = localProtocolCase(body.model)
@@ -1932,6 +1977,55 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'cloud_goal_restart') {
+      this.recordScenarioRequest('cloud_goal_restart', modelRequest)
+      if (this.cloudGoalRestartStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          'The real Codex request did not contain the cloud Goal restart prompt'
+        )
+        this.cloudGoalRestartStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.cloudGoalRestartStage === 'continuation') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.cloudGoalRestartStage = 'awaiting_update_output'
+        await this.goalRestartResumeRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(
+            'wework-e2e-cloud-goal-restart-complete',
+            updateGoal.name,
+            updateGoal.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.cloudGoalRestartStage,
+        'awaiting_update_output',
+        `Unexpected cloud Goal restart model stage: ${this.cloudGoalRestartStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The cloud Goal continuation did not return its update_goal output'
+      )
+      this.cloudGoalRestartStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'goal_restart') {
       this.recordScenarioRequest('goal_restart', modelRequest)
       if (this.goalRestartStage === 'initial') {
@@ -2498,14 +2592,39 @@ class DesktopE2EServer {
 
     if (this.scenario === 'automation') {
       this.recordScenarioRequest('automation', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(AUTOMATION_PROMPT),
-        'The automation prompt was lost before model execution'
+      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
+        assert.ok(
+          JSON.stringify(body).includes(AUTOMATION_PROMPT),
+          'The automation prompt was lost before model execution'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        const callId =
+          this.automationStage === 'manual_goal'
+            ? 'wework-e2e-automation-manual-goal'
+            : 'wework-e2e-automation-scheduled-goal'
+        this.automationStage =
+          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(callId, updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The automation Goal did not return its update_goal output'
       )
-      const requestNumber = this.scenarioRequests.get('automation').length
+      const manualRun = this.automationStage === 'manual_goal_output'
+      assert.ok(
+        manualRun || this.automationStage === 'scheduled_goal_output',
+        `Unexpected automation model stage: ${this.automationStage}`
+      )
+      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${requestNumber}`),
+        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return
@@ -2694,32 +2813,39 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'side_chat_queue') {
-      this.recordScenarioRequest('side_chat_queue', modelRequest)
+    if (this.scenario === 'side_chat_guidance') {
+      this.recordScenarioRequest('side_chat_guidance', modelRequest)
       const requestText = JSON.stringify(body)
-      const requestCount = this.scenarioRequests.get('side_chat_queue')?.length ?? 0
+      const requestCount = this.scenarioRequests.get('side_chat_guidance')?.length ?? 0
       if (requestCount === 1) {
         assert.ok(
-          requestText.includes(SIDE_CHAT_QUEUE_INITIAL),
-          'The initial side-chat queue request lost its prompt'
+          requestText.includes(SIDE_CHAT_GUIDANCE_INITIAL),
+          'The initial side-chat guidance request lost its prompt'
         )
-        response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.write(createSse([responseCreated(responseId)]))
-        await this.sideChatQueueRelease
-        if (response.destroyed || response.writableEnded) return
-        response.end(createSse([responseCompleted(responseId)]))
+        const tool = selectShellTool(body, this.workspacePath)
+        await this.sideChatGuidanceRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-side-chat-guidance-tool', tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
         return
       }
-      assert.ok(
-        requestText.includes(SIDE_CHAT_QUEUE_FOLLOW_UP),
-        'The queued side-chat follow-up lost its prompt'
+      assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
+      assert.equal(
+        requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
+        true,
+        'The side-chat guidance turn did not return its tool output'
       )
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      assert.ok(
+        requestText.includes(SIDE_CHAT_GUIDANCE_FOLLOW_UP),
+        'The side-chat follow-up was not delivered as guidance to the active turn'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(SIDE_CHAT_GUIDANCE_COMPLETION),
+        responseCompleted(responseId),
+      ])
       return
     }
 

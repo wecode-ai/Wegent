@@ -1137,7 +1137,7 @@ function GlobalImNotificationBell({
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.away_im_reminder_description',
-                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                    '锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
                   )}
                 </p>
               </div>
@@ -2031,6 +2031,9 @@ function LocalHarnessSessionRow({
   onClose?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const canArchive = session.harnessId === 'opencode'
+  const canClose = !session.isPrimary
+  const useArchiveTestId = canArchive && session.isPrimary
 
   return (
     <div className="group/harness-session relative flex items-center">
@@ -2050,18 +2053,26 @@ function LocalHarnessSessionRow({
         <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span className="truncate">{session.title}</span>
       </button>
-      {onClose && !session.isPrimary && (
+      {onClose && (canArchive || canClose) && (
         <button
           type="button"
-          data-testid={`close-local-harness-session-${session.sessionId}`}
+          data-testid={
+            useArchiveTestId
+              ? `archive-local-harness-session-${session.sessionId}`
+              : `close-local-harness-session-${session.sessionId}`
+          }
           onClick={event => {
             event.stopPropagation()
             void onClose(session.sessionId)
           }}
-          aria-label={t('workbench.close_harness', '关闭编码工具')}
+          aria-label={
+            canArchive
+              ? t('workbench.archive_harness', '归档编码会话')
+              : t('workbench.close_harness', '关闭编码工具')
+          }
           className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
         >
-          <X className="h-3.5 w-3.5" />
+          {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
         </button>
       )}
     </div>
@@ -2580,16 +2591,6 @@ function ProjectItem({
       >
         <div className="min-h-0 overflow-hidden">
           <div className="space-y-0.5">
-            {localHarnessSessions.map(session => (
-              <LocalHarnessSessionRow
-                key={session.sessionId}
-                session={session}
-                selected={activeLocalHarnessSessionId === session.sessionId}
-                indentClassName="pl-9"
-                onOpen={onOpenLocalHarnessSession}
-                onClose={onCloseLocalHarnessSession}
-              />
-            ))}
             {runtimeTaskItems.length === 0 && localHarnessSessions.length === 0 ? (
               <div
                 data-testid={`project-local-tasks-empty-${project.id}`}
@@ -2657,6 +2658,16 @@ function ProjectItem({
                     />
                   )}
                 />
+                {localHarnessSessions.map(session => (
+                  <LocalHarnessSessionRow
+                    key={session.sessionId}
+                    session={session}
+                    selected={activeLocalHarnessSessionId === session.sessionId}
+                    indentClassName="pl-9"
+                    onOpen={onOpenLocalHarnessSession}
+                    onClose={onCloseLocalHarnessSession}
+                  />
+                ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
                     {hasHiddenRuntimeTasks ? (
@@ -4103,15 +4114,6 @@ export function DesktopSidebar({
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
-                      {standaloneLocalHarnessSessions.map(session => (
-                        <LocalHarnessSessionRow
-                          key={session.sessionId}
-                          session={session}
-                          selected={activeLocalHarnessSessionId === session.sessionId}
-                          onOpen={onOpenLocalHarnessSession}
-                          onClose={onCloseLocalHarnessSession}
-                        />
-                      ))}
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
                         <div
@@ -4178,6 +4180,15 @@ export function DesktopSidebar({
                           )}
                         />
                       ) : null}
+                      {standaloneLocalHarnessSessions.map(session => (
+                        <LocalHarnessSessionRow
+                          key={session.sessionId}
+                          session={session}
+                          selected={activeLocalHarnessSessionId === session.sessionId}
+                          onOpen={onOpenLocalHarnessSession}
+                          onClose={onCloseLocalHarnessSession}
+                        />
+                      ))}
                     </div>
                   )}
                 </section>

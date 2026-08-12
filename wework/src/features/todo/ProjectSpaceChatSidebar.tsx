@@ -10,6 +10,7 @@ import {
 
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { CloudProject } from '@/api/deliveries'
@@ -271,21 +272,22 @@ export function ProjectSpaceChatSidebar({
         data-testid="project-space-chat-header"
         className="relative flex h-[52px] shrink-0 items-center gap-0.5 border-b border-border px-1.5"
       >
-        <button
-          type="button"
-          data-testid="project-space-chat-menu"
-          title={t('workbench.project_space_chat.conversation')}
-          aria-label={t('workbench.project_space_chat.conversation')}
-          aria-expanded={conversationMenuOpen}
-          onClick={() => setConversationMenuOpen(open => !open)}
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
-            conversationMenuOpen
-              ? 'bg-muted text-text-primary'
-              : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-          }`}
-        >
-          <MessageSquare className="h-4 w-4" />
-        </button>
+        <Tooltip label={t('workbench.project_space_chat.conversation')} side="bottom" align="start">
+          <button
+            type="button"
+            data-testid="project-space-chat-menu"
+            aria-label={t('workbench.project_space_chat.conversation')}
+            aria-expanded={conversationMenuOpen}
+            onClick={() => setConversationMenuOpen(open => !open)}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
+              conversationMenuOpen
+                ? 'bg-muted text-text-primary'
+                : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+            }`}
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
+        </Tooltip>
 
         <div className="flex min-w-0 flex-1 items-center">
           {showsNewConversationControls ? (
@@ -331,34 +333,40 @@ export function ProjectSpaceChatSidebar({
           )}
         </div>
 
-        <button
-          type="button"
-          data-testid="project-space-chat-new"
-          title={
+        <Tooltip
+          label={
             creatingNew
               ? t('workbench.project_space_chat.back_to_conversation')
               : t('workbench.project_space_chat.new_conversation')
           }
-          aria-label={
-            creatingNew
-              ? t('workbench.project_space_chat.back_to_conversation')
-              : t('workbench.project_space_chat.new_conversation')
-          }
-          onClick={startNewConversation}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+          side="bottom"
+          align="end"
         >
-          {creatingNew ? <Undo2 className="h-3.5 w-3.5" /> : <Plus className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          data-testid="project-space-chat-close"
-          onClick={onClose}
-          title={t('workbench.project_space_chat.close')}
-          aria-label={t('workbench.project_space_chat.close')}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary"
-        >
-          <X className="h-4 w-4" />
-        </button>
+          <button
+            type="button"
+            data-testid="project-space-chat-new"
+            aria-label={
+              creatingNew
+                ? t('workbench.project_space_chat.back_to_conversation')
+                : t('workbench.project_space_chat.new_conversation')
+            }
+            onClick={startNewConversation}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+          >
+            {creatingNew ? <Undo2 className="h-3.5 w-3.5" /> : <Plus className="h-4 w-4" />}
+          </button>
+        </Tooltip>
+        <Tooltip label={t('workbench.project_space_chat.close')} side="bottom" align="end">
+          <button
+            type="button"
+            data-testid="project-space-chat-close"
+            onClick={onClose}
+            aria-label={t('workbench.project_space_chat.close')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </Tooltip>
 
         {conversationMenuOpen && (
           <div

@@ -472,6 +472,11 @@ button:disabled {
 }
 
 @layer components {
+  /* Prism uses "table" as a Markdown token class, which collides with Tailwind's display utility. */
+  .markdown-code-block .token.table {
+    display: inline;
+  }
+
   .heading-xl {
     font-size: var(--text-xl);
     font-weight: 500;
@@ -1998,6 +2003,16 @@ button.plugin-route-back-button:hover {
   min-height: 28px;
   align-items: center;
   margin: 0 0 8px;
+}
+
+.plugin-market-category-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.plugin-market-category-section + .plugin-market-reveal-button {
+  margin-top: 4px;
 }
 
 .plugin-market-catalog-after-strip .plugin-market-section-head {

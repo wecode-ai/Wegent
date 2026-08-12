@@ -107,6 +107,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/started",
             "params": {
                 "turnId": "turn-1",
+                "startedAtMs": 1_780_000_001_250_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -123,6 +124,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/completed",
             "params": {
                 "turnId": "turn-1",
+                "completedAtMs": 1_780_000_004_750_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -156,6 +158,14 @@ fn active_codex_items_replace_stale_paginated_items() {
     assert_eq!(
         thread["turns"][0]["items"][0]["changes"][0]["path"],
         Value::String("/tmp/result.txt".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["createdAt"],
+        1_780_000_001_250_i64
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["completedAt"],
+        1_780_000_004_750_i64
     );
     let messages = transcript_messages(&thread, "device-1");
     assert_eq!(messages.len(), 1);
@@ -2111,9 +2121,20 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 
 #[test]
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
+    let managed_root = root.join("workspace/worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree_path = managed_root.join("task-1/Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
-        "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+        worktree_path.display().to_string(),
         "Task".to_owned(),
     );
     link.runtime_handle = json!({
@@ -2128,17 +2149,17 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         ]
     });
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
         .collect::<Vec<_>>();
 
-    assert!(target_paths
-        .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+    assert!(target_paths.contains(&worktree_path.display().to_string()));
     assert!(target_paths.contains(
         &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
     ));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2206,13 +2227,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
         "Task".to_owned(),
     );
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
@@ -2221,6 +2245,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let _ = fs::remove_dir_all(root);
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {

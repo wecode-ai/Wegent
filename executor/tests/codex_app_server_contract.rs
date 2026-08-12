@@ -70,6 +70,7 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert_eq!(messages[2]["params"]["model"], "gpt-5");
     assert_eq!(messages[2]["params"]["cwd"], "/tmp/wegent/project");
     assert_eq!(messages[2]["params"]["permissions"], ":danger-full-access");
+    assert_eq!(messages[2]["params"]["approvalPolicy"], "never");
     assert_eq!(
         messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_TASK_ID"],
         "task-525"
@@ -97,6 +98,7 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
         json!({"type": "text", "text": "implement feature", "text_elements": []})
     );
     assert_eq!(messages[3]["params"]["permissions"], ":danger-full-access");
+    assert_eq!(messages[3]["params"]["approvalPolicy"], "never");
     assert!(messages[3]["params"].get("sandboxPolicy").is_none());
 }
 

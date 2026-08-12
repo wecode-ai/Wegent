@@ -1,4 +1,5 @@
 import { getToken } from '@/api/auth'
+import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
@@ -84,6 +85,10 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    attachmentApi: createAttachmentApi({
+      apiBaseUrl,
+      getToken: resolveToken,
+    }),
     executorClient: createExecutorClientFromApis({
       transportKind,
       deviceApi,

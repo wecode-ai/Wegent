@@ -4,12 +4,23 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
 The context indicator beside the task composer shows the current model's context usage. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
+
+The permission-mode control appears as the current mode's icon immediately before the context
+indicator. Hover to see the active mode, or click to choose **Read only**, **Workspace**, or
+**Full access**. After selecting a project space, the composer chip shows only the board name;
+its hover text still explains that sending creates a task on that board.
+
+Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
+**Agent**. This device-local preference activates the matching top-level tab when the Wework main
+window opens or reloads at the root page. If every tab of that type has been closed, Wework creates
+one again. Explicit links to Settings, Plugins, or a specific workspace route take precedence and
+are not replaced by the default tab.
 
 ## View app information
 
@@ -54,7 +65,11 @@ tool's CLI protocol and runs the process in the current workspace through a loca
 interactive terminal appears in the center while the title bar, right workspace, and bottom panel
 remain available. The right and bottom panels can create additional harness sessions for the same
 workspace through a picker instead of exposing every installed tool inline. The primary session
-can be switched but not closed from a panel; additional sessions can be closed explicitly.
+can be switched but not closed from a panel; additional sessions can be closed explicitly. A
+session created from the right workspace opens directly as a right-side tab without replacing the
+central primary session. A session created from the bottom panel keeps the central additional-session
+behavior. The creation dialog selects both the harness and the model for that session and starts it
+only after **Create session** is confirmed.
 
 Kimi Code starts as an interactive TUI. When the terminal attaches, Wework injects the first task
 through bracketed paste instead of using the one-shot `--prompt` mode, so the same terminal remains
@@ -66,13 +81,20 @@ their project. Reopening one uses the native continue or resume mechanism of Ope
 or Kimi Code and restores bounded terminal scrollback. Explicitly closing a session terminates its
 process and removes the persisted record.
 
+Wework resumes a session only in the original workspace recorded when it was created. If that
+directory or temporary worktree has been removed, Wework reports that the original workspace is
+missing instead of launching the session in another directory. Restore the original workspace or
+create a new harness session in the current workspace.
+
 After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by
 the harness model picker. Its default is **Don't specify a model**: Wework does not pass a
 `--model` argument, model proxy endpoint, or model credential, so the tool reads its own native
 configuration. You can instead explicitly select a local model interface from
 **Settings → Models** or a public, personal, or group model available through the connected Wegent
 account. That choice is persisted for the harness and replaces any `--model` or `-m` value from its
-default arguments.
+default arguments. When an additional session is created from the right or bottom panel, the dialog
+starts with that persisted default, but changing the model there applies only to the new session and
+does not overwrite the harness default.
 
 Only an explicitly selected Wework model connects the harness to the Anthropic
 Messages-compatible loopback route exposed by the executor. The child process then receives a

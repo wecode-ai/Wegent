@@ -1693,6 +1693,8 @@
     "get_api_key": "获取 API 密钥",
     "discover": "浏览市场",
     "mcp_servers": "MCP 服务器",
+    "search_placeholder": "搜索 MCP 名称、描述或标签",
+    "no_search_results": "没有匹配的 MCP 服务器",
     "no_servers_found": "未找到 MCP 服务器",
     "loading_servers": "加载中...",
     "no_servers_hint": "暂无 MCP 服务器",

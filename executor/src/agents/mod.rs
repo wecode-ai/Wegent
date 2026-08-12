@@ -4,6 +4,8 @@
 
 use std::{env, future::Future, path::PathBuf, pin::Pin};
 
+use serde_json::Value;
+
 mod agno;
 mod backend_url;
 mod claude_code;
@@ -38,7 +40,8 @@ pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, select_wework_codex_user_instructions,
-    wework_codex_home,
+    wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+    CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
@@ -80,7 +83,17 @@ impl AgentCommandPlanner {
 
     pub fn command_for(&self, request: &ExecutionRequest) -> Result<CommandSpec, String> {
         match request.resolved_agent_kind() {
-            AgentKind::ClaudeCode => Ok(build_claude_command(request, &self.claude_binary)),
+            AgentKind::ClaudeCode => Ok(build_claude_command(
+                request,
+                request
+                    .extra
+                    .get("runtime_executable_path")
+                    .or_else(|| request.extra.get("runtimeExecutablePath"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&self.claude_binary),
+            )),
             AgentKind::CodeX => Ok(build_codex_app_server_command(&self.codex_binary)),
             agent_kind => Err(format!("unsupported agent kind: {agent_kind:?}")),
         }

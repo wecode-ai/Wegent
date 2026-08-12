@@ -699,6 +699,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
         headers=_auth_headers(test_token),
         json={
             "deviceId": "device-1",
+            "projectKey": "remote-project-id",
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
         },
@@ -708,6 +709,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     assert response.json()["accepted"] is True
     request = service_mock.await_args.kwargs["request"]
     assert request.device_id == "device-1"
+    assert request.project_key == "remote-project-id"
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
 
 
@@ -777,6 +779,33 @@ def test_runtime_global_im_notification_endpoint_dispatches_payload(
     payload = service_mock.await_args.kwargs["request"]
     assert payload.enabled is True
     assert payload.session_key == "session-1"
+
+
+def test_runtime_im_notification_presence_endpoint_dispatches_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(return_value={"away": False, "ttlSeconds": 90})
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "update_im_notification_presence",
+        service_mock,
+    )
+
+    response = test_client.put(
+        "/api/runtime-work/im-notifications/presence",
+        headers=_auth_headers(test_token),
+        json={"clientId": "desktop-client-1", "away": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"away": False, "ttlSeconds": 90}
+    request = service_mock.await_args.kwargs["request"]
+    assert request.client_id == "desktop-client-1"
+    assert request.away is False
 
 
 def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(

@@ -205,7 +205,7 @@ If you submit new composer text while the queue is paused, Wework asks how to ha
 - **Clear queue**: removes the existing queue and sends only the new composer message.
 - **Cancel**: sends nothing and preserves both the composer and the queue.
 
-The temporary sidebar conversation supports automatic queueing, cancellation, and editing: a message submitted while the current response is running appears in the pending queue and is sent automatically after the current response finishes. The sidebar does not surface “task is already running” as a send failure while a message is queued; you can cancel or edit the pending message from its queue card.
+The temporary sidebar conversation supports the same running send modes as the main conversation. A message sent normally while the current response is running enters the pending queue and is sent automatically after the response finishes. Selecting **Guide current response** applies the message to the same active turn in the temporary conversation instead of creating a regular follow-up turn. The sidebar does not surface “task is already running” as a send failure while a message is queued; from its queue card, you can cancel or edit the pending message, or send it as guidance.
 
 ---
 
@@ -251,10 +251,10 @@ Export task conversation history and code changes:
 
 When Codex creates an HTML visualization in the task workspace and references it in its response, Wework displays the chart or interactive page directly in that response. You do not need to copy a file path or open a separate browser.
 
-- Wework loads only HTML files created or modified in the current response's file changes. Deleted, reverted, or unlisted files are never loaded inline.
+- Wework supports the latest visualize content reference, such as `visualize{"path":"/absolute/path/visualizations/chart.html"}`. The absolute path does not need to appear in the current response's file changes, but it must point to an HTML file inside a `visualizations` directory.
+- The legacy `::codex-inline-vis{file="chart.html"}` directive remains supported. Legacy directives resolve relative paths or unique file names only from files created or modified in the current response, including fragments organized by date and thread under `.codex/visualizations/`.
 - The visualization runs in a script-isolated iframe and cannot access the Wework page.
-- Only relative workspace paths ending in `.html`, `.htm`, or `.xhtml` are accepted. Parent traversal, absolute paths, and directives inside code fences remain normal text.
-- A Codex visualization directive may reference only the file name. Wework resolves a unique matching file from the current response's file changes, including fragments organized by date and thread under `.codex/visualizations/`.
+- Only `.html`, `.htm`, or `.xhtml` files are accepted. Malformed references, paths containing parent traversal, and directives inside code fences remain normal text.
 - Wework wraps HTML fragments in a UTF-8 visualization host, supplies the Codex visualization theme variables, and automatically sizes the iframe to the fragment content.
 
 ## Cleaning Stale Runtimes

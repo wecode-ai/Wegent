@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    external_tasks,
     feedback,
     groups,
     health,
@@ -270,6 +271,11 @@ api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
+)
+api_router.include_router(
+    external_tasks.router,
+    prefix="/external/tasks",
+    tags=["external-tasks"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])

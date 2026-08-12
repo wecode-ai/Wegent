@@ -227,6 +227,19 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 桌面云设备测试
+
+从仓库根目录运行云设备功能 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+该场景会启动真实后端、Redis、云设备 executor 和 Tauri 应用，验证云项目任务、
+Goal 自动续跑与未读状态、忙碌任务转 Goal，以及本地与云端模型协议矩阵。失败时应
+使用命令输出中的 `wework/test-results/desktop-e2e/<run-id>/` 目录，对照前端、
+后端和 executor 日志定位主链路问题。
+
 ## 持续集成
 
 ### GitHub Actions 工作流
@@ -264,6 +277,9 @@ CI 稳定性依赖以下约束：
   策略任务也不得执行 PR 提供的代码。
 - 桌面 E2E 遇到异步独立渲染的最终文本和附属控件时，必须分别等待目标元素出现后再
   读取属性或断言状态。看到最终文本不代表折叠控件、时间线等关联 UI 已完成挂载。
+- Wework 发布说明查询 GitHub 提交作者时会对瞬时 API 或 TLS 故障进行有限次数的
+  指数退避重试。重试耗尽后发布任务仍必须失败，不能静默省略作者信息或生成不完整的
+  发布说明。
 
 ### CI 缓存所有权
 

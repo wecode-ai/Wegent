@@ -111,6 +111,7 @@ describe('createLocalAppServices', () => {
             ui: expect.objectContaining({
               family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
               familyLabel: '本地推理',
+              reasoningEfforts: [],
             }),
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
@@ -654,7 +655,6 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
       modelId: 'gpt-5',
       modelOptions: {
         reasoning: 'medium',
@@ -713,7 +713,6 @@ describe('createLocalAppServices', () => {
           local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
-      bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
       executionRequest: expect.objectContaining({
         task_id: 'task-1',
         subtask_id: expect.any(String),
@@ -728,7 +727,6 @@ describe('createLocalAppServices', () => {
           email: 'hongyu9@example.com',
         },
         cloudProjectId: 'cloud-project-42',
-        bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -773,6 +771,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
+            status: 'ready',
             subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
@@ -786,6 +785,111 @@ describe('createLocalAppServices', () => {
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('keeps backend attachment metadata in direct runtime execution requests', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'task-cloud-attachment',
+      workspacePath: '/workspace/project',
+      runtime: 'codex',
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'cloud-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'task-cloud-attachment',
+      runtime: 'codex',
+      message: 'inspect the image',
+      attachments: [
+        {
+          id: 42,
+          filename: 'cloud-image.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-08-11T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.attachments).toEqual([
+      {
+        id: 42,
+        filename: 'cloud-image.png',
+        original_filename: 'cloud-image.png',
+        file_size: 1200,
+        mime_type: 'image/png',
+        status: 'ready',
+        subtask_id: expect.any(String),
+        file_extension: '.png',
+      },
+    ])
+  })
+
+  test('runs Claude Code through the ordinary runtime task conversation API', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'device-uuid',
+          taskId: 'claude-task',
+          workspacePath: '/Users/me/project',
+          runtime: 'claude_code',
+        }
+      }
+      return { accepted: true }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'claude-task',
+      runtime: 'claude_code',
+      runtimeExecutablePath: '/Users/me/.local/bin/claude',
+      message: 'hello',
+      title: 'Claude',
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'claude-task',
+        runtime: 'claude_code',
+      },
+      message: 'continue',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(createPayload.runtime).toBe('claude_code')
+    expect(createPayload.executionRequest.bot).toEqual([{ id: 0, shell_type: 'ClaudeCode' }])
+    expect(createPayload.executionRequest.runtime_executable_path).toBe(
+      '/Users/me/.local/bin/claude'
+    )
+    expect(createPayload.executionRequest.model_config).toEqual({})
+    expect(createPayload).not.toHaveProperty('friendlyTitleExecutionRequest')
+    expect(sendPayload.address.runtime).toBe('claude_code')
+    expect(sendPayload.executionRequest.bot).toEqual([{ id: 0, shell_type: 'ClaudeCode' }])
+    expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
   test('keeps the backend model_config when the claim payload provides it', async () => {
@@ -889,6 +993,11 @@ describe('createLocalAppServices', () => {
         teamId: 0,
         runtime: 'codex',
         message: 'Say hello',
+        initialGoal: {
+          objective: 'Say hello',
+          status: 'active',
+          tokenBudget: null,
+        },
       },
     })
 
@@ -898,6 +1007,11 @@ describe('createLocalAppServices', () => {
         automation: expect.objectContaining({
           taskPayload: expect.objectContaining({
             standaloneChatWorkspace: true,
+            initialGoal: {
+              objective: 'Say hello',
+              status: 'active',
+              tokenBudget: null,
+            },
             executionRequest: expect.objectContaining({
               standalone_chat_workspace: true,
             }),
@@ -1195,6 +1309,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
+              status: 'ready',
               subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
@@ -2086,6 +2201,7 @@ describe('createLocalAppServices', () => {
         codexProviderId: 'openai',
         codexProviderName: 'OpenAI',
         codexProviderType: 'official',
+        permissionMode: 'full-access',
       },
     })
 
@@ -2100,6 +2216,7 @@ describe('createLocalAppServices', () => {
         provider_name: 'OpenAI',
       })
     )
+    expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
   })
 
   test('builds cloud model gateway config without resolving credentials', async () => {

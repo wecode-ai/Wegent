@@ -611,18 +611,17 @@ async fn handle_deferred_mcp_loop(
         let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
             return summary.outcome;
         };
-        // After draining an already answered form, a non-empty final answer is
-        // authoritative; a leftover deferred form is stale Claude session state.
-        if stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request).is_some()
+        let answered_tool_use_id = answered_interactive_form_tool_use_id(&request);
+        if answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
             && completed_with_content(&summary.outcome)
         {
-            log_executor_event("ignoring stale deferred form after answered drain", &fields);
+            log_executor_event("ignoring stale deferred form after answer", &fields);
             return summary.outcome;
         }
         if !stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request)
-                .is_some_and(|tool_use_id| tool_use_id == deferred_tool_use.id)
+            && answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
         {
             stale_answer_defer_drained = true;
             log_executor_event("draining stale answered interactive form defer", &fields);

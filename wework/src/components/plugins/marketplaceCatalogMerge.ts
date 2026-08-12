@@ -1,4 +1,5 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
@@ -146,5 +147,8 @@ export function mergeMarketplaceCatalog(
     const existing = merged.get(key)
     merged.set(key, existing ? preferLocalMarketplaceItem(existing, item) : item)
   }
-  return Array.from(merged.values())
+  // Local Codex catalogs (e.g. openai-curated-remote) can lag behind the installed
+  // list after plugin/install. Overlay by name@marketplace so cards flip off
+  // "安装" as soon as the strip shows the plugin.
+  return applyInstalledPluginsToMarketplaceItems(Array.from(merged.values()), installedPlugins)
 }

@@ -233,6 +233,11 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn get_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let mut response = task_action_success(&link);
+            response["goal"] = self.get_claude_goal(&link).unwrap_or(Value::Null);
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
@@ -258,6 +263,12 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let goal = self.set_claude_goal(&link, &payload);
+            let mut response = task_action_success(&link);
+            response["goal"] = goal;
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
@@ -299,6 +310,12 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let cleared = self.clear_claude_goal(&link);
+            let mut response = task_action_success(&link);
+            response["cleared"] = Value::Bool(cleared);
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
@@ -404,8 +421,9 @@ impl RuntimeWorkRpcHandler {
 
         self.store.delete_task(&link.local_task_id);
         let cleanup_link = link.clone();
+        let worktrees = self.worktrees.clone();
         let cleanup = tokio::task::spawn_blocking(move || {
-            cleanup_task_files_response(&cleanup_link, true, false)
+            cleanup_task_files_response(&worktrees, &cleanup_link, true, false)
         })
         .await
         .unwrap_or_else(|error| {
@@ -486,11 +504,16 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
         let previews = stream::iter(links)
-            .map(|link| async move {
-                let fallback = link.clone();
-                tokio::task::spawn_blocking(move || cleanup_task_files_preview(&link))
+            .map(|link| {
+                let worktrees = self.worktrees.clone();
+                async move {
+                    let fallback = link.clone();
+                    tokio::task::spawn_blocking(move || {
+                        cleanup_task_files_preview(&worktrees, &link)
+                    })
                     .await
                     .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+                }
             })
             .buffer_unordered(8)
             .collect::<Vec<_>>();
@@ -504,11 +527,16 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
         let results = stream::iter(links)
-            .map(|link| async move {
-                let fallback = link.clone();
-                tokio::task::spawn_blocking(move || cleanup_task_files_response(&link, true, false))
+            .map(|link| {
+                let worktrees = self.worktrees.clone();
+                async move {
+                    let fallback = link.clone();
+                    tokio::task::spawn_blocking(move || {
+                        cleanup_task_files_response(&worktrees, &link, true, false)
+                    })
                     .await
                     .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+                }
             })
             .buffer_unordered(8)
             .collect::<Vec<_>>();

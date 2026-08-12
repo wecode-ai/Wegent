@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   MenuSelect,
@@ -54,6 +55,7 @@ interface AutomationDetailWorkspaceProps {
   currentRuntimeTask: RuntimeTaskAddress | null
   runtimeWork: RuntimeWorkListResponse | null
   localDeviceIds: string[]
+  cloudAvailable: boolean
   saving: boolean
   dirty: boolean
   running: boolean
@@ -77,6 +79,7 @@ export function AutomationDetailWorkspace({
   currentRuntimeTask,
   runtimeWork,
   localDeviceIds,
+  cloudAvailable,
   saving,
   dirty,
   running,
@@ -211,6 +214,20 @@ export function AutomationDetailWorkspace({
           action={<Info className="h-4 w-4" />}
         />
         <SettingsGroup>
+          <SettingsRow
+            label={t('workbench.automation_goal_mode', '持续完成目标')}
+            description={t(
+              'workbench.automation_goal_description',
+              '将任务说明作为目标持续推进，直到目标完成'
+            )}
+          >
+            <SettingsSwitch
+              data-testid="automation-goal-switch"
+              checked={draft.goalEnabled}
+              onCheckedChange={checked => onChange('goalEnabled', checked)}
+              aria-label={t('workbench.automation_goal_mode', '持续完成目标')}
+            />
+          </SettingsRow>
           <SettingsRow label={t('workbench.automation_run_in', '运行于')}>
             <InlineSelect
               dataTestId="automation-conversation-mode"
@@ -250,7 +267,10 @@ export function AutomationDetailWorkspace({
                   const target = taskOptions.find(option => option.key === value)
                   onChange('continuationAddress', target?.address ?? null)
                   if (target) {
-                    onChange('source', 'local')
+                    onChange(
+                      'source',
+                      localDeviceIds.includes(target.address.deviceId) ? 'local' : 'cloud'
+                    )
                     onChange('deviceId', target.address.deviceId)
                     onChange('workspacePath', target.address.workspacePath ?? '')
                   }
@@ -271,7 +291,7 @@ export function AutomationDetailWorkspace({
                     {
                       value: 'cloud',
                       label: t('workbench.automation_cloud', '云端'),
-                      disabled: true,
+                      disabled: !cloudAvailable,
                     },
                   ]}
                 />
@@ -329,7 +349,6 @@ export function AutomationDetailWorkspace({
                       ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
                       : ''
                   }
-                  disabled={draft.source === 'cloud'}
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
                     onChange('modelType', modelType)
@@ -351,7 +370,6 @@ export function AutomationDetailWorkspace({
                 <InlineSelect
                   dataTestId="automation-reasoning-select"
                   value={reasoning}
-                  disabled={draft.source === 'cloud'}
                   onChange={value =>
                     onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
                   }

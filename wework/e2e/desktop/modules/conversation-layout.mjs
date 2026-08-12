@@ -20,6 +20,7 @@ import {
   assert,
   createSingleRootLocalProject,
   join,
+  pathExists,
   resultDir,
   selectE2EModel,
   withTimeout,
@@ -773,9 +774,13 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
   assert.match(
     await control.command('getText', '[data-testid="worktree-creation-status"]'),
-    /正在创建工作树|Creating worktree/,
+    /正在搭建你的独立工作树|Building your independent worktree/,
     'The worktree creation status page did not explain the active operation'
   )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: CHECKPOINT_TASK_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const creatingSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     creatingSnapshot.testIds.includes('desktop-floating-composer-card'),
@@ -795,16 +800,39 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
   await captureVerificationScreenshot(control, 'worktree-status-04-task-started.png')
 
-  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
-  await control.command(
-    'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  const taskDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const worktreeTaskId = taskDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  const worktreePath = taskDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath
+  assert.ok(worktreeTaskId, 'The worktree task did not expose its runtime task ID')
+  assert.ok(worktreePath, 'The worktree task did not expose its workspace path')
+  const worktreeContainer = join(worktreePath, '..')
+  assert.equal(await pathExists(worktreePath), true, 'The managed worktree was not created')
+  assert.equal(
+    await pathExists(worktreeContainer),
+    true,
+    'The managed worktree container was not created'
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(projectMenuTestId),
-    'The worktree status fixture project remained after cleanup'
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-archive-toast-${worktreeTaskId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await withTimeout(
+    (async () => {
+      while ((await pathExists(worktreePath)) || (await pathExists(worktreeContainer))) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Archiving the worktree task left its repository or runtime container on disk'
   )
 }
 

@@ -13,6 +13,7 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  ModelSelectionConfig,
   ModelType,
   PluginPathComponent,
   ProjectExecutionMode,
@@ -28,6 +29,7 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
+  RuntimeName,
   RuntimeSendRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
@@ -82,6 +84,10 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  runtime?: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+  modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]

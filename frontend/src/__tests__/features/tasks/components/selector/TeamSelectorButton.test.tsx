@@ -10,6 +10,7 @@ import { userApis } from '@/apis/user'
 
 const mockRefresh = jest.fn()
 const mockPush = jest.fn()
+let mockSearchParams = new URLSearchParams()
 let mockQuickAccessTeams: number[] = []
 let mockQuickAccessVersion: number | undefined = 7
 
@@ -17,6 +18,7 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: mockPush,
   }),
+  useSearchParams: () => mockSearchParams,
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -130,6 +132,7 @@ describe('TeamSelectorButton', () => {
     mockRefresh.mockResolvedValue(undefined)
     mockQuickAccessTeams = []
     mockQuickAccessVersion = 7
+    mockSearchParams = new URLSearchParams()
   })
 
   it('deduplicates system and personal teams with the same identity', async () => {
@@ -207,6 +210,30 @@ describe('TeamSelectorButton', () => {
 
     expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&mode=image')
     expect(setSelectedTeam).not.toHaveBeenCalled()
+  })
+
+  it('preserves project context when switching to an agent on another page', async () => {
+    mockSearchParams = new URLSearchParams({
+      projectId: '2180',
+      deviceId: 'cloud-device',
+      taskId: '99',
+    })
+    const taskTeam = makeTeam({ id: 1, name: 'task-agent', bind_mode: ['task'] })
+    const chatTeam = makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] })
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={taskTeam}
+        setSelectedTeam={jest.fn()}
+        teams={[taskTeam, chatTeam]}
+        disabled={false}
+        currentMode="task"
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('team-option-chat-agent'))
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&projectId=2180&deviceId=cloud-device')
   })
 
   it('shows five recent teams and fills missing entries by update time', async () => {
