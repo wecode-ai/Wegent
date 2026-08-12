@@ -18,8 +18,8 @@ from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import KnowledgeBaseType
 from app.schemas.wiki import WikiContentWriteRequest, WikiPageRead
 from app.services.knowledge.code_wiki.generation import FailureCode, failure_code
-from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
 from app.services.knowledge.code_wiki.prompts import build_diagram_correction
+from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.wiki_service import wiki_service
 
