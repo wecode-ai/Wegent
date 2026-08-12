@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useState, useCallback, useMemo } from 'react'
+import type { MCPServer } from '@/apis/mcpProviders'
 import { Button } from '@/components/ui/button'
 import { PlusIcon, SettingsIcon, XIcon } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -13,6 +14,7 @@ import {
   mergeMcpConfigs,
 } from '../utils/mcpConfig'
 import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter'
+import { buildProviderMcpConfig } from '../utils/providerMcpConfig'
 import McpConfigAddDialog from './McpConfigAddDialog'
 import McpConfigImportModal from './McpConfigImportModal'
 import McpConfigEditModal from './McpConfigEditModal'
@@ -184,33 +186,10 @@ const McpConfigSection: React.FC<McpConfigSectionProps> = ({
   )
 
   const handleImportServerFromProvider = useCallback(
-    (server: {
-      id: string
-      name: string
-      description?: string
-      type: string
-      base_url?: string
-      headers?: Record<string, string>
-    }) => {
+    (server: MCPServer) => {
       try {
         const currentConfig = parseMcpConfig(mcpConfig)
-        const serverKey = server.id.replace(/[@\/]/g, '_')
-
-        const newServer: Record<string, unknown> = {
-          type: server.type === 'streamableHttp' ? 'streamable-http' : server.type,
-        }
-
-        if (server.base_url) {
-          newServer.url = server.base_url
-        }
-
-        if (server.headers && Object.keys(server.headers).length > 0) {
-          newServer.headers = server.headers
-        }
-
-        const mergedConfig = mergeMcpConfigs(currentConfig, {
-          [serverKey]: newServer,
-        })
+        const mergedConfig = mergeMcpConfigs(currentConfig, buildProviderMcpConfig(server))
         onMcpConfigChange(stringifyMcpConfig(mergedConfig))
       } catch {
         toast({
