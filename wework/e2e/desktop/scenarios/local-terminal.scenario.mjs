@@ -368,8 +368,8 @@ async function verifyHarnessWorkbenchChrome({
   })
   assert.match(
     bottomPanelClass,
-    /(?:^|\s)opacity-100(?:\s|$)/,
-    `${title} did not apply the open bottom-panel style`
+    /(?:^|\s)pointer-events-auto(?:\s|$)/,
+    `${title} did not make the open bottom workspace panel interactive`
   )
   assert.match(
     bottomPanelInlineStyle,
@@ -380,6 +380,10 @@ async function verifyHarnessWorkbenchChrome({
     await control.command('getElementMetrics', bottomPanelSelector)
   )
   assert.ok(bottomPanelMetrics.width > 0, `${title} opened a zero-width bottom workspace panel`)
+  assert.ok(
+    bottomPanelMetrics.height >= 220,
+    `${title} opened an undersized bottom workspace panel`
+  )
   assert.ok(
     bottomPanelMetrics.scrollHeight > 0,
     `${title} opened a bottom workspace panel without content`

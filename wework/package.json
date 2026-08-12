@@ -109,6 +109,7 @@
     "react-dom": "^19.2.6",
     "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.12.2",
     "react-syntax-highlighter": "^15.6.6",
     "remark-gfm": "^4.0.1",
     "streamdown": "2.5.0",

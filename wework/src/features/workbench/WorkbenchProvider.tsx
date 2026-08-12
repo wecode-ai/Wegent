@@ -430,34 +430,41 @@ export function WorkbenchProvider({
     window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
     return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
   }, [projectChatScopeKey])
+  const setDraftInputForScope = useCallback((scopeKey: string, value: string) => {
+    setDraftInputByScope(current => {
+      if ((current[scopeKey] ?? '') === value) return current
+      if (!value && current[scopeKey] === undefined) return current
+      const next = { ...current }
+      if (value) next[scopeKey] = value
+      else delete next[scopeKey]
+      return next
+    })
+    if (!value.trim()) {
+      setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginNameByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginAppByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+    }
+  }, [])
   const setDraftInput = useCallback(
     (value: string) => {
-      setDraftInputByScope(current => {
-        if ((current[projectChatScopeKey] ?? '') === value) return current
-        return { ...current, [projectChatScopeKey]: value }
-      })
-      if (!value.trim()) {
-        setTrialTemplatesByScope(current => {
-          if (!current[projectChatScopeKey]) return current
-          const next = { ...current }
-          delete next[projectChatScopeKey]
-          return next
-        })
-        setTrialPluginNameByScope(current => {
-          if (!current[projectChatScopeKey]) return current
-          const next = { ...current }
-          delete next[projectChatScopeKey]
-          return next
-        })
-        setTrialPluginAppByScope(current => {
-          if (!current[projectChatScopeKey]) return current
-          const next = { ...current }
-          delete next[projectChatScopeKey]
-          return next
-        })
-      }
+      setDraftInputForScope(projectChatScopeKey, value)
     },
-    [projectChatScopeKey]
+    [projectChatScopeKey, setDraftInputForScope]
   )
   const setComposerError = useCallback(
     (error: string | null) => {
@@ -656,14 +663,15 @@ export function WorkbenchProvider({
     state.standaloneDeviceId,
     user,
   ])
+  const stableConsumeQueuedPluginTrial = useStableEvent(consumeQueuedPluginTrial)
 
   useEffect(() => {
-    queueMicrotask(consumeQueuedPluginTrial)
-    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    queueMicrotask(stableConsumeQueuedPluginTrial)
+    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     return () => {
-      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
-  }, [consumeQueuedPluginTrial])
+  }, [stableConsumeQueuedPluginTrial])
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -2190,6 +2198,7 @@ export function WorkbenchProvider({
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
+      inputByScope: draftInputByScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2218,6 +2227,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setInputForScope: setDraftInputForScope,
       setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
@@ -2239,6 +2249,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      draftInputByScope,
       composerError,
       trialTemplates,
       trialPluginName,
@@ -2262,6 +2273,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setDraftInputForScope,
       setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
@@ -2272,6 +2284,7 @@ export function WorkbenchProvider({
   const paneProjectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
+      inputByScope: draftInputByScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2300,6 +2313,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setInputForScope: setDraftInputForScope,
       setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
@@ -2321,6 +2335,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      draftInputByScope,
       composerError,
       trialTemplates,
       trialPluginName,
@@ -2343,6 +2358,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setDraftInputForScope,
       setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
@@ -2353,6 +2369,7 @@ export function WorkbenchProvider({
 
   const value: WorkbenchContextValue = {
     services: resolvedServices,
+    workspaceTabId,
     state,
     isStartupReady,
     workspaceFileApi,

@@ -424,6 +424,27 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('accepts an executor-confirmed autonomous turn after the previous turn settles', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.executorSettled(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('ignores a settled event from an older turn after a newer turn starts', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.turnStarted(address, 'turn-1')

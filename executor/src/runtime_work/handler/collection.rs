@@ -695,7 +695,13 @@ impl RuntimeWorkRpcHandler {
         thread_id: String,
         turn_id: String,
     ) {
-        if !self.is_local_task_execution_active(local_task_id, execution_id) {
+        let current_execution_id = self
+            .active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .get(local_task_id)
+            .map(|control| control.execution_id);
+        if current_execution_id.is_some_and(|current| current != execution_id) {
             return;
         }
         self.active_codex_turns
@@ -773,18 +779,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
-        self.active_turn_cancellations
+        let has_active_execution = self
+            .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
+            .contains_key(local_task_id);
+        if has_active_execution {
+            return true;
+        }
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
             .contains_key(local_task_id)
-    }
-
-    fn is_local_task_execution_active(&self, local_task_id: &str, execution_id: u64) -> bool {
-        self.active_turn_cancellations
-            .lock()
-            .expect("active turn cancellation map lock should not be poisoned")
-            .get(local_task_id)
-            .is_some_and(|control| control.execution_id == execution_id)
     }
 
     pub(super) fn clear_active_request_user_input(&self, local_task_id: &str, execution_id: u64) {
