@@ -14,6 +14,7 @@ from app.schemas.site import (
     ApplicationTypeListResponse,
     SiteAppType,
     SiteListResponse,
+    SiteMetadataUpdateRequest,
     SiteNetworkUpdateRequest,
     SiteResponse,
     SiteUpdateRequest,
@@ -151,6 +152,52 @@ async def update_site(
             siteid,
             username=current_user.user_name,
             sitename=sitename,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.patch("/{siteid}", response_model=SiteResponse)
+async def update_site_metadata(
+    siteid: str,
+    request: SiteMetadataUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Update editable metadata for an owned site project."""
+    request_fields = request.model_fields_set
+    title = request.title if "title" in request_fields else request.name
+    title = title.strip() if title is not None else None
+    if ("title" in request_fields or "name" in request_fields) and not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "validation_error",
+                "message": "Site title is required",
+            },
+        )
+    custom_domain_prefix_set = "custom_domain_prefix" in request_fields
+    custom_domain_prefix = request.custom_domain_prefix
+    if isinstance(custom_domain_prefix, str):
+        custom_domain_prefix = custom_domain_prefix.strip() or None
+    if title is None and not custom_domain_prefix_set:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "validation_error",
+                "message": "No editable site fields were provided",
+            },
+        )
+    try:
+        return await sites_service.update_site_metadata(
+            siteid,
+            username=current_user.user_name,
+            title=title,
+            custom_domain_prefix=custom_domain_prefix,
+            custom_domain_prefix_set=custom_domain_prefix_set,
         )
     except (
         SitesNotAvailableError,

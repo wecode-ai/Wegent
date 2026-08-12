@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   Check,
+  Code2,
   Copy,
   ExternalLink,
   Globe2,
@@ -22,7 +23,10 @@ export interface ApplicationRowContext {
   capabilities: ReadonlySet<ApplicationCapability>
   publishingIds: ReadonlySet<string>
   deletingSiteId: string | null
+  continuingSiteId?: string | null
   onPublish: (site: Site) => void
+  onContinueDevelopment: (site: Site) => void
+  onEdit: (site: Site) => void
   onDelete: (site: Site) => void
 }
 
@@ -61,10 +65,21 @@ export function SiteApplicationRow({
   const { t } = useTranslation('sites')
   const publishing = context.publishingIds.has(site.siteid)
   const deleting = context.deletingSiteId === site.siteid
+  const continuing = context.continuingSiteId === site.siteid
   const network = getSiteNetwork(site)
   const isPublishing = publishing || site.publish_status === 'publishing'
   const isFailed = site.publish_status === 'failed'
   const isSecurityChecking = site.publish_status === 'scanning'
+  const publishLabel = isPublishing
+    ? t('publishing', '发布中')
+    : isSecurityChecking
+      ? t('security_checking', '安全检查中')
+      : isFailed
+        ? t('retry_publish', '重试发布')
+        : network === 'outer'
+          ? t('publish_inner', '发布到内网')
+          : t('publish', '发布到外网')
+  const PublishIcon = isPublishing || isSecurityChecking ? Loader2 : Upload
 
   const openUrl = (url: string) => {
     void openExternalUrl(url).catch(error => {
@@ -110,34 +125,34 @@ export function SiteApplicationRow({
             </span>
           ) : null}
         </div>
-        {context.capabilities.has('publish') ? (
-          <button
-            type="button"
-            data-testid={`site-publish-${site.siteid}`}
-            disabled={isPublishing || isSecurityChecking || deleting}
-            onClick={() => context.onPublish(site)}
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
-          >
-            {isPublishing || isSecurityChecking ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-            {isPublishing
-              ? t('publishing', '发布中')
-              : isSecurityChecking
-                ? t('security_checking', '安全检查中')
-                : isFailed
-                  ? t('retry_publish', '重试发布')
-                  : network === 'outer'
-                    ? t('publish_inner', '发布到内网')
-                    : t('publish', '发布到外网')}
-          </button>
-        ) : null}
-        {context.capabilities.has('delete') ? (
+        <button
+          type="button"
+          data-testid={`site-continue-development-${site.siteid}`}
+          disabled={deleting || continuing}
+          onClick={() => context.onContinueDevelopment(site)}
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
+        >
+          {continuing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {t('continue_development', '继续开发')}
+        </button>
+        {context.capabilities.has('publish') ||
+        context.capabilities.has('edit') ||
+        context.capabilities.has('delete') ? (
           <SiteActionsMenu
             site={site}
-            disabled={isPublishing || deleting}
+            disabled={deleting || continuing}
+            canPublish={context.capabilities.has('publish')}
+            publishDisabled={isPublishing || isSecurityChecking}
+            publishLabel={publishLabel}
+            publishIcon={PublishIcon}
+            canEdit={context.capabilities.has('edit')}
+            canDelete={context.capabilities.has('delete')}
+            onPublish={context.onPublish}
+            onEdit={context.onEdit}
             onDelete={context.onDelete}
           />
         ) : null}
