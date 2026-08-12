@@ -18,6 +18,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatRelativeTime } from '@/utils/dateTime'
@@ -99,6 +106,7 @@ function RunRow({
   // the pages it overwrites keep their document ids only for as long as they exist
   // -- links held elsewhere to the current pages do not survive being replaced.
   const [confirming, setConfirming] = useState(false)
+  const [showingFailure, setShowingFailure] = useState(false)
   const republish = async () => {
     setConfirming(false)
     setWorking(true)
@@ -193,13 +201,39 @@ function RunRow({
           </AlertDialogContent>
         </AlertDialog>
         {reason && (
-          <p
-            className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-[11px] text-amber-500"
-            title={reason}
-            data-testid="code-wiki-run-error"
-          >
-            {reason}
-          </p>
+          <>
+            <p
+              className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-[11px] text-amber-500"
+              title={reason}
+              data-testid="code-wiki-run-error"
+            >
+              {reason}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowingFailure(true)}
+              className="mt-1 inline-flex min-h-11 items-center text-[11px] text-text-secondary underline-offset-2 hover:text-primary hover:underline lg:min-h-0"
+              data-testid="code-wiki-run-error-details-trigger"
+            >
+              {t('codeWiki.history.viewFailure')}
+            </button>
+            <Dialog open={showingFailure} onOpenChange={setShowingFailure}>
+              <DialogContent
+                className="max-h-[80vh] overflow-auto"
+                data-testid="code-wiki-run-error-details"
+              >
+                <DialogHeader>
+                  <DialogTitle>{t('codeWiki.history.failureDetailsTitle')}</DialogTitle>
+                  <DialogDescription>
+                    {t('codeWiki.history.failureDetailsDescription')}
+                  </DialogDescription>
+                </DialogHeader>
+                <pre className="whitespace-pre-wrap break-words text-sm text-amber-500">
+                  {reason}
+                </pre>
+              </DialogContent>
+            </Dialog>
+          </>
         )}
       </div>
     </li>

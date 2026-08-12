@@ -62,6 +62,63 @@ def test_gitlab_request_wrapper_supplies_a_default_timeout(
     mocker: MockerFixture,
 ) -> None:
     provider = GitLabProvider()
+    bearer_response = mocker.Mock(status_code=401)
+    private_token_response = mocker.Mock(status_code=200)
+    private_token_response.raise_for_status.return_value = None
+    request = mocker.patch(
+        "app.repository.gitlab_provider.requests.request",
+        side_effect=[bearer_response, private_token_response],
+    )
+
+    provider._make_request_with_auth_retry(
+        method="GET",
+        url="https://gitlab.example.com/api/v4/projects",
+        token="token",
+    )
+
+    assert [call.kwargs["timeout"] for call in request.call_args_list] == [
+        settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+        settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+    ]
+    assert (
+        request.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer token"
+    )
+    assert request.call_args_list[1].kwargs["headers"]["Private-Token"] == "token"
+
+
+@pytest.mark.asyncio
+async def test_gitlab_async_request_wrapper_supplies_a_default_timeout(
+    mocker: MockerFixture,
+) -> None:
+    provider = GitLabProvider()
+    bearer_response = mocker.Mock(status_code=401)
+    private_token_response = mocker.Mock(status_code=200)
+    private_token_response.raise_for_status.return_value = None
+    request = mocker.patch(
+        "app.repository.gitlab_provider.requests.request",
+        side_effect=[bearer_response, private_token_response],
+    )
+
+    await provider._make_request_with_auth_retry_async(
+        method="GET",
+        url="https://gitlab.example.com/api/v4/projects",
+        token="token",
+    )
+
+    assert [call.kwargs["timeout"] for call in request.call_args_list] == [
+        settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+        settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+    ]
+    assert (
+        request.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer token"
+    )
+    assert request.call_args_list[1].kwargs["headers"]["Private-Token"] == "token"
+
+
+def test_gitlab_request_wrapper_preserves_explicit_timeout(
+    mocker: MockerFixture,
+) -> None:
+    provider = GitLabProvider()
     response = mocker.Mock(status_code=200)
     response.raise_for_status.return_value = None
     request = mocker.patch(
@@ -72,33 +129,10 @@ def test_gitlab_request_wrapper_supplies_a_default_timeout(
         method="GET",
         url="https://gitlab.example.com/api/v4/projects",
         token="token",
+        timeout=3,
     )
 
-    assert (
-        request.call_args.kwargs["timeout"] == settings.REPOSITORY_READ_TIMEOUT_SECONDS
-    )
-
-
-@pytest.mark.asyncio
-async def test_gitlab_async_request_wrapper_supplies_a_default_timeout(
-    mocker: MockerFixture,
-) -> None:
-    provider = GitLabProvider()
-    response = mocker.Mock(status_code=200)
-    response.raise_for_status.return_value = None
-    request = mocker.patch(
-        "app.repository.gitlab_provider.requests.request", return_value=response
-    )
-
-    await provider._make_request_with_auth_retry_async(
-        method="GET",
-        url="https://gitlab.example.com/api/v4/projects",
-        token="token",
-    )
-
-    assert (
-        request.call_args.kwargs["timeout"] == settings.REPOSITORY_READ_TIMEOUT_SECONDS
-    )
+    assert request.call_args.kwargs["timeout"] == 3
 
 
 @pytest.mark.asyncio

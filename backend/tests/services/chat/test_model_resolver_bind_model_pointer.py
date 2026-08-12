@@ -229,7 +229,9 @@ class TestExtractModelConfigExplicitErrors:
         assert result["model"] == "claude"
 
     @_DECRYPT_PATCH
-    def test_does_not_log_model_credentials(self, _decrypt, caplog):
+    def test_does_not_log_model_credentials(
+        self, _decrypt: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         api_key = "sk-sensitive-model-key"
         header_value = "Bearer sensitive-header-value"
         spec = {

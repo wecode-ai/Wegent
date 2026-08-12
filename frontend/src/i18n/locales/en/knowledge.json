@@ -1182,7 +1182,10 @@
       "republished": "This version is published again",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
-      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break."
+      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "viewFailure": "View full error",
+      "failureDetailsTitle": "Generation error",
+      "failureDetailsDescription": "Full error message from this generation run."
     },
     "failure": {
       "task_ended_without_report": "The task ended without reporting a result",

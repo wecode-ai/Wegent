@@ -361,7 +361,7 @@ def test_an_empty_user_folder_is_left_alone(
 
 def test_folders_are_reused_rather_than_duplicated(
     test_db: Session, effects: RecordingEffects
-):
+) -> None:
     plan = compute_projection_plan(
         [_source("architecture/backend"), _source("architecture/frontend")], []
     )

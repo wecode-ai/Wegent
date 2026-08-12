@@ -149,6 +149,25 @@ describe('CodeWikiWorkspace', () => {
     await user.click(screen.getByTestId('code-wiki-content-permissions'))
 
     expect(screen.getByTestId('mock-code-wiki-permissions')).toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-group-navigation')).not.toBeInTheDocument()
+  })
+
+  it('uses group information as navigation only when a callback is supplied', async () => {
+    const user = userEvent.setup()
+    const onGroupClick = jest.fn()
+    render(
+      <CodeWikiWorkspace
+        wiki={wiki}
+        view="documents"
+        groupInfo={{ groupId: 'default', groupName: 'personal', groupType: 'personal' }}
+        onGroupClick={onGroupClick}
+      />
+    )
+
+    await user.click(screen.getByTestId('code-wiki-content-permissions'))
+    await user.click(screen.getByTestId('code-wiki-group-navigation'))
+
+    expect(onGroupClick).toHaveBeenCalledWith('default', 'personal')
   })
 
   it('does not expose permission management or configuration without manage permission', () => {

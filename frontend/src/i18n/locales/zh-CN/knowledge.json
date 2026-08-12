@@ -1182,7 +1182,10 @@
       "republished": "已恢复该版本",
       "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
       "republishConfirmTitle": "恢复这个版本？",
-      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。"
+      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
+      "viewFailure": "查看完整错误",
+      "failureDetailsTitle": "生成错误",
+      "failureDetailsDescription": "本次生成的完整错误信息。"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",

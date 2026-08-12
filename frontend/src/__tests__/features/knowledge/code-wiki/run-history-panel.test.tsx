@@ -100,16 +100,17 @@ describe('a failure reason of any length', () => {
     expect(reason).toHaveAttribute('title', LONG)
   })
 
-  it('stays clamped after clicking, like the reader summary', async () => {
+  it('shows the full reason only after an explicit disclosure action', async () => {
     render(<RunHistory knowledgeBaseId={1} status={null} />)
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
 
     const reason = await screen.findByTestId('code-wiki-run-error')
-    expect(reason.tagName).toBe('P')
-
     fireEvent.click(reason)
-
     expect(reason.className).toContain('line-clamp-3')
-    expect(reason).toHaveAttribute('title', LONG)
+    expect(screen.queryByTestId('code-wiki-run-error-details')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('code-wiki-run-error-details-trigger'))
+
+    expect(await screen.findByTestId('code-wiki-run-error-details')).toHaveTextContent(LONG)
   })
 })

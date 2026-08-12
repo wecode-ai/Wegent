@@ -443,7 +443,7 @@ def test_optional_jwt_lookup_propagates_database_failures() -> None:
 
 
 def test_writer_does_not_recast_jwt_lookup_failures_as_invalid_tokens(
-    test_db, monkeypatch
+    test_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.api.endpoints.wiki import _verify_internal_token
     from app.core import security

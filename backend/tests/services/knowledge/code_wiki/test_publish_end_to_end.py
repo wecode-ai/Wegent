@@ -10,6 +10,7 @@ a reader would actually get, so that a wrong signature or a document that never
 becomes visible fails here rather than in production.
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from unittest.mock import patch
 
@@ -62,7 +63,9 @@ def knowledge_base(test_db: Session, test_user: User) -> Kind:
 
 
 @pytest.fixture
-def generation(test_db: Session, knowledge_base: Kind, test_user: User):
+def generation(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> Callable[[], WikiGeneration]:
     def build() -> WikiGeneration:
         record = WikiGeneration(
             project_id=1,
@@ -153,8 +156,11 @@ def test_a_published_page_is_queued_for_indexing(
 
 
 def test_a_published_page_uses_the_normal_document_summary_flow(
-    test_db: Session, knowledge_base: Kind, test_user: User, generation
-):
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    generation: Callable[[], WikiGeneration],
+) -> None:
     """Generated pages need the same post-index summary as user documents."""
     version = generation()
     _page(test_db, version, "index", "overview")

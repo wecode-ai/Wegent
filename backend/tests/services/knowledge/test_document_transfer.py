@@ -36,6 +36,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
     TransferDocumentsResponse,
 )
 from app.schemas.namespace import GroupRole
@@ -421,6 +422,58 @@ def test_transfer_folders_with_documents(test_db: Session) -> None:
         .all()
     )
     assert len(transferred_docs) == 3
+
+
+@pytest.mark.unit
+def test_transfer_document_preserves_a_reparented_folder_hierarchy(
+    test_db: Session,
+) -> None:
+    """A folder's ID order does not determine its current parent-first order."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-transfer-reparented-folders")
+    source_kb_id = _create_kb(test_db, owner.id, "source-reparented-folder-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-reparented-folder-kb")
+    child = _create_folder(test_db, source_kb_id, owner.id, "child")
+    parent = _create_folder(test_db, source_kb_id, owner.id, "parent")
+    root = _create_folder(test_db, source_kb_id, owner.id, "root")
+
+    KnowledgeFolderService.update_folder(
+        test_db,
+        parent.id,
+        owner.id,
+        KnowledgeFolderUpdate(parent_id=root.id),
+        knowledge_base_id=source_kb_id,
+    )
+    KnowledgeFolderService.update_folder(
+        test_db,
+        child.id,
+        owner.id,
+        KnowledgeFolderUpdate(parent_id=parent.id),
+        knowledge_base_id=source_kb_id,
+    )
+    document = _create_document(
+        test_db, source_kb_id, owner.id, "reparented-document.md", folder_id=child.id
+    )
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[document.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    target_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    target_by_name = {folder.name: folder for folder in target_folders}
+    assert result.transferred_folder_count == 3
+    assert target_by_name["parent"].parent_id == target_by_name["root"].id
+    assert target_by_name["child"].parent_id == target_by_name["parent"].id
 
 
 @pytest.mark.unit

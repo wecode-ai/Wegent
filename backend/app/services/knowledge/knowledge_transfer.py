@@ -393,14 +393,21 @@ class KnowledgeTransferService:
         """Recreate a verified source folder hierarchy in the target KB."""
         old_to_new_folder: dict[int, int] = {}
         transferred_folder_count = 0
-        source_folder_ids = {folder.id for folder in source_folders}
+        parent_by_id = {folder.id: folder.parent_id for folder in source_folders}
+
+        def selection_depth(folder: KnowledgeFolder) -> int:
+            depth = 0
+            current = folder.parent_id
+            seen: set[int] = set()
+            while current in parent_by_id and current not in seen:
+                seen.add(current)
+                depth += 1
+                current = parent_by_id[current]
+            return depth
 
         sorted_folders = sorted(
             source_folders,
-            key=lambda folder: (
-                folder.parent_id in source_folder_ids,
-                folder.parent_id,
-            ),
+            key=lambda folder: (selection_depth(folder), folder.id),
         )
 
         for source_folder in sorted_folders:

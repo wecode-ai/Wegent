@@ -83,10 +83,10 @@ export function CodeWikiWorkspace({
       onValueChange={next => setDocumentView(next as DocumentManagementView)}
       className="flex-shrink-0"
     >
-      <TabsList className="h-8" data-testid="code-wiki-content-roots">
+      <TabsList className="h-11 sm:h-8" data-testid="code-wiki-content-roots">
         <TabsTrigger
           value="generated"
-          className="h-7 gap-1 px-2 text-xs"
+          className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
           data-testid="code-wiki-content-generated"
         >
           <Library className="h-3.5 w-3.5" />
@@ -94,7 +94,7 @@ export function CodeWikiWorkspace({
         </TabsTrigger>
         <TabsTrigger
           value="user"
-          className="h-7 gap-1 px-2 text-xs"
+          className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
           data-testid="code-wiki-content-user"
         >
           <FileText className="h-3.5 w-3.5" />
@@ -103,7 +103,7 @@ export function CodeWikiWorkspace({
         {permissions.canManagePermissions && (
           <TabsTrigger
             value="permissions"
-            className="h-7 gap-1 px-2 text-xs"
+            className="min-h-11 min-w-11 gap-1 px-2 text-xs sm:h-7 sm:min-h-0 sm:min-w-0"
             data-testid="code-wiki-content-permissions"
           >
             <Shield className="h-3.5 w-3.5" />
@@ -134,14 +134,24 @@ export function CodeWikiWorkspace({
                   <div className="flex items-center gap-1.5">
                     {groupInfo && (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => onGroupClick?.(groupInfo.groupId, groupInfo.groupType)}
-                          className="max-w-[120px] truncate text-base font-medium text-text-secondary transition-colors hover:text-primary"
-                          title={groupInfo.groupName}
-                        >
-                          {groupInfo.groupName}
-                        </button>
+                        {onGroupClick ? (
+                          <button
+                            type="button"
+                            onClick={() => onGroupClick(groupInfo.groupId, groupInfo.groupType)}
+                            className="max-w-[120px] truncate text-base font-medium text-text-secondary transition-colors hover:text-primary"
+                            title={groupInfo.groupName}
+                            data-testid="code-wiki-group-navigation"
+                          >
+                            {groupInfo.groupName}
+                          </button>
+                        ) : (
+                          <span
+                            className="max-w-[120px] truncate text-base font-medium text-text-secondary"
+                            title={groupInfo.groupName}
+                          >
+                            {groupInfo.groupName}
+                          </span>
+                        )}
                         <span className="text-text-muted">/</span>
                       </>
                     )}
