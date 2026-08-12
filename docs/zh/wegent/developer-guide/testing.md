@@ -299,7 +299,9 @@ CI 稳定性依赖以下约束：
   通过仓库内的 `package-lock.json` 锁定完整依赖图和包完整性。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
-  `--build-only`，非 `main` 任务以只读模式访问共享 sccache。
+  `--build-only`，非 `main` 任务以只读模式访问共享 sccache。sccache 只是可选
+  加速层；当 release 下载暂时不可用时，任务必须发出告警并继续执行无缓存 Rust
+  编译，不能跳过或阻断实际检查。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
