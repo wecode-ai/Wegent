@@ -11,6 +11,9 @@ export function reduceRuntimeTaskLifecycle(
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
       const queuedStatus = isQueuedTaskStatus(event.task.status)
+      const snapshotConfirmsActiveTurn =
+        snapshotRunning === true &&
+        (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
       const settledLocalHarness =
         snapshotRunning === false &&
         state.turnPhase !== 'streaming' &&
@@ -21,6 +24,7 @@ export function reduceRuntimeTaskLifecycle(
         snapshotRunning !== expectedRunning &&
         !queuedStatus &&
         (!terminalStatus || hasIdentifiedActiveTurn) &&
+        !snapshotConfirmsActiveTurn &&
         !settledLocalHarness
       if (shouldIgnoreStaleSnapshot) return state
 
@@ -199,6 +203,11 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
+}
+
+function isRunningTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
 }
 
 function isLocalHarnessRuntime(runtime: string | null | undefined): boolean {
