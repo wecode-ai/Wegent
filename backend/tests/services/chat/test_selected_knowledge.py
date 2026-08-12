@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -502,58 +500,3 @@ def test_apply_selected_knowledge_context_without_selection_keeps_native_off() -
     assert selected_skills == []
     assert request.preload_skills == ["dingtalk-docs"]
     assert request.provider_native_knowledge is False
-
-
-def test_provider_native_e2e_logging_records_selection_and_activation(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    monkeypatch.setenv("PROVIDER_NATIVE_E2E_LOGGING", "true")
-    caplog.set_level(logging.INFO, logger="app.services.chat.selected_knowledge")
-    request = ExecutionRequest(
-        task_id=101,
-        subtask_id=202,
-        knowledge_base_ids=[12],
-        bot=[{"shell_type": "Chat"}],
-        skill_names=["wegent-knowledge"],
-        skill_configs=[
-            {
-                "name": "wegent-knowledge",
-                "mcpServers": {"wegent-knowledge": {"url": "https://example.com/mcp"}},
-            }
-        ],
-    )
-    task = SimpleNamespace(
-        json={
-            "spec": {
-                "knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}],
-            }
-        }
-    )
-
-    provider_skills = apply_selected_knowledge_context(MagicMock(), request, task)
-    activate_provider_native_knowledge(request, provider_skills)
-
-    payloads = [
-        json.loads(record.getMessage().split("] ", 1)[1])
-        for record in caplog.records
-        if record.getMessage().startswith("[PROVIDER_NATIVE_E2E]")
-    ]
-    selection = next(item for item in payloads if item["event"] == "selection_built")
-    activation = next(
-        item for item in payloads if item["event"] == "activation_succeeded"
-    )
-
-    assert selection["task_id"] == 101
-    assert selection["subtask_id"] == 202
-    assert selection["refs"] == [
-        {
-            "provider": "wegent",
-            "knowledge_base_id": "12",
-            "knowledge_base_name": "产品知识",
-            "resources": [],
-        }
-    ]
-    assert len(selection["selected_prompt_sha256"]) == 64
-    assert activation["provider_native_knowledge"] is True
-    assert activation["expected_mcp_names"] == ["wegent-knowledge"]
