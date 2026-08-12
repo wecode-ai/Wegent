@@ -2729,21 +2729,29 @@ class DesktopE2EServer {
         return
       }
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        const stream = streamingTextEvents(responseId, SUPERVISOR_CORRECTION_COMPLETION_TEXT)
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(createSse([responseCreated(responseId)]))
+        response.write(createSse(stream.start))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(
+        response.write(
           createSse([
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-            responseCompleted(responseId),
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+              offset: 0,
+            },
           ])
         )
+        response.end(createSse(stream.finish))
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')

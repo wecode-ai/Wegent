@@ -93,6 +93,7 @@ case " $* " in
     esac
     printf '%s\\n' '{"type":"system","subtype":"init","session_id":"claude-code-e2e-session"}'
     printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Claude Code ordinary conversation reply"}]}}'
+    sleep 1
     printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"claude-code-e2e-session"}'
     exit 0
     ;;
