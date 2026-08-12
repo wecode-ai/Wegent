@@ -617,6 +617,10 @@ fn browser_open_action(readiness: Option<EmbeddedBrowserReadiness>) -> EmbeddedB
     }
 }
 
+fn browser_open_action_requires_navigation(action: EmbeddedBrowserOpenAction) -> bool {
+    action != EmbeddedBrowserOpenAction::RequestOpen
+}
+
 fn wait_for_browser_ready_with_observer(
     mut readiness: impl FnMut() -> Result<Option<EmbeddedBrowserReadiness>, String>,
     attempts: u64,
@@ -1157,9 +1161,10 @@ fn request_browser_open(
     target_label: &str,
     url: &str,
     browser_session_id: Option<&str>,
-) -> Result<(), String> {
-    let request_id = match browser_open_action(entry_readiness(state, target_label)?) {
-        EmbeddedBrowserOpenAction::Ready => return Ok(()),
+) -> Result<EmbeddedBrowserOpenAction, String> {
+    let open_action = browser_open_action(entry_readiness(state, target_label)?);
+    let request_id = match open_action {
+        EmbeddedBrowserOpenAction::Ready => return Ok(open_action),
         EmbeddedBrowserOpenAction::WaitForReady => state
             .pending_open_requests
             .lock()
@@ -1273,7 +1278,7 @@ fn request_browser_open(
             "requestId": request_id,
         }),
     );
-    Ok(())
+    Ok(open_action)
 }
 
 #[tauri::command]
@@ -1373,18 +1378,18 @@ fn handle_bridge_request(
                 .url
                 .ok_or_else(|| "Embedded browser navigate requires url".to_string())?;
             bridge_navigation_url(&url)?;
-            if !is_browser_open(state, &label)? {
-                request_browser_open(
-                    app,
-                    state,
-                    &base_label,
-                    &label,
-                    &url,
-                    request.browser_session_id.as_deref(),
-                )?;
+            let open_action = request_browser_open(
+                app,
+                state,
+                &base_label,
+                &label,
+                &url,
+                request.browser_session_id.as_deref(),
+            )?;
+            if browser_open_action_requires_navigation(open_action) {
+                navigate_label(state, &label, url.clone())?;
             }
             let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
-            navigate_label(state, &label, url.clone())?;
             wait_for_browser_navigation(state, &label, timeout_ms)?;
             Ok(json!({ "ok": true }))
         }
