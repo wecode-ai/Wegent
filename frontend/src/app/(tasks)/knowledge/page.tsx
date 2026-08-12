@@ -64,15 +64,6 @@ function KnowledgePageContent() {
         {knowledgeViewState.switcher === 'code-wiki' ? (
           <>
             <TabsTrigger
-              value="wiki"
-              aria-label={t('knowledge:codeWiki.workspace.wiki')}
-              data-testid="code-wiki-view-wiki"
-              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('knowledge:codeWiki.workspace.wiki')}</span>
-            </TabsTrigger>
-            <TabsTrigger
               value="documents"
               aria-label={t('knowledge:codeWiki.workspace.documents')}
               data-testid="code-wiki-view-documents"
@@ -82,6 +73,15 @@ function KnowledgePageContent() {
               <span className="hidden sm:inline">
                 {t('knowledge:codeWiki.workspace.documents')}
               </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="wiki"
+              aria-label={t('knowledge:codeWiki.workspace.wiki')}
+              data-testid="code-wiki-view-wiki"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('knowledge:codeWiki.workspace.wiki')}</span>
             </TabsTrigger>
           </>
         ) : (
