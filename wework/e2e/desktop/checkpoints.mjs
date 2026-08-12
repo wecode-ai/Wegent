@@ -3,6 +3,7 @@ export const DESKTOP_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
+  'project-automation',
   'model-routing',
   'permission-modes',
   'core-task-flow',

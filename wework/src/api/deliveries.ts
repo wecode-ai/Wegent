@@ -77,6 +77,13 @@ export interface CloudLoopItem {
   queued_at?: string | null
   execution_note?: string | null
   execution_error?: string | null
+  automation?: {
+    rule_id?: string
+    run_id?: string
+    trigger?: 'scheduled' | 'manual' | string
+    scheduled_for?: string | null
+    bug_key?: string
+  } | null
   ai_state?: {
     run_id?: string
     status?: string

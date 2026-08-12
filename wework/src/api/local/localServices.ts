@@ -1438,10 +1438,12 @@ interface BuildLocalRuntimeExecutionRequestInput {
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
@@ -1493,11 +1495,16 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
   const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
     input.runtime.trim().toLowerCase()
   )
   const modelConfig =
-    claudeRuntime && !input.modelId
+    input.modelConfig ??
+    (claudeRuntime && !input.modelId
       ? {}
       : applyRuntimeModelOptions(
           localRuntimeModelConfig(
@@ -1509,7 +1516,7 @@ function buildLocalRuntimeExecutionRequest(
             !claudeRuntime
           ),
           input.modelOptions
-        )
+        ))
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1546,12 +1553,7 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [
-      {
-        id: 0,
-        shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex',
-      },
-    ],
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
     ...(input.runtimeExecutablePath
       ? { runtime_executable_path: input.runtimeExecutablePath }
       : {}),
@@ -1747,10 +1749,12 @@ async function createLocalRuntimeTaskPayload(
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,

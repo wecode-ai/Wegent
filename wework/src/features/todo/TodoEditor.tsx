@@ -1519,6 +1519,14 @@ export function TodoEditor(props: TodoEditorProps) {
                   <span>{item.id}</span>
                   <span>·</span>
                   <span>创建于 {item.created_at.slice(5, 10)}</span>
+                  {item.automation ? (
+                    <>
+                      <span>·</span>
+                      <span data-testid="cloud-todo-automation-source">
+                        自动化 · {item.automation.trigger === 'manual' ? '手动触发' : '定时触发'}
+                      </span>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
               <textarea

@@ -41,6 +41,16 @@ The execution queue shows waiting and running tasks in columns:
 
 The queue can be filtered by execution state (pending approval, queued, claimed, running, failed) and searched by title; running tasks show a spinning status icon. Robots configured for manual approval put their tasks into the pending approval state until a member approves them.
 
+### Scheduled rules
+
+Create a scheduled rule from the Automation tab to let a project robot execute the configured prompt on the selected days, time, and time zone. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
+
+- Cloud robots create and execute the task as soon as the rule is due.
+- Local robots execute immediately while online. While offline, the run shows **Waiting for local device** and can be claimed if the device returns before the next scheduled occurrence.
+- If the local device remains offline until the next occurrence, the old scheduled run is skipped instead of being accumulated for catch-up. A waiting manual **Run now** invocation does not expire on the schedule.
+
+Each effective run creates an independent board task whose description is the rule's configured prompt. Progress, results, and failures are written back to the task comments and still require human acceptance. The run uses the selected robot's model, execution device, and bound code workspace. Every run has its own execution session, which can be continued from the task comments.
+
 The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
 
 ## Create a project from the composer

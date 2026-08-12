@@ -463,6 +463,17 @@ describe('TaskActivityView', () => {
       dispose: vi.fn(),
     } satisfies ProjectChatClient
 
+    runtimeWorkMock.value = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          projectId: null,
+          tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+        },
+      ],
+      totalTasks: 1,
+    }
     render(
       <TaskActivityView
         client={client}
@@ -994,11 +1005,8 @@ describe('TaskActivityView', () => {
       />
     )
 
-    expect(await screen.findByTestId('cloud-task-activity-review-actions-WEG-1')).toHaveTextContent(
-      '继续修改'
-    )
-    await user.click(screen.getByTestId('cloud-task-activity-continue-WEG-1'))
-    expect(screen.getByTestId('cloud-task-activity-composer')).toHaveFocus()
+    await screen.findByTestId('cloud-task-activity-review-actions-WEG-1')
+    expect(screen.queryByTestId('cloud-task-activity-continue-WEG-1')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('cloud-task-activity-rerun-WEG-1'))
     await waitFor(() =>
@@ -1296,6 +1304,22 @@ describe('TaskActivityView', () => {
     }
     attachmentSelectionMock.attachments = [attachment]
     sendRuntimePaneMessage.mockResolvedValue(true)
+    runtimeWorkMock.value = {
+      projects: [
+        {
+          project: { id: 91, name: '运营工作区' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              projectId: 91,
+              tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
     const client = {
       subscribe: vi.fn(async () => ({
         snapshot: {
@@ -1311,6 +1335,17 @@ describe('TaskActivityView', () => {
       dispose: vi.fn(),
     } satisfies ProjectChatClient
 
+    runtimeWorkMock.value = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          projectId: null,
+          tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+        },
+      ],
+      totalTasks: 1,
+    }
     render(
       <TaskActivityView
         client={client}
@@ -1786,8 +1821,12 @@ describe('TaskActivityView', () => {
       '新评论',
       expect.objectContaining({
         cloudProjectId: '11',
-        hiddenFromSidebar: true,
-        continuable: true,
+        origin: {
+          type: 'board_comment',
+          cloudProjectId: '11',
+          loopItemId: 'WEG-1',
+          rootCommentId: userMessage.messageId,
+        },
       })
     )
   })
@@ -1821,6 +1860,22 @@ describe('TaskActivityView', () => {
       dispose: vi.fn(),
     } satisfies ProjectChatClient
 
+    runtimeWorkMock.value = {
+      projects: [
+        {
+          project: { id: 91, name: '运营工作区' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              projectId: 91,
+              tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
     render(
       <TaskActivityView
         client={client}
@@ -1983,7 +2038,9 @@ describe('TaskActivityView', () => {
     await screen.findByText('Code Reviewer')
     expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-task-activity-reject-WEG-1')).not.toBeInTheDocument()
-    expect(screen.getByText('待 Alice 批准')).toBeInTheDocument()
+    const status = screen.getByTestId('cloud-task-activity-execution-status-WEG-1')
+    expect(status).toHaveAttribute('data-status', 'waiting')
+    expect(status).toHaveAccessibleName('待 Alice 批准')
   })
 
   it('shows approve/reject when the backend marks the run as approvable by the current user', async () => {
@@ -2025,6 +2082,12 @@ describe('TaskActivityView', () => {
   })
 
   it('shows the execution failed badge and error reason', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
     const client = {
       subscribe: vi.fn(async () => ({
         snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
@@ -2057,11 +2120,16 @@ describe('TaskActivityView', () => {
     )
 
     await screen.findByText('Code Reviewer')
-    expect(screen.getByTestId('cloud-task-activity-execution-failed-WEG-1')).toHaveTextContent(
-      '执行失败'
-    )
+    const status = screen.getByTestId('cloud-task-activity-execution-status-WEG-1')
+    expect(status).toHaveAttribute('data-status', 'failed')
+    expect(status).toHaveAccessibleName('执行失败')
+    await user.click(status)
     expect(screen.getByTestId('cloud-task-activity-execution-error-WEG-1')).toHaveTextContent(
       'Device went offline before dispatch'
+    )
+    await user.click(screen.getByRole('button', { name: '复制执行详情' }))
+    expect(writeText).toHaveBeenCalledWith(
+      '状态: 执行失败\n错误: Device went offline before dispatch'
     )
   })
 })

@@ -146,13 +146,20 @@ async function buildExecutor() {
   if (configured)
     return resolveExecutable(configured, 'wegent-executor', 'Configured Wework executor')
 
+  const targetDir = process.env.WEWORK_E2E_EXECUTOR_TARGET_DIR?.trim()
+    ? resolve(repoDir, process.env.WEWORK_E2E_EXECUTOR_TARGET_DIR.trim())
+    : join(repoDir, 'executor', 'target', 'desktop-e2e')
   await runChecked('cargo', ['build', '--locked', '--bin', 'wegent-executor'], {
     cwd: join(repoDir, 'executor'),
+    env: { ...process.env, CARGO_TARGET_DIR: targetDir },
   })
   const binaryName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
-  const binaryPath = join(repoDir, 'executor', 'target', 'debug', binaryName)
+  const binaryPath = join(targetDir, 'debug', binaryName)
   assert.equal(await isExecutable(binaryPath), true, `Executor build did not produce ${binaryPath}`)
-  return binaryPath
+  const stagedBinaryPath = join(resultDir, binaryName)
+  await copyFile(binaryPath, stagedBinaryPath)
+  await chmod(stagedBinaryPath, 0o755)
+  return stagedBinaryPath
 }
 
 function hostCodexTarget() {
