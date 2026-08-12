@@ -48,7 +48,11 @@ function TabsState() {
   )
 }
 
-function RoutingHarness() {
+function RoutingHarness({
+  startupTabKind,
+}: {
+  startupTabKind?: 'task' | 'board' | 'agent'
+} = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
     search: window.location.search,
@@ -70,6 +74,7 @@ function RoutingHarness() {
       search={location.search}
       storageScope="context-test"
       labels={labels}
+      startupTabKind={startupTabKind}
     >
       <TabsState />
     </WorkspaceTabsProvider>
@@ -93,6 +98,48 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('activates the preferred tab when the main workspace starts at the root route', () => {
+    render(<RoutingHarness startupTabKind="board" />)
+
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+    expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('workspaceTab=board-')
+  })
+
+  test('keeps an explicit route instead of applying the startup tab preference', () => {
+    window.history.replaceState({}, '', '/plugins')
+
+    render(<RoutingHarness startupTabKind="board" />)
+
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+    expect(window.location.pathname).toBe('/plugins')
+  })
+
+  test('recreates the preferred startup tab when the persisted list no longer contains it', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v2:context-test',
+      JSON.stringify({
+        activeTabId: 'task-1',
+        tabs: [
+          {
+            id: 'task-1',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+          },
+        ],
+      })
+    )
+
+    render(<RoutingHarness startupTabKind="board" />)
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
   })
 
   test('the explicit new-tab action still opens a separate tab', () => {
