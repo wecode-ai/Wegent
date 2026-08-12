@@ -4139,10 +4139,11 @@ fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str 
         .and_then(Value::as_str)
     {
         Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
+        Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
         Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         }
-        _ => CODEX_WORKSPACE_PERMISSION_PROFILE,
+        _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
     }
 }
 

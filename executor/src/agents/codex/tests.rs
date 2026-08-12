@@ -2035,7 +2035,7 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
-fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
+fn codex_full_access_permission_profile_is_applied_by_default() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
     let thread_start = thread_start_params(&request, &launch_config);
@@ -2044,19 +2044,22 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
     let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
 
     for params in [thread_start, thread_resume, thread_fork, turn_start] {
-        assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
-        assert_eq!(params["approvalPolicy"], "on-request");
+        assert_eq!(
+            params["permissions"],
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        );
+        assert_eq!(params["approvalPolicy"], "never");
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
     }
 }
 
 #[test]
-fn codex_full_access_permission_profile_is_applied_when_requested() {
+fn codex_workspace_permission_profile_is_applied_when_requested() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
         "runtime_permission_profile".to_owned(),
-        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+        Value::String(CODEX_WORKSPACE_PERMISSION_PROFILE.to_owned()),
     );
     let launch_config = CodexLaunchConfig::default();
 
@@ -2066,11 +2069,8 @@ fn codex_full_access_permission_profile_is_applied_when_requested() {
         thread_fork_params("thread-1", None, &request, &launch_config),
         turn_start_params("thread-1", &request, &launch_config, Vec::new()),
     ] {
-        assert_eq!(
-            params["permissions"],
-            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
-        );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], "on-request");
     }
 }
 
@@ -2358,7 +2358,7 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(params["approvalPolicy"], "on-request");
+        assert_eq!(params["approvalPolicy"], "never");
     }
 }
 

@@ -8,9 +8,9 @@ import { normalizeModelOptions } from '@/lib/model-ui'
 import type { UnifiedModel } from '@/types/api'
 
 describe('runtimePermissionMode', () => {
-  test('uses workspace access by default', () => {
+  test('uses full access by default', () => {
     expect(runtimePermissionMode()).toBe(DEFAULT_RUNTIME_PERMISSION_MODE)
-    expect(runtimePermissionProfile(runtimePermissionMode())).toBe(':workspace')
+    expect(runtimePermissionProfile(runtimePermissionMode())).toBe(':danger-full-access')
   })
 
   test('maps supported modes to Codex permission profiles', () => {
@@ -23,7 +23,7 @@ describe('runtimePermissionMode', () => {
   })
 
   test('ignores an unknown persisted value', () => {
-    expect(runtimePermissionMode({ permissionMode: 'unknown' })).toBe('workspace-write')
+    expect(runtimePermissionMode({ permissionMode: 'unknown' })).toBe('full-access')
   })
 
   test('survives model option normalization and session restoration', () => {

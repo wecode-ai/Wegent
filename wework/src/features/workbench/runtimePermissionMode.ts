@@ -4,11 +4,11 @@ export const RUNTIME_PERMISSION_MODE_OPTION = 'permissionMode'
 
 export type RuntimePermissionMode = 'read-only' | 'workspace-write' | 'full-access'
 
-export const DEFAULT_RUNTIME_PERMISSION_MODE: RuntimePermissionMode = 'workspace-write'
+export const DEFAULT_RUNTIME_PERMISSION_MODE: RuntimePermissionMode = 'full-access'
 
 export function runtimePermissionMode(options?: ModelOptions): RuntimePermissionMode {
   const value = options?.[RUNTIME_PERMISSION_MODE_OPTION]
-  if (value === 'read-only' || value === 'full-access') return value
+  if (value === 'read-only' || value === 'workspace-write' || value === 'full-access') return value
   return DEFAULT_RUNTIME_PERMISSION_MODE
 }
 

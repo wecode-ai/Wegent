@@ -295,8 +295,8 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     {
         let profile = match permission_mode {
             "read-only" => CODEX_READ_ONLY_PERMISSION_PROFILE,
-            "full-access" => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
-            _ => CODEX_WORKSPACE_PERMISSION_PROFILE,
+            "workspace-write" => CODEX_WORKSPACE_PERMISSION_PROFILE,
+            _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
         };
         request.extra.insert(
             "runtime_permission_profile".to_owned(),

@@ -3001,17 +3001,32 @@ async function verifyPermissionModes(control) {
   })
   assert.match(
     await control.command('getText', trigger),
-    /Workspace|工作区/,
-    'The default permission mode was not workspace'
+    /Full access|完整访问/,
+    'The default permission mode was not full access'
   )
-  await captureVerificationScreenshot(control, 'permission-01-default-workspace.png')
+  await captureVerificationScreenshot(control, 'permission-01-default-full-access.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'permission-02-mode-menu.png')
+
+  await control.command('click', '[data-testid="permission-mode-workspace-write"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', trigger),
+    /Workspace|工作区/,
+    'Selecting workspace mode did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-03-workspace-enabled.png')
 
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'permission-02-mode-menu.png')
-
   await control.command('click', '[data-testid="permission-mode-full-access"]')
   await control.command('waitFor', '[data-testid="full-access-confirm-overlay"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3021,7 +3036,7 @@ async function verifyPermissionModes(control) {
     /Enable full access|启用完整访问/,
     'The full-access warning dialog did not explain the requested mode'
   )
-  await captureVerificationScreenshot(control, 'permission-03-full-access-confirmation.png')
+  await captureVerificationScreenshot(control, 'permission-04-full-access-confirmation.png')
 
   await control.command('click', '[data-testid="full-access-confirm-cancel"]')
   await control.command('waitFor', trigger, {
@@ -3039,7 +3054,7 @@ async function verifyPermissionModes(control) {
     false,
     'Cancelling full access left the confirmation dialog open'
   )
-  await captureVerificationScreenshot(control, 'permission-04-full-access-cancelled.png')
+  await captureVerificationScreenshot(control, 'permission-05-full-access-cancelled.png')
 
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
@@ -3058,7 +3073,7 @@ async function verifyPermissionModes(control) {
     /Full access|完整访问/,
     'Confirming full access did not update the permission mode'
   )
-  await captureVerificationScreenshot(control, 'permission-05-full-access-enabled.png')
+  await captureVerificationScreenshot(control, 'permission-06-full-access-enabled.png')
 
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-read-only"]', {
@@ -3073,7 +3088,7 @@ async function verifyPermissionModes(control) {
     /Read only|只读/,
     'Selecting read-only did not update the permission mode'
   )
-  await captureVerificationScreenshot(control, 'permission-06-read-only-enabled.png')
+  await captureVerificationScreenshot(control, 'permission-07-read-only-enabled.png')
 
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
