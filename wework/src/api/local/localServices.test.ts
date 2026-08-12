@@ -2743,6 +2743,13 @@ describe('createLocalAppServices', () => {
       },
       intervalSeconds: 60,
     })
+
+    await services.runtimeWorkApi?.runRuntimeSupervisorNow({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.run_now', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+    })
   })
 
   test('adapts executor runtime workspace list to workbench shape', async () => {

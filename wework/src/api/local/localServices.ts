@@ -42,6 +42,7 @@ import type {
   RuntimeSupervisorGetRequest,
   RuntimeSupervisorResolveRequest,
   RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
@@ -2550,6 +2551,11 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeSupervisorClearRequest
     ): Promise<RuntimeSupervisorResponse> {
       return requestWithLocalDevice('runtime.tasks.supervisor.clear', data)
+    },
+    runRuntimeSupervisorNow(
+      data: RuntimeSupervisorRunNowRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.run_now', data)
     },
     resolveRuntimeSupervisor(
       data: RuntimeSupervisorResolveRequest

@@ -16,6 +16,8 @@ import { snapshotHasAssistantActivity } from './response-protocol.mjs'
 import {
   COMPOSER_READY_STABILITY_MS,
   ACTIVE_WORKBENCH_SELECTOR,
+  CLOUD_PUBLIC_MODEL_LABEL,
+  CLOUD_PUBLIC_MODEL_NAME,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -46,6 +48,8 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+
+const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}`
 
 async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
   control.setScenario('goal_idle')
@@ -460,7 +464,25 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
-  await control.command('click', '[data-testid="task-supervisor-mode-auto"]')
+  await control.command('waitFor', '[data-testid="task-supervisor-model"]', {
+    text: CLOUD_PUBLIC_MODEL_LABEL,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="task-supervisor-model"]', {
+    value: SUPERVISOR_MODEL_KEY,
+  })
+  assert.equal(
+    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    SUPERVISOR_MODEL_KEY,
+    'The supervisor model selector did not retain the selected model'
+  )
+  assert.match(
+    await control.command('getAttribute', '[data-testid="task-supervisor-mode-auto"]', {
+      value: 'class',
+    }),
+    /bg-text-primary/,
+    'The supervisor dialog did not default to auto-correct mode'
+  )
   await control.command('fill', '[data-testid="task-supervisor-instructions"]', {
     value: SUPERVISOR_PRINCIPLES,
   })
@@ -469,6 +491,16 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     text: '监督将在任务开始后生效',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="pending-supervisor-indicator"]')
+  await control.command('waitFor', '[data-testid="task-supervisor-model"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    SUPERVISOR_MODEL_KEY,
+    'Reopening the supervisor reset its selected model'
+  )
+  await control.command('click', '[data-testid="task-supervisor-close-button"]')
   await captureVerificationScreenshot(control, 'supervisor-pending-context.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
   control.releaseSupervisorInitialResponse()
@@ -553,6 +585,27 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     snapshot => !snapshot.testIds.includes('task-supervisor-suggestion'),
     'Auto-correction incorrectly rendered an approval card'
   )
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
+  await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+  await control.command('waitFor', '[data-testid="task-supervisor-next-check"]', {
+    text: '下次巡检',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    SUPERVISOR_MODEL_KEY,
+    'The active supervisor did not retain its selected model'
+  )
+  await control.command('click', '[data-testid="task-supervisor-run-now-button"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The immediate supervisor review did not reach the evaluator'
+  )
+  await control.command('waitFor', '[data-testid="task-supervisor-next-check"]', {
+    text: '下次巡检',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyGoalRestartRecoveryLifecycle({
