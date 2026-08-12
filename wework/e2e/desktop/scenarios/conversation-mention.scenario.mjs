@@ -134,6 +134,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
     async verify(control) {
       active = true
+      await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const initialTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
