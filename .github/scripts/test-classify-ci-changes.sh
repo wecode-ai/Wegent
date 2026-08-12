@@ -534,6 +534,12 @@ if [[ "$(grep -c \
   exit 1
 fi
 
+if ! grep -Fq "if: matrix.command != 'e2e:desktop:cloud'" \
+  <<<"$desktop_cache_step"; then
+  printf 'Wework Cloud desktop E2E jobs must reuse the shared build artifact\n' >&2
+  exit 1
+fi
+
 if [[ "$core_cache_key" != "$desktop_cache_key" ]] ||
   [[ "$core_cache_restore_keys" != "$desktop_cache_restore_keys" ]]; then
   printf 'Wework desktop E2E build jobs must share one Cargo cache key\n' >&2
@@ -583,6 +589,15 @@ if ! grep -q \
   "needs.changes.outputs.wework_desktop_other_e2e == 'true'" \
   <<<"$wework_desktop_job"; then
   printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq -- "--cloud-only --segment" <<<"$wework_desktop_job" ||
+  ! grep -Fq "name: Download shared Wework desktop E2E build" \
+    <<<"$wework_desktop_job" ||
+  ! grep -Fq "WEWORK_E2E_APP_BIN:" <<<"$wework_desktop_job" ||
+  ! grep -Fq "WEWORK_E2E_EXECUTOR_BIN:" <<<"$wework_desktop_job"; then
+  printf 'Wework Cloud desktop E2E jobs must run from the shared prebuilt binaries\n' >&2
   exit 1
 fi
 
