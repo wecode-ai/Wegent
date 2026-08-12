@@ -440,6 +440,7 @@ function browserWorkspaceTabStorageScope(): string {
 
 function AppShell() {
   const { t } = useTranslation('common')
+  const appPreferences = useAppPreferencesState()
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
@@ -682,6 +683,11 @@ function AppShell() {
       search={search}
       storageScope={workspaceTabStorageScope}
       labels={workspaceTabLabels}
+      startupTabKind={
+        isMainWindow && appPreferences?.loaded
+          ? appPreferences.preferences.defaultWorkspaceTab
+          : undefined
+      }
     >
       <div
         data-testid="app-shell"

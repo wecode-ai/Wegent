@@ -227,6 +227,19 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 桌面云设备测试
+
+从仓库根目录运行云设备功能 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+该场景会启动真实后端、Redis、云设备 executor 和 Tauri 应用，验证云项目任务、
+Goal 自动续跑与未读状态、忙碌任务转 Goal，以及本地与云端模型协议矩阵。失败时应
+使用命令输出中的 `wework/test-results/desktop-e2e/<run-id>/` 目录，对照前端、
+后端和 executor 日志定位主链路问题。
+
 ## 持续集成
 
 ### GitHub Actions 工作流

@@ -4,9 +4,11 @@
 
 import {
   adaptMcpConfigForAgent,
+  adaptMcpConfigForShell,
+  isMcpCapableShellType,
   isValidMcpTypeForAgent,
   getSupportedMcpTypes,
-} from '../mcpTypeAdapter'
+} from '@/features/settings/utils/mcpTypeAdapter'
 
 describe('mcpTypeAdapter', () => {
   describe('adaptMcpConfigForAgent', () => {
@@ -117,8 +119,7 @@ describe('mcpTypeAdapter', () => {
       }
 
       const result = adaptMcpConfigForAgent(config, 'Agno')
-      // Should default to 'sse' when type is missing
-      expect((result.server1 as Record<string, unknown>).type).toBe('sse')
+      expect((result.server1 as Record<string, unknown>).type).toBe('stdio')
     })
   })
 
@@ -153,6 +154,48 @@ describe('mcpTypeAdapter', () => {
     it('should return Agno supported types', () => {
       const types = getSupportedMcpTypes('Agno')
       expect(types).toEqual(['sse', 'streamable-http', 'stdio'])
+    })
+  })
+
+  describe('shell adaptation', () => {
+    it('uses Claude Code HTTP transport naming', () => {
+      const result = adaptMcpConfigForShell(
+        {
+          server1: {
+            type: 'streamable-http',
+            url: 'https://example.com/mcp',
+          },
+        },
+        'ClaudeCode'
+      )
+
+      expect((result.server1 as Record<string, unknown>).type).toBe('http')
+    })
+
+    it.each(['Chat', 'Agno', 'Codex', 'CodeX'] as const)(
+      'uses canonical streamable-http naming for %s',
+      shellType => {
+        const result = adaptMcpConfigForShell(
+          {
+            server1: {
+              type: 'http',
+              url: 'https://example.com/mcp',
+            },
+          },
+          shellType
+        )
+
+        expect((result.server1 as Record<string, unknown>).type).toBe('streamable-http')
+      }
+    )
+
+    it('only accepts executors with Wegent MCP runtime support', () => {
+      expect(isMcpCapableShellType('ClaudeCode')).toBe(true)
+      expect(isMcpCapableShellType('Chat')).toBe(true)
+      expect(isMcpCapableShellType('Agno')).toBe(true)
+      expect(isMcpCapableShellType('Codex')).toBe(true)
+      expect(isMcpCapableShellType('CodeX')).toBe(true)
+      expect(isMcpCapableShellType('Dify')).toBe(false)
     })
   })
 })

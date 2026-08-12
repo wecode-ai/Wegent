@@ -1006,6 +1006,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         activeModel={controls.activeModel}
         selectedModelOptions={controls.selectedModelOptions}
         onSelectModel={model => requestModelSelection(model)}
+        onSelectModelOption={controls.setSelectedModelOption}
         onBlockedModelSelect={controls.onBlockedModelSelect}
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
         isStreaming={isStreaming}

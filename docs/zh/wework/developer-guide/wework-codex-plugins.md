@@ -76,6 +76,20 @@ executor 在启动 Codex app-server 前会解析并规范化 Wework Codex home �
 
 交互风格也以同一份 `config.toml` 为唯一来源。设置页修改 Friendly 或 Pragmatic 时通过 `config/batchWrite` 更新 personality，不再把 personality 保存在 localStorage，也不再在每个 thread/turn 请求中重复覆盖。
 
+## 运行时权限模式
+
+Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“工作区”，不会再隐式获得完整磁盘访问：
+
+| 权限模式 | Codex permission profile | Approval policy | 行为                                                                   |
+| -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
+| 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
+| 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
+| 完整访问 | `:danger-full-access`    | `never`         | 不经审批访问文件、终端和网络；启用前必须经过显式风险确认               |
+
+前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
+
+Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval` 和 `item/permissions/requestApproval` 请求会映射为 Wework 的 `request_user_input` 卡片。卡片保持 `availableDecisions` 的顺序，只展示协议实际提供的决定，并使用稳定协议值回传。Executor 支持单次批准 `accept`、会话批准 `acceptForSession`、命令规则 `acceptWithExecpolicyAmendment`、网络 host 规则 `applyNetworkPolicyAmendment`、拒绝 `decline` 和停止 `cancel`；结构化规则直接使用 Codex 请求携带的 amendment，缺失或不匹配时安全拒绝，不会根据显示文本自行扩大授权。权限请求可以按 turn 或 session scope 授权，也可以在当前 turn 启用 `strictAutoReview`，逐一审查之后的命令；拒绝时不授予任何额外权限。
+
 ## 模型列表
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。

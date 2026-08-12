@@ -15,6 +15,11 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import {
+  RUNTIME_PERMISSION_MODE_OPTION,
+  runtimePermissionMode,
+} from '@/features/workbench/runtimePermissionMode'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -175,6 +180,11 @@ export function ComposerToolbar({
           usage={contextUsage}
           disabled={disabled}
           onCompactContext={onCompactContext}
+        />
+        <PermissionModeSelector
+          value={runtimePermissionMode(selectedModelOptions)}
+          disabled={disabled}
+          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
         />
         {modelSelectorOverride ??
           (isModelSelectionReady ? (

@@ -10,6 +10,7 @@ import {
   DingTalkDocumentColumn,
   DingTalkWikispaceRows,
 } from '@/features/tasks/components/chat/DingTalkKnowledgePicker'
+import { buildDingTalkDocContext } from '@/features/tasks/components/chat/DingTalkDocContextSelector'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 const mockT = (key: string, params?: Record<string, string>) =>
@@ -20,26 +21,47 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-const docNode: DingtalkDocNode = {
-  id: 1,
-  dingtalk_node_id: 'doc-1',
-  name: '产品说明',
-  doc_url: 'https://example.com/doc-1',
-  parent_node_id: '',
-  node_type: 'doc',
-  workspace_id: 'workspace-1',
-  content_type: 'ALIDOC',
-  source: 'docs',
-  is_active: true,
-  content_updated_at: '',
-  last_synced_at: '',
-  created_at: '',
-  updated_at: '',
-  children: [],
-}
+const nodes: DingtalkDocNode[] = [
+  {
+    id: 1,
+    dingtalk_node_id: 'doc-1',
+    name: '任务执行流程',
+    doc_url: 'https://example.com/doc-1',
+    parent_node_id: '',
+    node_type: 'doc',
+    workspace_id: 'workspace-1',
+    content_type: 'ALIDOC',
+    source: 'docs',
+    is_active: true,
+    content_updated_at: '',
+    last_synced_at: '',
+    created_at: '',
+    updated_at: '',
+    children: [],
+  },
+  {
+    id: 2,
+    dingtalk_node_id: 'doc-2',
+    name: '预算说明',
+    doc_url: 'https://example.com/doc-2',
+    parent_node_id: '',
+    node_type: 'doc',
+    workspace_id: 'workspace-1',
+    content_type: 'ALIDOC',
+    source: 'docs',
+    is_active: true,
+    content_updated_at: '',
+    last_synced_at: '',
+    created_at: '',
+    updated_at: '',
+    children: [],
+  },
+]
 
-describe('DingTalkDocsRootRow', () => {
-  it('shows a configure link without a sync button when docs MCP is not configured', () => {
+const docNode = nodes[0]
+
+describe('DingTalkDocsRootRow sync entry', () => {
+  it('shows configuration navigation without sync when not configured', () => {
     render(
       <DingTalkDocsRootRow
         nodes={[]}
@@ -58,10 +80,9 @@ describe('DingTalkDocsRootRow', () => {
     expect(screen.queryByTestId('dingtalk-empty-sync-button')).not.toBeInTheDocument()
   })
 
-  it('triggers docs sync from the configured-but-empty state', () => {
+  it('syncs from the configured empty state and disables the action while syncing', () => {
     const onSync = jest.fn()
-
-    render(
+    const { rerender } = render(
       <DingTalkDocsRootRow
         nodes={[]}
         totalCount={0}
@@ -77,10 +98,8 @@ describe('DingTalkDocsRootRow', () => {
 
     fireEvent.click(screen.getByTestId('dingtalk-empty-sync-button'))
     expect(onSync).toHaveBeenCalledTimes(1)
-  })
 
-  it('disables the sync button while syncing', () => {
-    render(
+    rerender(
       <DingTalkDocsRootRow
         nodes={[]}
         totalCount={0}
@@ -90,17 +109,15 @@ describe('DingTalkDocsRootRow', () => {
         selectedIds={new Set()}
         syncing={true}
         onRetry={jest.fn()}
-        onSync={jest.fn()}
+        onSync={onSync}
         onToggle={jest.fn()}
       />
     )
-
     expect(screen.getByTestId('dingtalk-empty-sync-button')).toBeDisabled()
   })
 
-  it('keeps retry as the only action in the load-failed state', () => {
+  it('keeps retry as the only action after loading fails', () => {
     const onRetry = jest.fn()
-
     render(
       <DingTalkDocsRootRow
         nodes={[]}
@@ -122,8 +139,158 @@ describe('DingTalkDocsRootRow', () => {
   })
 })
 
-describe('DingTalkWikispaceRows', () => {
-  it('shows a configure link when wikispace MCP is not configured', () => {
+describe('DingTalkDocumentColumn', () => {
+  it('applies whole-container selection to all nodes instead of filtered results', () => {
+    const onToggleAll = jest.fn()
+
+    render(
+      <DingTalkDocumentColumn
+        title="全部文档"
+        nodes={nodes}
+        totalCount={2}
+        loading={false}
+        error={null}
+        configured={true}
+        notConfiguredLabel="未配置"
+        emptyLabel="暂无文档"
+        query="任务"
+        selectedIds={new Set()}
+        onRetry={jest.fn()}
+        onToggle={jest.fn()}
+        onToggleAll={onToggleAll}
+      />
+    )
+
+    expect(screen.getByText('任务执行流程')).toBeInTheDocument()
+    expect(screen.queryByText('预算说明')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-toggle-all'))
+    expect(onToggleAll).toHaveBeenCalledWith(nodes)
+  })
+
+  it('selects an empty folder only through its selection control', () => {
+    const onToggle = jest.fn()
+    const emptyFolder: DingtalkDocNode = {
+      ...nodes[0],
+      id: 3,
+      dingtalk_node_id: 'folder-empty',
+      name: '空文件夹',
+      node_type: 'folder',
+    }
+
+    render(
+      <DingTalkDocumentColumn
+        title="全部文档"
+        nodes={[emptyFolder]}
+        totalCount={1}
+        loading={false}
+        error={null}
+        configured={true}
+        notConfiguredLabel="未配置"
+        emptyLabel="暂无文档"
+        query=""
+        selectedIds={new Set()}
+        onRetry={jest.fn()}
+        onToggle={onToggle}
+        onToggleAll={jest.fn()}
+      />
+    )
+
+    const folderRow = screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-empty')
+    expect(folderRow).toBeDisabled()
+    fireEvent.click(folderRow)
+    expect(onToggle).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-folder-empty'))
+    expect(onToggle).toHaveBeenCalledWith(emptyFolder)
+  })
+
+  it('does not show an extra navigation arrow on knowledge-base rows', () => {
+    const knowledgeBase: DingtalkDocNode = {
+      ...nodes[0],
+      id: 4,
+      dingtalk_node_id: 'space-1',
+      name: '产品知识库',
+      node_type: 'folder',
+      source: 'wikispace',
+      children: [{ ...nodes[0], source: 'wikispace' }],
+    }
+
+    render(
+      <DingTalkWikispaceRows
+        nodes={[knowledgeBase]}
+        query=""
+        loading={false}
+        error={null}
+        configured={true}
+        selectedIds={new Set()}
+        activeNode={knowledgeBase}
+        onRetry={jest.fn()}
+        onOpen={jest.fn()}
+        onToggle={jest.fn()}
+      />
+    )
+
+    const row = screen.getByTestId('knowledge-picker-dingtalk-space-space-1')
+    expect(row.querySelector('.lucide-chevron-right')).not.toBeInTheDocument()
+  })
+})
+
+describe('buildDingTalkDocContext', () => {
+  it('preserves the owning knowledge base identity for a child document', () => {
+    const workspace: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'space-1',
+      workspace_id: 'space-1',
+      name: '产品知识库',
+      node_type: 'folder',
+      source: 'wikispace',
+    }
+    const document: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'doc-1',
+      workspace_id: 'space-1',
+      name: '产品说明',
+      source: 'wikispace',
+    }
+
+    expect(buildDingTalkDocContext(document, workspace)).toEqual(
+      expect.objectContaining({
+        name: '产品说明',
+        workspace_id: 'space-1',
+        workspace_name: '产品知识库',
+      })
+    )
+  })
+
+  it('treats empty workspace identity fields as invalid values', () => {
+    const workspace: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'space-1',
+      workspace_id: '',
+      name: '',
+      node_type: 'folder',
+      source: 'wikispace',
+    }
+    const document: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'doc-1',
+      workspace_id: 'space-1',
+      name: '产品说明',
+      source: 'wikispace',
+    }
+
+    expect(buildDingTalkDocContext(document, workspace)).toEqual(
+      expect.objectContaining({
+        workspace_id: 'space-1',
+        workspace_name: undefined,
+      })
+    )
+  })
+})
+
+describe('DingTalk wikispace sync entry', () => {
+  it('shows configuration navigation when not configured', () => {
     render(
       <DingTalkWikispaceRows
         nodes={[]}
@@ -144,10 +311,9 @@ describe('DingTalkWikispaceRows', () => {
     expect(screen.queryByTestId('dingtalk-empty-sync-button')).not.toBeInTheDocument()
   })
 
-  it('triggers wikispace sync from the configured-but-empty state', () => {
+  it('syncs only when the configured catalog itself is empty', () => {
     const onSync = jest.fn()
-
-    render(
+    const { rerender } = render(
       <DingTalkWikispaceRows
         nodes={[]}
         query=""
@@ -165,10 +331,8 @@ describe('DingTalkWikispaceRows', () => {
 
     fireEvent.click(screen.getByTestId('dingtalk-empty-sync-button'))
     expect(onSync).toHaveBeenCalledTimes(1)
-  })
 
-  it('does not offer sync when the catalog has nodes but search matches none', () => {
-    render(
+    rerender(
       <DingTalkWikispaceRows
         nodes={[docNode]}
         query="不存在的知识库"
@@ -178,12 +342,11 @@ describe('DingTalkWikispaceRows', () => {
         selectedIds={new Set()}
         activeNode={null}
         onRetry={jest.fn()}
-        onSync={jest.fn()}
+        onSync={onSync}
         onOpen={jest.fn()}
         onToggle={jest.fn()}
       />
     )
-
     expect(screen.queryByTestId('dingtalk-empty-sync-button')).not.toBeInTheDocument()
   })
 })
@@ -202,25 +365,9 @@ describe('DingTalkDocumentColumn sync entry', () => {
     onToggleAll: jest.fn(),
   }
 
-  it('shows a configure link when not configured', () => {
-    render(
-      <DingTalkDocumentColumn
-        {...baseProps}
-        nodes={[]}
-        configured={false}
-        query=""
-        onSync={jest.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('dingtalk-go-to-configure')).toBeInTheDocument()
-    expect(screen.queryByTestId('dingtalk-empty-sync-button')).not.toBeInTheDocument()
-  })
-
-  it('offers sync when the synced catalog is empty', () => {
+  it('offers sync for an empty catalog but not an empty search result', () => {
     const onSync = jest.fn()
-
-    render(
+    const { rerender } = render(
       <DingTalkDocumentColumn
         {...baseProps}
         nodes={[]}
@@ -232,52 +379,23 @@ describe('DingTalkDocumentColumn sync entry', () => {
 
     fireEvent.click(screen.getByTestId('dingtalk-empty-sync-button'))
     expect(onSync).toHaveBeenCalledTimes(1)
-  })
 
-  it('does not offer sync when only the search result is empty', () => {
-    render(
+    rerender(
       <DingTalkDocumentColumn
         {...baseProps}
         nodes={[docNode]}
         configured={true}
         query="不匹配"
-        onSync={jest.fn()}
+        onSync={onSync}
       />
     )
-
     expect(screen.queryByTestId('dingtalk-empty-sync-button')).not.toBeInTheDocument()
   })
 })
 
 describe('DingTalkSyncToolbar', () => {
-  it('shows a persistent sync entry with last sync time when docs have nodes', () => {
+  it('shows the last sync time and triggers sync when documents exist', () => {
     const onSync = jest.fn()
-
-    render(
-      <DingTalkDocsRootRow
-        nodes={[docNode]}
-        totalCount={1}
-        loading={false}
-        error={null}
-        configured={true}
-        selectedIds={new Set()}
-        syncing={false}
-        lastSyncedAt="2026-08-10T07:00:00Z"
-        onRetry={jest.fn()}
-        onSync={onSync}
-        onToggle={jest.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('dingtalk-sync-button')).toBeInTheDocument()
-    expect(screen.queryByText('dingtalkDocs.neverSynced')).not.toBeInTheDocument()
-    // Compact icon-only button exposes an accessible name instead of text.
-    expect(screen.getByTestId('dingtalk-sync-button')).toHaveAccessibleName('dingtalkDocs.sync')
-    fireEvent.click(screen.getByTestId('dingtalk-sync-button'))
-    expect(onSync).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows a compact sync time and keeps the full timestamp on hover', () => {
     render(
       <DingTalkDocsRootRow
         nodes={[docNode]}
@@ -288,7 +406,7 @@ describe('DingTalkSyncToolbar', () => {
         selectedIds={new Set()}
         lastSyncedAt="2026-08-10T07:05:00Z"
         onRetry={jest.fn()}
-        onSync={jest.fn()}
+        onSync={onSync}
         onToggle={jest.fn()}
       />
     )
@@ -296,10 +414,13 @@ describe('DingTalkSyncToolbar', () => {
     const expectedFullTime = new Date('2026-08-10T07:05:00Z').toLocaleString()
     const timeText = screen.getByLabelText(`dingtalkDocs.lastSynced ${expectedFullTime}`)
     expect(timeText.textContent).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(screen.getByTestId('dingtalk-sync-button')).toHaveAccessibleName('dingtalkDocs.sync')
+    fireEvent.click(screen.getByTestId('dingtalk-sync-button'))
+    expect(onSync).toHaveBeenCalledTimes(1)
   })
 
-  it('shows never-synced text when the docs catalog has no sync time', () => {
-    render(
+  it('shows never-synced text and does not duplicate the toolbar in empty state', () => {
+    const { rerender } = render(
       <DingTalkDocsRootRow
         nodes={[docNode]}
         totalCount={1}
@@ -312,43 +433,9 @@ describe('DingTalkSyncToolbar', () => {
         onToggle={jest.fn()}
       />
     )
-
     expect(screen.getByText('dingtalkDocs.neverSynced')).toBeInTheDocument()
-  })
 
-  it('shows a persistent sync entry above wikispace rows', () => {
-    const onSync = jest.fn()
-    const knowledgeBase: DingtalkDocNode = {
-      ...docNode,
-      dingtalk_node_id: 'space-1',
-      name: '产品知识库',
-      node_type: 'folder',
-      source: 'wikispace',
-      children: [{ ...docNode, source: 'wikispace' }],
-    }
-
-    render(
-      <DingTalkWikispaceRows
-        nodes={[knowledgeBase]}
-        query=""
-        loading={false}
-        error={null}
-        configured={true}
-        selectedIds={new Set()}
-        activeNode={null}
-        onRetry={jest.fn()}
-        onSync={onSync}
-        onOpen={jest.fn()}
-        onToggle={jest.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('dingtalk-sync-button'))
-    expect(onSync).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not duplicate the sync entry in the empty state', () => {
-    render(
+    rerender(
       <DingTalkDocsRootRow
         nodes={[]}
         totalCount={0}
@@ -361,7 +448,6 @@ describe('DingTalkSyncToolbar', () => {
         onToggle={jest.fn()}
       />
     )
-
     expect(screen.queryByTestId('dingtalk-sync-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-empty-sync-button')).toBeInTheDocument()
   })

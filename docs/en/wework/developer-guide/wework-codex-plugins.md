@@ -76,6 +76,20 @@ Custom instructions from Settings → Context are read and written through Codex
 
 The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
 
+## Runtime Permission Modes
+
+The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Workspace instead of implicitly receiving full disk access:
+
+| Permission mode | Codex permission profile | Approval policy | Behavior                                                                                                                        |
+| --------------- | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Read only       | `:read-only`             | `on-request`    | Reads the workspace; file writes, commands outside the permission boundary, and additional permission requests require approval |
+| Workspace       | `:workspace`             | `on-request`    | Reads and writes inside the workspace; access outside it or permission expansion requires approval                              |
+| Full access     | `:danger-full-access`    | `never`         | Accesses files, the terminal, and the network without approval; enabling it requires an explicit risk confirmation              |
+
+The frontend sends `runtime_permission_profile` with every local runtime request. The Executor applies the corresponding `permissions` and `approvalPolicy` to `thread/start`, `thread/resume`, `thread/fork`, and `turn/start`. Resuming or continuing from a task runtime handle must reconstruct the same profile from the persisted permission mode and must not fall back to a more permissive profile.
+
+Codex app-server requests from `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `item/permissions/requestApproval` are mapped to Wework `request_user_input` cards. The card preserves the order of `availableDecisions`, displays only decisions actually advertised by the protocol, and returns stable protocol values. The Executor supports one-time `accept`, session-scoped `acceptForSession`, command-rule `acceptWithExecpolicyAmendment`, network-host `applyNetworkPolicyAmendment`, `decline`, and `cancel` responses. Structured rules reuse the amendment carried by the Codex request; missing or mismatched payloads are safely declined instead of deriving broader authority from display text. Permission requests can grant turn or session scope, or enable `strictAutoReview` for the current turn so each subsequent command is reviewed; a denial grants no additional permissions.
+
 ## Model List
 
 Wework requests the model catalog from the Codex app-server's `model/list` method through the local executor, then uses the returned provider and model array order unchanged in the model picker. The frontend does not reorder official or default models or custom providers, and does not add models that Codex did not return. The request uses `includeHidden: false`, so models Codex marks as hidden are not displayed.

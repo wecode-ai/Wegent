@@ -1049,6 +1049,30 @@ describe('ChatInput', () => {
     )
   })
 
+  test('exposes permission modes from the compact composer context sheet', async () => {
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({
+          selectedModelOptions: { permissionMode: 'workspace-write' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('mobile-permission-mode-row')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    await userEvent.click(screen.getByTestId('permission-mode-read-only'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('permissionMode', 'read-only')
+  })
+
   test('shows compact pause button while the assistant is streaming', async () => {
     const onPause = vi.fn()
 
