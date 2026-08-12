@@ -228,8 +228,10 @@ if [[ ! -f "$script_dir/../claude-code-cli/package.json" ]] ||
   [[ ! -f "$script_dir/../claude-code-cli/package-lock.json" ]] ||
   ! grep -Fq "$claude_cli_key" "$warmup_workflow" ||
   ! grep -Fq "$claude_cli_key" "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq "$claude_cli_key" "$workflow_dir/wework-e2e.yml" ||
   grep -Eq 'npm install -g .*claude-code' \
-    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml" \
+    "$workflow_dir/wework-e2e.yml"; then
   fail "Local harness CLI caches must use the shared integrity-locked npm graph"
 fi
 
