@@ -45,6 +45,7 @@ class PublicSkillAdapter:
             "is_active": kind.is_active,
             "is_public": True,
             "user_id": kind.user_id,
+            "source": spec.get("source"),
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
         }

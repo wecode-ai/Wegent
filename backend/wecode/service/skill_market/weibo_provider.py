@@ -46,8 +46,12 @@ class WeiboSkillMarketProvider(ISkillMarketProvider):
     """
 
     @property
+    def key(self) -> str:
+        return "weibo"
+
+    @property
     def name(self) -> str:
-        return "微博技能市场"
+        return "SkillHub"
 
     @property
     def market_url(self) -> str:
