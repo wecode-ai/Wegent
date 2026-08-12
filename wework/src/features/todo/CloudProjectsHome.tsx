@@ -2,6 +2,7 @@ import { Check, Cloud, Copy, HardDrive, Plus, Search, Settings2 } from 'lucide-r
 import { useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudMyWorkItem, CloudProjectMember } from '@/api/deliveries'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
@@ -145,26 +146,35 @@ function ProjectSpaceRow({
             </>
           )}
         </span>
-        <button
-          type="button"
-          data-testid={`cloud-project-copy-id-${project.id}`}
-          onClick={event => {
-            event.stopPropagation()
-            void copyProjectId()
-          }}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
-          aria-label={
+        <Tooltip
+          label={
             copied
               ? t('todo.project_id_copied', '项目 ID 已复制')
               : t('todo.copy_project_id', '复制项目 ID')
           }
+          align="end"
         >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-green-600" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </button>
+          <button
+            type="button"
+            data-testid={`cloud-project-copy-id-${project.id}`}
+            onClick={event => {
+              event.stopPropagation()
+              void copyProjectId()
+            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
+            aria-label={
+              copied
+                ? t('todo.project_id_copied', '项目 ID 已复制')
+                : t('todo.copy_project_id', '复制项目 ID')
+            }
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-green-600" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </Tooltip>
       </span>
     </div>
   )

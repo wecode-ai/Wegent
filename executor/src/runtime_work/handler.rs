@@ -26,7 +26,8 @@ use crate::{
         codex_runtime_approval_policy, select_wework_codex_user_instructions,
         CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
         CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        CODEX_APP_SERVER_TURN_CANCELLED, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+        CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
     config::device::ConnectionConfig,
     hooks::{

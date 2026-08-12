@@ -28,6 +28,7 @@ import {
   type AppLanguagePreference,
   type AppPreferences,
   type AppPreferencesPatch,
+  type DefaultWorkspaceTab,
 } from '@/tauri/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
@@ -54,6 +55,7 @@ const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
 const DEFAULT_MAX_CONCURRENT_TASKS = 10
 const MAX_CONCURRENT_TASKS_LIMIT = 20
+const DEFAULT_WORKSPACE_TAB_OPTIONS: DefaultWorkspaceTab[] = ['task', 'board', 'agent']
 
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
@@ -274,6 +276,27 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleDefaultWorkspaceTabChange = async (defaultWorkspaceTab: DefaultWorkspaceTab) => {
+    if (defaultWorkspaceTab === preferences.defaultWorkspaceTab) return
+
+    const previousDefaultWorkspaceTab = preferences.defaultWorkspaceTab
+    setPreferences(current => ({ ...current, defaultWorkspaceTab }))
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(await updateAppPreferences({ defaultWorkspaceTab }))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update default workspace tab', saveError)
+      setPreferences(current => ({
+        ...current,
+        defaultWorkspaceTab: previousDefaultWorkspaceTab,
+      }))
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const saveFriendlyTaskTitles = async (
     enabled: boolean,
     modelKey = FRIENDLY_TITLE_TASK_MODEL_VALUE
@@ -377,6 +400,39 @@ export function GeneralSettingsPage() {
                       ].join(' ')}
                     >
                       <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_default_workspace_tab')}
+            description={t('workbench.general_settings_default_workspace_tab_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {DEFAULT_WORKSPACE_TAB_OPTIONS.map(tabKind => {
+                  const active = preferences.defaultWorkspaceTab === tabKind
+                  return (
+                    <button
+                      key={tabKind}
+                      type="button"
+                      data-testid={`general-default-workspace-tab-${tabKind}-button`}
+                      disabled={loading || saving}
+                      aria-pressed={active}
+                      onClick={() => void handleDefaultWorkspaceTabChange(tabKind)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_default_workspace_tab_${tabKind}`)}
+                      </span>
                     </button>
                   )
                 })}

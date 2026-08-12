@@ -295,13 +295,36 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
 }
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
-    ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: link.local_task_id.clone(),
         subtask_id: format!("{}-context-compact", link.local_task_id),
         project_workspace_path: Some(link.workspace_path.clone()),
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
+    };
+    if let Some(permission_mode) = link
+        .runtime_handle
+        .get("modelSelection")
+        .or_else(|| link.runtime_handle.get("model_selection"))
+        .and_then(|selection| selection.get("options"))
+        .and_then(|options| {
+            options
+                .get("permissionMode")
+                .or_else(|| options.get("permission_mode"))
+        })
+        .and_then(Value::as_str)
+    {
+        let profile = match permission_mode {
+            "read-only" => CODEX_READ_ONLY_PERMISSION_PROFILE,
+            "workspace-write" => CODEX_WORKSPACE_PERMISSION_PROFILE,
+            _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+        };
+        request.extra.insert(
+            "runtime_permission_profile".to_owned(),
+            Value::String(profile.to_owned()),
+        );
     }
+    request
 }
 
 fn runtime_project_workspace_path(

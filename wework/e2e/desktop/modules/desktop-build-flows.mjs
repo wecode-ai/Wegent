@@ -14,6 +14,8 @@ import {
 
 import { waitForScenarioRequestCount } from './memory-tool-flows.mjs'
 
+import { verifyActiveGoalIdleUnreadLifecycle, verifyBusyTurnGoalHandoff } from './goal-flows.mjs'
+
 import { verifyAnthropicEmptyResponseRecovery } from './resilience-flows.mjs'
 
 import {
@@ -37,6 +39,7 @@ import {
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
@@ -342,7 +345,8 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
-        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
+        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
+          CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
@@ -731,6 +735,17 @@ async function verifyCloudProjectFlow(
     'The cloud follow-up task did not settle before project removal'
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
+
+  await verifyActiveGoalIdleUnreadLifecycle({
+    composerSelector,
+    control,
+    executorLogPath: cloudEnvironment.remoteExecutorLogPath,
+  })
+  await verifyBusyTurnGoalHandoff({
+    composerSelector,
+    control,
+    executorLogPath: cloudEnvironment.remoteExecutorLogPath,
+  })
 
   await verifyCloudVisionFlows(control, composerSelector)
 

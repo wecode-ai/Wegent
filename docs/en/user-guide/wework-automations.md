@@ -36,6 +36,13 @@ and executed by the current device's local Executor.
 - **Interval** repeats in minutes, hours, or days.
 - **One time** runs at a specific time and disables itself after scheduling.
 
+## Persistent goals
+
+When **Keep pursuing a goal** is enabled, Wework uses the task instructions as
+a persistent Codex goal instead of a one-turn message. Codex can continue
+working until it explicitly marks the goal complete or blocked. The setting
+works with both conversation modes and is persisted with the automation.
+
 ## Conversation modes
 
 - **Create a new task each run** creates an independent Codex task and is suitable

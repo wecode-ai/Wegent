@@ -9,6 +9,7 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -61,6 +62,7 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    defaultWorkspaceTab: 'task',
     systemDragEnabled: true,
     preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
@@ -222,6 +224,26 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('persists the selected default workspace tab', async () => {
+    render(<GeneralSettingsPage />)
+
+    const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
+    await waitFor(() => expect(boardButton).toBeEnabled())
+    expect(screen.getByTestId('general-default-workspace-tab-task-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(boardButton)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        defaultWorkspaceTab: 'board',
+      })
+    })
+    expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {

@@ -2195,6 +2195,9 @@ function LocalHarnessSessionRow({
   onClose?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const canArchive = session.harnessId === 'opencode'
+  const canClose = !session.isPrimary
+  const useArchiveTestId = canArchive && session.isPrimary
 
   return (
     <div className="group/harness-session relative flex items-center">
@@ -2214,18 +2217,26 @@ function LocalHarnessSessionRow({
         <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span className="truncate">{session.title}</span>
       </button>
-      {onClose && !session.isPrimary && (
+      {onClose && (canArchive || canClose) && (
         <button
           type="button"
-          data-testid={`close-local-harness-session-${session.sessionId}`}
+          data-testid={
+            useArchiveTestId
+              ? `archive-local-harness-session-${session.sessionId}`
+              : `close-local-harness-session-${session.sessionId}`
+          }
           onClick={event => {
             event.stopPropagation()
             void onClose(session.sessionId)
           }}
-          aria-label={t('workbench.close_harness', '关闭编码工具')}
+          aria-label={
+            canArchive
+              ? t('workbench.archive_harness', '归档编码会话')
+              : t('workbench.close_harness', '关闭编码工具')
+          }
           className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
         >
-          <X className="h-3.5 w-3.5" />
+          {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
         </button>
       )}
     </div>

@@ -227,6 +227,20 @@ frontend/src/__tests__/
 └── components/              # Component tests
 ```
 
+## Wework Desktop Cloud Device Tests
+
+Run the cloud-device feature E2E from the repository root:
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+This scenario starts a real backend, Redis, cloud-device executor, and Tauri
+application. It verifies cloud project tasks, Goal auto-continuation and unread
+state, busy-turn Goal handoff, and the local/cloud model protocol matrix. On
+failure, use the reported `wework/test-results/desktop-e2e/<run-id>/` directory
+to correlate frontend, backend, and executor logs before changing behavior.
+
 ## Continuous Integration
 
 ### GitHub Actions Workflow

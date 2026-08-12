@@ -390,7 +390,9 @@ class DesktopE2EServer {
     this.goalIdleStage = 'initial'
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
+    this.cloudGoalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
+    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -569,6 +571,7 @@ class DesktopE2EServer {
         'goal_idle',
         'goal_busy_handoff',
         'goal_restart',
+        'cloud_goal_restart',
         'turn_navigation',
         'cancellation',
         'send_rejection',
@@ -1974,6 +1977,55 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'cloud_goal_restart') {
+      this.recordScenarioRequest('cloud_goal_restart', modelRequest)
+      if (this.cloudGoalRestartStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          'The real Codex request did not contain the cloud Goal restart prompt'
+        )
+        this.cloudGoalRestartStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.cloudGoalRestartStage === 'continuation') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.cloudGoalRestartStage = 'awaiting_update_output'
+        await this.goalRestartResumeRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(
+            'wework-e2e-cloud-goal-restart-complete',
+            updateGoal.name,
+            updateGoal.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.cloudGoalRestartStage,
+        'awaiting_update_output',
+        `Unexpected cloud Goal restart model stage: ${this.cloudGoalRestartStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The cloud Goal continuation did not return its update_goal output'
+      )
+      this.cloudGoalRestartStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'goal_restart') {
       this.recordScenarioRequest('goal_restart', modelRequest)
       if (this.goalRestartStage === 'initial') {
@@ -2540,14 +2592,39 @@ class DesktopE2EServer {
 
     if (this.scenario === 'automation') {
       this.recordScenarioRequest('automation', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(AUTOMATION_PROMPT),
-        'The automation prompt was lost before model execution'
+      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
+        assert.ok(
+          JSON.stringify(body).includes(AUTOMATION_PROMPT),
+          'The automation prompt was lost before model execution'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        const callId =
+          this.automationStage === 'manual_goal'
+            ? 'wework-e2e-automation-manual-goal'
+            : 'wework-e2e-automation-scheduled-goal'
+        this.automationStage =
+          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(callId, updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The automation Goal did not return its update_goal output'
       )
-      const requestNumber = this.scenarioRequests.get('automation').length
+      const manualRun = this.automationStage === 'manual_goal_output'
+      assert.ok(
+        manualRun || this.automationStage === 'scheduled_goal_output',
+        `Unexpected automation model stage: ${this.automationStage}`
+      )
+      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${requestNumber}`),
+        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return

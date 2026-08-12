@@ -26,9 +26,10 @@ import {
 } from './shared.mjs'
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, workspacePath }) {
+  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
+    this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
   }
 
@@ -60,6 +61,7 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
+      FRONTEND_URL: this.modelServerUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
@@ -101,7 +103,7 @@ class RealCloudEnvironment {
   async startRemoteExecutor(executorBinary) {
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,

@@ -6839,7 +6839,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                   deviceId: 'device-1',
                   deviceName: 'Project Device',
                   deviceStatus: 'online',
-                  workspacePath: '/workspace/worktrees/9/project-alpha',
+                  workspacePath: '/workspace/project-alpha',
                   workspaceKind: 'worktree',
                   worktreeId: '9',
                   available: true,

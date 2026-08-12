@@ -290,6 +290,32 @@ describe('runtimeTaskSidebarHelpers', () => {
     })
   })
 
+  test('uses a worktree task path when grouped under its source project', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
+      available: true,
+      tasks: [],
+    }
+
+    expect(
+      getRuntimeTaskAddress(workspace, {
+        taskId: 'worktree-task',
+        workspacePath: '/workspace/worktrees/runtime-1/repo',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
+        title: 'Worktree task',
+        runtime: 'codex',
+      })
+    ).toMatchObject({
+      deviceId: 'device-1',
+      taskId: 'worktree-task',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+    })
+  })
+
   test('reveals project runtime tasks in preview and step increments', () => {
     const items = Array.from({ length: 26 }, (_, index) => ({
       workspace: {

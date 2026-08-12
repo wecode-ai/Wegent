@@ -8,6 +8,16 @@ import { isTauriRuntime } from './runtime-environment'
 const localFileOpenerIconCache = new Map<string, string>()
 const localFileOpenerIconRequests = new Map<string, Promise<string>>()
 
+export const WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT = 'wework:local-harness-sessions-changed'
+
+export function notifyLocalHarnessSessionsChanged(openSessionId?: string) {
+  window.dispatchEvent(
+    new CustomEvent(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, {
+      detail: { openSessionId: openSessionId?.trim() || null },
+    })
+  )
+}
+
 function getLocalRuntimePlatform() {
   if (typeof navigator === 'undefined') return null
 
@@ -97,6 +107,7 @@ export interface LocalHarnessSessionDescriptor {
   is_primary: boolean
   project_id: number | null
   active: boolean
+  archived_at?: number | null
   model_key?: string | null
   plugin_roots?: string[]
   proxy_token?: string
@@ -204,6 +215,27 @@ export async function listLocalHarnessSessions(): Promise<LocalHarnessSessionDes
   if (!isLocalHarnessAvailable()) return []
 
   return invoke<LocalHarnessSessionDescriptor[]>('list_local_harness_sessions')
+}
+
+export async function listArchivedLocalHarnessSessions(): Promise<LocalHarnessSessionDescriptor[]> {
+  if (!isLocalHarnessAvailable()) return []
+
+  return invoke<LocalHarnessSessionDescriptor[]>('list_archived_local_harness_sessions')
+}
+
+export async function archiveLocalHarnessSession(sessionId: string): Promise<void> {
+  if (!isLocalHarnessAvailable()) return
+  await invoke('archive_local_harness_session', { sessionId })
+}
+
+export async function unarchiveLocalHarnessSession(sessionId: string): Promise<void> {
+  if (!isLocalHarnessAvailable()) return
+  await invoke('unarchive_local_harness_session', { sessionId })
+}
+
+export async function deleteArchivedLocalHarnessSession(sessionId: string): Promise<void> {
+  if (!isLocalHarnessAvailable()) return
+  await invoke('delete_archived_local_harness_session', { sessionId })
 }
 
 export async function resolveLocalHarnessPluginRoots(

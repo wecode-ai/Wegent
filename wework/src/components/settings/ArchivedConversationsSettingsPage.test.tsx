@@ -8,12 +8,29 @@ import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { notifyWorkbenchCloudArchivesChanged } from '@/features/workbench/workbenchCloudDataEvents'
+import {
+  deleteArchivedLocalHarnessSession,
+  listArchivedLocalHarnessSessions,
+  notifyLocalHarnessSessionsChanged,
+  unarchiveLocalHarnessSession,
+} from '@/lib/local-terminal'
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(),
 }))
 
+vi.mock('@/lib/local-terminal', () => ({
+  deleteArchivedLocalHarnessSession: vi.fn(),
+  listArchivedLocalHarnessSessions: vi.fn().mockResolvedValue([]),
+  notifyLocalHarnessSessionsChanged: vi.fn(),
+  unarchiveLocalHarnessSession: vi.fn(),
+}))
+
 const createLocalAppServicesMock = vi.mocked(createLocalAppServices)
+const deleteArchivedLocalHarnessSessionMock = vi.mocked(deleteArchivedLocalHarnessSession)
+const listArchivedLocalHarnessSessionsMock = vi.mocked(listArchivedLocalHarnessSessions)
+const notifyLocalHarnessSessionsChangedMock = vi.mocked(notifyLocalHarnessSessionsChanged)
+const unarchiveLocalHarnessSessionMock = vi.mocked(unarchiveLocalHarnessSession)
 
 const archivedItem: ArchivedConversationItem = {
   id: 'conversation-1',
@@ -59,6 +76,10 @@ describe('ArchivedConversationsSettingsPage', () => {
     deleteArchivedConversation.mockReset().mockResolvedValue({})
     deleteArchivedConversationsBulk.mockReset().mockResolvedValue({ results: [] })
     unarchiveConversation.mockReset().mockResolvedValue({})
+    deleteArchivedLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
+    listArchivedLocalHarnessSessionsMock.mockReset().mockResolvedValue([])
+    notifyLocalHarnessSessionsChangedMock.mockReset()
+    unarchiveLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
     createLocalAppServicesMock.mockReturnValue({
       runtimeWorkApi: {
         listArchivedConversations,
@@ -112,6 +133,81 @@ describe('ArchivedConversationsSettingsPage', () => {
     })
     expect(screen.queryByText('Greet user')).not.toBeInTheDocument()
     expect(createLocalAppServices).toHaveBeenCalledTimes(1)
+  })
+
+  test('lists an archived OpenCode session and restores it to the workbench', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    listArchivedLocalHarnessSessionsMock
+      .mockResolvedValueOnce([
+        {
+          session_id: 'local-harness-1',
+          harness_id: 'opencode',
+          title: 'Inspect archive flow',
+          cwd: '/Users/test/Wegent',
+          created_at: 1_786_506_000_000,
+          archived_at: 1_786_506_100_000,
+          is_primary: true,
+          project_id: 7,
+          active: false,
+        },
+      ])
+      .mockResolvedValue([])
+    const onLeaveSettings = vi.fn()
+
+    render(<ArchivedConversationsSettingsPage onLeaveSettings={onLeaveSettings} />)
+
+    expect(await screen.findByText('Inspect archive flow')).toBeInTheDocument()
+    await userEvent.click(
+      screen.getByTestId('archived-unarchive-button-local-harness-local-harness-1')
+    )
+
+    await waitFor(() =>
+      expect(unarchiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-1')
+    )
+    expect(notifyLocalHarnessSessionsChangedMock).toHaveBeenCalledWith()
+    await userEvent.click(await screen.findByTestId('archived-view-now-button'))
+
+    expect(notifyLocalHarnessSessionsChangedMock).toHaveBeenLastCalledWith('local-harness-1')
+    expect(onLeaveSettings).toHaveBeenCalled()
+    expect(unarchiveConversation).not.toHaveBeenCalled()
+  })
+
+  test('deletes an archived OpenCode session without calling the runtime task API', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    listArchivedLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-2',
+        harness_id: 'opencode',
+        title: 'Delete archive flow',
+        cwd: '/Users/test/Wegent',
+        created_at: 1_786_506_000_000,
+        archived_at: 1_786_506_100_000,
+        is_primary: true,
+        project_id: 7,
+        active: false,
+      },
+    ])
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Delete archive flow')
+    await userEvent.click(
+      screen.getByTestId('archived-delete-button-local-harness-local-harness-2')
+    )
+    await userEvent.click(screen.getByTestId('archived-delete-confirm-dialog-confirm-button'))
+
+    await waitFor(() =>
+      expect(deleteArchivedLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-2')
+    )
+    expect(deleteArchivedConversation).not.toHaveBeenCalled()
   })
 
   test('uses the injected hybrid API and offers View now after unarchiving', async () => {

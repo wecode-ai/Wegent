@@ -3,11 +3,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import i18n from '@/i18n'
 import {
+  archiveLocalHarnessSession,
   closeLocalTerminal,
   connectLocalTerminal,
+  deleteArchivedLocalHarnessSession,
   getLocalExecutorDeviceId,
   isLocalHarnessAvailable,
   isLocalTerminalAvailable,
+  listArchivedLocalHarnessSessions,
   listenLocalTerminalExit,
   listenLocalTerminalOutput,
   getLocalPathKind,
@@ -16,6 +19,7 @@ import {
   openLocalWorkspace,
   resizeLocalTerminal,
   startLocalTerminal,
+  unarchiveLocalHarnessSession,
   updateLocalHarnessSessionTitle,
   writeLocalTerminal,
 } from './local-terminal'
@@ -400,6 +404,33 @@ describe('local-terminal', () => {
     expect(invokeMock).toHaveBeenCalledWith('update_local_harness_session_title', {
       sessionId: 'local-harness-1',
       title: 'Greeting',
+    })
+  })
+
+  test('archives, lists, restores, and deletes local Harness sessions', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
+    setNavigatorValue('platform', 'Linux x86_64')
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue([])
+
+    await archiveLocalHarnessSession('local-harness-1')
+    await listArchivedLocalHarnessSessions()
+    await unarchiveLocalHarnessSession('local-harness-1')
+    await deleteArchivedLocalHarnessSession('local-harness-1')
+
+    expect(invokeMock).toHaveBeenCalledWith('archive_local_harness_session', {
+      sessionId: 'local-harness-1',
+    })
+    expect(invokeMock).toHaveBeenCalledWith('list_archived_local_harness_sessions')
+    expect(invokeMock).toHaveBeenCalledWith('unarchive_local_harness_session', {
+      sessionId: 'local-harness-1',
+    })
+    expect(invokeMock).toHaveBeenCalledWith('delete_archived_local_harness_session', {
+      sessionId: 'local-harness-1',
     })
   })
 

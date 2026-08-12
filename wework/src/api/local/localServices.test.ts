@@ -885,6 +885,11 @@ describe('createLocalAppServices', () => {
         teamId: 0,
         runtime: 'codex',
         message: 'Say hello',
+        initialGoal: {
+          objective: 'Say hello',
+          status: 'active',
+          tokenBudget: null,
+        },
       },
     })
 
@@ -894,6 +899,11 @@ describe('createLocalAppServices', () => {
         automation: expect.objectContaining({
           taskPayload: expect.objectContaining({
             standaloneChatWorkspace: true,
+            initialGoal: {
+              objective: 'Say hello',
+              status: 'active',
+              tokenBudget: null,
+            },
             executionRequest: expect.objectContaining({
               standalone_chat_workspace: true,
             }),
@@ -2083,6 +2093,7 @@ describe('createLocalAppServices', () => {
         codexProviderId: 'openai',
         codexProviderName: 'OpenAI',
         codexProviderType: 'official',
+        permissionMode: 'full-access',
       },
     })
 
@@ -2097,6 +2108,7 @@ describe('createLocalAppServices', () => {
         provider_name: 'OpenAI',
       })
     )
+    expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
   })
 
   test('builds cloud model gateway config without resolving credentials', async () => {

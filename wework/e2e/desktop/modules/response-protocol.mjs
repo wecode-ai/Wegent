@@ -336,9 +336,13 @@ function parseTelemetryPayload(rawBody) {
   try {
     return JSON.parse(rawBody)
   } catch {
-    const encoded = new URLSearchParams(rawBody).get('data')
-    assert.ok(encoded, 'The PostHog telemetry request did not contain a JSON payload')
-    return JSON.parse(encoded)
+    const data = new URLSearchParams(rawBody).get('data')
+    assert.ok(data, 'The PostHog telemetry request did not contain a JSON payload')
+    try {
+      return JSON.parse(data)
+    } catch {
+      return JSON.parse(Buffer.from(data, 'base64').toString('utf8'))
+    }
   }
 }
 
