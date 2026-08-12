@@ -80,13 +80,14 @@ async def trigger_automation_event(
         ) from exc
     if not isinstance(payload, dict):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook payload")
-    event_name = str(payload.get("event_type") or payload.get("eventType") or "")
-    if not event_name and isinstance(payload.get("issue"), dict):
+    if project.task_provider == "github" and isinstance(payload.get("issue"), dict):
         event_name = f"issues.{payload.get('action')}"
-    if not event_name and payload.get("object_kind") == "issue":
+    elif project.task_provider == "gitlab" and payload.get("object_kind") == "issue":
         attributes = payload.get("object_attributes")
-        if isinstance(attributes, dict):
-            event_name = f"issue.{attributes.get('action')}"
+        action = attributes.get("action") if isinstance(attributes, dict) else None
+        event_name = f"issue.{action}"
+    else:
+        event_name = str(payload.get("event_type") or payload.get("eventType") or "")
     if event_name not in {"task.created", "issues.opened", "issue.open"}:
         return {"status": "ignored", "dispatched": 0}
     issue = payload.get("issue")

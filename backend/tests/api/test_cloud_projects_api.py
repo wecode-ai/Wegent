@@ -1347,11 +1347,13 @@ def test_project_automation_webhook_verifies_gitlab_token(
         headers={"X-Gitlab-Token": rule["webhookSecret"]},
         json={
             "object_kind": "issue",
+            "event_type": "issue",
             "object_attributes": {"action": "open", "iid": 7, "title": "Bug"},
         },
     )
 
     assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted", "dispatched": 1}
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
