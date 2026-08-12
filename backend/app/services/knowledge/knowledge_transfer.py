@@ -5,6 +5,7 @@
 """Knowledge base migration and document transfer service."""
 
 import logging
+from dataclasses import dataclass
 
 from fastapi import status
 from sqlalchemy import func
@@ -44,6 +45,14 @@ FOLDERS_NOT_FOUND = "FOLDERS_NOT_FOUND"
 DOCS_NOT_FOUND = "DOCS_NOT_FOUND"
 NOTEBOOK_DOC_LIMIT_EXCEEDED = "NOTEBOOK_DOC_LIMIT_EXCEEDED"
 GENERATED_CONTENT_READ_ONLY = "GENERATED_CONTENT_READ_ONLY"
+
+
+@dataclass(frozen=True)
+class TransferSelection:
+    """Verified source folders selected for a document transfer."""
+
+    document_ids: frozenset[int]
+    source_folders: tuple[KnowledgeFolder, ...]
 
 
 class KnowledgeTransferService:
@@ -316,6 +325,7 @@ class KnowledgeTransferService:
                     db.query(KnowledgeDocument.folder_id)
                     .filter(
                         KnowledgeDocument.id.in_(all_doc_ids),
+                        KnowledgeDocument.kind_id == source_kb_id,
                         KnowledgeDocument.folder_id > 0,
                     )
                     .distinct()
@@ -323,39 +333,42 @@ class KnowledgeTransferService:
                 )
                 direct_folder_ids = {fid for (fid,) in doc_folder_ids if fid}
 
-                # Walk up the folder tree to collect all ancestors
-                for folder_id in direct_folder_ids:
-                    current_id = folder_id
-                    while current_id and current_id not in descendant_folder_ids:
-                        descendant_folder_ids.add(current_id)
-                        folder = (
-                            db.query(KnowledgeFolder)
-                            .filter(
-                                KnowledgeFolder.id == current_id,
-                                KnowledgeFolder.kind_id == source_kb_id,
-                            )
-                            .first()
+                # Walk all ancestor chains in batches. The folder records needed to
+                # recreate the target hierarchy are loaded once by
+                # ``load_transfer_selection`` below.
+                pending_ids = direct_folder_ids
+                while pending_ids:
+                    current_ids = pending_ids - descendant_folder_ids
+                    if not current_ids:
+                        break
+                    rows = (
+                        db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                        .filter(
+                            KnowledgeFolder.kind_id == source_kb_id,
+                            KnowledgeFolder.id.in_(current_ids),
                         )
-                        if folder and folder.parent_id and folder.parent_id > 0:
-                            current_id = folder.parent_id
-                        else:
-                            break
+                        .all()
+                    )
+                    # Preserve a missing requested id until the single source-folder
+                    # load below can report it as a structured not-found error.
+                    descendant_folder_ids.update(current_ids)
+                    pending_ids = set()
+                    for folder_id, parent_id in rows:
+                        if parent_id > 0 and parent_id not in descendant_folder_ids:
+                            pending_ids.add(parent_id)
 
         return all_doc_ids, descendant_folder_ids
 
     @staticmethod
-    def recreate_folders_in_target(
+    def load_transfer_selection(
         db: Session,
+        document_ids: set[int],
         descendant_folder_ids: set[int],
-        target_kb_id: int,
         source_kb_id: int,
-    ) -> tuple[dict[int, int], int]:
-        """Recreate transferred folder hierarchy in the target KB."""
-        old_to_new_folder: dict[int, int] = {}
-        transferred_folder_count = 0
-
+    ) -> TransferSelection:
+        """Load and lock selected source folders once for validation and recreation."""
         if not descendant_folder_ids:
-            return old_to_new_folder, transferred_folder_count
+            return TransferSelection(frozenset(document_ids), ())
 
         source_folders = (
             db.query(KnowledgeFolder)
@@ -363,6 +376,7 @@ class KnowledgeTransferService:
                 KnowledgeFolder.id.in_(descendant_folder_ids),
                 KnowledgeFolder.kind_id == source_kb_id,
             )
+            .with_for_update()
             .all()
         )
 
@@ -376,10 +390,30 @@ class KnowledgeTransferService:
                 error_code=FOLDERS_NOT_FOUND,
             )
 
+        if any(folder.origin != ContentOrigin.USER.value for folder in source_folders):
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Generated Code Wiki content is read-only",
+                error_code=GENERATED_CONTENT_READ_ONLY,
+            )
+
+        return TransferSelection(frozenset(document_ids), tuple(source_folders))
+
+    @staticmethod
+    def recreate_folders_in_target(
+        db: Session,
+        source_folders: tuple[KnowledgeFolder, ...],
+        target_kb_id: int,
+    ) -> tuple[dict[int, int], int]:
+        """Recreate a verified source folder hierarchy in the target KB."""
+        old_to_new_folder: dict[int, int] = {}
+        transferred_folder_count = 0
+        source_folder_ids = {folder.id for folder in source_folders}
+
         sorted_folders = sorted(
             source_folders,
             key=lambda folder: (
-                folder.parent_id in descendant_folder_ids,
+                folder.parent_id in source_folder_ids,
                 folder.parent_id,
             ),
         )
@@ -401,6 +435,7 @@ class KnowledgeTransferService:
                     KnowledgeFolder.kind_id == target_kb_id,
                     KnowledgeFolder.name == source_folder.name,
                     KnowledgeFolder.parent_id == new_parent_id,
+                    KnowledgeFolder.origin == ContentOrigin.USER.value,
                 )
                 .first()
             )
@@ -413,6 +448,7 @@ class KnowledgeTransferService:
                 kind_id=target_kb_id,
                 parent_id=new_parent_id,
                 name=source_folder.name,
+                origin=ContentOrigin.USER.value,
             )
             db.add(new_folder)
             db.flush()
@@ -424,20 +460,11 @@ class KnowledgeTransferService:
     @staticmethod
     def validate_transfer_document_names(
         db: Session,
-        all_doc_ids: set[int],
+        source_documents: tuple[KnowledgeDocument, ...],
         target_kb_id: int,
-        source_kb_id: int,
     ) -> None:
         """Reject transfers that would create duplicate document names."""
-        source_names = [
-            name
-            for (name,) in db.query(KnowledgeDocument.name)
-            .filter(
-                KnowledgeDocument.id.in_(all_doc_ids),
-                KnowledgeDocument.kind_id == source_kb_id,
-            )
-            .all()
-        ]
+        source_names = [document.name for document in source_documents]
         if not source_names:
             return
 
@@ -458,37 +485,14 @@ class KnowledgeTransferService:
 
     @staticmethod
     def transfer_documents_mutate(
-        db: Session,
-        all_doc_ids: set[int],
+        source_documents: tuple[KnowledgeDocument, ...],
         old_to_new_folder: dict[int, int],
         target_kb_id: int,
-        source_kb_id: int,
-    ) -> tuple[list[KnowledgeDocument], int]:
-        """Move documents to target KB and reset index state."""
+    ) -> int:
+        """Move locked source documents to the target KB and reset index state."""
         from app.models.knowledge import DocumentIndexStatus
 
-        docs = (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.id.in_(all_doc_ids),
-                KnowledgeDocument.kind_id == source_kb_id,
-            )
-            .with_for_update()
-            .all()
-        )
-
-        # Verify all requested documents were found
-        found_doc_ids = {d.id for d in docs}
-        missing_doc_ids = all_doc_ids - found_doc_ids
-        if missing_doc_ids:
-            raise CustomHTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Documents not found in source knowledge base: {sorted(missing_doc_ids)}",
-                error_code=DOCS_NOT_FOUND,
-            )
-
-        transferred_doc_count = 0
-        for doc in docs:
+        for doc in source_documents:
             if doc.folder_id > 0 and doc.folder_id in old_to_new_folder:
                 doc.folder_id = old_to_new_folder[doc.folder_id]
             else:
@@ -497,9 +501,45 @@ class KnowledgeTransferService:
             doc.kind_id = target_kb_id
             doc.index_status = DocumentIndexStatus.NOT_INDEXED
             doc.is_active = False  # Will be set to True after successful reindexing
-            transferred_doc_count += 1
 
-        return docs, transferred_doc_count
+        return len(source_documents)
+
+    @staticmethod
+    def lock_transfer_documents(
+        db: Session,
+        document_ids: frozenset[int],
+        source_kb_id: int,
+    ) -> tuple[KnowledgeDocument, ...]:
+        """Lock and validate source documents before any target rows are created."""
+        source_documents = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.id.in_(document_ids),
+                KnowledgeDocument.kind_id == source_kb_id,
+            )
+            .with_for_update()
+            .all()
+        )
+
+        found_doc_ids = {document.id for document in source_documents}
+        missing_doc_ids = document_ids - found_doc_ids
+        if missing_doc_ids:
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Documents not found in source knowledge base: {sorted(missing_doc_ids)}",
+                error_code=DOCS_NOT_FOUND,
+            )
+
+        if any(
+            document.origin != ContentOrigin.USER.value for document in source_documents
+        ):
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Generated Code Wiki content is read-only",
+                error_code=GENERATED_CONTENT_READ_ONLY,
+            )
+
+        return tuple(source_documents)
 
     @staticmethod
     def cleanup_empty_folders(
@@ -734,38 +774,22 @@ class KnowledgeTransferService:
                 target_kb_id=target_kb_id,
             )
 
-        generated_document = (
-            db.query(KnowledgeDocument.id)
-            .filter(
-                KnowledgeDocument.id.in_(all_doc_ids),
-                KnowledgeDocument.kind_id == source_kb_id,
-                KnowledgeDocument.origin == ContentOrigin.GENERATED.value,
-            )
-            .first()
+        selection = KnowledgeTransferService.load_transfer_selection(
+            db=db,
+            document_ids=all_doc_ids,
+            descendant_folder_ids=descendant_folder_ids,
+            source_kb_id=source_kb_id,
         )
-        generated_folder = (
-            db.query(KnowledgeFolder.id)
-            .filter(
-                KnowledgeFolder.id.in_(descendant_folder_ids),
-                KnowledgeFolder.kind_id == source_kb_id,
-                KnowledgeFolder.origin == ContentOrigin.GENERATED.value,
-            )
-            .first()
-            if descendant_folder_ids
-            else None
+        docs = KnowledgeTransferService.lock_transfer_documents(
+            db=db,
+            document_ids=selection.document_ids,
+            source_kb_id=source_kb_id,
         )
-        if generated_document or generated_folder:
-            raise CustomHTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Generated Code Wiki content is read-only",
-                error_code=GENERATED_CONTENT_READ_ONLY,
-            )
 
         KnowledgeTransferService.validate_transfer_document_names(
             db=db,
-            all_doc_ids=all_doc_ids,
+            source_documents=docs,
             target_kb_id=target_kb_id,
-            source_kb_id=source_kb_id,
         )
 
         logger.info(
@@ -779,19 +803,14 @@ class KnowledgeTransferService:
         old_to_new_folder, transferred_folder_count = (
             KnowledgeTransferService.recreate_folders_in_target(
                 db=db,
-                descendant_folder_ids=descendant_folder_ids,
+                source_folders=selection.source_folders,
                 target_kb_id=target_kb_id,
-                source_kb_id=source_kb_id,
             )
         )
-        docs, transferred_doc_count = (
-            KnowledgeTransferService.transfer_documents_mutate(
-                db=db,
-                all_doc_ids=all_doc_ids,
-                old_to_new_folder=old_to_new_folder,
-                target_kb_id=target_kb_id,
-                source_kb_id=source_kb_id,
-            )
+        transferred_doc_count = KnowledgeTransferService.transfer_documents_mutate(
+            source_documents=docs,
+            old_to_new_folder=old_to_new_folder,
+            target_kb_id=target_kb_id,
         )
         # Flush document mutations so that cleanup_empty_folders can see
         # the updated kind_id / folder_id values via SQL COUNT queries.

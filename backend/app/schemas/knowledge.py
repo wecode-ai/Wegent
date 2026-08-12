@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.models.knowledge import ContentOrigin
 from app.schemas.base_role import BaseRole
 
 # Import shared types from kind.py to avoid duplication
@@ -57,13 +58,6 @@ class DocumentSourceType(str, Enum):
     # Source file indexed for retrieval rather than a browsable document. Declared so
     # ensure_source_type_enum does not silently coerce it to FILE.
     CODE = "code"
-
-
-class ContentOrigin(str, Enum):
-    """Whether knowledge content belongs to a person or the wiki projection."""
-
-    GENERATED = "generated"
-    USER = "user"
 
 
 def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":

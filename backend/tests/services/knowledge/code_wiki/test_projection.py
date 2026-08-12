@@ -378,6 +378,37 @@ def test_folders_are_reused_rather_than_duplicated(
     )
 
 
+def test_projection_never_reuses_a_user_folder_with_the_same_path_segment(
+    test_db: Session, effects: RecordingEffects
+):
+    user_folder = KnowledgeFolder(
+        kind_id=KIND_ID,
+        parent_id=0,
+        name="architecture",
+        origin=ContentOrigin.USER.value,
+    )
+    test_db.add(user_folder)
+    test_db.flush()
+
+    plan = compute_projection_plan([_source("architecture/backend")], [])
+    outcome = _apply(test_db, plan, effects)
+
+    document = test_db.get(KnowledgeDocument, outcome.created_document_ids[0])
+    generated_folder = (
+        test_db.query(KnowledgeFolder)
+        .filter(
+            KnowledgeFolder.kind_id == KIND_ID,
+            KnowledgeFolder.parent_id == 0,
+            KnowledgeFolder.name == "architecture",
+            KnowledgeFolder.origin == ContentOrigin.GENERATED.value,
+        )
+        .one()
+    )
+
+    assert document.folder_id == generated_folder.id
+    assert document.folder_id != user_folder.id
+
+
 # --- retriable cleanup -----------------------------------------------------
 
 

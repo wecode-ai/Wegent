@@ -22,7 +22,12 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge import (
+    ContentOrigin,
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeFolder,
+)
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
@@ -167,9 +172,8 @@ def test_validate_transfer_document_names_rejects_duplicates(test_db: Session) -
     with pytest.raises(StructuredValidationException) as exc_info:
         KnowledgeTransferService.validate_transfer_document_names(
             db=test_db,
-            all_doc_ids={source_doc.id},
+            source_documents=(source_doc,),
             target_kb_id=target_kb_id,
-            source_kb_id=source_kb_id,
         )
 
     assert exc_info.value.error_code == "DUPLICATE_DOCUMENT_NAMES"
@@ -409,12 +413,65 @@ def test_transfer_folders_with_documents(test_db: Session) -> None:
     target_parent = next(f for f in target_folders if f.name == "parent-folder")
     target_child = next(f for f in target_folders if f.name == "child-folder")
     assert target_child.parent_id == target_parent.id
+    assert target_parent.origin == ContentOrigin.USER.value
+    assert target_child.origin == ContentOrigin.USER.value
     transferred_docs = (
         test_db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.kind_id == target_kb_id)
         .all()
     )
     assert len(transferred_docs) == 3
+
+
+@pytest.mark.unit
+def test_transfer_rejects_generated_documents_and_folders(test_db: Session) -> None:
+    """A transfer may not detach content owned by a Code Wiki generation."""
+    owner = _create_user(test_db, "owner-generated-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-generated-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-generated-kb")
+    generated_folder = KnowledgeFolder(
+        kind_id=source_kb_id,
+        parent_id=0,
+        name="generated",
+        origin=ContentOrigin.GENERATED.value,
+    )
+    test_db.add(generated_folder)
+    test_db.flush()
+    generated_document = KnowledgeDocument(
+        kind_id=source_kb_id,
+        attachment_id=0,
+        name="generated.md",
+        file_extension="md",
+        file_size=10,
+        source_type="text",
+        user_id=owner.id,
+        folder_id=generated_folder.id,
+        origin=ContentOrigin.GENERATED.value,
+    )
+    test_db.add(generated_document)
+    test_db.commit()
+
+    with pytest.raises(CustomHTTPException) as document_error:
+        KnowledgeService.transfer_documents_to_kb(
+            db=test_db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=[generated_document.id],
+            folder_ids=[],
+            user_id=owner.id,
+        )
+    assert document_error.value.error_code == "GENERATED_CONTENT_READ_ONLY"
+
+    with pytest.raises(CustomHTTPException) as folder_error:
+        KnowledgeService.transfer_documents_to_kb(
+            db=test_db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=[],
+            folder_ids=[generated_folder.id],
+            user_id=owner.id,
+        )
+    assert folder_error.value.error_code == "GENERATED_CONTENT_READ_ONLY"
 
 
 @pytest.mark.unit
@@ -896,11 +953,10 @@ def test_validate_transfer_namespace_rejects_org_to_group(test_db: Session) -> N
 
 
 @pytest.mark.unit
-def test_transfer_documents_mutate_uses_row_lock(test_db: Session) -> None:
-    """transfer_documents_mutate acquires row-level locks via with_for_update()."""
+def test_lock_transfer_documents_uses_row_lock(test_db: Session) -> None:
+    """The documents used for validation and mutation are locked once."""
     owner = _create_user(test_db, "owner-row-lock")
     source_kb_id = _create_kb(test_db, owner.id, "source-row-lock-kb")
-    target_kb_id = _create_kb(test_db, owner.id, "target-row-lock-kb")
     doc = _create_document(test_db, source_kb_id, owner.id, "lock-doc.md")
 
     # Patch the query chain to verify with_for_update is called
@@ -913,18 +969,15 @@ def test_transfer_documents_mutate_uses_row_lock(test_db: Session) -> None:
         mock_query = test_db.query(KnowledgeDocument)
         mock_for_update.return_value = mock_query
 
-        docs, count = KnowledgeTransferService.transfer_documents_mutate(
+        docs = KnowledgeTransferService.lock_transfer_documents(
             db=test_db,
-            all_doc_ids={doc.id},
-            old_to_new_folder={},
-            target_kb_id=target_kb_id,
+            document_ids=frozenset({doc.id}),
             source_kb_id=source_kb_id,
         )
 
         mock_for_update.assert_called_once()
 
-    assert count == 1
-    assert docs[0].kind_id == target_kb_id
+    assert docs[0].id == doc.id
 
 
 @pytest.mark.unit
@@ -941,9 +994,8 @@ def test_validate_transfer_document_names_allows_no_duplicates(
     # Should not raise any exception
     KnowledgeTransferService.validate_transfer_document_names(
         db=test_db,
-        all_doc_ids={source_doc.id},
+        source_documents=(source_doc,),
         target_kb_id=target_kb_id,
-        source_kb_id=source_kb_id,
     )
 
 
@@ -961,9 +1013,8 @@ def test_validate_transfer_document_names_multiple_duplicates(test_db: Session) 
     with pytest.raises(StructuredValidationException) as exc_info:
         KnowledgeTransferService.validate_transfer_document_names(
             db=test_db,
-            all_doc_ids={doc_a.id, doc_b.id},
+            source_documents=(doc_a, doc_b),
             target_kb_id=target_kb_id,
-            source_kb_id=source_kb_id,
         )
 
     assert exc_info.value.error_code == "DUPLICATE_DOCUMENT_NAMES"
@@ -980,7 +1031,6 @@ def test_validate_transfer_document_names_empty_doc_ids(test_db: Session) -> Non
     # Should not raise any exception
     KnowledgeTransferService.validate_transfer_document_names(
         db=test_db,
-        all_doc_ids=set(),
+        source_documents=(),
         target_kb_id=target_kb_id,
-        source_kb_id=source_kb_id,
     )
