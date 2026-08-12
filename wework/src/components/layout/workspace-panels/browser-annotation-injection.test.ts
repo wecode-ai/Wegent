@@ -32,10 +32,14 @@ function click(element: Element) {
 }
 
 function openEditor(target: HTMLElement) {
-  target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
-  click(target)
+  elementsFromPointTarget = target
+  const blocker = document.querySelector<HTMLElement>('[data-wework-annotation="blocker"]')!
+  blocker.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  click(blocker)
   return document.querySelector<HTMLInputElement>('[data-wework-annotation="comment-input"]')
 }
+
+let elementsFromPointTarget: Element | null = null
 
 function saveButton() {
   return (
@@ -46,6 +50,12 @@ function saveButton() {
 
 describe('browser annotation injection', () => {
   beforeEach(() => {
+    elementsFromPointTarget = null
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      writable: true,
+      value: () => (elementsFromPointTarget ? [elementsFromPointTarget] : []),
+    })
     document.body.innerHTML =
       '<main><button id="first-target">First target</button><button id="second-target">Second target</button></main>'
     setElementRect(document.querySelector('#first-target')!, 20, 30)
@@ -231,5 +241,20 @@ describe('browser annotation injection', () => {
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
     )
     expect(document.querySelector('[data-wework-annotation="editor"]')).toBeNull()
+  })
+
+  test('intercepts link clicks instead of navigating away', () => {
+    const link = document.createElement('a')
+    link.href = 'https://example.com'
+    link.textContent = 'example link'
+    document.querySelector('main')!.appendChild(link)
+    setElementRect(link, 300, 200)
+    elementsFromPointTarget = link
+    const blocker = document.querySelector<HTMLElement>('[data-wework-annotation="blocker"]')!
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    blocker.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.querySelector('[data-wework-annotation="editor"]')).not.toBeNull()
   })
 })

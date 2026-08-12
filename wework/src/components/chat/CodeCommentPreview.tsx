@@ -1,10 +1,8 @@
-import { FileCode2, MessageSquare, MessageSquarePlus } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { isBrowserAnnotationContext } from '@/lib/browser-annotation-context'
 import type { CodeCommentContext } from '@/types/workspace-files'
 
 interface CodeCommentPreviewProps {
@@ -19,6 +17,7 @@ const VALUE_LIMIT = 80
 
 export function CodeCommentPreview({ comments, testId, children }: CodeCommentPreviewProps) {
   const triggerRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState({ left: 8, top: 8 })
@@ -31,15 +30,36 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
 
   const show = () => {
     clearCloseTimer()
-    const rect = triggerRef.current?.getBoundingClientRect()
-    if (rect) {
-      setPosition({
-        left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 428)),
-        top: Math.min(rect.bottom + 4, Math.max(8, window.innerHeight - 120)),
-      })
-    }
     setOpen(true)
   }
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const triggerRect = triggerRef.current?.getBoundingClientRect()
+    const contentRect = contentRef.current?.getBoundingClientRect()
+    if (!triggerRect || !contentRect) return
+    let boundaryNode = triggerRef.current?.parentElement ?? null
+    let rightBoundary = window.innerWidth - 8
+    while (boundaryNode && boundaryNode !== document.body) {
+      const rect = boundaryNode.getBoundingClientRect()
+      if (rect.width >= contentRect.width) {
+        rightBoundary = rect.right
+        break
+      }
+      boundaryNode = boundaryNode.parentElement
+    }
+    let left = triggerRect.left
+    if (left + contentRect.width > rightBoundary) {
+      left = Math.max(8, rightBoundary - contentRect.width)
+    }
+    let top = triggerRect.top - contentRect.height - 4
+    if (top < 8) {
+      top = triggerRect.bottom + 4
+    }
+    setPosition(previous =>
+      previous.left === left && previous.top === top ? previous : { left, top }
+    )
+  }, [open, comments])
 
   const scheduleClose = () => {
     clearCloseTimer()
@@ -73,6 +93,7 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
       {open &&
         createPortal(
           <CodeCommentPreviewContent
+            contentRef={contentRef}
             comments={comments}
             position={position}
             testId={testId}
@@ -86,12 +107,14 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
 }
 
 function CodeCommentPreviewContent({
+  contentRef,
   comments,
   position,
   testId,
   onPointerEnter,
   onPointerLeave,
 }: {
+  contentRef: React.RefObject<HTMLDivElement | null>
   comments: CodeCommentContext[]
   position: { left: number; top: number }
   testId: string
@@ -100,56 +123,49 @@ function CodeCommentPreviewContent({
 }) {
   return (
     <div
+      ref={contentRef}
       data-testid={testId}
-      className="fixed z-popover max-h-[calc(100vh-16px)] w-[min(420px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
+      className="fixed z-popover max-h-[min(360px,calc(100vh-16px))] w-[min(420px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
       style={position}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      {comments.map((comment, index) => (
-        <CodeCommentPreviewItem key={comment.id} comment={comment} number={index + 1} />
-      ))}
+      <div className="divide-y divide-border">
+        {comments.map(comment => (
+          <CodeCommentPreviewItem key={comment.id} comment={comment} />
+        ))}
+      </div>
     </div>
   )
 }
 
-function CodeCommentPreviewItem({
-  comment,
-  number,
-}: {
-  comment: CodeCommentContext
-  number: number
-}) {
+function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
   const { t } = useTranslation('common')
-  const browser = isBrowserAnnotationContext(comment)
   const target = comment.browserAnnotation?.target
   const adjustments = comment.adjustments ?? []
-  const label = target
-    ? `#${comment.browserAnnotation?.number ?? number} <${target.tagName}> ${truncate(target.text, TARGET_TEXT_LIMIT)}`
-    : `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`
-  const hasAdjustmentsOnly = browser && !comment.comment && adjustments.length > 0
+  const codeLabel = `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`
+  const targetText =
+    target?.isSimpleText && target.text ? truncate(target.text, TARGET_TEXT_LIMIT) : ''
 
   return (
-    <div className="rounded-lg px-2 py-1.5 text-sm text-text-primary">
+    <div className="px-2 py-1.5 text-sm text-text-primary">
       <div className="flex min-w-0 items-center gap-1.5 font-medium">
-        {browser ? (
-          hasAdjustmentsOnly ? (
-            <MessageSquarePlus
-              className="h-3.5 w-3.5 shrink-0 text-text-secondary"
-              aria-hidden="true"
-            />
-          ) : (
-            <MessageSquare
-              className="h-3.5 w-3.5 shrink-0 text-text-secondary"
-              aria-hidden="true"
-            />
-          )
+        {target ? (
+          <>
+            <span className="inline-flex shrink-0 items-center rounded-md border border-border bg-muted px-1.5 py-px font-mono text-xs font-medium leading-[14px] text-text-secondary">
+              {target.tagName}
+            </span>
+            {targetText && (
+              <span className="truncate text-text-primary" title={targetText}>
+                {targetText}
+              </span>
+            )}
+          </>
         ) : (
-          <FileCode2 className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden="true" />
+          <span className="truncate" title={codeLabel}>
+            {codeLabel}
+          </span>
         )}
-        <span className="truncate" title={label}>
-          {label}
-        </span>
       </div>
       {!target && (
         <PreviewLine
@@ -158,13 +174,8 @@ function CodeCommentPreviewItem({
         />
       )}
       {comment.comment && (
-        <PreviewLine label={t('workbench.code_comment_preview_comment')} value={comment.comment} />
-      )}
-      {hasAdjustmentsOnly && (
-        <p className="mt-1 text-xs font-medium leading-4 text-text-secondary">
-          {t('workbench.browser_annotation_adjustments_count', {
-            count: adjustments.length,
-          })}
+        <p className="mt-1 break-words text-xs leading-4 text-text-primary" title={comment.comment}>
+          {truncate(comment.comment, COMMENT_TEXT_LIMIT)}
         </p>
       )}
       {adjustments.slice(0, 3).map(adjustment => (
