@@ -54,7 +54,7 @@ export function CodeWikiWorkspace({
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
   const namespaceRoleMap = useNamespaceRoleMap()
-  const [documentView, setDocumentView] = useState<DocumentManagementView>('user')
+  const [documentView, setDocumentView] = useState<DocumentManagementView>('generated')
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({ kbId: wiki.id })
 
   useEffect(() => {

@@ -100,30 +100,30 @@ describe('CodeWikiWorkspace', () => {
     expect(screen.getByTestId('code-wiki-content-roots')).toBeInTheDocument()
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-origin',
-      'user'
+      'generated'
     )
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-read-only',
-      'false'
+      'true'
     )
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-can-upload',
-      'true'
+      'false'
     )
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-group-id',
       'default'
     )
 
-    fireEvent.mouseDown(screen.getByTestId('code-wiki-content-generated'))
+    fireEvent.mouseDown(screen.getByTestId('code-wiki-content-user'))
 
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-origin',
-      'generated'
+      'user'
     )
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-read-only',
-      'true'
+      'false'
     )
 
     fireEvent.mouseDown(screen.getByTestId('code-wiki-content-permissions'))
