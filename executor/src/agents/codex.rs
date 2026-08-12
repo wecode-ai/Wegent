@@ -2615,14 +2615,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 project_id.as_deref(),
             ));
         }
-    } else if let (Some(base_url), Some(api_key)) = (
-        non_empty_config(&request.model_config, "base_url"),
-        api_key(&request.model_config),
-    ) {
+    } else if let Some(upstream) =
+        local_model_proxy::upstream_from_model_config(&request.model_config)
+    {
         configure_codex_router(
             &mut launch_config,
             &request.task_id,
-            explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            upstream,
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
@@ -2757,45 +2756,27 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
     }))
 }
 
-fn explicit_codex_upstream(
-    model_config: &Value,
-    base_url: &str,
-    api_key: &str,
-) -> LocalModelProxyUpstream {
-    LocalModelProxyUpstream {
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: non_empty_config(model_config, "responses_url")
-            .or_else(|| non_empty_config(model_config, "responsesUrl")),
-        api_format: non_empty_config(model_config, "upstream_api_format")
-            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-        convert_custom_tools: non_empty_config(model_config, "tool_profile")
-            .or_else(|| non_empty_config(model_config, "toolProfile"))
-            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
-        native_tool_search: bool_value(model_config.get("native_tool_search"))
-            .or_else(|| bool_value(model_config.get("nativeToolSearch")))
-            .unwrap_or(false),
-        native_namespace_tools: bool_value(model_config.get("native_namespace_tools"))
-            .or_else(|| bool_value(model_config.get("nativeNamespaceTools")))
-            .unwrap_or(false),
-        api_key: api_key.to_owned(),
-        default_headers: parse_header_map(model_config.get("default_headers")),
-        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
-        model_id: non_empty_config(model_config, "model_id"),
-        routing_model_id: None,
-        max_output_tokens: model_config
-            .get("max_output_tokens")
-            .or_else(|| model_config.get("maxOutputTokens"))
-            .and_then(value_u64)
-            .filter(|value| *value > 0),
-    }
-}
-
 fn shell_path_config_override() -> String {
     let path = process_environment::normalized_process_path(
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+#[cfg(test)]
+fn explicit_codex_upstream(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> LocalModelProxyUpstream {
+    let mut config = model_config.clone();
+    let object = config
+        .as_object_mut()
+        .expect("test model config should be an object");
+    object.insert("base_url".to_owned(), Value::String(base_url.to_owned()));
+    object.insert("api_key".to_owned(), Value::String(api_key.to_owned()));
+    local_model_proxy::upstream_from_model_config(&config)
+        .expect("explicit model config should produce an upstream")
 }
 
 fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {

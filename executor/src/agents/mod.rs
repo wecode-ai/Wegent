@@ -4,6 +4,8 @@
 
 use std::{env, future::Future, path::PathBuf, pin::Pin};
 
+use serde_json::Value;
+
 mod agno;
 mod backend_url;
 mod claude_code;
@@ -81,7 +83,17 @@ impl AgentCommandPlanner {
 
     pub fn command_for(&self, request: &ExecutionRequest) -> Result<CommandSpec, String> {
         match request.resolved_agent_kind() {
-            AgentKind::ClaudeCode => Ok(build_claude_command(request, &self.claude_binary)),
+            AgentKind::ClaudeCode => Ok(build_claude_command(
+                request,
+                request
+                    .extra
+                    .get("runtime_executable_path")
+                    .or_else(|| request.extra.get("runtimeExecutablePath"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&self.claude_binary),
+            )),
             AgentKind::CodeX => Ok(build_codex_app_server_command(&self.codex_binary)),
             agent_kind => Err(format!("unsupported agent kind: {agent_kind:?}")),
         }

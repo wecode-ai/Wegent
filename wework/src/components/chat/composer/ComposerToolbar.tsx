@@ -176,15 +176,16 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
+        <PermissionModeSelector
+          value={runtimePermissionMode(selectedModelOptions)}
+          disabled={disabled}
+          iconOnly
+          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+        />
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
           onCompactContext={onCompactContext}
-        />
-        <PermissionModeSelector
-          value={runtimePermissionMode(selectedModelOptions)}
-          disabled={disabled}
-          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
         />
         {modelSelectorOverride ??
           (isModelSelectionReady ? (
