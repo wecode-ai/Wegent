@@ -1457,6 +1457,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 }
 
 function installDesktopControlClient() {
+  if (!isTauriRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getCurrentWindow().label
   if (
