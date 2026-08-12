@@ -516,6 +516,7 @@ class RuntimeWorkspaceRemoveRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     device_id: str = Field(..., alias="deviceId", min_length=1)
+    project_key: Optional[str] = Field(default=None, alias="projectKey")
     workspace_path: str = Field(..., alias="workspacePath", min_length=1)
     runtime: RuntimeName = "codex"
 
