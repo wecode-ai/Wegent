@@ -62,6 +62,8 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
+import { hasBrowserAnnotationScope } from '@/lib/browser-annotation-context'
 import {
   abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
@@ -206,6 +208,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
+  const [browserAnnotationCommand, setBrowserAnnotationCommand] =
+    useState<BrowserAnnotationCommand | null>(null)
+  const browserAnnotationCommandSequenceRef = useRef(0)
   const input = projectChat.input ?? ''
   const scopedSetInput = projectChat.setInput ?? noopSetInput
   const [localError, setLocalError] = useState<string | null>(null)
@@ -224,6 +229,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [scopedSetInput]
   )
+
+  const clearCodeCommentsAfterCommit = useCallback((reason: BrowserAnnotationCommand['reason']) => {
+    setCodeCommentContexts([])
+    browserAnnotationCommandSequenceRef.current += 1
+    setBrowserAnnotationCommand({
+      sequence: browserAnnotationCommandSequenceRef.current,
+      type: 'clear_all_and_exit',
+      reason,
+    })
+  }, [])
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -1893,7 +1908,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               dispatchMessages({ type: 'reset', messages: [] })
             }
             projectChat.resetAttachments()
-            setCodeCommentContexts([])
+            clearCodeCommentsAfterCommit('send_success')
           } else {
             restoreInputAfterFailure(visibleSubmittedInput)
           }
@@ -1940,7 +1955,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (sent) {
             setInput('')
             projectChat.resetAttachments()
-            setCodeCommentContexts([])
+            clearCodeCommentsAfterCommit('send_success')
           } else if (isRuntimeTaskBusyError(sendError)) {
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
@@ -2001,6 +2016,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
       [
         appendLocalUserMessage,
+        clearCodeCommentsAfterCommit,
         codeCommentContexts,
         compactRuntimePaneTask,
         currentRuntimeTask,
@@ -2030,9 +2046,42 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setCodeCommentContexts(current => [...current.filter(item => item.id !== context.id), context])
   }, [])
 
-  const clearCodeComments = useCallback(() => {
-    setCodeCommentContexts([])
+  const replaceBrowserCodeComments = useCallback(
+    (scope: BrowserAnnotationScope, contexts: CodeCommentContext[]) => {
+      setCodeCommentContexts(current => {
+        const replacementById = new Map(contexts.map(context => [context.id, context]))
+        const existingOrder = current
+          .filter(context => hasBrowserAnnotationScope(context, scope))
+          .map(context => context.id)
+        const orderedReplacement = [
+          ...existingOrder
+            .map(id => replacementById.get(id))
+            .filter((context): context is CodeCommentContext => Boolean(context)),
+          ...contexts.filter(context => !existingOrder.includes(context.id)),
+        ]
+        if (existingOrder.length === 0) return [...current, ...orderedReplacement]
+
+        let replacementInserted = false
+        return current.flatMap(context => {
+          if (!hasBrowserAnnotationScope(context, scope)) return [context]
+          if (replacementInserted) return []
+          replacementInserted = true
+          return orderedReplacement
+        })
+      })
+    },
+    []
+  )
+
+  const removeBrowserCodeComments = useCallback((scope: BrowserAnnotationScope) => {
+    setCodeCommentContexts(current =>
+      current.filter(context => !hasBrowserAnnotationScope(context, scope))
+    )
   }, [])
+
+  const clearCodeComments = useCallback(() => {
+    clearCodeCommentsAfterCommit('composer_clear')
+  }, [clearCodeCommentsAfterCommit])
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
@@ -2424,6 +2473,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     queuedMessagesPaused,
     guidanceMessages,
     codeCommentContexts,
+    browserAnnotationCommand,
     input,
     setInput,
     error,
@@ -2455,6 +2505,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendRequestUserInputResponse,
     ignoreRequestUserInput,
     addCodeComment,
+    replaceBrowserCodeComments,
+    removeBrowserCodeComments,
     clearCodeComments,
     cancelQueuedMessage,
     resumeQueuedMessages,
