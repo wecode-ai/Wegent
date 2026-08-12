@@ -774,7 +774,7 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
   assert.match(
     await control.command('getText', '[data-testid="worktree-creation-status"]'),
-    /正在创建工作树|Creating worktree/,
+    /正在搭建你的独立工作树|Building your independent worktree/,
     'The worktree creation status page did not explain the active operation'
   )
   await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
