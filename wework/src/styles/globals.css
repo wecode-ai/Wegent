@@ -472,6 +472,11 @@ button:disabled {
 }
 
 @layer components {
+  /* Prism uses "table" as a Markdown token class, which collides with Tailwind's display utility. */
+  .markdown-code-block .token.table {
+    display: inline;
+  }
+
   .heading-xl {
     font-size: var(--text-xl);
     font-weight: 500;
