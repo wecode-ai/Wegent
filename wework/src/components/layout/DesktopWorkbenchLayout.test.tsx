@@ -8739,7 +8739,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const creationStatus = screen.getByTestId('worktree-creation-status')
-    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(creationStatus).toHaveTextContent('正在搭建你的独立工作树')
     expect(screen.getByTestId('desktop-chat-scroll-content')).toContainElement(creationStatus)
     expect(screen.queryByTestId('desktop-chat-scroll-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
