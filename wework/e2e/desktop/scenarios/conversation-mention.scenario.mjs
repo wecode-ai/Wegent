@@ -113,12 +113,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const responseId = `wework-conversation-mention-${Date.now()}`
       let completion = ''
 
-      if (serialized.includes(SOURCE_PROMPT) && !serialized.includes('<application_context>')) {
-        sourceRequest = body
-        completion = SOURCE_COMPLETION
-      } else if (serialized.includes('wework-conversation://')) {
+      if (serialized.includes('wework-conversation://')) {
         targetRequest = body
         completion = TARGET_COMPLETION
+      } else if (serialized.includes(SOURCE_PROMPT)) {
+        sourceRequest = body
+        completion = SOURCE_COMPLETION
       }
 
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
