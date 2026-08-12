@@ -4,12 +4,18 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
 The context indicator beside the task composer shows the current model's context usage. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
+
+Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
+**Agent**. This device-local preference activates the matching top-level tab when the Wework main
+window opens or reloads at the root page. If every tab of that type has been closed, Wework creates
+one again. Explicit links to Settings, Plugins, or a specific workspace route take precedence and
+are not replaced by the default tab.
 
 ## View app information
 
