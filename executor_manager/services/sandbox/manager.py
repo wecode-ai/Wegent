@@ -1548,6 +1548,13 @@ class SandboxManager(metaclass=SingletonMeta):
             sandbox = await self._repository.load_sandbox_async(sandbox_id)
             if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                 return
+            if sandbox.metadata.get("heartbeat_monitoring") == "unavailable":
+                logger.info(
+                    "[SandboxManager] Heartbeat cleanup skipped after lifecycle "
+                    "recheck; monitoring is unavailable sandbox_id=%s",
+                    sandbox_id,
+                )
+                return
 
             heartbeat_mgr = get_heartbeat_manager()
             if await heartbeat_mgr.check_heartbeat(sandbox_id):

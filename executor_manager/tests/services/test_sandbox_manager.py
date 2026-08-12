@@ -1867,6 +1867,61 @@ class TestSandboxManager:
         release.assert_awaited_once_with(lease)
 
     @pytest.mark.asyncio
+    async def test_heartbeat_timeout_rechecks_unavailable_monitoring_under_lease(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """An in-flight heartbeat check must honor the latest monitoring state."""
+        from executor_manager.models.sandbox import SandboxStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.RUNNING
+        sample_sandbox.metadata["heartbeat_monitoring"] = "unavailable"
+        lease = MagicMock()
+        mocker.patch.object(
+            manager,
+            "_try_acquire_task_lifecycle_lease",
+            new_callable=AsyncMock,
+            return_value=lease,
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+            return_value=sample_sandbox,
+        )
+        heartbeat = MagicMock()
+        heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_heartbeat_manager",
+            return_value=heartbeat,
+        )
+        check_health = mocker.patch.object(
+            manager,
+            "_check_container_health",
+            new_callable=AsyncMock,
+        )
+        handle_dead = mocker.patch.object(
+            manager,
+            "_handle_executor_dead",
+            new_callable=AsyncMock,
+        )
+        release = mocker.patch.object(
+            manager,
+            "_release_task_lifecycle_lease",
+            new_callable=AsyncMock,
+        )
+
+        await manager._handle_heartbeat_timeout("12345")
+
+        heartbeat.check_heartbeat.assert_not_awaited()
+        check_health.assert_not_awaited()
+        handle_dead.assert_not_awaited()
+        release.assert_awaited_once_with(lease)
+
+    @pytest.mark.asyncio
     async def test_heartbeat_timeout_deletes_only_unhealthy_runtime(
         self,
         sandbox_manager_with_mock_redis,
