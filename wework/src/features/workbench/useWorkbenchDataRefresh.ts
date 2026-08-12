@@ -6,6 +6,7 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeSupervisorState,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
@@ -882,6 +883,20 @@ export function useWorkbenchDataRefresh({
     []
   )
 
+  const updateLocalRuntimeTaskSupervisor = useCallback(
+    (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
+      localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
+        supervisor,
+      })
+      dispatch({
+        type: 'runtime_task_supervisor_updated',
+        address,
+        supervisor,
+      })
+    },
+    [dispatch]
+  )
+
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       const runtimeWork = applyRuntimeTaskTitleOverrides(
@@ -928,6 +943,7 @@ export function useWorkbenchDataRefresh({
     refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,

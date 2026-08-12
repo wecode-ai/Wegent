@@ -841,6 +841,7 @@ export function WorkbenchProvider({
     refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
@@ -1770,8 +1771,8 @@ export function WorkbenchProvider({
             lifecycleStore.goalStatusReceived(address, null)
             syncRuntimeTaskSnapshot(address)
           },
-          onRuntimeSupervisorUpdated: address => {
-            syncRuntimeTaskSnapshot(address)
+          onRuntimeSupervisorUpdated: (address, payload) => {
+            updateLocalRuntimeTaskSupervisor(address, payload.supervisor)
           },
           onRuntimeGoalContinuation: (address, payload) => {
             applyRuntimeConversationGoalContinuation(address, payload)
@@ -1793,6 +1794,7 @@ export function WorkbenchProvider({
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskExecution,
       updateLocalRuntimeTaskSnapshot,
+      updateLocalRuntimeTaskSupervisor,
       updateLocalRuntimeTaskTitle,
     ]
   )
