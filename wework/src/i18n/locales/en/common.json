@@ -186,6 +186,7 @@
     "harness_default_args_description": "Enter one argument per line. Wework appends the task prompt using the tool's protocol.",
     "harness_environment": "Environment",
     "harness_environment_description": "Enter one NAME=VALUE per line. Values stay on this device.",
+    "archive_harness": "Archive coding session",
     "close_harness": "Close coding tool",
     "search": "Search",
     "search_conversations": "Search conversations",

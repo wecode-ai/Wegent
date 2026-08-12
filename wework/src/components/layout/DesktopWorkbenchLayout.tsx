@@ -40,10 +40,12 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
+  archiveLocalHarnessSession,
   closeLocalTerminal,
   isLocalHarnessAvailable,
   listLocalHarnessSessions,
   updateLocalHarnessSessionTitle,
+  WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
 } from '@/lib/local-terminal'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
@@ -148,42 +150,58 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
     null
   )
+  const loadLocalHarnessSessions = useCallback(async () => {
+    const sessions = await listLocalHarnessSessions()
+    return sessions.map(session => ({
+      sessionId: session.session_id,
+      harnessId: session.harness_id,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.created_at,
+      isPrimary: session.is_primary,
+      projectId: session.project_id,
+      active: session.active,
+      modelKey: session.model_key,
+      pluginRoots: session.plugin_roots?.length ? session.plugin_roots : undefined,
+      proxyToken: session.proxy_token,
+    }))
+  }, [])
+
   useEffect(() => {
     if (!isLocalHarnessAvailable()) return
 
     let cancelled = false
-    void listLocalHarnessSessions()
-      .then(sessions => {
+    void loadLocalHarnessSessions()
+      .then(restored => {
         if (cancelled) return
-        const restored = sessions.map(session => ({
-          sessionId: session.session_id,
-          harnessId: session.harness_id,
-          title: session.title,
-          cwd: session.cwd,
-          createdAt: session.created_at,
-          isPrimary: session.is_primary,
-          projectId: session.project_id,
-          active: session.active,
-          modelKey: session.model_key,
-          pluginRoots: session.plugin_roots?.length ? session.plugin_roots : undefined,
-          proxyToken: session.proxy_token,
-        }))
-        setLocalHarnessSessions(current => [
-          ...current,
-          ...restored.filter(
-            session => !current.some(candidate => candidate.sessionId === session.sessionId)
-          ),
-        ])
+        setLocalHarnessSessions(restored)
         setActiveLocalHarnessSessionId(current => current ?? restored[0]?.sessionId ?? null)
       })
       .catch(error => {
         console.error('Failed to restore local harness sessions:', error)
       })
+    const handleSessionsChanged = (event: Event) => {
+      const openSessionId = (event as CustomEvent<{ openSessionId?: string | null }>).detail
+        ?.openSessionId
+      void loadLocalHarnessSessions()
+        .then(restored => {
+          setLocalHarnessSessions(restored)
+          if (!openSessionId || !restored.some(session => session.sessionId === openSessionId))
+            return
+          setActiveLocalHarnessSessionId(openSessionId)
+          navigateTo('/')
+        })
+        .catch(error => {
+          console.error('Failed to refresh local Harness sessions:', error)
+        })
+    }
+    window.addEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
 
     return () => {
       cancelled = true
+      window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
-  }, [])
+  }, [loadLocalHarnessSessions])
   const todoOpen = currentPath === '/todo'
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
@@ -275,12 +293,13 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const closeLocalHarnessSession = useCallback(
     async (sessionId: string) => {
-      if (
-        localHarnessSessions.some(session => session.sessionId === sessionId && session.isPrimary)
-      ) {
-        return
+      const session = localHarnessSessions.find(candidate => candidate.sessionId === sessionId)
+      if (!session || (session.isPrimary && session.harnessId !== 'opencode')) return
+      if (session.harnessId === 'opencode') {
+        await archiveLocalHarnessSession(sessionId)
+      } else {
+        await closeLocalTerminal(sessionId)
       }
-      await closeLocalTerminal(sessionId)
       removeLocalHarnessSession(sessionId)
     },
     [localHarnessSessions, removeLocalHarnessSession]
