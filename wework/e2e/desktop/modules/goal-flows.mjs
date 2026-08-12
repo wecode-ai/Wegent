@@ -748,7 +748,7 @@ async function verifyCloudGoalRestartRecoveryLifecycle({
   executorProcessId,
   restartDesktopApp,
 }) {
-  control.setScenario('goal_restart')
+  control.setScenario('cloud_goal_restart')
   const taskRowsBeforeGoal = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -766,7 +766,7 @@ async function verifyCloudGoalRestartRecoveryLifecycle({
     control,
     composerSelector,
     GOAL_RESTART_PROMPT,
-    'goal_restart'
+    'cloud_goal_restart'
   )
   const goalTaskRowTestId = await waitForNewTaskRow(
     control,
@@ -777,7 +777,7 @@ async function verifyCloudGoalRestartRecoveryLifecycle({
   const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
   const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
   await withTimeout(
-    control.awaitScenarioRequestCount('goal_restart', 2),
+    control.awaitScenarioRequestCount('cloud_goal_restart', 2),
     DEFAULT_STEP_TIMEOUT_MS,
     'The cloud Goal did not enter automatic continuation before Wework restarted'
   )
