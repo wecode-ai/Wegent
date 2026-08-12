@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
 import { Loader2, Pencil } from 'lucide-react'
 import type { Site } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
