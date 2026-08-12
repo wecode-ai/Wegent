@@ -18,57 +18,45 @@ from app.models.delivery import CloudProject
 from app.schemas.cloud_project import default_board_statuses
 
 STATUS_HISTORY_KEY = "status_history"
-STATUS_HISTORY_TRIGGERS = frozenset(
-    {
-        "create",
-        "user_update",
-        "ai_started",
-        "ai_completed",
-        "task_started",
-        "delivery",
-        "status_removed",
-    }
-)
 
 
-def _status_id(entry: object) -> object:
-    return entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
-
-
-def _status_name(entry: object) -> str:
-    name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", "")
-    return name if isinstance(name, str) else ""
-
-
-def status_name(project: CloudProject, status_id: str) -> str:
-    """Display name for a status id; falls back to the default board statuses.
+def project_board_statuses(project: CloudProject) -> list[tuple[str, str]]:
+    """(id, name) pairs of the project's board columns, defaults when unset.
 
     A legacy project without an explicit ``board_config`` still recognizes the
-    five default status ids, mirroring ``_project_status_ids``.
+    five default status ids, mirroring ``default_board_statuses``.
     """
     metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
     board_config = metadata.get("board_config")
-    statuses = (
+    raw = (
         board_config.get("statuses")
         if isinstance(board_config, dict)
         and isinstance(board_config.get("statuses"), list)
         else None
     )
-    if statuses is None:
-        statuses = default_board_statuses()
-    for entry in statuses:
-        if _status_id(entry) == status_id:
-            return _status_name(entry)
+    if raw is None:
+        return [(status.id, status.name) for status in default_board_statuses()]
+    return [
+        (str(entry["id"]), str(entry.get("name") or ""))
+        for entry in raw
+        if isinstance(entry, dict) and entry.get("id")
+    ]
+
+
+def status_name(project: CloudProject, status_id: str) -> str:
+    """Display name for a status id; empty when the id is not on the board."""
+    for entry_id, entry_name in project_board_statuses(project):
+        if entry_id == status_id:
+            return entry_name
     return ""
 
 
 def write_status_change(
     metadata: dict[str, Any],
     *,
+    project: CloudProject,
     from_status: str,
     to_status: str,
-    from_status_name: str,
-    to_status_name: str,
     trigger: str,
     by_user_id: int | None,
 ) -> None:
@@ -82,9 +70,11 @@ def write_status_change(
     history.append(
         {
             "from_status": from_status,
-            "from_status_name": from_status_name,
+            "from_status_name": (
+                status_name(project, from_status) if from_status else ""
+            ),
             "to_status": to_status,
-            "to_status_name": to_status_name,
+            "to_status_name": status_name(project, to_status) if to_status else "",
             "trigger": trigger,
             "by_user_id": by_user_id,
             "at": now.isoformat(),

@@ -56,7 +56,7 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_item_executions.wake import wake_robot_creator
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
-    status_name,
+    project_board_statuses,
     write_status_change,
 )
 from app.services.project_chat.service import ProjectChatService, bot_config
@@ -71,19 +71,7 @@ logger = logging.getLogger(__name__)
 class LoopItemService:
     @staticmethod
     def _project_status_ids(project: CloudProject) -> list[str]:
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        board = metadata.get("board_config")
-        board = board if isinstance(board, dict) else {}
-        statuses = board.get("statuses")
-        if not isinstance(statuses, list):
-            return ["inbox", "pending", "in_progress", "in_review", "completed"]
-        return [
-            str(item["id"])
-            for item in statuses
-            if isinstance(item, dict) and item.get("id")
-        ]
+        return [status_id for status_id, _ in project_board_statuses(project)]
 
     def _require_internal_task_project(
         self,
@@ -272,10 +260,9 @@ class LoopItemService:
             if project is not None:
                 write_status_change(
                     metadata,
+                    project=project,
                     from_status=item.status,
-                    from_status_name=status_name(project, item.status),
                     to_status="in_review",
-                    to_status_name=status_name(project, "in_review"),
                     trigger="ai_completed",
                     by_user_id=None,
                 )
@@ -619,10 +606,9 @@ class LoopItemService:
         if payload["status"]:
             write_status_change(
                 task_metadata,
+                project=project,
                 from_status="",
-                from_status_name="",
                 to_status=payload["status"],
-                to_status_name=status_name(project, payload["status"]),
                 trigger="create",
                 by_user_id=user_id,
             )
@@ -1024,10 +1010,9 @@ class LoopItemService:
                     metadata = dict(item.metadata_json or {})
                 write_status_change(
                     metadata,
+                    project=project,
                     from_status=item.status,
-                    from_status_name=status_name(project, item.status),
                     to_status=updates["status"] or "",
-                    to_status_name=status_name(project, updates["status"] or ""),
                     trigger="user_update",
                     by_user_id=user_id,
                 )
@@ -1531,10 +1516,9 @@ class LoopItemService:
             )
             write_status_change(
                 metadata,
+                project=project,
                 from_status=item.status,
-                from_status_name=status_name(project, item.status),
                 to_status="in_progress",
-                to_status_name=status_name(project, "in_progress"),
                 trigger="task_started",
                 by_user_id=user_id,
             )

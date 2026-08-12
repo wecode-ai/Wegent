@@ -29,10 +29,7 @@ from app.schemas.cloud_project import (
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.loop_item_status_history import (
-    status_name,
-    write_status_change,
-)
+from app.services.loop_item_status_history import write_status_change
 
 logger = logging.getLogger(__name__)
 
@@ -185,11 +182,6 @@ class CloudProjectService:
                 next_ids = {item.id for item in values.board_config.statuses}
                 removed_ids = previous_ids - next_ids
                 if removed_ids:
-                    removed_names = {
-                        str(entry.get("id")): entry.get("name")
-                        for entry in previous_statuses
-                        if isinstance(entry, dict)
-                    }
                     affected = (
                         db.query(LoopItem)
                         .filter(
@@ -205,13 +197,11 @@ class CloudProjectService:
                             if isinstance(item.metadata_json, dict)
                             else {}
                         )
-                        name = removed_names.get(item.status)
                         write_status_change(
                             metadata,
+                            project=project,
                             from_status=item.status,
-                            from_status_name=name if isinstance(name, str) else "",
                             to_status="",
-                            to_status_name="",
                             trigger="status_removed",
                             by_user_id=user_id,
                         )

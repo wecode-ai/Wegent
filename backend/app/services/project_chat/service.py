@@ -35,10 +35,7 @@ from app.schemas.project_chat import (
     ProjectChatSubscribe,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.loop_item_status_history import (
-    status_name,
-    write_status_change,
-)
+from app.services.loop_item_status_history import write_status_change
 
 logger = logging.getLogger(__name__)
 
@@ -1079,10 +1076,9 @@ class ProjectChatService:
                 if project is not None:
                     write_status_change(
                         task_metadata,
+                        project=project,
                         from_status=task.status,
-                        from_status_name=status_name(project, task.status),
                         to_status="in_progress",
-                        to_status_name=status_name(project, "in_progress"),
                         trigger="ai_started",
                         by_user_id=None,
                     )
@@ -1223,10 +1219,9 @@ class ProjectChatService:
         if project is not None:
             write_status_change(
                 task_metadata,
+                project=project,
                 from_status=task.status,
-                from_status_name=status_name(project, task.status),
                 to_status="in_review",
-                to_status_name=status_name(project, "in_review"),
                 trigger="ai_completed",
                 by_user_id=None,
             )

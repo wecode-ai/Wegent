@@ -31,10 +31,7 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
-from app.services.loop_item_status_history import (
-    status_name,
-    write_status_change,
-)
+from app.services.loop_item_status_history import write_status_change
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -260,10 +257,9 @@ class DeliveryService:
                     )
                     write_status_change(
                         metadata,
+                        project=project,
                         from_status=item.status,
-                        from_status_name=status_name(project, item.status),
                         to_status="completed",
-                        to_status_name=status_name(project, "completed"),
                         trigger="delivery",
                         by_user_id=user_id,
                     )
