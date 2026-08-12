@@ -872,9 +872,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const pendingProjectSpaceContext =
     !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
       <ComposerModePill
-        label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
-          name: pendingCloudProject.name,
-        })}
+        label={pendingCloudProject.name}
         icon={LayoutDashboard}
         testId="project-space-context-pill"
         cancelTestId="clear-project-space-context-button"

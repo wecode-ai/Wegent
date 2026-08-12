@@ -2114,7 +2114,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
-      '加入看板 · Task Follow-up Board'
+      'Task Follow-up Board'
     )
   })
 
