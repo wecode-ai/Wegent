@@ -334,6 +334,31 @@ describe('ChatInput', () => {
     expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
+  test('keeps the plugin picker above runtime plan progress', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        taskPlan={{
+          plan: [
+            { step: 'Inspect', status: 'inProgress' },
+            { step: 'Implement', status: 'pending' },
+          ],
+        }}
+        projectChat={projectChatControls()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+
+    expect(screen.getByTestId('runtime-plan-progress')).toHaveClass('z-0')
+    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass('z-10')
+    expect(await screen.findByTestId('composer-plugin-picker')).toHaveClass('z-popover')
+  })
+
   test('shows the plan mode pill when plan mode is selected', async () => {
     const setSelectedModelOption = vi.fn()
     render(

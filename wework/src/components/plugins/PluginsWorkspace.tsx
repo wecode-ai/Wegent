@@ -43,7 +43,10 @@ import {
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
 import { isWegentCloudMarketplace, type PluginReference } from '@/features/plugins/pluginNavigation'
-import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
+import {
+  isBuiltInMarketplaceId,
+  isOpenAiOfficialMarketplaceId,
+} from '@/features/plugins/marketplaceIdentity'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import {
   marketplaceSearchScore,
@@ -57,6 +60,7 @@ import {
   sameInstalledPlugins,
   sameMarketplaceItems,
   setPluginMarketplaceCache,
+  type PluginMarketplaceCacheSnapshot,
 } from '@/features/plugins/pluginMarketplaceCache'
 import {
   hasAttemptedPluginDeviceAutoSync,
@@ -104,7 +108,7 @@ import {
 import { humanizeMarketplaceInstallError } from './marketplaceInstallError'
 import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'
 import {
-  groupMarketplaceItemsByCategory,
+  groupMarketplaceItemsAdaptively,
   previewMarketplaceSectionItems,
   prioritizeFeaturedMarketplaceItems,
   type MarketplaceCategorySection,
@@ -483,6 +487,82 @@ function toMarketplaceOptions(
     path: marketplace.path,
   }))
   return [...cloudOptions, ...localOptions]
+}
+
+function isCodexCatalogItem(item: PluginMarketplaceItem): boolean {
+  if (isLocalMarketplaceItem(item)) return true
+  const marketplaceId = marketplaceItemMarketplaceId(item)
+  return marketplaceId != null && isOpenAiOfficialMarketplaceId(marketplaceId)
+}
+
+function mergeWarmMarketplaceItems(
+  cached: PluginMarketplaceCacheSnapshot | null,
+  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>
+): PluginMarketplaceItem[] {
+  const cachedItems = cached?.marketplaceItems ?? []
+  const cachedLocalItems = cachedItems.filter(isCodexCatalogItem)
+  const localItemsById = new Map(cachedLocalItems.map(item => [String(item.id), item] as const))
+  // The Codex cache owns local / OpenAI rows. The account-scoped marketplace
+  // cache can be populated by management views with cloud rows only, so it must
+  // never suppress an otherwise valid official catalog on the first paint.
+  for (const item of durablePeek?.marketplaceItems ?? []) {
+    localItemsById.set(String(item.id), item)
+  }
+  return mergeMarketplaceCatalog(
+    cachedItems.filter(item => !isCodexCatalogItem(item)),
+    [...localItemsById.values()],
+    (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
+  )
+}
+
+function hasOpenAiOfficialCatalog(items: PluginMarketplaceItem[]): boolean {
+  return items.some(item => {
+    const marketplaceId = marketplaceItemMarketplaceId(item)
+    return marketplaceId != null && isOpenAiOfficialMarketplaceId(marketplaceId)
+  })
+}
+
+function durableLocalStateMatchesCachedDevice(
+  cached: PluginMarketplaceCacheSnapshot | null,
+  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>
+): boolean {
+  const localDeviceId = durablePeek?.deviceId.trim() || ''
+  if (!localDeviceId) return false
+  const cachedDeviceId = cached?.deviceId.trim() || ''
+  return !cachedDeviceId || cachedDeviceId === localDeviceId
+}
+
+function mergeWarmInstalledPlugins(
+  cached: PluginMarketplaceCacheSnapshot | null,
+  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>
+): InstalledPluginItem[] {
+  const cachedRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
+  if (!durablePeek || !durableLocalStateMatchesCachedDevice(cached, durablePeek)) {
+    return cached?.installedPlugins ?? []
+  }
+  const cloudRaw = cachedRaw.filter(isCloudManagedInstalledPlugin)
+  return mergeInstalledPlugins(cloudRaw, durablePeek.installedPlugins, durablePeek.deviceId).map(
+    toInstalledPluginItem
+  )
+}
+
+function mergeWarmMarketplaceOptions(
+  cached: PluginMarketplaceCacheSnapshot | null,
+  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>,
+  cloudAvailable: boolean,
+  cloudMarketplaceName: string
+): MarketplaceOption[] {
+  const optionsByKey = new Map(
+    (cached?.marketplaces ?? []).map(option => [option.key, option] as const)
+  )
+  for (const option of toMarketplaceOptions(
+    durablePeek?.marketplaces ?? [],
+    cloudAvailable,
+    cloudMarketplaceName
+  )) {
+    optionsByKey.set(option.key, option)
+  }
+  return [...optionsByKey.values()]
 }
 
 function AddMarketDialog({
@@ -1256,12 +1336,23 @@ export function PluginsWorkspace({
     [cloudApiBaseUrl, cloudToken]
   )
   const initialMarketplaceCache = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-  // Cold launch: memory cache is empty, but durable Codex peek can paint OpenAI/local
-  // rows immediately while plugin/list refreshes in the background.
-  const initialDurablePeek =
-    initialMarketplaceCache == null
-      ? peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
-      : null
+  // The account-scoped cloud cache and the local Codex cache cover different
+  // catalogs. Always read both so a cloud-only snapshot cannot hide OpenAI/local
+  // rows until the slow plugin/list request finishes.
+  const initialDurablePeek = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+  const initialInstalledPlugins = mergeWarmInstalledPlugins(
+    initialMarketplaceCache,
+    initialDurablePeek
+  )
+  const initialMarketplaceItems = mergeWarmMarketplaceItems(
+    initialMarketplaceCache,
+    initialDurablePeek
+  )
+  const initialMarketplaceItemsWithInstalls = mergeMarketplaceCatalog(
+    initialMarketplaceItems.filter(item => !isCodexCatalogItem(item)),
+    initialMarketplaceItems.filter(isCodexCatalogItem),
+    initialInstalledPlugins.map(plugin => plugin.raw)
+  )
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
   const marketplaceSearchInputRef = useRef<HTMLInputElement>(null)
   const marketplaceScrollRegionRef = useRef<HTMLDivElement>(null)
@@ -1270,13 +1361,13 @@ export function PluginsWorkspace({
   // Durable peek / warm cache already paints the catalog — do not start in a
   // "refreshing" skeleton state just because Codex plugin/list will revalidate.
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
+  const [isOpenAiOfficialCatalogLoading, setIsOpenAiOfficialCatalogLoading] = useState(
+    () => !hasOpenAiOfficialCatalog(initialMarketplaceItems)
+  )
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>(() => {
-    if (initialMarketplaceCache?.marketplaces?.length) {
-      return initialMarketplaceCache.marketplaces
-    }
-    if (!initialDurablePeek?.marketplaces.length) return []
-    return toMarketplaceOptions(
-      initialDurablePeek.marketplaces,
+    return mergeWarmMarketplaceOptions(
+      initialMarketplaceCache,
+      initialDurablePeek,
       cloudMarketplaceAvailable,
       'Wework 云端市场'
     )
@@ -1288,12 +1379,7 @@ export function PluginsWorkspace({
   // previously selected local marketplace filter when navigating back from another route.
   const [marketplaceSourceFilterKey, setMarketplaceSourceFilterKey] = useState('')
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    // Empty cached installs are authoritative for this account — do not fall back
-    // to a device-local Codex peek (that can belong to another session).
-    if (initialMarketplaceCache) {
-      return initialMarketplaceCache.installedPlugins
-    }
-    return []
+    return initialInstalledPlugins
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
     () => initialMarketplaceCache?.deviceId || initialDurablePeek?.deviceId || ''
@@ -1311,11 +1397,9 @@ export function PluginsWorkspace({
   const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
   const [pluginMarketplaceState, setPluginMarketplaceState] = useState<PluginMarketplaceState>(
     () => {
-      const items =
-        initialMarketplaceCache?.marketplaceItems ?? initialDurablePeek?.marketplaceItems ?? []
       return {
-        items,
-        isLoading: items.length === 0,
+        items: initialMarketplaceItemsWithInstalls,
+        isLoading: initialMarketplaceItemsWithInstalls.length === 0,
         error: null,
       }
     }
@@ -1323,6 +1407,12 @@ export function PluginsWorkspace({
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [deviceAutoSyncSettled, setDeviceAutoSyncSettled] = useState(() =>
     hasSettledPluginDeviceAutoSync(currentDeviceId)
+  )
+  const [localInstalledStateReadyKey, setLocalInstalledStateReadyKey] = useState<string | null>(
+    () =>
+      durableLocalStateMatchesCachedDevice(initialMarketplaceCache, initialDurablePeek)
+        ? marketplaceCacheKeyValue
+        : null
   )
   const installedPluginsRef = useRef(installedPlugins)
   installedPluginsRef.current = installedPlugins
@@ -1337,31 +1427,36 @@ export function PluginsWorkspace({
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
-  // Account/session identity is encoded in the cache key; hydrate from durable cache on
-  // switch. Catalog may use a device-local Codex peek for OpenAI/local first paint, but
-  // the installed strip is account-scoped: cache hit (including empty) wins, cache miss
-  // clears prior-account installs — never paint peek installs onto another account.
+  // Account/session identity is encoded in the cache key. Cloud installs come from that
+  // account cache, while a matching device-local snapshot remains authoritative for
+  // packages already materialized on this device.
   useEffect(() => {
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-    const durablePeek =
-      cached == null ? peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) : null
-    const items = cached?.marketplaceItems ?? durablePeek?.marketplaceItems ?? []
-    const nextMarketplaces =
-      cached?.marketplaces ??
-      (durablePeek?.marketplaces.length
-        ? toMarketplaceOptions(
-            durablePeek.marketplaces,
-            cloudMarketplaceAvailable,
-            t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
-          )
-        : [])
+    const durablePeek = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+    const nextInstalled = mergeWarmInstalledPlugins(cached, durablePeek)
+    const warmItems = mergeWarmMarketplaceItems(cached, durablePeek)
+    const items = mergeMarketplaceCatalog(
+      warmItems.filter(item => !isCodexCatalogItem(item)),
+      warmItems.filter(isCodexCatalogItem),
+      nextInstalled.map(plugin => plugin.raw)
+    )
+    const nextMarketplaces = mergeWarmMarketplaceOptions(
+      cached,
+      durablePeek,
+      cloudMarketplaceAvailable,
+      t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
+    )
     setMarketplaces(nextMarketplaces)
     setSelectedMarketplaceKey(cached?.selectedMarketplaceKey || rememberedMarketplaceKey())
-    setInstalledPlugins(cached != null ? cached.installedPlugins : [])
+    setInstalledPlugins(nextInstalled)
+    setLocalInstalledStateReadyKey(
+      durableLocalStateMatchesCachedDevice(cached, durablePeek) ? marketplaceCacheKeyValue : null
+    )
     setCurrentDeviceId(cached?.deviceId || durablePeek?.deviceId || '')
     setCanPublish(cached?.canPublish ?? false)
     setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
     setIsMarketplaceRefreshing(false)
+    setIsOpenAiOfficialCatalogLoading(!hasOpenAiOfficialCatalog(items))
     setPluginMarketplaceState({
       items,
       isLoading: items.length === 0,
@@ -2835,8 +2930,16 @@ export function PluginsWorkspace({
       ? peekLocalCodexPluginsReadState(localReadParams)
       : null
     const hasDurablePeek = Boolean(peekedLocalState?.marketplaceItems.length)
+    const hasWarmOpenAiCatalog = hasOpenAiOfficialCatalog(
+      mergeWarmMarketplaceItems(cached, peekedLocalState)
+    )
+    const shouldForceIncompleteLocalRefresh = Boolean(
+      !isExplicitRefresh && peekedLocalState && !hasWarmOpenAiCatalog
+    )
     const localStateIsFresh =
       Boolean(peekedLocalState) && isLocalCodexPluginsReadStateFresh(localReadParams)
+
+    setIsOpenAiOfficialCatalogLoading(!hasWarmOpenAiCatalog)
 
     if (!hasCachedCatalog && !hasDurablePeek) {
       setPluginMarketplaceState(previous => ({
@@ -2864,10 +2967,7 @@ export function PluginsWorkspace({
         error: null,
         ...(previous.items.length === 0
           ? {
-              items:
-                (cached?.marketplaceItems.length
-                  ? cached.marketplaceItems
-                  : peekedLocalState?.marketplaceItems) ?? previous.items,
+              items: mergeWarmMarketplaceItems(cached, peekedLocalState),
             }
           : {}),
       }))
@@ -2906,11 +3006,11 @@ export function PluginsWorkspace({
     // for first paint; never block settle on a stale peek refresh (that made OpenAI官方
     // feel like a cold load every time the user returned from background).
     const localPromise =
-      !isExplicitRefresh && peekedLocalState
+      !isExplicitRefresh && peekedLocalState && !shouldForceIncompleteLocalRefresh
         ? Promise.resolve(peekedLocalState)
         : localPluginApi.readState({
             ...localReadParams,
-            refresh: isExplicitRefresh,
+            refresh: isExplicitRefresh || shouldForceIncompleteLocalRefresh,
           })
     // Use a known device id when available (cache / prior load). Otherwise start cloud
     // immediately for progressive first paint; a device-scoped pass follows once local
@@ -2948,7 +3048,7 @@ export function PluginsWorkspace({
       const localRows = mergeDiskPersonalIntoLocalRows(
         localState?.marketplaceItems ??
           (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []).filter(
-            isLocalMarketplaceItem
+            isCodexCatalogItem
           ),
         diskPersonalItemsForMerge
       )
@@ -3023,6 +3123,7 @@ export function PluginsWorkspace({
       const localState = options.localState ?? null
       if (localState) {
         localStateForMerge = localState
+        setLocalInstalledStateReadyKey(marketplaceCacheKeyValue)
         setCurrentDeviceId(localState.deviceId)
         applyLocalMarketplaceState(localState)
         const selectedKey = localState.selectedMarketplaceId
@@ -3093,17 +3194,14 @@ export function PluginsWorkspace({
       const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       const hasCachedSnapshot = cachedSnapshot != null
       const cachedMarketplaceItems = cachedSnapshot?.marketplaceItems ?? []
-      const cachedCloudItems = cachedMarketplaceItems.filter(item => !isLocalMarketplaceItem(item))
+      const cachedCloudItems = cachedMarketplaceItems.filter(item => !isCodexCatalogItem(item))
       const cachedInstalledRaw = (cachedSnapshot?.installedPlugins ?? []).map(plugin => plugin.raw)
       const localRows = mergeDiskPersonalIntoLocalRows(
-        localStateForMerge?.marketplaceItems ??
-          cachedMarketplaceItems.filter(isLocalMarketplaceItem),
+        localStateForMerge?.marketplaceItems ?? cachedMarketplaceItems.filter(isCodexCatalogItem),
         diskPersonalItemsForMerge
       )
-      // When this key has a warm snapshot, its installed list is authoritative even if
-      // empty — never fall back to installedPluginsRef (may still be the prior account).
-      // Device-local Codex peek may still paint OpenAI catalog rows, but must not widen
-      // the account install strip until a refreshed local read (or cloud installs) arrives.
+      // Never reuse the prior account's React state. A same-device local snapshot may
+      // still contribute packages that are physically installed on this device.
       const previousInstalledRaw = hasCachedSnapshot
         ? cachedInstalledRaw
         : (localStateForMerge?.installedPlugins ?? [])
@@ -3115,6 +3213,8 @@ export function PluginsWorkspace({
           peekedLocalState != null &&
           localStateForMerge != null &&
           localStateForMerge === peekedLocalState,
+        cachedDeviceId: cachedSnapshot?.deviceId,
+        localDeviceId: localStateForMerge?.deviceId,
       })
       // Local-first paint must not blank cloud installs for THIS account. Never keep
       // prior-account strip rows when the current key has no warm snapshot.
@@ -3160,6 +3260,28 @@ export function PluginsWorkspace({
         return
       }
 
+      // Persist progressive cloud/local paint immediately. Waiting for every
+      // source to settle leaves the visible OpenAI catalog memory-only whenever
+      // Codex plugin/list is slow, so a destroyed/recreated WebView cold-loads it.
+      const progressiveMarketplaces =
+        localStateForMerge != null
+          ? toMarketplaceOptions(
+              localStateForMerge.marketplaces,
+              cloudMarketplaceAvailable,
+              t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
+            )
+          : marketplacesRef.current
+      setPluginMarketplaceCache({
+        cacheKey: marketplaceCacheKeyValue,
+        marketplaceItems: mergedItems,
+        installedPlugins: nextInstalled,
+        marketplaces: progressiveMarketplaces,
+        selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
+        deviceId: localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+        canPublish: Boolean(cachedSnapshot?.canPublish),
+        canSharePersonalPlugins: Boolean(cachedSnapshot?.canSharePersonalPlugins ?? true),
+        fetchedAt: Date.now(),
+      })
       setPluginMarketplaceState(previous => {
         if (sameMarketplaceItems(previous.items, mergedItems) && !previous.error) {
           return { ...previous, isLoading: false, error: null }
@@ -3186,6 +3308,7 @@ export function PluginsWorkspace({
     ) => {
       if (!isCurrent) return
       setCurrentDeviceId(localState.deviceId)
+      setLocalInstalledStateReadyKey(marketplaceCacheKeyValue)
       applyLocalMarketplaceState(localState)
       const localRows = mergeDiskPersonalIntoLocalRows(
         localState.marketplaceItems,
@@ -3201,7 +3324,7 @@ export function PluginsWorkspace({
       ).map(toInstalledPluginItem)
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: mergeMarketplaceCatalog(
-          pluginMarketplaceStateRef.current.items.filter(item => !isLocalMarketplaceItem(item)),
+          pluginMarketplaceStateRef.current.items.filter(item => !isCodexCatalogItem(item)),
           localRows,
           nextInstalledRaw.map(plugin => plugin.raw)
         ),
@@ -3239,7 +3362,12 @@ export function PluginsWorkspace({
 
     // Stale durable peek: revalidate Codex plugin/list in the background without
     // blocking first paint or the OpenAI官方 tab.
-    if (!isExplicitRefresh && peekedLocalState && !localStateIsFresh) {
+    if (
+      !isExplicitRefresh &&
+      peekedLocalState &&
+      !localStateIsFresh &&
+      !shouldForceIncompleteLocalRefresh
+    ) {
       void localPluginApi
         .readState({
           ...localReadParams,
@@ -3274,10 +3402,10 @@ export function PluginsWorkspace({
         const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
         const cloudItems =
           cloudItemsForMerge ??
-          (cached?.marketplaceItems ?? []).filter(item => !isLocalMarketplaceItem(item))
+          (cached?.marketplaceItems ?? []).filter(item => !isCodexCatalogItem(item))
         const localRows = mergeDiskPersonalIntoLocalRows(
           localStateForMerge?.marketplaceItems ??
-            (cached?.marketplaceItems ?? []).filter(isLocalMarketplaceItem),
+            (cached?.marketplaceItems ?? []).filter(isCodexCatalogItem),
           diskPersonalItems
         )
         const cachedInstalledRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
@@ -3289,6 +3417,8 @@ export function PluginsWorkspace({
             peekedLocalState != null &&
             localStateForMerge != null &&
             localStateForMerge === peekedLocalState,
+          cachedDeviceId: cached?.deviceId,
+          localDeviceId: localStateForMerge?.deviceId,
         })
         const nextInstalledRaw = mergeInstalledPlugins(
           cloudInstalledForMerge ??
@@ -3342,6 +3472,9 @@ export function PluginsWorkspace({
         })
       })
       .catch(() => undefined)
+      .finally(() => {
+        if (isCurrent) setIsOpenAiOfficialCatalogLoading(false)
+      })
 
     // Paint the installed strip as soon as account installs arrive — do not wait on
     // marketplace catalog or Codex plugin/list. That is what made Wework/official
@@ -3484,6 +3617,7 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
     if (!marketplaceNeedsDeviceSync(pluginMarketplaceState.items)) return
@@ -3524,7 +3658,7 @@ export function PluginsWorkspace({
           setPluginMarketplaceState(previous => {
             const nextItems = mergeMarketplaceCatalog(
               cloud.items,
-              previous.items.filter(isLocalMarketplaceItem),
+              previous.items.filter(isCodexCatalogItem),
               nextInstalled.map(plugin => plugin.raw)
             )
             if (sameMarketplaceItems(previous.items, nextItems) && !previous.error) {
@@ -3559,6 +3693,7 @@ export function PluginsWorkspace({
     cloudMarketplaceAvailable,
     cloudToken,
     currentDeviceId,
+    localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,
     pluginMarketplaceState.isLoading,
@@ -3579,7 +3714,7 @@ export function PluginsWorkspace({
           setPluginMarketplaceState(previous => {
             const nextItems = mergeMarketplaceCatalog(
               response.items,
-              previous.items.filter(isLocalMarketplaceItem),
+              previous.items.filter(isCodexCatalogItem),
               installedPluginsRef.current.map(plugin => plugin.raw)
             )
             if (sameMarketplaceItems(previous.items, nextItems)) {
@@ -3822,12 +3957,22 @@ export function PluginsWorkspace({
     // Featured is a Codex/OpenAI concept — keep the English title.
     // On the OpenAI官方 tab, Other / All plugins stay English too; other tabs localize.
     const openAiOfficialLabels = marketplaceDistributionFilter === 'official'
-    return groupMarketplaceItemsByCategory(visibleMarketplaceItems, {
-      featured: 'Featured',
-      other: openAiOfficialLabels ? 'Other' : t('workbench.plugins_category_other', '其他'),
-      all: openAiOfficialLabels ? 'All plugins' : t('workbench.plugins_all', '全部插件'),
-    })
-  }, [marketplaceDistributionFilter, t, visibleMarketplaceItems])
+    return groupMarketplaceItemsAdaptively(
+      visibleMarketplaceItems,
+      {
+        featured: 'Featured',
+        other: openAiOfficialLabels ? 'Other' : t('workbench.plugins_category_other', '其他'),
+        all: openAiOfficialLabels ? 'All plugins' : t('workbench.plugins_all', '全部插件'),
+      },
+      { forceFlat: Boolean(normalizedQuery) }
+    )
+  }, [marketplaceDistributionFilter, normalizedQuery, t, visibleMarketplaceItems])
+  const isOpenAiOfficialViewLoading =
+    marketplaceDistributionFilter === 'official' &&
+    !marketplaceSourceFilterKey &&
+    !normalizedQuery &&
+    visibleMarketplaceItems.length === 0 &&
+    isOpenAiOfficialCatalogLoading
   const browsingCategorySection = useMemo(
     () =>
       browsingCategoryKey
@@ -4800,7 +4945,9 @@ export function PluginsWorkspace({
                 </p>
               </div>
             ) : visibleMarketplaceItems.length === 0 &&
-              (pluginMarketplaceState.isLoading || isMarketplaceRefreshing) &&
+              (pluginMarketplaceState.isLoading ||
+                isMarketplaceRefreshing ||
+                isOpenAiOfficialViewLoading) &&
               !normalizedQuery ? (
               <PluginMarketplaceLoadingSkeleton
                 message={
@@ -4899,7 +5046,7 @@ export function PluginsWorkspace({
                 {marketplaceCategorySections.map(section => {
                   const { preview, rest } = previewMarketplaceSectionItems(
                     section.items,
-                    MARKETPLACE_SECTION_PREVIEW_COUNT
+                    section.flat ? section.items.length : MARKETPLACE_SECTION_PREVIEW_COUNT
                   )
                   return (
                     <section
@@ -4907,9 +5054,11 @@ export function PluginsWorkspace({
                       data-testid={`plugins-category-section-${section.key}`}
                       className="plugin-market-category-section"
                     >
-                      <div className="plugin-market-section-head">
-                        <h2>{section.title}</h2>
-                      </div>
+                      {!section.flat && (
+                        <div className="plugin-market-section-head">
+                          <h2>{section.title}</h2>
+                        </div>
+                      )}
                       <div className="plugin-market-card-grid">
                         {preview.map(item => (
                           <PluginMarketplaceRow

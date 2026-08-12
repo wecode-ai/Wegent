@@ -324,6 +324,10 @@ const READ_STATE_LEGACY_STORAGE_KEYS = ['wework.plugins.codexReadState.v1'] as c
 const READ_STATE_FRESH_TTL_MS = 60_000
 /** Keep a durable snapshot so cold app launches can paint before plugin/list (~10s). */
 const READ_STATE_DURABLE_TTL_MS = 7 * 24 * 60 * 60_000
+/** Keep package artwork from exhausting the shared WebView localStorage quota. */
+const MAX_DURABLE_DATA_URL_CHARS = 4096
+/** A marketplace switch can produce several equivalent snapshots; bound their disk footprint. */
+const MAX_DURABLE_READ_STATE_ENTRIES = 4
 let cachedState: LocalCodexPluginsState | null = null
 let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
@@ -396,12 +400,43 @@ function parsePersistedReadStateStore(raw: string | null): PersistedReadStateSto
   }
 }
 
+function preferredPersistedReadStateEntry(
+  store: PersistedReadStateStore
+): PersistedReadStateEntry | undefined {
+  // PluginsWorkspace always peeks the merged catalog for first paint. Preserve
+  // that canonical entry ahead of a newer single-market snapshot under quota.
+  return (
+    store.entries[readStateParamsKey({ mergeAllMarketplaces: true })] ??
+    Object.values(store.entries).sort((left, right) => right.cachedAt - left.cachedAt)[0]
+  )
+}
+
 function readPersistedReadStateStore(): PersistedReadStateStore {
   if (typeof window === 'undefined') return { version: 2, entries: {} }
-  const fromLocal = parsePersistedReadStateStore(
-    window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
-  )
-  if (fromLocal) return fromLocal
+  const localRaw = window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
+  const fromLocal = parsePersistedReadStateStore(localRaw)
+  if (fromLocal) {
+    const compacted: PersistedReadStateStore = {
+      version: 2,
+      entries: Object.fromEntries(
+        Object.entries(fromLocal.entries).map(([key, entry]) => [
+          key,
+          { ...entry, state: toDurableReadState(entry.state) },
+        ])
+      ),
+    }
+    const compactedRaw = JSON.stringify(compacted)
+    if (localRaw && compactedRaw.length < localRaw.length) {
+      // Early v2 builds stored complete plugin details. Compact them before any
+      // network refresh so an old snapshot cannot keep the shared quota full.
+      try {
+        window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, compactedRaw)
+      } catch {
+        // The compact in-memory value is still usable for this session.
+      }
+    }
+    return compacted
+  }
 
   // Migrate yesterday's v1 durable peek / session snapshot into v2 once.
   for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
@@ -433,22 +468,25 @@ function readPersistedReadStateStore(): PersistedReadStateStore {
     window.sessionStorage.getItem(READ_STATE_SESSION_STORAGE_KEY)
   )
   if (fromSession) {
-    writePersistedReadStateStore(fromSession)
-    try {
-      window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
-    } catch {
-      // Ignore storage failures; memory cache still works for the session.
+    const persisted = writePersistedReadStateStore(fromSession)
+    if (persisted) {
+      try {
+        window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
+      } catch {
+        // Ignore storage failures; memory cache still works for the session.
+      }
     }
     return fromSession
   }
   return { version: 2, entries: {} }
 }
 
-function writePersistedReadStateStore(store: PersistedReadStateStore): void {
-  if (typeof window === 'undefined') return
+function writePersistedReadStateStore(store: PersistedReadStateStore): boolean {
+  if (typeof window === 'undefined') return false
+  const previousRaw = window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
   try {
     window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, JSON.stringify(store))
-    return
+    return true
   } catch (error) {
     console.warn(
       '[Wework] durable Codex plugin cache write failed; retrying with latest entry only',
@@ -457,17 +495,54 @@ function writePersistedReadStateStore(store: PersistedReadStateStore): void {
   }
   // Quota / private-mode: keep a single latest snapshot so cold launches still paint.
   try {
-    const latest = Object.values(store.entries).sort(
-      (left, right) => right.cachedAt - left.cachedAt
-    )[0]
-    if (!latest) return
-    window.localStorage.setItem(
-      READ_STATE_LOCAL_STORAGE_KEY,
-      JSON.stringify({ version: 2 as const, entries: { [latest.paramsKey]: latest } })
-    )
+    const latest = preferredPersistedReadStateEntry(store)
+    if (!latest) return false
+    const latestRaw = JSON.stringify({
+      version: 2 as const,
+      entries: { [latest.paramsKey]: latest },
+    })
+    try {
+      window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, latestRaw)
+      return true
+    } catch {
+      // WebKit can reject replacement while the old value still occupies quota.
+      // Free this exact cache key, retry the compact active snapshot, and restore
+      // the previous atomic value if the retry still cannot be stored.
+      window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
+      try {
+        window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, latestRaw)
+        return true
+      } catch (retryError) {
+        if (previousRaw) {
+          try {
+            window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, previousRaw)
+          } catch {
+            // Keep the newest snapshot in sessionStorage below.
+          }
+        }
+        throw retryError
+      }
+    }
   } catch (error) {
     console.warn('[Wework] durable Codex plugin cache write failed', error)
+    try {
+      const latest = preferredPersistedReadStateEntry(store)
+      if (latest) {
+        window.sessionStorage.setItem(
+          READ_STATE_SESSION_STORAGE_KEY,
+          JSON.stringify({ version: 2 as const, entries: { [latest.paramsKey]: latest } })
+        )
+      }
+    } catch {
+      // Memory cache remains available until the WebView is destroyed.
+    }
+    return false
   }
+}
+
+function slimDurableAssetUrl(value?: string | null): string | null {
+  if (!value) return null
+  return value.startsWith('data:') && value.length > MAX_DURABLE_DATA_URL_CHARS ? null : value
 }
 
 function slimPluginInterfaceForDurableCache(
@@ -481,11 +556,30 @@ function slimPluginInterfaceForDurableCache(
     shortDescription: value.shortDescription ?? null,
     developerName: value.developerName ?? null,
     category: value.category ?? null,
-    logo: value.logo ?? null,
-    logoDark: value.logoDark ?? null,
-    composerIcon: value.composerIcon ?? null,
+    logo: slimDurableAssetUrl(value.logo),
+    logoDark: slimDurableAssetUrl(value.logoDark),
     brandColor: value.brandColor ?? null,
   }
+}
+
+function slimPluginManifestForDurableCache(
+  manifest: Record<string, unknown> | null | undefined
+): Record<string, unknown> {
+  if (!manifest) return {}
+  const keys = [
+    'name',
+    'id',
+    'marketplaceId',
+    'source',
+    'installPolicy',
+    'authPolicy',
+    'availability',
+    'disabledReason',
+    'eligiblePlanTypes',
+  ] as const
+  return Object.fromEntries(
+    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
+  )
 }
 
 function slimConnectorsForDurableCache(
@@ -519,6 +613,7 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
         (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
       components: emptyComponents(),
       interface: slimPluginInterfaceForDurableCache(item.interface),
+      manifest: slimPluginManifestForDurableCache(item.manifest),
     })),
     installedPlugins: state.installedPlugins.map(plugin => ({
       ...plugin,
@@ -530,8 +625,51 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
             : plugin.spec.description,
         components: slimConnectorsForDurableCache(plugin),
         interface: slimPluginInterfaceForDurableCache(plugin.spec.interface),
+        manifest: slimPluginManifestForDurableCache(plugin.spec.manifest),
       },
     })),
+  }
+}
+
+function isOpenAiOfficialMarketplaceItem(item: PluginMarketplaceItem): boolean {
+  const marketplaceId = item.manifest?.marketplaceId
+  return typeof marketplaceId === 'string' && isOpenAiOfficialMarketplaceId(marketplaceId)
+}
+
+/**
+ * An app-server reconnection can briefly return a successful but incomplete
+ * plugin/list response after the desktop app resumes. Treat a missing OpenAI
+ * marketplace as incomplete when the durable snapshot still has one: otherwise
+ * that transient response permanently replaces the cache with an empty official
+ * catalog and every later open looks like a first sync.
+ */
+function retainOpenAiOfficialCatalog(
+  previous: LocalCodexPluginsState | null,
+  next: LocalCodexPluginsState
+): LocalCodexPluginsState {
+  const previousOfficialMarketplaces = (previous?.marketplaces ?? []).filter(
+    marketplace =>
+      isOpenAiOfficialMarketplaceId(marketplace.id) ||
+      isOpenAiOfficialMarketplaceId(marketplace.name)
+  )
+  const hasCurrentOfficialItems = next.marketplaceItems.some(isOpenAiOfficialMarketplaceItem)
+  if (previousOfficialMarketplaces.length === 0 || hasCurrentOfficialItems) return next
+
+  const existingItemIds = new Set(next.marketplaceItems.map(item => String(item.id)))
+  const retainedItems = (previous?.marketplaceItems ?? []).filter(
+    item => isOpenAiOfficialMarketplaceItem(item) && !existingItemIds.has(String(item.id))
+  )
+  const existingMarketplaceIds = new Set(next.marketplaces.map(marketplace => marketplace.id))
+  const retainedMarketplaces = previousOfficialMarketplaces.filter(
+    marketplace => !existingMarketplaceIds.has(marketplace.id)
+  )
+  console.warn(
+    '[Wework] Codex plugin/list returned an incomplete OpenAI marketplace after resume; retaining cached catalog'
+  )
+  return {
+    ...next,
+    marketplaceItems: [...next.marketplaceItems, ...retainedItems],
+    marketplaces: [...next.marketplaces, ...retainedMarketplaces],
   }
 }
 
@@ -546,6 +684,10 @@ function persistReadStateSnapshot(
     cachedAt,
     state: toDurableReadState(state),
   }
+  const retainedEntries = Object.entries(store.entries)
+    .sort(([, left], [, right]) => right.cachedAt - left.cachedAt)
+    .slice(0, MAX_DURABLE_READ_STATE_ENTRIES)
+  store.entries = Object.fromEntries(retainedEntries)
   writePersistedReadStateStore(store)
 }
 
@@ -797,8 +939,10 @@ async function ensurePluginInWeworkPersonal(options: {
       console.warn('[Wework] Failed to install migrated personal plugin', error)
     }
   }
-  // Disk / App Server may have changed even when migrated=false (idempotent ensure).
-  clearLocalCodexPluginsReadStateCache()
+  // `migrated: false` is a read-only idempotent hit in the Tauri command. Do not
+  // erase the just-written OpenAI catalog on every personal-plugin reconciliation.
+  // A real migration reloads and persists a fresh snapshot in readState below.
+  if (ensured.migrated) clearLocalCodexPluginsReadStateCache()
   return ensured
 }
 
@@ -1840,16 +1984,24 @@ export function applyInstalledPluginsToMarketplaceItems(
   }
 
   return items.map(item => {
-    if (item.installed && item.installedPluginId != null) return item
     const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) return item
     const id = installedPluginId(installed)
+    const installedLocally = typeof installed.spec.pluginId !== 'number'
+    if (
+      item.installed &&
+      item.installedPluginId != null &&
+      !installedLocally &&
+      item.enabled === installed.spec.enabled
+    ) {
+      return item
+    }
     return {
       ...item,
       installed: true,
       installedPluginId:
         typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
-      installedLocally: true,
+      installedLocally: item.installedLocally || installedLocally,
       enabled: installed.spec.enabled,
     }
   })
@@ -1987,7 +2139,7 @@ async function loadReadStateSnapshot(
     installedPlugins
   )
   const marketplaces = availableMarketplaces.map(marketplaceInfo)
-  const state: LocalCodexPluginsState = {
+  const loadedState: LocalCodexPluginsState = {
     marketplaceItems,
     installedPlugins,
     marketplaces,
@@ -1998,6 +2150,10 @@ async function loadReadStateSnapshot(
     installRegistryPath: '',
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
+  const state = retainOpenAiOfficialCatalog(
+    cachedStateParamsKey === paramsKey ? cachedState : null,
+    loadedState
+  )
   if (generation >= cachedStateGeneration) {
     // Always cache the unfiltered catalog so search queries can reuse it.
     rememberReadStateSnapshot(paramsKey, state, generation)

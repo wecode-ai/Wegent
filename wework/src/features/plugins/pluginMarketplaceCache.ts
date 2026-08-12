@@ -1,5 +1,6 @@
-import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPluginComponents, PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
+import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 
 export interface PluginMarketplaceCacheSnapshot {
   cacheKey: string
@@ -25,12 +26,13 @@ export interface PluginMarketplaceCacheSnapshot {
   logosStripped?: boolean
 }
 
-/** v2: prefer full logo persistence; invalidate v1 entries that nulled data-URL logos. */
+/** v2 durable snapshots are compacted in place to preserve existing warm catalogs. */
 const STORAGE_KEY = 'wework.plugins.marketplaceCache.v2'
 /** Keep a warm catalog / installed strip across app restarts. */
 const DURABLE_TTL_MS = 7 * 24 * 60 * 60 * 1000
-/** Only strip oversized inlined logos when localStorage rejects the full snapshot. */
+/** Never let one inlined package logo consume a material share of WebView storage. */
 const MAX_PERSISTED_LOGO_CHARS = 4096
+const COMPRESSED_STORAGE_PREFIX = 'lz:'
 
 interface PersistedMarketplaceCacheStore {
   entries: Record<string, PluginMarketplaceCacheSnapshot>
@@ -69,26 +71,72 @@ function slimLogoField(value?: string | null): string | null | undefined {
 function slimInterface(interfaceData?: PluginInterface | null): PluginInterface | null {
   if (!interfaceData) return null
   return {
-    ...interfaceData,
+    displayName: interfaceData.displayName ?? null,
+    shortDescription: interfaceData.shortDescription ?? null,
+    developerName: interfaceData.developerName ?? null,
+    category: interfaceData.category ?? null,
     logo: slimLogoField(interfaceData.logo),
     logoDark: slimLogoField(interfaceData.logoDark),
     composerIcon: slimLogoField(interfaceData.composerIcon),
+    brandColor: interfaceData.brandColor ?? null,
   }
 }
 
-function toPersistedSnapshot(
-  next: PluginMarketplaceCacheSnapshot,
-  logosStripped: boolean
-): PluginMarketplaceCacheSnapshot {
-  if (!logosStripped) {
-    return { ...next, logosStripped: false }
+function emptyComponents(): InstalledPluginComponents {
+  return {
+    skills: [],
+    commands: [],
+    agents: [],
+    hooks: [],
+    mcps: [],
+    lsps: [],
+    monitors: [],
+    bins: [],
+    connectors: [],
   }
+}
+
+function slimManifest(manifest?: Record<string, unknown> | null): Record<string, unknown> {
+  if (!manifest) return {}
+  const keys = [
+    'name',
+    'id',
+    'marketplaceId',
+    'source',
+    'installPolicy',
+    'authPolicy',
+    'availability',
+    'disabledReason',
+    'eligiblePlanTypes',
+  ] as const
+  return Object.fromEntries(
+    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
+  )
+}
+
+function hasOversizedLogo(interfaceData?: PluginInterface | null): boolean {
+  if (!interfaceData) return false
+  return [interfaceData.logo, interfaceData.logoDark, interfaceData.composerIcon].some(
+    value =>
+      typeof value === 'string' &&
+      value.startsWith('data:') &&
+      value.length > MAX_PERSISTED_LOGO_CHARS
+  )
+}
+
+function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarketplaceCacheSnapshot {
+  const logosStripped =
+    next.logosStripped === true ||
+    next.marketplaceItems.some(item => hasOversizedLogo(item.interface)) ||
+    next.installedPlugins.some(plugin => hasOversizedLogo(plugin.raw.spec.interface))
   return {
     ...next,
-    logosStripped: true,
+    logosStripped,
     marketplaceItems: next.marketplaceItems.map(item => ({
       ...item,
       interface: slimInterface(item.interface),
+      components: emptyComponents(),
+      manifest: slimManifest(item.manifest),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
       ...plugin,
@@ -122,9 +170,28 @@ function readPersistedStore(): PersistedMarketplaceCacheStore {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return { entries: {} }
-    const parsed = JSON.parse(raw) as PersistedMarketplaceCacheStore
+    const json = raw.startsWith(COMPRESSED_STORAGE_PREFIX)
+      ? decompressFromUTF16(raw.slice(COMPRESSED_STORAGE_PREFIX.length))
+      : raw
+    if (!json) return { entries: {} }
+    const parsed = JSON.parse(json) as PersistedMarketplaceCacheStore
     if (!parsed || typeof parsed !== 'object' || !parsed.entries) return { entries: {} }
-    return { entries: parsed.entries }
+    const compacted = {
+      entries: Object.fromEntries(
+        Object.entries(parsed.entries).map(([key, entry]) => [key, toPersistedSnapshot(entry)])
+      ),
+    }
+    const compactedRaw = JSON.stringify(compacted)
+    if (compactedRaw.length < raw.length) {
+      // Older v2 builds persisted complete plugin details and large data-URL logos.
+      // Rewrite them on first read so the Codex catalog cache has quota to persist.
+      try {
+        window.localStorage.setItem(STORAGE_KEY, compactedRaw)
+      } catch {
+        // The compact in-memory value is still usable for this session.
+      }
+    }
+    return compacted
   } catch {
     return { entries: {} }
   }
@@ -142,6 +209,14 @@ function writePersistedStore(store: PersistedMarketplaceCacheStore): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
 }
 
+function writeCompressedPersistedStore(store: PersistedMarketplaceCacheStore): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    `${COMPRESSED_STORAGE_PREFIX}${compressToUTF16(JSON.stringify(store))}`
+  )
+}
+
 function isUsableSnapshot(
   entry: PluginMarketplaceCacheSnapshot | null | undefined,
   cacheKey?: string
@@ -155,7 +230,18 @@ function isUsableSnapshot(
 
 function readPersistedSnapshot(cacheKey: string): PluginMarketplaceCacheSnapshot | null {
   const entry = readPersistedStore().entries[cacheKey]
-  return isUsableSnapshot(entry, cacheKey) ? entry : null
+  if (!isUsableSnapshot(entry, cacheKey)) return null
+  if (splitPluginMarketplaceCacheKey(cacheKey).tokenHint !== 'anon') {
+    try {
+      // Only the active authenticated account can paint the next app launch.
+      // Keeping several full catalogs consumed the quota needed by the canonical
+      // local/OpenAI cache and made every background return wait on plugin/list.
+      writePersistedStore({ entries: { [cacheKey]: entry } })
+    } catch {
+      // The exact snapshot is still usable in memory.
+    }
+  }
+  return entry
 }
 
 function trimPersistedEntries(store: PersistedMarketplaceCacheStore): void {
@@ -171,28 +257,47 @@ function trimPersistedEntries(store: PersistedMarketplaceCacheStore): void {
 
 function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
   if (typeof window === 'undefined') return
-  const store = readPersistedStore()
-  const write = (entry: PluginMarketplaceCacheSnapshot) => {
-    store.entries[next.cacheKey] = entry
-    trimPersistedEntries(store)
-    writePersistedStore(store)
-  }
+  const previousRaw = window.localStorage.getItem(STORAGE_KEY)
+  const persisted = toPersistedSnapshot(next)
+  const store =
+    splitPluginMarketplaceCacheKey(next.cacheKey).tokenHint === 'anon'
+      ? readPersistedStore()
+      : { entries: {} }
+  store.entries[next.cacheKey] = persisted
+  trimPersistedEntries(store)
 
   try {
-    // Prefer keeping package logos on disk so restart does not flash initials.
-    write(toPersistedSnapshot(next, false))
+    writePersistedStore(store)
   } catch (error) {
     if (!isQuotaExceededError(error)) {
       console.warn('[Wework] Failed to persist plugin marketplace cache.', error)
       return
     }
     try {
-      write(toPersistedSnapshot(next, true))
+      // Account switches can leave several otherwise valid snapshots. Under quota
+      // pressure, the active account is the only one needed for the next paint.
+      writePersistedStore({ entries: { [next.cacheKey]: persisted } })
       console.warn(
-        '[Wework] Plugin marketplace cache exceeded storage quota; persisted without large data-URL logos.'
+        '[Wework] Plugin marketplace cache exceeded storage quota; kept the active account only.'
       )
-    } catch (slimError) {
-      console.warn('[Wework] Failed to persist plugin marketplace cache.', slimError)
+    } catch {
+      try {
+        // WebKit may count the value being replaced against quota. Release this
+        // exact rebuildable key, then synchronously compress the compact snapshot.
+        // Reading remains synchronous, so background restore still paints in the
+        // first React render instead of waiting on IndexedDB or plugin/list.
+        window.localStorage.removeItem(STORAGE_KEY)
+        writeCompressedPersistedStore({ entries: { [next.cacheKey]: persisted } })
+      } catch (retryError) {
+        if (previousRaw) {
+          try {
+            window.localStorage.setItem(STORAGE_KEY, previousRaw)
+          } catch {
+            // The full-fidelity snapshot remains in memory for this WebView.
+          }
+        }
+        console.warn('[Wework] Failed to persist plugin marketplace cache.', retryError)
+      }
     }
   }
 }

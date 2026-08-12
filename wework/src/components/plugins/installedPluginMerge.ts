@@ -81,21 +81,57 @@ export function mergeInstalledPlugins(
       .filter((pluginId): pluginId is number => pluginId !== null)
       .map(String)
   )
+  const localItemsByIdentity = new Map(
+    localItems.flatMap(item => {
+      const identity = pluginIdentity(item)
+      return identity ? ([[identity, item]] as const) : []
+    })
+  )
 
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
+      const currentDeviceInstallation = item.status.devices?.find(
+        device => device.deviceId === currentDeviceId
+      )
+      const hasMaterializedRelease = Boolean(currentDeviceInstallation?.actualReleaseId)
       if (
         currentDeviceId &&
         item.spec.installState !== 'installed' &&
-        item.spec.installState !== 'update_available'
+        item.spec.installState !== 'update_available' &&
+        !hasMaterializedRelease
       ) {
         continue
       }
       if (locallyPublishedPluginIds.has(String(item.spec.pluginId))) {
         continue
       }
-      merged.set(`market:${item.spec.pluginId}:${item.spec.releaseId}`, item)
       const identity = pluginIdentity(item)
+      const actualReleaseId = currentDeviceInstallation?.actualReleaseId
+      const localMaterialization =
+        actualReleaseId && actualReleaseId !== item.spec.releaseId && identity
+          ? localItemsByIdentity.get(identity)
+          : undefined
+      const mergedItem = localMaterialization
+        ? {
+            ...item,
+            spec: {
+              ...item.spec,
+              releaseId: actualReleaseId,
+              version: localMaterialization.spec.version ?? null,
+              manifest: localMaterialization.spec.manifest,
+              components: localMaterialization.spec.components,
+              interface: localMaterialization.spec.interface,
+              packageRef: localMaterialization.spec.packageRef,
+              sourcePayload: {
+                ...(localMaterialization.spec.sourcePayload ?? {}),
+                ...(item.spec.sourcePayload ?? {}),
+                releaseId: actualReleaseId,
+                cloudInstalledPluginId: localPluginId(item),
+              },
+            },
+          }
+        : item
+      merged.set(`market:${item.spec.pluginId}:${mergedItem.spec.releaseId}`, mergedItem)
       if (identity) cloudPluginIdentities.add(identity)
     }
   }
@@ -180,17 +216,24 @@ export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
 }
 
 /**
- * Progressive paints may reuse a device-local Codex peek while an account-scoped
- * marketplace cache already has an authoritative install strip (including empty).
- * Peek must not widen that strip; refreshed local reads may still replace it.
+ * Progressive paints may reuse a device-local Codex peek beside an account-scoped
+ * marketplace cache. Same-device installs are authoritative for materialized packages;
+ * a peek from another device must not widen the current account strip.
  */
 export function resolveProgressiveLocalInstalledRaw<T>(options: {
   hasCachedSnapshot: boolean
   cachedInstalledRaw: T[]
   localInstalledRaw?: T[] | null
   localStateIsPeek: boolean
+  cachedDeviceId?: string | null
+  localDeviceId?: string | null
 }): T[] {
   if (options.hasCachedSnapshot && options.localStateIsPeek) {
+    const cachedDeviceId = options.cachedDeviceId?.trim() || ''
+    const localDeviceId = options.localDeviceId?.trim() || ''
+    if (localDeviceId && (!cachedDeviceId || cachedDeviceId === localDeviceId)) {
+      return options.localInstalledRaw ?? options.cachedInstalledRaw
+    }
     return options.cachedInstalledRaw
   }
   if (options.localInstalledRaw != null) {

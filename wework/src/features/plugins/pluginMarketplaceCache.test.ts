@@ -70,7 +70,7 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache('other')).toBeNull()
   })
 
-  test('persists data-URL logos so restart does not fall back to initials', () => {
+  test('keeps full logos in memory but strips oversized data URLs from durable storage', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-logos')
     const logo = `data:image/png;base64,${'A'.repeat(5000)}`
     setPluginMarketplaceCache({
@@ -95,9 +95,52 @@ describe('pluginMarketplaceCache', () => {
       fetchedAt: Date.now(),
     })
 
-    resetPluginMarketplaceCacheMemory()
     expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.interface?.logo).toBe(logo)
-    expect(getPluginMarketplaceCache(key)?.logosStripped).not.toBe(true)
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.interface?.logo).toBeNull()
+    expect(getPluginMarketplaceCache(key)?.logosStripped).toBe(true)
+  })
+
+  test('compacts an existing heavy v2 snapshot before returning it', () => {
+    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const key = pluginMarketplaceCacheKey('http://api', 'token-heavy-v2')
+    const logo = `data:image/png;base64,${'A'.repeat(200_000)}`
+    const heavySnapshot = {
+      cacheKey: key,
+      marketplaceItems: [
+        item({
+          id: 3,
+          name: 'tingwen',
+          interface: {
+            displayName: '听文成稿',
+            shortDescription: 'Create documents',
+            longDescription: 'L'.repeat(100_000),
+            logo,
+          },
+        }),
+      ],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    }
+    const heavyRaw = JSON.stringify({ entries: { [key]: heavySnapshot } })
+    window.localStorage.setItem(storageKey, heavyRaw)
+    resetPluginMarketplaceCacheMemory()
+
+    const restored = getPluginMarketplaceCache(key)
+    const compactedRaw = window.localStorage.getItem(storageKey) ?? ''
+
+    expect(restored?.marketplaceItems[0]?.interface).toMatchObject({
+      displayName: '听文成稿',
+      shortDescription: 'Create documents',
+      logo: null,
+    })
+    expect(restored?.marketplaceItems[0]?.interface?.longDescription).toBeUndefined()
+    expect(compactedRaw.length).toBeLessThan(heavyRaw.length / 10)
   })
 
   test('anon cache key never reuses an authenticated snapshot', () => {
@@ -122,6 +165,68 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(authedKey)?.marketplaceItems).toEqual([
       expect.objectContaining({ id: 9, name: 'wework-official' }),
     ])
+  })
+
+  test('authenticated lookup releases durable snapshots from inactive accounts', () => {
+    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const activeKey = pluginMarketplaceCacheKey('http://api', 'token-active')
+    const inactiveKey = pluginMarketplaceCacheKey('http://api', 'token-inactive')
+    const snapshotFor = (cacheKey: string, name: string) => ({
+      cacheKey,
+      marketplaceItems: [item({ id: name, name })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        entries: {
+          [inactiveKey]: snapshotFor(inactiveKey, 'inactive'),
+          [activeKey]: snapshotFor(activeKey, 'active'),
+        },
+      })
+    )
+    resetPluginMarketplaceCacheMemory()
+
+    expect(getPluginMarketplaceCache(activeKey)?.marketplaceItems[0]?.name).toBe('active')
+    const persisted = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as {
+      entries?: Record<string, unknown>
+    }
+    expect(Object.keys(persisted.entries ?? {})).toEqual([activeKey])
+  })
+
+  test('retries a compact snapshot after releasing the value WebKit counts toward quota', () => {
+    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const key = pluginMarketplaceCacheKey('http://api', 'token-quota-retry')
+    window.localStorage.setItem(storageKey, JSON.stringify({ entries: { old: {} } }))
+    const nativeSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (name, value) {
+      if (name === storageKey && window.localStorage.getItem(storageKey)) {
+        throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      }
+      nativeSetItem.call(this, name, value)
+    })
+
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [item({ id: 'gmail', name: 'gmail' })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+
+    expect(window.localStorage.getItem(storageKey)).toMatch(/^lz:/)
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.name).toBe('gmail')
   })
 
   test('rehydrates installed plugins from durable storage after memory reset', () => {
