@@ -77,7 +77,7 @@ Enable **Experimental features** under **Settings → General**, then use **Pers
 - **Suggest** shows a correction above the composer for you to approve or dismiss.
 - **Auto-correct** steers an active response when a clear deviation is found, or starts a normal follow-up just as if you had sent the instruction from the composer.
 
-Supervision settings belong to the current task. The review model can follow the current task or be selected independently, and the review frequency can be 10 seconds, 30 seconds, 1 minute, or 5 minutes. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
+Supervision settings belong to the current task. The review model can follow the current task or be selected independently, and the review frequency can be 10 seconds, 30 seconds, 1 minute, or 5 minutes. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task. You can also save, disable, or resolve supervisor suggestions while the task is running; the current task displays the updated supervision state immediately.
 
 ## Review the processing timeline
 
