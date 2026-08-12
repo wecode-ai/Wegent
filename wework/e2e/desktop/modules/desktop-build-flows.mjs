@@ -99,10 +99,20 @@ import {
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
-async function waitForControlText(control, selector, expected, message) {
+async function waitForSingleProjectByTitle(control, expectedTitle, message, timeoutMs) {
   const startedAt = Date.now()
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    if ((await control.command('getText', selector)).trim() === expected) return
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const projectMenuTestIds = snapshot.testIds.filter(testId => testId.startsWith('project-menu-'))
+    if (projectMenuTestIds.length === 1) {
+      const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
+      try {
+        const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
+        if (title.trim() === expectedTitle) return { projectId, snapshot }
+      } catch {
+        // The transient project row can disappear between snapshot and lookup.
+      }
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
@@ -828,30 +838,16 @@ async function verifyCloudProjectFlow(
   await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
   await waitForFolderPathReady(control, replacementWorkspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  const replacementProjectSnapshot = await waitForSnapshot(
+  const { projectId: replacementProjectId } = await waitForSingleProjectByTitle(
     control,
-    snapshot =>
-      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
-      !snapshot.testIds.includes('device-folder-path-input') &&
-      !snapshot.testIds.includes('confirm-device-folder-picker-button') &&
-      snapshot.text.includes('replacement-workspace'),
-    'The duplicate regression cloud project was not created'
+    'replacement-workspace',
+    'Creating another cloud project restored the removed project instead of the replacement',
+    DEFAULT_STEP_TIMEOUT_MS
   )
-  const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
-    testId.startsWith('project-menu-')
-  )
-  assert.ok(replacementProjectMenuTestId, 'The replacement cloud project identity was not found')
-  const replacementProjectId = replacementProjectMenuTestId.slice('project-menu-'.length)
   assert.notEqual(
     replacementProjectId,
     currentProjectId,
     'Creating another cloud project restored the removed project identity'
-  )
-  await waitForControlText(
-    control,
-    `[data-testid="project-title-${replacementProjectId}"]`,
-    'replacement-workspace',
-    'Creating another cloud project restored the removed project instead of the replacement'
   )
 
   await cloudEnvironment.aliasCloudDeviceToCurrentApp()
@@ -867,29 +863,16 @@ async function verifyCloudProjectFlow(
   await captureVerificationScreenshot(control, 'cloud-08-local-project-deduplicated.png')
 
   await restartDesktopApp()
-  const restartedProjectSnapshot = await waitForSnapshot(
+  const { projectId: restartedProjectId } = await waitForSingleProjectByTitle(
     control,
-    snapshot =>
-      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
-      snapshot.text.includes('replacement-workspace'),
+    'replacement-workspace',
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  const restartedProjectMenuTestId = restartedProjectSnapshot.testIds.find(testId =>
-    testId.startsWith('project-menu-')
-  )
-  assert.ok(restartedProjectMenuTestId, 'The restarted replacement project identity was not found')
-  const restartedProjectId = restartedProjectMenuTestId.slice('project-menu-'.length)
   assert.notEqual(
     restartedProjectId,
     currentProjectId,
     'Restarting Wework restored the removed project identity'
-  )
-  await waitForControlText(
-    control,
-    `[data-testid="project-title-${restartedProjectId}"]`,
-    'replacement-workspace',
-    'Restarting Wework restored the removed project instead of the replacement'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
 }
