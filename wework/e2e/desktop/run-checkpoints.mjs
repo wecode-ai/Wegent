@@ -10,6 +10,7 @@ import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 3
 const CHECKPOINT_SCENARIO_MODULES = {
+  'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',

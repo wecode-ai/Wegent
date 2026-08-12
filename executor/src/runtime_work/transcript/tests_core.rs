@@ -3,6 +3,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::super::*;
+
+#[test]
+fn visible_user_request_skips_nested_application_context_from_referenced_conversations() {
+    let content = concat!(
+        "<application_context>\n",
+        "[referencedConversations]\n",
+        "[{\"role\":\"user\",\"content\":\"<application_context>\\n",
+        "[source]\\nstate\\n</application_context>\\n\\nOriginal question\"}]\n",
+        "</application_context>\n\n",
+        "Continue with the referenced conversation"
+    );
+
+    assert_eq!(
+        normalized_user_request_content(content),
+        "Continue with the referenced conversation"
+    );
+}
+
 #[test]
 fn transcript_restores_failed_turn_without_assistant_output() {
     let thread = json!({
