@@ -699,6 +699,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
         headers=_auth_headers(test_token),
         json={
             "deviceId": "device-1",
+            "projectKey": "remote-project-id",
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
         },
@@ -708,6 +709,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     assert response.json()["accepted"] is True
     request = service_mock.await_args.kwargs["request"]
     assert request.device_id == "device-1"
+    assert request.project_key == "remote-project-id"
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
 
 
