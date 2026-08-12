@@ -290,7 +290,10 @@ pub async fn list_local_workspace_openers(app: tauri::AppHandle) -> Vec<OpenerIn
             .collect()
     })
     .await
-    .unwrap_or_default()
+    .unwrap_or_else(|error| {
+        log::warn!("Failed to list local workspace openers: {error}");
+        Vec::new()
+    })
 }
 
 fn opener_available(def: &OpenerDef, _app: &tauri::AppHandle) -> bool {
@@ -420,7 +423,11 @@ fn detect_windows(def: &OpenerDef, app: &tauri::AppHandle) -> Option<PathBuf> {
     }
 
     for var in windows.env_vars {
-        let value = std::env::var(var).ok()?;
+        // Unset override variables are common; skip them and keep probing the
+        // remaining detection strategies instead of aborting detection.
+        let Ok(value) = std::env::var(var) else {
+            continue;
+        };
         let value = value.trim();
         if value.is_empty() {
             continue;

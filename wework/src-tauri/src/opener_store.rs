@@ -26,7 +26,9 @@ pub fn saved_exe_path(app: &tauri::AppHandle, opener: &str) -> Option<String> {
 }
 
 pub fn save_exe_path(app: &tauri::AppHandle, opener: &str, exe_path: &str) -> Result<(), String> {
-    let mut entries = load(app)?;
+    // A corrupt or unreadable store must not block saving a new opener path;
+    // fall back to an empty map and rewrite, matching saved_exe_path's tolerance.
+    let mut entries = load(app).unwrap_or_default();
     entries.insert(opener.to_string(), exe_path.to_string());
     let path = store_path(app)?;
     if let Some(parent) = path.parent() {
@@ -35,6 +37,11 @@ pub fn save_exe_path(app: &tauri::AppHandle, opener: &str, exe_path: &str) -> Re
     }
     let bytes = serde_json::to_vec_pretty(&entries)
         .map_err(|error| format!("Failed to encode workspace opener store: {error}"))?;
-    std::fs::write(&path, bytes)
-        .map_err(|error| format!("Failed to write workspace opener store: {error}"))
+    // Write to a sibling temp file and rename so an interrupted write never
+    // leaves the store truncated.
+    let temp_path = path.with_extension("json.tmp");
+    std::fs::write(&temp_path, bytes)
+        .map_err(|error| format!("Failed to write workspace opener store: {error}"))?;
+    std::fs::rename(&temp_path, &path)
+        .map_err(|error| format!("Failed to replace workspace opener store: {error}"))
 }

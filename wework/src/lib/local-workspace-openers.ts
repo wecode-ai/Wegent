@@ -24,7 +24,7 @@ export const LOCAL_WORKSPACE_OPENERS = [
   { id: 'warp', label: 'Warp', category: 'macOnly' },
   { id: 'cmd', label: 'CMD', category: 'winOnly' },
   { id: 'powershell', label: 'PowerShell', category: 'winOnly' },
-  { id: 'custom', label: 'Custom', category: 'general' },
+  { id: 'custom', label: 'Custom', category: 'winOnly' },
 ] as const
 
 export type LocalWorkspaceOpenerId = (typeof LOCAL_WORKSPACE_OPENERS)[number]['id']

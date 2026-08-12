@@ -194,6 +194,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     ? (availableOpenerIds[0] ?? null)
     : DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   const defaultOpenerLabel =
+    (defaultOpener != null ? openerLabels[defaultOpener] : undefined) ??
     LOCAL_WORKSPACE_OPENERS.find(opener => opener.id === (defaultOpener ?? 'vscode'))?.label ??
     'VS Code'
 
