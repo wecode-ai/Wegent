@@ -9,6 +9,8 @@ interface WorkbenchHarnessModelSelectorProps {
   models: LocalHarnessModelOption[]
   selectedModel: LocalHarnessModelOption | null
   onModelChange: (model: LocalHarnessModelOption | null) => void
+  testId?: string
+  optionTestIdPrefix?: string
 }
 
 export function WorkbenchHarnessModelSelector({
@@ -16,6 +18,8 @@ export function WorkbenchHarnessModelSelector({
   models,
   selectedModel,
   onModelChange,
+  testId = 'workbench-harness-model-selector',
+  optionTestIdPrefix = 'workbench-harness-model-option',
 }: WorkbenchHarnessModelSelectorProps) {
   const { t } = useTranslation('common')
   const defaultLabel = t('workbench.harness_model_unspecified', '不指定模型')
@@ -25,7 +29,7 @@ export function WorkbenchHarnessModelSelector({
   return (
     <ActionMenu
       ariaLabel={t('workbench.harness_model_selector', '选择编码工具模型')}
-      testId="workbench-harness-model-selector"
+      testId={testId}
       icon={Cpu}
       triggerLabel={
         <span
@@ -40,12 +44,12 @@ export function WorkbenchHarnessModelSelector({
       items={[
         {
           label: defaultLabel,
-          testId: `workbench-harness-model-option-${harnessId}-native`,
+          testId: `${optionTestIdPrefix}-${harnessId}-native`,
           onSelect: () => onModelChange(null),
         },
         ...models.map((model, index) => ({
           label: optionLabel(model),
-          testId: `workbench-harness-model-option-${harnessId}-${index}`,
+          testId: `${optionTestIdPrefix}-${harnessId}-${index}`,
           onSelect: () => onModelChange(model),
         })),
       ]}

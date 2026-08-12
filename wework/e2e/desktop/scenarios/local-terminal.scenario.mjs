@@ -689,13 +689,23 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="harness-session-picker-option-opencode"]')
+      await control.command('waitFor', '[data-testid="harness-session-picker-model-selector"]', {
+        text: 'Desktop E2E Vision',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="harness-session-picker-create-button"]')
       await waitForFile(
         join(homePath, OPEN_CODE_ARGS_FILE),
         '--model\nwework-messages/wework-selected\n',
         uiTimeoutMs
       )
+      await control.command(
+        'waitFor',
+        '[data-testid^="right-workspace-harness-tab-local-harness-"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', '[data-testid="workbench-pane-task-title"]', {
-        text: 'OpenCode',
+        text: 'Inspect the project with Kimi',
         timeoutMs: uiTimeoutMs,
       })
       const multiSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -705,11 +715,40 @@ export async function createDesktopScenario({
         ).length >= 2,
         'The workspace did not retain multiple harness sessions'
       )
+      assert.ok(
+        multiSessionSnapshot.testIds.some(testId =>
+          testId.startsWith('right-workspace-harness-tab-local-harness-')
+        ),
+        'The additional harness session was not created in the right sidebar'
+      )
+      assert.ok(
+        !multiSessionSnapshot.testIds.includes('central-harness-close-button'),
+        'The right-sidebar harness session replaced the active primary session'
+      )
       await captureWorkbench(control, 'local-harness-20-multiple-sessions.png')
-      await control.command('click', '[data-testid="central-harness-close-button"]')
-      await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      await control.command(
+        'click',
+        '[data-testid^="right-workspace-harness-tab-local-harness-"][data-testid$="-close-button"]'
+      )
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-launcher"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="workbench-pane-task-title"]', {
+        text: 'Inspect the project with Kimi',
+        timeoutMs: uiTimeoutMs,
+      })
+      const closedSidebarSessionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        !closedSidebarSessionSnapshot.testIds.some(testId =>
+          testId.startsWith('right-workspace-harness-tab-local-harness-')
+        ),
+        'The closed right-sidebar harness tab remained mounted'
+      )
+      assert.ok(
+        !closedSidebarSessionSnapshot.testIds.includes('desktop-empty-composer-frame'),
+        'Closing the right-sidebar harness session replaced the active primary session'
+      )
       await captureWorkbench(control, 'local-harness-21-session-closed.png')
 
       await control.command(

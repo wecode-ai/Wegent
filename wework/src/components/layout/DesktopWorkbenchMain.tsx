@@ -65,6 +65,7 @@ import {
   type RightWorkspaceBrowserState,
   type RightWorkspaceBrowserTab,
   type RightWorkspaceChatTab,
+  type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
 } from './workspace-panels/RightWorkspacePanel'
@@ -173,7 +174,10 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -306,12 +310,21 @@ function rightPanelTabType(
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
+  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
   if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
   return 'other'
 }
 
 function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightWorkspaceBrowserTab {
   return tab.startsWith('browser:')
+}
+
+function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
+  return tab.startsWith('harness:')
+}
+
+function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
+  return tab.slice('harness:'.length)
 }
 
 function logBrowserOpenDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
@@ -399,7 +412,10 @@ interface DesktopWorkbenchMainProps {
   sidebarResizing?: boolean
   showComposerProjectMenuAction?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
-  onLocalHarnessSessionStarted?: (session: LocalHarnessWorkbenchSession) => void
+  onLocalHarnessSessionStarted?: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
   onLocalHarnessSessionTitleChange?: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit?: (sessionId: string) => void
@@ -479,16 +495,18 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const activeLocalHarnessSession =
     localHarnessSessions.find(session => session.sessionId === activeLocalHarnessSessionId) ?? null
   const registerLocalHarnessSession = useCallback(
-    (session: LocalHarnessWorkbenchSession) => {
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
       if (onLocalHarnessSessionStarted) {
-        onLocalHarnessSessionStarted(session)
+        onLocalHarnessSessionStarted(session, options)
         return
       }
       setInternalHarnessSessions(current => [
         session,
         ...current.filter(candidate => candidate.sessionId !== session.sessionId),
       ])
-      setInternalActiveHarnessSessionId(session.sessionId)
+      if (options?.activate !== false) {
+        setInternalActiveHarnessSessionId(session.sessionId)
+      }
     },
     [onLocalHarnessSessionStarted]
   )
@@ -609,6 +627,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
           onWorkspaceStateChange={rememberPaneWorkspaceState}
           onLocalHarnessSessionStarted={registerLocalHarnessSession}
+          localHarnessSessions={localHarnessSessions}
           activeLocalHarnessSession={
             getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
           }
@@ -657,6 +676,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   initialWorkspaceState,
   onWorkspaceStateChange,
   onLocalHarnessSessionStarted,
+  localHarnessSessions,
   activeLocalHarnessSession,
   onLocalHarnessSessionTitleChange,
   onLocalHarnessSessionClose,
@@ -676,7 +696,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
-  onLocalHarnessSessionStarted: (session: LocalHarnessWorkbenchSession) => void
+  onLocalHarnessSessionStarted: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
+  localHarnessSessions: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSession: LocalHarnessWorkbenchSession | null
   onLocalHarnessSessionTitleChange: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
@@ -708,7 +732,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
   const { t } = useTranslation('common')
-  const [harnessSessionPickerOpen, setHarnessSessionPickerOpen] = useState(false)
+  const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
+    'main' | 'right' | null
+  >(null)
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
@@ -1337,7 +1363,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
     fileWorkspaceDirty ||
-    rightPanelTabs.some(tab => tab === 'terminal' || isRightWorkspaceBrowserTab(tab))
+    rightPanelTabs.some(
+      tab =>
+        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+    )
   useEffect(() => {
     onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
     return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
@@ -1598,6 +1627,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       projectId,
       cwd,
       resumeSession,
+      activate = true,
     }: {
       preference: LocalHarnessPreference
       model: LocalHarnessModelOption | null
@@ -1606,7 +1636,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       projectId: number | null
       cwd: string
       resumeSession?: LocalHarnessWorkbenchSession
-    }) => {
+      activate?: boolean
+    }): Promise<LocalHarnessWorkbenchSession | null> => {
       setCentralHarnessStarting(true)
       setCentralHarnessError(null)
       const requestId = centralHarnessRequestIdRef.current + 1
@@ -1644,12 +1675,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           if (modelLaunch) {
             await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
           }
-          return
+          return null
         }
         if (!resumeSession) {
           setPaneInput('')
         }
-        onLocalHarnessSessionStarted({
+        const session: LocalHarnessWorkbenchSession = {
           sessionId,
           harnessId: preference.id,
           cwd,
@@ -1664,7 +1695,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           modelKey: model?.key ?? null,
           pluginRoots,
           proxyToken: modelLaunch?.proxyToken,
-        })
+        }
+        onLocalHarnessSessionStarted(session, { activate })
+        return session
       } catch (error) {
         console.error('Failed to launch local Harness session:', {
           harnessId: preference.id,
@@ -1679,6 +1712,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             ? error.message
             : t('workbench.harness_start_failed', '启动编码工具失败')
         )
+        return null
       } finally {
         setCentralHarnessStarting(false)
       }
@@ -1875,18 +1909,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }
 
   const startAdditionalHarnessSession = useCallback(
-    async (harnessId: LocalHarnessId) => {
+    async (
+      harnessId: LocalHarnessId,
+      target: 'main' | 'right',
+      model: LocalHarnessModelOption | null
+    ) => {
       if (centralHarnessStarting) return
 
       const preference = enabledLocalHarnesses.find(candidate => candidate.id === harnessId)
-      const modelKey = preference ? getConfiguredHarnessModelKey(preference) : null
-      const model = preference ? getSelectedHarnessModel(preference) : null
       const installed = localHarnesses.some(
         harness => harness.id === harnessId && harness.installed
       )
       if (
         !preference ||
-        (modelKey && !model) ||
         !installed ||
         !centralHarnessCwd ||
         !preferLocalWorkspaceTerminal ||
@@ -1904,14 +1939,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
       try {
         const cwd = activeLocalHarnessSession?.cwd ?? (await resolvePrimaryHarnessCwd())
-        await launchHarnessSession({
+        const session = await launchHarnessSession({
           preference,
           model,
           prompt: '',
           isPrimary: false,
           projectId: activeLocalHarnessSession?.projectId ?? currentProject?.id ?? null,
           cwd,
+          activate: target === 'main',
         })
+        if (session && target === 'right') {
+          const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
+          setRightPanelOpen(true)
+          setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
+          setRightPanelView(tab)
+        }
       } catch (error) {
         setCentralHarnessError(
           error instanceof Error
@@ -1927,8 +1969,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       centralHarnessStarting,
       currentProject,
       enabledLocalHarnesses,
-      getConfiguredHarnessModelKey,
-      getSelectedHarnessModel,
       launchHarnessSession,
       localHarnesses,
       preferLocalWorkspaceTerminal,
@@ -1945,27 +1985,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         disabled: Boolean(
           centralHarnessStarting ||
           !localHarnesses.some(harness => harness.id === preference.id && harness.installed) ||
-          (getConfiguredHarnessModelKey(preference) && !getSelectedHarnessModel(preference)) ||
           !centralHarnessCwd ||
           !preferLocalWorkspaceTerminal ||
-          !canPrepareHarnessWorktree ||
-          (getSelectedHarnessModel(preference) && !services?.localHarnessModelApi)
+          !canPrepareHarnessWorktree
         ),
+        models: services?.localHarnessModelApi ? getHarnessModelOptions(preference.id) : [],
+        selectedModel: services?.localHarnessModelApi ? getSelectedHarnessModel(preference) : null,
       })),
     [
       canPrepareHarnessWorktree,
       centralHarnessCwd,
       centralHarnessStarting,
       enabledLocalHarnesses,
-      getConfiguredHarnessModelKey,
+      getHarnessModelOptions,
       getSelectedHarnessModel,
       localHarnesses,
       preferLocalWorkspaceTerminal,
       services?.localHarnessModelApi,
     ]
   )
-  const harnessWorkspaceActions = useMemo<WorkspaceAddMenuItem[]>(
-    () =>
+  const createHarnessWorkspaceActions = useCallback(
+    (target: 'main' | 'right'): WorkspaceAddMenuItem[] =>
       enabledLocalHarnesses.length > 0
         ? [
             {
@@ -1977,11 +2017,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 '新建编码会话'
               )} · ${t('workbench.experimental_badge', '实验性')}`,
               disabled: harnessSessionPickerOptions.every(option => option.disabled),
-              onSelect: () => setHarnessSessionPickerOpen(true),
+              onSelect: () => setHarnessSessionPickerTarget(target),
             },
           ]
         : [],
     [enabledLocalHarnesses.length, harnessSessionPickerOptions, t]
+  )
+  const rightHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('right'),
+    [createHarnessWorkspaceActions]
+  )
+  const bottomHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('main'),
+    [createHarnessWorkspaceActions]
   )
 
   useEffect(() => {
@@ -2519,6 +2567,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+    }
+    if (isRightWorkspaceHarnessTab(tab)) {
+      void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
     }
     if (tab === 'files') {
       setOpenFileRequest(null)
@@ -3851,7 +3902,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               fileWorkspaceTargets={fileWorkspaceTargets}
               preferLocalTerminal={workspacePanelPrefersLocalTerminal}
               terminalContextTitle={workbenchTitle}
-              workspaceActions={harnessWorkspaceActions}
+              workspaceActions={rightHarnessWorkspaceActions}
+              harnessSessions={localHarnessSessions}
               workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
@@ -3876,6 +3928,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
+              onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
+              onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
@@ -3895,7 +3949,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             context={context}
             workspaceSessionApi={workspaceSessionApi}
             showWorkbenchBackground={hasMainBackground}
-            workspaceActions={harnessWorkspaceActions}
+            workspaceActions={bottomHarnessWorkspaceActions}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />
@@ -3903,10 +3957,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })}
       <>
         <HarnessSessionPickerDialog
-          open={harnessSessionPickerOpen}
+          open={harnessSessionPickerTarget !== null}
           options={harnessSessionPickerOptions}
-          onClose={() => setHarnessSessionPickerOpen(false)}
-          onSelect={startAdditionalHarnessSession}
+          onClose={() => setHarnessSessionPickerTarget(null)}
+          onSelect={(harnessId, model) =>
+            startAdditionalHarnessSession(harnessId, harnessSessionPickerTarget ?? 'main', model)
+          }
         />
         <TaskForkDialog
           key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
