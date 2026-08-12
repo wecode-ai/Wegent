@@ -580,7 +580,13 @@
         "refetchFailed": "Failed to re-fetch web page",
         "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
       },
-      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."
+      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files.",
+      "longVideoWarning": {
+        "title": "Long video",
+        "description": "We recommend videos no longer than 30 minutes. Longer videos may not be analyzed completely. Consider splitting the file before uploading.",
+        "cancel": "Go back",
+        "continue": "Upload anyway"
+      }
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",
@@ -882,7 +888,21 @@
       "reanalyze": "Re-analyze",
       "reanalyzing": "Re-analyzing...",
       "reanalyzeSuccess": "Re-analysis started",
-      "reanalyzeFailed": "Re-analysis failed"
+      "reanalyzeFailed": "Re-analysis failed",
+      "videoPreview": {
+        "notReady": "The video is still processing. Please retry shortly.",
+        "loadFailed": "Failed to load the video. Check your network connection or access permissions.",
+        "retry": "Retry"
+      },
+      "timestampGuard": {
+        "title": "The video prompt may be missing time-range instructions",
+        "description": "The prompt does not clearly require a start and end time for every video segment, so citations may not locate precise clips. You can inject the suggested instruction or continue without it.",
+        "conflictDescription": "The prompt may explicitly exclude timestamps, so citations may not locate precise clips. Confirm whether to inject the suggested instruction or continue without it.",
+        "injectAndContinue": "Inject and continue",
+        "continueAnyway": "Continue anyway",
+        "returnToEdit": "Return to edit",
+        "injectionTooLong": "The injected prompt would exceed the length limit. Return to editing and shorten the original prompt."
+      }
     }
   },
   "add_repository": "Add Repository",

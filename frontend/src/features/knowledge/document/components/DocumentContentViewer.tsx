@@ -23,6 +23,7 @@ import {
   isImageDocument,
   InlineImageViewer,
 } from '@/features/knowledge/multimodal/components/InlineImageViewer'
+import { DocumentPreviewExtension } from './DocumentPreviewExtension'
 import { resolveWikiLink } from '../utils/wikiLinkResolver'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
@@ -204,9 +205,15 @@ export function DocumentContentViewer({
       )
     }
     return (
-      <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
-        {t('document.document.detail.noContent')}
-      </div>
+      <DocumentPreviewExtension
+        document={document}
+        className="p-4 bg-white rounded-lg border border-border"
+        fallback={
+          <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
+            {t('document.document.detail.noContent')}
+          </div>
+        }
+      />
     )
   }
 
@@ -214,6 +221,10 @@ export function DocumentContentViewer({
     <div className="p-4 bg-white rounded-lg border border-border">
       {/* Image document: show the original image above the extracted text content */}
       <InlineImageViewer
+        document={document}
+        className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
+      />
+      <DocumentPreviewExtension
         document={document}
         className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
       />

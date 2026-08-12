@@ -226,6 +226,17 @@ export interface SourceReference {
   source_uri?: string
   /** Provider source name */
   source_name?: string
+  /** Internal document ID for time-addressable media references. */
+  document_id?: number
+  /** Retrieved video ranges; absent for ordinary references. */
+  segments?: Array<{
+    id?: string
+    start_sec: number
+    end_sec: number
+    score?: number
+    title?: string
+    description?: string
+  }>
 }
 
 export interface RetrievalSummaryPayload {
