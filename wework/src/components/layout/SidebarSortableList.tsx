@@ -19,6 +19,12 @@ import { CSS } from '@dnd-kit/utilities'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { SidebarPointerSensor } from './sidebarDragActivator'
+import {
+  dispatchWorkbenchSidebarPaneDragCancel,
+  dispatchWorkbenchSidebarPaneDragEnd,
+  dispatchWorkbenchSidebarPaneDragStart,
+  type WorkbenchSidebarPaneDragData,
+} from './workbenchPaneDrag'
 
 const SIDEBAR_SORTABLE_POINTER_DISTANCE = 6
 
@@ -27,6 +33,7 @@ interface SidebarSortableListProps<T> {
   getId: (item: T) => string
   getLabel: (item: T) => string
   canDrag?: (item: T) => boolean
+  getExternalDragData?: (item: T) => WorkbenchSidebarPaneDragData
   renderItem: (item: T) => ReactNode
   onMove: (item: T, beforeItem: T | null) => Promise<void>
   className?: string
@@ -84,6 +91,7 @@ export function SidebarSortableList<T>({
   getId,
   getLabel,
   canDrag = () => true,
+  getExternalDragData,
   renderItem,
   onMove,
   className,
@@ -109,9 +117,32 @@ export function SidebarSortableList<T>({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const handleDragStart = ({ active }: DragStartEvent) => setActiveId(String(active.id))
-  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+  const handleDragStart = ({ active }: DragStartEvent) => {
+    const activeId = String(active.id)
+    setActiveId(activeId)
+    const item = itemById.get(activeId)
+    const externalData = item ? getExternalDragData?.(item) : undefined
+    if (externalData) dispatchWorkbenchSidebarPaneDragStart(externalData)
+  }
+  const handleDragEnd = async ({ active, delta, over }: DragEndEvent) => {
     setActiveId(null)
+    const movedItem = itemById.get(String(active.id))
+    const externalData = movedItem ? getExternalDragData?.(movedItem) : undefined
+    if (externalData) {
+      const rect = active.rect.current.initial
+      if (rect) {
+        const dragEndData = {
+          ...externalData,
+          clientX: rect.left + rect.width / 2 + delta.x,
+          clientY: rect.top + rect.height / 2 + delta.y,
+          handled: false,
+        }
+        dispatchWorkbenchSidebarPaneDragEnd(dragEndData)
+        if (dragEndData.handled) return
+      } else {
+        dispatchWorkbenchSidebarPaneDragCancel()
+      }
+    }
     if (!over || active.id === over.id) return
     const oldIndex = orderedIds.indexOf(String(active.id))
     const newIndex = orderedIds.indexOf(String(over.id))
@@ -119,9 +150,8 @@ export function SidebarSortableList<T>({
 
     const previousIds = orderedIds
     const nextIds = arrayMove(previousIds, oldIndex, newIndex)
-    const movedItem = itemById.get(String(active.id))
     const beforeItem = itemById.get(nextIds[newIndex + 1] ?? '') ?? null
-    if (!movedItem) return
+    if (!movedItem || !canDrag(movedItem)) return
 
     setOptimisticOrder({ sourceSignature, ids: nextIds })
     try {
@@ -138,7 +168,10 @@ export function SidebarSortableList<T>({
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragStart={handleDragStart}
-      onDragCancel={() => setActiveId(null)}
+      onDragCancel={() => {
+        setActiveId(null)
+        dispatchWorkbenchSidebarPaneDragCancel()
+      }}
       onDragEnd={event => void handleDragEnd(event)}
     >
       <SortableContext items={orderedIds} strategy={verticalListSortingStrategy}>
@@ -147,7 +180,11 @@ export function SidebarSortableList<T>({
             const item = itemById.get(id)
             if (!item) return null
             return (
-              <SortableItem key={id} id={id} disabled={!canDrag(item)}>
+              <SortableItem
+                key={id}
+                id={id}
+                disabled={!canDrag(item) && !getExternalDragData?.(item)}
+              >
                 {renderItem(item)}
               </SortableItem>
             )

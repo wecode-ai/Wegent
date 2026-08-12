@@ -156,12 +156,15 @@ export interface RuntimePaneGuidanceResult {
 
 export interface WorkbenchContextValue {
   services: WorkbenchServices
+  workspaceTabId?: string
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
+    scopeKey: string
+    inputByScope: Readonly<Record<string, string>>
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
@@ -190,6 +193,7 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
