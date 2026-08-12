@@ -575,6 +575,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     #[serde(default = "default_true")]
     show_main_window_on_launch: bool,
+    #[serde(default = "default_workspace_tab")]
+    default_workspace_tab: String,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
     #[serde(default = "default_true")]
@@ -769,6 +771,11 @@ fn default_language_preference() -> String {
 }
 
 #[cfg(desktop)]
+fn default_workspace_tab() -> String {
+    "task".to_string()
+}
+
+#[cfg(desktop)]
 fn default_browser_external_link_target() -> String {
     "system".to_string()
 }
@@ -789,6 +796,7 @@ impl Default for AppPreferences {
         Self {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
+            default_workspace_tab: default_workspace_tab(),
             system_drag_enabled: true,
             prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
@@ -846,6 +854,7 @@ where
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1153,6 +1162,12 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    if !matches!(
+        preferences.default_workspace_tab.as_str(),
+        "task" | "board" | "agent"
+    ) {
+        preferences.default_workspace_tab = default_workspace_tab();
+    }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
@@ -1423,6 +1438,9 @@ fn update_app_preferences(
     if let Some(value) = patch.show_main_window_on_launch {
         preferences.show_main_window_on_launch = value;
     }
+    if let Some(value) = patch.default_workspace_tab {
+        preferences.default_workspace_tab = value;
+    }
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
@@ -1520,6 +1538,7 @@ fn update_app_preferences(
 struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
+    default_workspace_tab: String,
     system_drag_enabled: bool,
     prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
@@ -1554,6 +1573,7 @@ struct AppPreferences {
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1588,6 +1608,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
     Ok(AppPreferences {
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
+        default_workspace_tab: "task".to_string(),
         system_drag_enabled: true,
         prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
@@ -1626,6 +1647,10 @@ fn update_app_preferences(
     Ok(AppPreferences {
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
+        default_workspace_tab: patch
+            .default_workspace_tab
+            .filter(|value| matches!(value.as_str(), "task" | "board" | "agent"))
+            .unwrap_or_else(|| "task".to_string()),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),

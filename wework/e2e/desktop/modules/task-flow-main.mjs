@@ -245,6 +245,7 @@ import {
   captureVerificationScreenshot,
   configureDefaultProjectSpaceAssociation,
   verifyExplicitlyTrackedTask,
+  verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceDocumentTabs,
   verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
@@ -1148,6 +1149,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
+      phase = 'workspace-startup-tab'
+      await verifyDefaultWorkspaceStartupTab(control)
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
