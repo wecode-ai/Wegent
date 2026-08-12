@@ -10,6 +10,8 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
+        nodejs \
+        npm \
         sudo \
         tar \
         unzip \
