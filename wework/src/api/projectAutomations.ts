@@ -15,7 +15,11 @@ export interface ProjectAutomationRule {
   projectId: string
   name: string
   prompt: string
-  cronExpression: string
+  triggerType: 'schedule' | 'event'
+  eventType: 'task.created' | null
+  eventConfig: Record<string, unknown>
+  webhookEventId: string | null
+  cronExpression: string | null
   timezone: string
   agentId: string
   agentName: string
@@ -34,7 +38,7 @@ export interface ProjectAutomationRun {
   id: string
   automationId: string
   projectId: string
-  trigger: 'scheduled' | 'manual'
+  trigger: 'scheduled' | 'manual' | 'event'
   status: ProjectAutomationRunStatus
   timezone: string
   scheduledFor: string
@@ -49,7 +53,10 @@ export interface ProjectAutomationRun {
 export interface ProjectAutomationInput {
   name: string
   prompt: string
-  cronExpression: string
+  triggerType: 'schedule' | 'event'
+  eventType: 'task.created' | null
+  eventConfig: Record<string, unknown>
+  cronExpression: string | null
   timezone: string
   agentId: string
   enabled: boolean

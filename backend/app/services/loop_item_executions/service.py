@@ -1166,7 +1166,7 @@ class LoopItemExecutionService:
             agent=agent,
             creator=creator,
             team=team,
-            prompt=self.build_robot_prompt(agent),
+            prompt=self.build_robot_prompt(agent, execution.execution_note),
             model_config=model_config,
             runtime_task_id=runtime_task_id,
         )
@@ -1190,7 +1190,7 @@ class LoopItemExecutionService:
         return payload
 
     @staticmethod
-    def build_robot_prompt(agent: object) -> str:
+    def build_robot_prompt(agent: object, automation_prompt: str = "") -> str:
         """Build the robot role description sent to the executor.
 
         The task title and description are not embedded here; the AI reads the
@@ -1204,11 +1204,14 @@ class LoopItemExecutionService:
         agent_name = (
             getattr(agent, "title", None) or getattr(agent, "name", None) or "AI"
         )
-        return (
+        identity = (
             f"你是 {agent_name}，这个项目任务的 AI 执行者。\n{system_prompt}"
             if system_prompt
             else f"你是 {agent_name}，这个项目任务的 AI 执行者。"
         )
+        if automation_prompt:
+            return f"{identity}\n\n自动化规则指令：\n{automation_prompt}"
+        return identity
 
     @staticmethod
     def _resolve_default_team(db: Session, user_id: int) -> Optional[object]:

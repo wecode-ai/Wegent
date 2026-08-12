@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
@@ -1098,6 +1099,159 @@ def test_cloud_project_robot_binds_local_project(
     )
     assert cleared.status_code == 200
     assert cleared.json()["localProjectId"] is None
+
+
+def test_task_created_event_assigns_matching_project_automation_robot(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="event-cloud-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "cloud"},
+                "metadata": {"name": "event-cloud-device"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "eventauto", "name": "Event automation"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Dispatcher",
+            "runtime": "codex",
+            "executionEnvironment": "cloud",
+            "executionDeviceId": "event-cloud-device",
+        },
+    ).json()
+    created_rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Assign new bugs",
+            "prompt": "Read the task and choose its owner.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "eventConfig": {"priorities": ["high"]},
+            "agentId": agent["id"],
+        },
+    )
+    assert created_rule.status_code == 201
+    rule = created_rule.json()
+    assert rule["triggerType"] == "event"
+    assert rule["webhookEventId"] == rule["id"]
+    assert rule["nextRunAt"] is None
+
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Production bug", "priority": "high"},
+    )
+    assert task.status_code == 201
+    assert task.json()["assignee_agent_id"] == agent["id"]
+    execution = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == task.json()["id"])
+        .one()
+    )
+    assert execution.execution_note == "Read the task and choose its owner."
+
+    runs = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
+        headers=_auth(test_token),
+    )
+    assert runs.status_code == 200
+    assert runs.json()[0]["trigger"] == "event"
+    assert runs.json()[0]["taskId"] == task.json()["id"]
+
+
+def test_project_automation_webhook_accepts_api_key(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    test_api_key: tuple[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="hook-cloud-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "cloud"},
+                "metadata": {"name": "hook-cloud-device"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "hook", "name": "Webhook project"},
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Dispatcher",
+            "runtime": "codex",
+            "executionEnvironment": "cloud",
+            "executionDeviceId": "hook-cloud-device",
+        },
+    ).json()
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "External issue",
+            "prompt": "Dispatch the issue.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "agentId": agent["id"],
+        },
+    ).json()
+
+    captured: dict[str, object] = {}
+
+    async def fake_process(
+        db: Session, event: object, *, automation_id: str | None = None
+    ) -> int:
+        captured["event"] = event
+        captured["automation_id"] = automation_id
+        return 1
+
+    monkeypatch.setattr(
+        "app.api.endpoints.project_automations.project_automation_processor.process",
+        fake_process,
+    )
+    response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        headers={"X-API-Key": test_api_key[0]},
+        json={"action": "opened", "issue": {"number": 42, "title": "Bug"}},
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted", "dispatched": 1}
+    assert captured["automation_id"] == rule["id"]
+    event = captured["event"]
+    assert getattr(event, "event_type") == "task.created"
+    assert getattr(event, "subject_id") == f"{project['project_key']}-42"
+    assert getattr(event, "actor_user_id") == test_user.id
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(

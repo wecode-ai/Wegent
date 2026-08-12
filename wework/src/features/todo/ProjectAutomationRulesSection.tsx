@@ -103,6 +103,9 @@ const timezoneOptions = (current: string): string[] =>
 const defaultInput = (): ProjectAutomationInput => ({
   name: '',
   prompt: '',
+  triggerType: 'schedule',
+  eventType: null,
+  eventConfig: {},
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
   agentId: '',
@@ -164,12 +167,15 @@ export function ProjectAutomationRulesSection({
     setDraft({
       name: rule.name,
       prompt: rule.prompt,
+      triggerType: rule.triggerType,
+      eventType: rule.eventType,
+      eventConfig: rule.eventConfig,
       cronExpression: rule.cronExpression,
       timezone: rule.timezone,
       agentId: rule.agentId,
       enabled: rule.enabled,
     })
-    setSchedule(cronToSchedule(rule.cronExpression))
+    setSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'))
     if (!api) return
     try {
       setError('')
@@ -197,7 +203,11 @@ export function ProjectAutomationRulesSection({
     setBusy(true)
     setError('')
     try {
-      const input = { ...draft, cronExpression: scheduleToCron(schedule) }
+      const input: ProjectAutomationInput = {
+        ...draft,
+        cronExpression: draft.triggerType === 'schedule' ? scheduleToCron(schedule) : null,
+        eventType: draft.triggerType === 'event' ? 'task.created' : null,
+      }
       if (selected) {
         await api.update(projectId, selected.id, { ...input, version: selected.version })
       } else {
@@ -239,6 +249,9 @@ export function ProjectAutomationRulesSection({
       await api.update(projectId, rule.id, {
         name: rule.name,
         prompt: rule.prompt,
+        triggerType: rule.triggerType,
+        eventType: rule.eventType,
+        eventConfig: rule.eventConfig,
         cronExpression: rule.cronExpression,
         timezone: rule.timezone,
         agentId: rule.agentId,
@@ -339,8 +352,10 @@ export function ProjectAutomationRulesSection({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{rule.name}</span>
                 <span className="mt-0.5 block text-xs text-text-muted">
-                  {formatSchedule(cronToSchedule(rule.cronExpression), t)} ·{' '}
-                  {timezoneLabel(rule.timezone, t)} · {rule.agentName}
+                  {rule.triggerType === 'event'
+                    ? t('workbench.project_automation_task_created')
+                    : `${formatSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'), t)} · ${timezoneLabel(rule.timezone, t)}`}{' '}
+                  · {rule.agentName}
                 </span>
               </span>
               <span className="shrink-0 text-right text-xs text-text-muted">
@@ -415,64 +430,106 @@ export function ProjectAutomationRulesSection({
               className="mt-3 min-h-24 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
             />
 
-            <SectionTitle
-              title={t('workbench.project_automation_schedule')}
-              action={<Clock3 className="h-4 w-4" />}
-            />
+            <SectionTitle title={t('workbench.project_automation_trigger')} />
             <SettingsGroup>
-              <SettingsRow label={t('workbench.project_automation_frequency')}>
+              <SettingsRow label={t('workbench.project_automation_trigger')}>
                 <MenuSelect
-                  testId="project-automation-frequency"
-                  value={schedule.frequency}
+                  testId="project-automation-trigger-type"
+                  value={draft.triggerType}
                   pill
                   onChange={value =>
-                    setSchedule({ ...schedule, frequency: value as ScheduleFrequency })
+                    setDraft({
+                      ...draft,
+                      triggerType: value as 'schedule' | 'event',
+                      eventType: value === 'event' ? 'task.created' : null,
+                    })
                   }
                   options={[
-                    { value: 'daily', label: t('workbench.project_automation_daily') },
-                    { value: 'weekdays', label: t('workbench.project_automation_weekdays') },
-                    { value: 'weekly', label: t('workbench.project_automation_weekly') },
+                    { value: 'schedule', label: t('workbench.project_automation_time_trigger') },
+                    { value: 'event', label: t('workbench.project_automation_event_trigger') },
                   ]}
                 />
               </SettingsRow>
-              {schedule.frequency === 'weekly' ? (
-                <SettingsRow label={t('workbench.project_automation_weekday')}>
-                  <MenuSelect
-                    testId="project-automation-weekday"
-                    value={schedule.weekday}
-                    pill
-                    onChange={value => setSchedule({ ...schedule, weekday: value })}
-                    options={weekdayOptions(t)}
-                  />
+              {draft.triggerType === 'event' ? (
+                <SettingsRow label={t('workbench.project_automation_event')}>
+                  <span className="text-sm font-medium">
+                    {t('workbench.project_automation_task_created')}
+                  </span>
                 </SettingsRow>
               ) : null}
-              <SettingsRow label={t('workbench.project_automation_time')}>
-                <input
-                  type="time"
-                  step={60}
-                  value={schedule.time}
-                  onChange={event => setSchedule({ ...schedule, time: event.target.value })}
-                  data-testid="project-automation-time"
-                  aria-label={t('workbench.project_automation_time')}
-                  className="h-8 rounded-full border-0 bg-surface px-2 text-sm font-medium text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
-                />
-              </SettingsRow>
-              <SettingsRow label={t('workbench.project_automation_timezone')}>
-                <MenuSelect
-                  testId="project-automation-timezone"
-                  value={draft.timezone}
-                  pill
-                  onChange={value => setDraft({ ...draft, timezone: value })}
-                  options={timezoneOptions(draft.timezone).map(timezone => ({
-                    value: timezone,
-                    label:
-                      timezone === 'Asia/Shanghai'
-                        ? `${timezone} · ${timezoneLabel(timezone, t)}`
-                        : timezone,
-                  }))}
-                />
-              </SettingsRow>
             </SettingsGroup>
+
+            {draft.triggerType === 'schedule' ? (
+              <>
+                <SectionTitle
+                  title={t('workbench.project_automation_schedule')}
+                  action={<Clock3 className="h-4 w-4" />}
+                />
+                <SettingsGroup>
+                  <SettingsRow label={t('workbench.project_automation_frequency')}>
+                    <MenuSelect
+                      testId="project-automation-frequency"
+                      value={schedule.frequency}
+                      pill
+                      onChange={value =>
+                        setSchedule({ ...schedule, frequency: value as ScheduleFrequency })
+                      }
+                      options={[
+                        { value: 'daily', label: t('workbench.project_automation_daily') },
+                        { value: 'weekdays', label: t('workbench.project_automation_weekdays') },
+                        { value: 'weekly', label: t('workbench.project_automation_weekly') },
+                      ]}
+                    />
+                  </SettingsRow>
+                  {schedule.frequency === 'weekly' ? (
+                    <SettingsRow label={t('workbench.project_automation_weekday')}>
+                      <MenuSelect
+                        testId="project-automation-weekday"
+                        value={schedule.weekday}
+                        pill
+                        onChange={value => setSchedule({ ...schedule, weekday: value })}
+                        options={weekdayOptions(t)}
+                      />
+                    </SettingsRow>
+                  ) : null}
+                  <SettingsRow label={t('workbench.project_automation_time')}>
+                    <input
+                      type="time"
+                      step={60}
+                      value={schedule.time}
+                      onChange={event => setSchedule({ ...schedule, time: event.target.value })}
+                      data-testid="project-automation-time"
+                      aria-label={t('workbench.project_automation_time')}
+                      className="h-8 rounded-full border-0 bg-surface px-2 text-sm font-medium text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                    />
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.project_automation_timezone')}>
+                    <MenuSelect
+                      testId="project-automation-timezone"
+                      value={draft.timezone}
+                      pill
+                      onChange={value => setDraft({ ...draft, timezone: value })}
+                      options={timezoneOptions(draft.timezone).map(timezone => ({
+                        value: timezone,
+                        label:
+                          timezone === 'Asia/Shanghai'
+                            ? `${timezone} · ${timezoneLabel(timezone, t)}`
+                            : timezone,
+                      }))}
+                    />
+                  </SettingsRow>
+                </SettingsGroup>
+              </>
+            ) : selected?.webhookEventId ? (
+              <div className="mt-5 rounded-xl border border-border bg-surface px-4 py-3">
+                <p className="text-xs text-text-muted">
+                  {t('workbench.project_automation_webhook_event_id')}
+                </p>
+                <code className="mt-1 block break-all text-code text-text-primary">
+                  /api/v1/cloud-projects/automation-events/{selected.webhookEventId}
+                </code>
+              </div>
+            ) : null}
 
             <div className="mt-7">
               <SettingsGroup>

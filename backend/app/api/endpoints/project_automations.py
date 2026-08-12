@@ -3,23 +3,85 @@
 
 """Wework project automation endpoints."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
-from app.models.delivery import ProjectAutomationRun
+from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.models.delivery import (
+    CloudProject,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.project_automation import (
     ProjectAutomationCreate,
     ProjectAutomationRunView,
     ProjectAutomationUpdate,
     ProjectAutomationView,
 )
-from app.services.project_automations import project_automation_service
+from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.project_automations import (
+    ProjectAutomationEvent,
+    project_automation_processor,
+    project_automation_service,
+)
 
 router = APIRouter()
+
+
+@router.post(
+    "/automation-events/{webhook_event_id}", status_code=status.HTTP_202_ACCEPTED
+)
+async def trigger_automation_event(
+    webhook_event_id: str,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> dict[str, int | str]:
+    rule = db.get(ProjectAutomationRule, webhook_event_id)
+    if rule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
+    project_automation_service._rule(db, str(rule.cloud_project_id), webhook_event_id)
+    require_cloud_project_role(
+        db, str(rule.cloud_project_id), current_user.id, BaseRole.Maintainer
+    )
+    event_name = str(payload.get("event_type") or payload.get("eventType") or "")
+    if not event_name and isinstance(payload.get("issue"), dict):
+        event_name = f"issues.{payload.get('action')}"
+    if not event_name and payload.get("object_kind") == "issue":
+        attributes = payload.get("object_attributes")
+        if isinstance(attributes, dict):
+            event_name = f"issue.{attributes.get('action')}"
+    if event_name not in {"task.created", "issues.opened", "issue.open"}:
+        return {"status": "ignored", "dispatched": 0}
+    issue = payload.get("issue")
+    if not isinstance(issue, dict):
+        object_attributes = payload.get("object_attributes")
+        issue = object_attributes if isinstance(object_attributes, dict) else payload
+    number = issue.get("number") or issue.get("iid")
+    project = db.get(CloudProject, rule.cloud_project_id)
+    if not number or project is None or not project.project_key:
+        return {"status": "ignored", "dispatched": 0}
+    subject_id = f"{project.project_key}-{number}"
+    source = project.task_provider
+    dispatched = await project_automation_processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id=str(rule.cloud_project_id),
+            subject_id=subject_id,
+            source=source,
+            actor_user_id=current_user.id,
+            payload=issue,
+        ),
+        automation_id=webhook_event_id,
+    )
+    return {"status": "accepted", "dispatched": dispatched}
 
 
 @router.get("/{project_id}/automations", response_model=list[ProjectAutomationView])

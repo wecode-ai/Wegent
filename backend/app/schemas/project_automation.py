@@ -4,7 +4,7 @@
 """Schemas for project-scoped scheduled automations."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -24,7 +24,10 @@ AutomationRunStatus = Literal[
 class ProjectAutomationCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
-    cron_expression: str = Field(min_length=1, max_length=100)
+    trigger_type: Literal["schedule", "event"] = "schedule"
+    event_type: Literal["task.created"] | None = None
+    event_config: dict[str, Any] = Field(default_factory=dict)
+    cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
     agent_id: str = Field(min_length=1, max_length=64)
     enabled: bool = True
@@ -45,7 +48,11 @@ class ProjectAutomationView(ProjectChatSchema):
     project_id: str
     name: str
     prompt: str
-    cron_expression: str
+    trigger_type: Literal["schedule", "event"]
+    event_type: Literal["task.created"] | None
+    event_config: dict[str, Any]
+    webhook_event_id: str | None
+    cron_expression: str | None
     timezone: str
     agent_id: str
     agent_name: str
@@ -64,7 +71,7 @@ class ProjectAutomationRunView(ProjectChatSchema):
     id: str
     automation_id: str
     project_id: str
-    trigger: Literal["scheduled", "manual"]
+    trigger: Literal["scheduled", "manual", "event"]
     status: AutomationRunStatus
     timezone: str
     scheduled_for: datetime
@@ -74,3 +81,6 @@ class ProjectAutomationRunView(ProjectChatSchema):
     error: str | None
     created_at: datetime
     updated_at: datetime
+    trigger_type: Literal["schedule", "event"] | None = None
+    event_type: Literal["task.created"] | None = None
+    event_config: dict[str, Any] | None = None

@@ -4,6 +4,8 @@
 
 """Authenticated project TODO and delivery endpoints."""
 
+import logging
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -56,6 +58,7 @@ from app.services.loop_items.provider_router import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _loop_item_response(
@@ -255,7 +258,7 @@ def list_loop_items(
     response_model=LoopItemResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_loop_item(
+async def create_loop_item(
     project_id: int,
     values: LoopItemCreate,
     db: Session = Depends(get_db),
@@ -263,7 +266,35 @@ def create_loop_item(
 ) -> LoopItemResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
-    return LoopItemResponse.model_validate(created.values)
+    response = LoopItemResponse.model_validate(created.values)
+    from app.services.project_automations import (
+        ProjectAutomationEvent,
+        project_automation_processor,
+    )
+
+    try:
+        await project_automation_processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.created",
+                project_id=str(project.id),
+                subject_id=str(created.values["id"]),
+                source=project.task_provider,
+                actor_user_id=current_user.id,
+                payload=response.model_dump(mode="json"),
+            ),
+        )
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Project automation processing failed after task creation project=%s task=%s",
+            project.id,
+            created.values.get("id"),
+        )
+    if created.internal_item is not None:
+        db.refresh(created.internal_item)
+        return _loop_item_response(db, created.internal_item, current_user)
+    return response
 
 
 @router.post(

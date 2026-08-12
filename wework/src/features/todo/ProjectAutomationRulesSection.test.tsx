@@ -7,6 +7,10 @@ const rule = {
   projectId: '1',
   name: '每日 Bug 扫描',
   prompt: '扫描回归 Bug',
+  triggerType: 'schedule' as const,
+  eventType: null,
+  eventConfig: {},
+  webhookEventId: null,
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
   agentId: 'agent-1',
@@ -42,6 +46,49 @@ const agent = {
 }
 
 describe('ProjectAutomationRulesSection', () => {
+  it('creates a board-task event rule', async () => {
+    const api = {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue(rule),
+      update: vi.fn(),
+      delete: vi.fn(),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn(),
+    }
+    const agentApi = {
+      list: vi.fn().mockResolvedValue([agent]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+
+    render(<ProjectAutomationRulesSection projectId="1" api={api} agentApi={agentApi} canManage />)
+
+    await waitFor(() => expect(agentApi.list).toHaveBeenCalledWith('1'))
+    fireEvent.click(screen.getByTestId('project-automation-create'))
+    fireEvent.change(screen.getByTestId('project-automation-name'), {
+      target: { value: '新任务分派' },
+    })
+    fireEvent.change(screen.getByTestId('project-automation-prompt'), {
+      target: { value: '阅读任务并选择负责人' },
+    })
+    fireEvent.click(screen.getByTestId('project-automation-trigger-type'))
+    fireEvent.click(screen.getByTestId('project-automation-trigger-type-option-event'))
+    fireEvent.click(screen.getByTestId('project-automation-save'))
+
+    await waitFor(() =>
+      expect(api.create).toHaveBeenCalledWith(
+        '1',
+        expect.objectContaining({
+          triggerType: 'event',
+          eventType: 'task.created',
+          cronExpression: null,
+          agentId: 'agent-1',
+        })
+      )
+    )
+  })
+
   it('creates a scheduled rule with the selected project robot', async () => {
     const api = {
       list: vi.fn().mockResolvedValue([]),
