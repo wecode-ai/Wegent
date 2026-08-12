@@ -30,6 +30,13 @@ interface DiscoverResourcesProps {
   leadingFilterControls?: ReactNode
   hideSearch?: boolean
   systemOnly?: boolean
+  externalMarketplaces?: Array<{
+    key: string
+    label: string
+    content: ReactNode
+  }>
+  activeExternalMarketplaceKey?: string | null
+  onExternalMarketplaceChange?: (key: string | null) => void
 }
 
 const RESOURCE_LIBRARY_PAGE_SIZE = 20
@@ -58,6 +65,9 @@ export function DiscoverResources({
   leadingFilterControls,
   hideSearch = false,
   systemOnly = false,
+  externalMarketplaces = [],
+  activeExternalMarketplaceKey = null,
+  onExternalMarketplaceChange,
 }: DiscoverResourcesProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -87,6 +97,10 @@ export function DiscoverResources({
   const [installingIds, setInstallingIds] = useState<Set<number>>(() => new Set())
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null)
   const listingGridClassName = 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+  const activeExternalMarketplace = externalMarketplaces.find(
+    marketplace => marketplace.key === activeExternalMarketplaceKey
+  )
+  const isExternalMarketplaceActive = Boolean(activeExternalMarketplace)
 
   const replaceMarketplaceParams = useCallback(
     (updates: { keyword?: string; tag?: string }) => {
@@ -182,8 +196,12 @@ export function DiscoverResources({
   )
 
   useEffect(() => {
+    if (isExternalMarketplaceActive) {
+      setIsLoading(false)
+      return
+    }
     void loadListings()
-  }, [loadListings])
+  }, [isExternalMarketplaceActive, loadListings])
 
   const markInstalling = (listingId: number, installing: boolean) => {
     setInstallingIds(previous => {
@@ -228,6 +246,7 @@ export function DiscoverResources({
   }
 
   const handleTagChange = (tag: string) => {
+    onExternalMarketplaceChange?.(null)
     setSelectedTag(tag)
     replaceMarketplaceParams({ tag })
   }
@@ -339,34 +358,68 @@ export function DiscoverResources({
         data-testid="marketplace-toolbar"
       >
         {leadingFilterControls}
-        <div className="flex max-w-full flex-wrap gap-2" data-testid="marketplace-tag-filter">
-          <Button
-            type="button"
-            size="sm"
-            className="min-h-11 min-w-11 md:min-h-9 md:min-w-0"
-            variant={selectedTag ? 'outline' : 'primary'}
-            onClick={() => handleTagChange('')}
-            aria-pressed={!selectedTag}
-            data-testid="marketplace-tag-filter-all"
-          >
-            {t(systemOnly ? 'marketplace_tags.featured' : 'marketplace_tags.all')}
-          </Button>
-          {enabledMarketplaceTags.map(item => (
+        <div
+          className="flex w-full min-w-0 items-center gap-2 overflow-x-auto pb-1"
+          data-testid="marketplace-tag-filter"
+        >
+          <div className="flex shrink-0 gap-2">
             <Button
-              key={item.id}
               type="button"
               size="sm"
               className="min-h-11 min-w-11 md:min-h-9 md:min-w-0"
-              variant={selectedTag === item.id ? 'primary' : 'outline'}
-              onClick={() => handleTagChange(item.id)}
-              aria-pressed={selectedTag === item.id}
-              data-testid={`marketplace-tag-filter-${item.id}`}
+              variant={selectedTag || activeExternalMarketplace ? 'outline' : 'primary'}
+              onClick={() => handleTagChange('')}
+              aria-pressed={!selectedTag && !activeExternalMarketplace}
+              data-testid="marketplace-tag-filter-all"
             >
-              {getMarketplaceTagLabel(item, i18n.language)}
+              {t(systemOnly ? 'marketplace_tags.featured' : 'marketplace_tags.all')}
             </Button>
-          ))}
+            {enabledMarketplaceTags.map(item => (
+              <Button
+                key={item.id}
+                type="button"
+                size="sm"
+                className="min-h-11 min-w-11 shrink-0 md:min-h-9 md:min-w-0"
+                variant={
+                  !activeExternalMarketplace && selectedTag === item.id ? 'primary' : 'outline'
+                }
+                onClick={() => handleTagChange(item.id)}
+                aria-pressed={!activeExternalMarketplace && selectedTag === item.id}
+                data-testid={`marketplace-tag-filter-${item.id}`}
+              >
+                {getMarketplaceTagLabel(item, i18n.language)}
+              </Button>
+            ))}
+          </div>
+          {externalMarketplaces.length > 0 && (
+            <>
+              <div
+                className="h-6 w-px shrink-0 bg-border"
+                aria-hidden="true"
+                data-testid="marketplace-source-divider"
+              />
+              <div className="flex shrink-0 gap-2">
+                {externalMarketplaces.map(marketplace => (
+                  <Button
+                    key={marketplace.key}
+                    type="button"
+                    size="sm"
+                    className="min-h-11 min-w-11 md:min-h-9 md:min-w-0"
+                    variant={
+                      activeExternalMarketplaceKey === marketplace.key ? 'primary' : 'outline'
+                    }
+                    onClick={() => onExternalMarketplaceChange?.(marketplace.key)}
+                    aria-pressed={activeExternalMarketplaceKey === marketplace.key}
+                    data-testid={`marketplace-external-source-${marketplace.key}`}
+                  >
+                    {marketplace.label}
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
-        {!hideSearch && (
+        {!hideSearch && !activeExternalMarketplace && (
           <form className="flex flex-1 flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
             <Input
               value={searchInput}
@@ -389,7 +442,9 @@ export function DiscoverResources({
         )}
       </div>
 
-      {isLoading ? (
+      {activeExternalMarketplace ? (
+        activeExternalMarketplace.content
+      ) : isLoading ? (
         <div className={listingGridClassName} aria-label={t('states.loading')}>
           {Array.from({ length: 8 }).map((_, index) => (
             <Skeleton key={index} className="h-[180px] rounded-lg" />

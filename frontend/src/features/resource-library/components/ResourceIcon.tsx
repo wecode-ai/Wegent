@@ -13,7 +13,7 @@ interface ResourceIconProps {
   resourceType: ResourceLibraryResourceType
   name?: string | null
   icon?: string | null
-  marketplaceTags?: string[]
+  marketplaceTags?: string[] | null
   size?: 'sm' | 'md'
   className?: string
 }
@@ -108,8 +108,9 @@ export function ResourceIcon({
   const iconId = imageUrl || configuredIcon?.iconId || initial || typeIconId
   const shapeClassName = resourceType === 'agent' ? 'rounded-full' : 'rounded-xl'
   const sizeClasses = SIZE_CLASSES[size]
+  const normalizedMarketplaceTags = marketplaceTags || []
   const initialColorStyle = initial
-    ? getStableColorStyle(name?.trim() || initial, marketplaceTags)
+    ? getStableColorStyle(name?.trim() || initial, normalizedMarketplaceTags)
     : null
 
   return (

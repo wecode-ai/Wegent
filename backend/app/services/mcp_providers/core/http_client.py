@@ -105,7 +105,10 @@ class MCPProviderHTTPClient:
 
         # Check success field
         success_field = self.config.mapping.success_field
-        if success_field and not data.get(success_field):
+        if (
+            success_field
+            and data.get(success_field) != self.config.mapping.success_value
+        ):
             error_msg = data.get(self.config.mapping.error_message_field, "API error")
             raise HTTPClientError("api_error", error_msg)
 
@@ -131,7 +134,7 @@ class MCPProviderHTTPClient:
                 method=self.config.api.method,
                 url=url,
                 params=params if self.config.api.method == "GET" else None,
-                json={} if self.config.api.method == "POST" else None,
+                json=params if self.config.api.method == "POST" else None,
                 headers=headers,
             )
 
@@ -145,7 +148,11 @@ class MCPProviderHTTPClient:
             all_items.extend(items)
 
             # Check if more pages
-            total = self._extract_by_path(data, self.config.mapping.total_path)
+            total_path = self.config.mapping.total_path
+            if not total_path:
+                break
+
+            total = self._extract_by_path(data, total_path)
             if total is None:
                 break
 

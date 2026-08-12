@@ -10,7 +10,7 @@
  * service which handles communication with the skill market provider.
  */
 
-import { getToken } from './user'
+import { getToken } from '@/apis/user'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 // Use dynamic API base URL from runtime config
@@ -76,46 +76,36 @@ export interface MarketSkill {
 /**
  * Skill market availability response
  */
-export interface SkillMarketAvailability {
-  /** Whether a skill market provider is available */
-  available: boolean
-  /** Market name for display */
-  marketName?: string
-  /** Market URL for navigation */
+export interface SkillMarketProvider {
+  key: string
+  name: string
   marketUrl?: string
 }
 
-/**
- * Check if a skill market provider is available
- *
- * @returns Skill market availability info including market name and URL
- */
-export async function checkSkillMarketAvailable(): Promise<SkillMarketAvailability> {
-  try {
-    const token = getToken()
-    if (!token) return { available: false }
+export async function listSkillMarketProviders(): Promise<SkillMarketProvider[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
 
-    const url = `${getApiUrl()}/skill-market/available`
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-    })
-
-    if (!response.ok) {
-      return { available: false }
-    }
-
-    const data = await response.json()
-    return {
-      available: data.available === true,
-      marketName: data.market_name || undefined,
-      marketUrl: data.market_url || undefined,
-    }
-  } catch {
-    return { available: false }
+  const response = await fetch(`${getApiUrl()}/skill-market/providers`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: Failed to load skill market providers`)
   }
+
+  const data = (await response.json()) as {
+    providers?: Array<{ key?: string; name?: string; market_url?: string | null }>
+  }
+  return (data.providers ?? [])
+    .filter(provider => provider.key && provider.name)
+    .map(provider => ({
+      key: provider.key as string,
+      name: provider.name as string,
+      marketUrl: provider.market_url || undefined,
+    }))
 }
 
 /**
@@ -125,12 +115,16 @@ export async function checkSkillMarketAvailable(): Promise<SkillMarketAvailabili
  * @returns Search result with skills list
  * @throws Error if the request fails or no provider is available
  */
-export async function searchSkills(params: SearchSkillsParams): Promise<SearchSkillsResult> {
+export async function searchSkills(
+  providerKey: string,
+  params: SearchSkillsParams
+): Promise<SearchSkillsResult> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
   // Build query parameters
   const queryParams = new URLSearchParams()
+  queryParams.set('provider', providerKey)
 
   if (params.keyword) {
     queryParams.append('keyword', params.keyword)
@@ -184,11 +178,12 @@ export async function searchSkills(params: SearchSkillsParams): Promise<SearchSk
  * @returns Skill file as Blob
  * @throws Error if the request fails or no provider is available
  */
-export async function downloadSkill(skillKey: string): Promise<Blob> {
+export async function downloadSkill(providerKey: string, skillKey: string): Promise<Blob> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${getApiUrl()}/skill-market/download/${encodeURIComponent(skillKey)}`
+  const queryParams = new URLSearchParams({ provider: providerKey })
+  const url = `${getApiUrl()}/skill-market/download/${encodeURIComponent(skillKey)}?${queryParams}`
 
   const response = await fetch(url, {
     headers: {
