@@ -3403,6 +3403,14 @@ describe('DesktopWorkbenchLayout', () => {
       within(screen.getByTestId('desktop-workbench-content')).getByTestId('embedded-local-terminal')
     ).toHaveAttribute('data-session-id', 'local-harness-1')
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+
+    startLocalHarnessMock.mockRejectedValueOnce(new Error('Right session failed'))
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    await userEvent.click(screen.getByTestId('harness-session-picker-create-button'))
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
   })
 
   test('prepares a project worktree before starting the primary OpenCode session', async () => {

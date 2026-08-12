@@ -787,6 +787,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const [additionalHarnessError, setAdditionalHarnessError] = useState<string | null>(null)
   const [harnessResumeLaunchError, setHarnessResumeLaunchError] = useState<{
     sessionId: string
     message: string
@@ -1628,6 +1629,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       cwd,
       resumeSession,
       activate = true,
+      onError = setCentralHarnessError,
     }: {
       preference: LocalHarnessPreference
       model: LocalHarnessModelOption | null
@@ -1637,6 +1639,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       cwd: string
       resumeSession?: LocalHarnessWorkbenchSession
       activate?: boolean
+      onError?: (message: string) => void
     }): Promise<LocalHarnessWorkbenchSession | null> => {
       setCentralHarnessStarting(true)
       setCentralHarnessError(null)
@@ -1707,7 +1710,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (proxyToken) {
           await services?.localHarnessModelApi?.unregisterProxy(proxyToken)
         }
-        setCentralHarnessError(
+        onError(
           error instanceof Error
             ? error.message
             : t('workbench.harness_start_failed', '启动编码工具失败')
@@ -1938,6 +1941,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
 
       try {
+        setAdditionalHarnessError(null)
         const cwd = activeLocalHarnessSession?.cwd ?? (await resolvePrimaryHarnessCwd())
         const session = await launchHarnessSession({
           preference,
@@ -1947,6 +1951,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           projectId: activeLocalHarnessSession?.projectId ?? currentProject?.id ?? null,
           cwd,
           activate: target === 'main',
+          onError: target === 'right' ? setAdditionalHarnessError : setCentralHarnessError,
         })
         if (session && target === 'right') {
           const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
@@ -1955,11 +1960,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           setRightPanelView(tab)
         }
       } catch (error) {
-        setCentralHarnessError(
+        const message =
           error instanceof Error
             ? error.message
             : t('workbench.harness_start_failed', '启动编码工具失败')
-        )
+        if (target === 'right') {
+          setAdditionalHarnessError(message)
+        } else {
+          setCentralHarnessError(message)
+        }
       }
     },
     [
@@ -1974,6 +1983,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       preferLocalWorkspaceTerminal,
       resolvePrimaryHarnessCwd,
       services,
+      setAdditionalHarnessError,
       setCentralHarnessError,
       t,
     ]
@@ -4043,6 +4053,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           message={continueInIm.notice?.message ?? null}
           tone={continueInIm.notice?.tone}
           onClear={continueInIm.clearNotice}
+        />
+        <TransientNotice
+          message={additionalHarnessError}
+          tone="error"
+          onClear={() => setAdditionalHarnessError(null)}
         />
         <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />

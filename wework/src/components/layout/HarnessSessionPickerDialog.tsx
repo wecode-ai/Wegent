@@ -1,6 +1,6 @@
 import { SquareTerminal, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -33,6 +33,7 @@ export function HarnessSessionPickerDialog({
   const [selectedHarnessId, setSelectedHarnessId] = useState<LocalHarnessId | null>(null)
   const [selectedModelKey, setSelectedModelKey] = useState<string | null | undefined>(undefined)
   const [submitting, setSubmitting] = useState(false)
+  const submissionGenerationRef = useRef(0)
   const firstAvailableOption = useMemo(() => options.find(option => !option.disabled), [options])
   const selectedOption =
     options.find(option => option.id === selectedHarnessId && !option.disabled) ??
@@ -43,6 +44,7 @@ export function HarnessSessionPickerDialog({
   const selectedModel =
     selectedOption?.models.find(model => model.key === effectiveSelectedModelKey) ?? null
   const closeDialog = () => {
+    submissionGenerationRef.current += 1
     setSelectedHarnessId(null)
     setSelectedModelKey(undefined)
     setSubmitting(false)
@@ -153,12 +155,18 @@ export function HarnessSessionPickerDialog({
             disabled={!selectedOption || submitting}
             onClick={async () => {
               if (!selectedOption || submitting) return
+              const submissionGeneration = submissionGenerationRef.current + 1
+              submissionGenerationRef.current = submissionGeneration
               setSubmitting(true)
               try {
                 await onSelect(selectedOption.id, selectedModel)
-                closeDialog()
+                if (submissionGenerationRef.current === submissionGeneration) {
+                  closeDialog()
+                }
               } finally {
-                setSubmitting(false)
+                if (submissionGenerationRef.current === submissionGeneration) {
+                  setSubmitting(false)
+                }
               }
             }}
             className="flex h-8 items-center rounded-lg bg-text-primary px-3 text-sm text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
