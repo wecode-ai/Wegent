@@ -5,7 +5,7 @@
 import type { DingTalkDocContext, ExternalKnowledgeRef } from '@/types/context'
 
 function externalKnowledgeScopeKey(ref: ExternalKnowledgeRef): string {
-  return `${ref.provider}:${ref.mode}:${ref.id}`
+  return `${ref.provider}:${ref.mode}:${ref.scope ?? ''}:${ref.id}`
 }
 
 function externalKnowledgeTargetKey(ref: ExternalKnowledgeRef): string {

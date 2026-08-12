@@ -51,7 +51,7 @@ interface TaskKnowledgeBindingPanelProps {
 function externalRefKey(ref: ExternalKnowledgeRef) {
   const targetType = ref.target_type ?? 'knowledge_base'
   const targetId = ref.node_id ?? ref.document_id ?? 'source'
-  return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
+  return `external:${ref.provider}:${ref.mode}:${ref.scope ?? ''}:${ref.id}:${targetType}:${targetId}`
 }
 
 function externalDisplayName(ref: ExternalKnowledgeRef) {

@@ -147,7 +147,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     await screen.findByText('测试1111')
     fireEvent.click(
       screen.getByTestId(
-        'task-knowledge-binding-remove-external:demo:explicit:lib-1:knowledge_base:source'
+        'task-knowledge-binding-remove-external:demo:explicit:organization:lib-1:knowledge_base:source'
       )
     )
 
@@ -157,6 +157,28 @@ describe('TaskKnowledgeBindingPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText('测试1111')).not.toBeInTheDocument()
     })
+  })
+
+  it('renders the same external ID from different scopes as separate bindings', async () => {
+    mockGetBoundExternalKnowledgeRefs.mockResolvedValue({
+      items: [externalRef, { ...externalRef, name: '测试2222', scope: 'personal' }],
+      total: 2,
+    })
+
+    render(<TaskKnowledgeBindingPanel taskId={71} />)
+
+    expect(await screen.findByText('测试1111')).toBeInTheDocument()
+    expect(screen.getByText('测试2222')).toBeInTheDocument()
+    expect(
+      screen.getByTestId(
+        'task-knowledge-binding-external:demo:explicit:organization:lib-1:knowledge_base:source'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByTestId(
+        'task-knowledge-binding-external:demo:explicit:personal:lib-1:knowledge_base:source'
+      )
+    ).toBeInTheDocument()
   })
 
   it('keeps internal knowledge management available when external bindings fail to load', async () => {

@@ -119,7 +119,7 @@ function getStructuredItemId(context: SubtaskContextBrief): string | null {
       targetType === 'knowledge_base'
         ? context.external_id
         : (context.external_node_id ?? context.external_document_id ?? 'unknown')
-    return `external_knowledge:${context.external_provider}:explicit:${context.external_id}:${targetType}:${targetId}`
+    return `external_knowledge:${context.external_provider}:explicit:${context.external_scope ?? ''}:${context.external_id}:${targetType}:${targetId}`
   }
 
   return null

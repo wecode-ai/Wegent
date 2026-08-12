@@ -198,6 +198,43 @@ describe('pipeline next-step helpers', () => {
     expect(draft.structuredItems).toHaveLength(2)
   })
 
+  it('keeps the same external knowledge ID from different scopes distinct', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 213,
+            context_type: 'external_knowledge',
+            name: 'Organization KB',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_scope: 'organization',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+          {
+            id: 214,
+            context_type: 'external_knowledge',
+            name: 'Personal KB',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_scope: 'personal',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems.map(item => item.id)).toEqual([
+      'external_knowledge:demo-provider:explicit:organization:kb-1:knowledge_base:kb-1',
+      'external_knowledge:demo-provider:explicit:personal:kb-1:knowledge_base:kb-1',
+    ])
+  })
+
   it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
     const draft = buildPipelineNextStepDraft(
       [

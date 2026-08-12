@@ -123,4 +123,26 @@ describe('normalizeSelectedExternalKnowledgeRefs', () => {
 
     expect(normalizeSelectedExternalKnowledgeRefs(refs)).toEqual(refs)
   })
+
+  it('keeps the same knowledge base ID from different scopes', () => {
+    const refs = [
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        scope: 'organization',
+        id: 'workspace-1',
+        target_type: 'knowledge_base',
+      },
+      {
+        provider: 'dingtalk',
+        mode: 'explicit',
+        scope: 'personal',
+        id: 'workspace-1',
+        target_type: 'document',
+        node_id: 'doc-1',
+      },
+    ] satisfies ExternalKnowledgeRef[]
+
+    expect(normalizeSelectedExternalKnowledgeRefs(refs)).toEqual(refs)
+  })
 })

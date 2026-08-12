@@ -163,4 +163,39 @@ describe('ContextBadgeList knowledge presentation', () => {
     expect(screen.getAllByText('Project Space')).toHaveLength(1)
     expect(screen.getByText('1 文件夹 · 1 文档')).toBeInTheDocument()
   })
+
+  it('renders separate cards for the same external ID in different scopes', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 30,
+            context_type: 'external_knowledge',
+            name: 'Organization Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_scope: 'organization',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+          {
+            id: 31,
+            context_type: 'external_knowledge',
+            name: 'Personal Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_scope: 'personal',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Organization Space')).toBeInTheDocument()
+    expect(screen.getByText('Personal Space')).toBeInTheDocument()
+    expect(screen.getAllByText('WeiboAP')).toHaveLength(2)
+  })
 })

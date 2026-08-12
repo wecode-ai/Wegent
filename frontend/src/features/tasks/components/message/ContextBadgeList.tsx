@@ -89,7 +89,7 @@ export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageCo
       context.external_provider &&
       context.external_mode
     const key = isExternalKnowledge
-      ? `external:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}`
+      ? `external:${context.external_provider}:${context.external_mode}:${context.external_scope ?? ''}:${context.external_id ?? 'all'}`
       : `${context.context_type}:${context.id}`
     const existingIndex = groupIndexes.get(key)
     const isWholeKnowledgeBase =
