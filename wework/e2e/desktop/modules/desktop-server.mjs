@@ -219,10 +219,16 @@ import {
 } from './shared.mjs'
 
 class DesktopE2EServer {
-  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
+  constructor(
+    workspacePath,
+    cloudWorkspacePath = workspacePath,
+    desktopScenario = null,
+    { enableMarketplaceConnectorAppsStub = false } = {}
+  ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
     this.desktopScenario = desktopScenario
+    this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -898,7 +904,11 @@ class DesktopE2EServer {
     // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
     // lists Wegent connector-apps before plugin/install; stub them as already
     // connected so desktop E2E can exercise the real install path.
-    if (request.method === 'GET' && url.pathname === '/api/connector-apps') {
+    if (
+      this.enableMarketplaceConnectorAppsStub &&
+      request.method === 'GET' &&
+      url.pathname === '/api/connector-apps'
+    ) {
       const connected = status => ({
         status,
         external_account_name: status === 'connected' ? 'desktop-e2e' : null,
@@ -934,20 +944,6 @@ class DesktopE2EServer {
           connection: connected('connected'),
         },
       ])
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/connector-runtime/token') {
-      json(response, 200, {
-        access_token: 'desktop-e2e-connector-runtime-token',
-        token_type: 'bearer',
-        expires_in: 3600,
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
-      json(response, 200, { apps: [] })
       return
     }
 
