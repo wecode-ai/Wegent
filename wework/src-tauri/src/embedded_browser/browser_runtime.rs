@@ -1,12 +1,18 @@
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use serde_json::{json, Value};
 
 use super::{
     eval_json, get_entry, EmbeddedBrowserBridgeRequest, EmbeddedBrowserState,
     BRIDGE_EVAL_TIMEOUT_MS, EMBEDDED_BROWSER_ACTION_SCRIPT, EMBEDDED_BROWSER_BRIDGE_SEQUENCE,
-    EMBEDDED_BROWSER_INSPECT_SCRIPT, EMBEDDED_BROWSER_WAIT_SCRIPT,
+    EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR, EMBEDDED_BROWSER_INSPECT_SCRIPT,
+    EMBEDDED_BROWSER_WAIT_SCRIPT,
 };
+
+const READONLY_EVALUATION_RETRY_INTERVAL_MS: u64 = 50;
 
 pub(super) async fn eval_json_nonblocking(
     state: &EmbeddedBrowserState,
@@ -26,7 +32,14 @@ pub(super) async fn eval_json_nonblocking(
     let result = tauri::async_runtime::spawn_blocking(move || {
         receiver
             .recv_timeout(Duration::from_millis(timeout_ms))
-            .map_err(|_| "Timed out waiting for embedded browser evaluation".to_string())
+            .map_err(|error| match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => {
+                    "Timed out waiting for embedded browser evaluation".to_string()
+                }
+                std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                    EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR.to_string()
+                }
+            })
     })
     .await
     .map_err(|error| format!("Failed to join embedded browser evaluation task: {error}"))??;
@@ -183,7 +196,38 @@ pub(super) fn inspect_embedded_browser(
     options: Value,
     timeout_ms: u64,
 ) -> Result<Value, String> {
-    eval_json(state, label, script_semantic_inspect(&options)?, timeout_ms)
+    let script = script_semantic_inspect(&options)?;
+    retry_readonly_evaluation(timeout_ms, |remaining_ms| {
+        eval_json(state, label, script.clone(), remaining_ms)
+    })
+}
+
+pub(super) fn retry_readonly_evaluation(
+    timeout_ms: u64,
+    mut evaluate: impl FnMut(u64) -> Result<Value, String>,
+) -> Result<Value, String> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let remaining_ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .try_into()
+            .unwrap_or(timeout_ms)
+            .max(1);
+        match evaluate(remaining_ms) {
+            Err(error)
+                if error == EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(READONLY_EVALUATION_RETRY_INTERVAL_MS)),
+                );
+            }
+            result => return result,
+        }
+    }
 }
 
 pub(super) fn embedded_browser_capabilities() -> Value {

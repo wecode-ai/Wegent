@@ -77,6 +77,8 @@ const EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_A
 const EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
 const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
+const EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR: &str =
+    "Embedded browser evaluation was interrupted by page navigation";
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const BRIDGE_OPEN_REQUEST_REPLAY_INTERVAL_MS: u64 = 500;
@@ -1274,7 +1276,14 @@ fn eval_json(
 
     let result = receiver
         .recv_timeout(Duration::from_millis(timeout_ms))
-        .map_err(|_| "Timed out waiting for embedded browser evaluation".to_string())?;
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                "Timed out waiting for embedded browser evaluation".to_string()
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR.to_string()
+            }
+        })?;
     serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 

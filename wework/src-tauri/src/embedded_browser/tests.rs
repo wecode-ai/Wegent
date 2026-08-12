@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     available_logical_entry, bridge_navigation_url, bridge_request_authorized,
-    browser_file_url_from_path, browser_open_action, browser_webview_url,
+    browser_file_url_from_path, browser_open_action, browser_runtime, browser_webview_url,
     consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
     download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
     loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
@@ -24,7 +24,7 @@ use super::{
     wait_for_browser_ready_with_observer, DirectoryEntry, EmbeddedBrowserBridgeRequest,
     EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
     EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -789,4 +789,29 @@ fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
     );
     assert_eq!(entries["workspace-browser-source"], "source-native");
     assert_eq!(entries["workspace-browser-target"], "target-native");
+}
+
+#[test]
+fn readonly_evaluation_retries_when_navigation_interrupts_the_callback() {
+    let mut attempts = 0;
+
+    let result = browser_runtime::retry_readonly_evaluation(1_000, |_| {
+        attempts += 1;
+        if attempts == 1 {
+            return Err(EMBEDDED_BROWSER_EVALUATION_INTERRUPTED_ERROR.to_string());
+        }
+        Ok(json!({ "ok": true }))
+    })
+    .unwrap();
+
+    assert_eq!(attempts, 2);
+    assert_eq!(result, json!({ "ok": true }));
+}
+
+#[test]
+fn readonly_evaluation_preserves_non_navigation_errors() {
+    let result =
+        browser_runtime::retry_readonly_evaluation(1_000, |_| Err("script failed".to_string()));
+
+    assert_eq!(result, Err("script failed".to_string()));
 }
