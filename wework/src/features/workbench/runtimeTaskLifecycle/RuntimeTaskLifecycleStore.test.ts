@@ -256,6 +256,26 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isTurnActive).toBe(true)
   })
 
+  test('recovers a streaming turn after restart when coarse transcript running state is stale', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'restored-turn', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getSnapshot().runningTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
+  })
+
   test('treats an explicit executor snapshot as authoritative over a live turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
