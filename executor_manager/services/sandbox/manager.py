@@ -36,6 +36,12 @@ from executor_manager.services.sandbox.health_checker import (
     get_container_health_checker,
 )
 from executor_manager.services.sandbox.repository import get_sandbox_repository
+from executor_manager.services.sandbox.skill_sync import (
+    ResolvedTaskSkills,
+    SandboxSkillSyncError,
+    SandboxSkillSynchronizer,
+    required_skill_names,
+)
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.telemetry.decorators import trace_async
@@ -69,6 +75,7 @@ class SandboxManager(metaclass=SingletonMeta):
         self._repository = get_sandbox_repository()
         self._health_checker = get_container_health_checker()
         self._execution_runner = get_execution_runner()
+        self._skill_synchronizer = SandboxSkillSynchronizer()
         self._scheduler: Optional["SandboxScheduler"] = None
         self._shutting_down = False
         self._create_locks: Dict[str, asyncio.Lock] = {}
@@ -173,6 +180,16 @@ class SandboxManager(metaclass=SingletonMeta):
                             f"[SandboxManager] Reusing existing sandbox {existing_sandbox.sandbox_id} "
                             f"for task {task_id} (health check passed)"
                         )
+                        self._merge_activation_metadata(
+                            existing_sandbox, sandbox_metadata, bot_config
+                        )
+                        skill_error = await self._prepare_sandbox_skills(
+                            existing_sandbox, existing_sandbox.base_url
+                        )
+                        if skill_error:
+                            existing_sandbox.set_failed(skill_error)
+                            self._repository.save_sandbox(existing_sandbox)
+                            return existing_sandbox, skill_error
                         # Extend timeout
                         existing_sandbox.extend_timeout(timeout)
                         self._repository.save_sandbox(existing_sandbox)
@@ -240,8 +257,13 @@ class SandboxManager(metaclass=SingletonMeta):
         Returns:
             Error message if failed, None if successful
         """
+        try:
+            resolved_skills = await self._skill_synchronizer.resolve(sandbox)
+        except SandboxSkillSyncError as exc:
+            return str(exc)
+
         # Build task data for executor
-        task_data = self._build_sandbox_task(sandbox)
+        task_data = self._build_sandbox_task(sandbox, resolved_skills)
 
         # Get executor and create container
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
@@ -271,10 +293,53 @@ class SandboxManager(metaclass=SingletonMeta):
         if base_url is None:
             return f"Container {container_name} failed to become ready"
 
+        try:
+            await self._skill_synchronizer.sync(base_url, task_data, resolved_skills)
+        except SandboxSkillSyncError as exc:
+            return str(exc)
+
         sandbox.set_running(base_url)
+        sandbox.metadata["synced_required_skills"] = resolved_skills.required_skills
         self._repository.save_sandbox(sandbox)
 
         return None
+
+    async def _prepare_sandbox_skills(
+        self, sandbox: Sandbox, base_url: str
+    ) -> Optional[str]:
+        """Synchronize newly active Skills before reusing a running sandbox."""
+        try:
+            resolved = await self._skill_synchronizer.resolve(sandbox)
+            task = self._build_sandbox_task(sandbox, resolved)
+            await self._skill_synchronizer.sync(base_url, task, resolved)
+        except SandboxSkillSyncError as exc:
+            return str(exc)
+        sandbox.metadata["synced_required_skills"] = resolved.required_skills
+        return None
+
+    @staticmethod
+    def _merge_activation_metadata(
+        sandbox: Sandbox,
+        incoming: Dict[str, Any],
+        bot_config: Optional[Dict[str, Any]],
+    ) -> None:
+        """Merge credentials and active Skill names into a reused sandbox."""
+        for key in (
+            "auth_token",
+            "skill_identity_token",
+            "workspace_ref",
+            "task_type",
+            "e2b_sandbox_id",
+            "bot_config",
+        ):
+            if incoming.get(key):
+                sandbox.metadata[key] = incoming[key]
+
+        required = set(required_skill_names(sandbox.metadata))
+        required.update(required_skill_names(incoming))
+        sandbox.metadata["required_skills"] = sorted(required)
+        if bot_config:
+            sandbox.metadata["bot_config"] = bot_config
 
     async def _wait_for_container_ready(
         self,
@@ -339,7 +404,11 @@ class SandboxManager(metaclass=SingletonMeta):
         except Exception:
             return False
 
-    def _build_sandbox_task(self, sandbox: Sandbox) -> Dict[str, Any]:
+    def _build_sandbox_task(
+        self,
+        sandbox: Sandbox,
+        resolved_skills: Optional[ResolvedTaskSkills] = None,
+    ) -> Dict[str, Any]:
         """Build task data for creating a sandbox container.
 
         Args:
@@ -418,6 +487,9 @@ class SandboxManager(metaclass=SingletonMeta):
         skill_identity_token = sandbox.metadata.get("skill_identity_token")
         if skill_identity_token:
             task["skill_identity_token"] = skill_identity_token
+
+        if resolved_skills is not None:
+            resolved_skills.apply_to_task(task)
 
         return task
 

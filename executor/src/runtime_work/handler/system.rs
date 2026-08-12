@@ -347,6 +347,51 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
+    pub(super) async fn register_harness_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let scope = string_field(&payload, "scope")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
+        let upstream = payload
+            .get("upstream")
+            .cloned()
+            .ok_or_else(|| AppIpcError::new("invalid_request", "upstream is required"))
+            .and_then(|value| {
+                serde_json::from_value::<local_model_proxy::LocalModelProxyUpstream>(value).map_err(
+                    |error| {
+                        AppIpcError::new(
+                            "invalid_request",
+                            format!("Invalid harness proxy upstream: {error}"),
+                        )
+                    },
+                )
+            })?;
+        let loopback = executor_loopback_base_url().ok_or_else(|| {
+            AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            )
+        })?;
+        let token = local_model_proxy::register_harness(&scope, upstream);
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}/v1/harness-router/{token}")
+        }))
+    }
+
+    pub(super) async fn unregister_harness_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        local_model_proxy::unregister_harness(&token);
+        Ok(json!({"unregistered": true}))
+    }
+
     pub(super) async fn write_custom_codex_catalog(
         &self,
         payload: Value,

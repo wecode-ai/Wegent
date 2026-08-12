@@ -142,3 +142,36 @@ async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
     assert session.state == IMSessionState.IDLE
     assert session.active_task_id == 7001
     assert session.pending_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_im_notification_presence_aggregates_clients_and_expires(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    assert await im_session_service.is_user_away_for_im_notifications(test_user.id)
+
+    away = await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="client-a",
+        away=True,
+    )
+    assert away is True
+
+    away = await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="client-b",
+        away=False,
+    )
+    assert away is False
+
+    away = await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="client-b",
+        away=True,
+    )
+    assert away is True
+
+    key = f"channel:user_im_notification_presence:{test_user.id}"
+    fake_im_session_cache.zsets[key] = {"client-a\0active": 0}
+    assert await im_session_service.is_user_away_for_im_notifications(test_user.id)

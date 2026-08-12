@@ -88,10 +88,10 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
         return {
             "id": team_id,
             "metadata": {"name": f"team-{team_id}", "displayName": f"Team {team_id}"},
-            "recommended_mode": "chat",
             "spec": {
                 "description": f"Description {team_id}",
                 "icon": "sparkles",
+                "bind_mode": ["code"],
                 "quick_phrases": [f"agent phrase {team_id}"],
             },
             "agent_type": "claude",
@@ -114,7 +114,8 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     assert response.system_functions[0].name == "team-101"
     assert response.system_functions[0].description == "Description 101"
     assert response.system_functions[0].icon == "sparkles"
-    assert response.system_functions[0].recommended_mode == "chat"
+    assert response.system_functions[0].bind_mode == ["code"]
+    assert response.system_functions[0].recommended_mode == "code"
     assert response.system_functions[0].input_presets[0].id == "roadmap"
     assert (
         response.system_functions[0].input_presets[0].prompt
@@ -138,6 +139,8 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     ].options.selected_skill_names == ["ppt"]
     assert response.favorite_agents[0].team_id == 202
     assert response.favorite_agents[0].title == "Team 202"
+    assert response.favorite_agents[0].bind_mode == ["code"]
+    assert response.favorite_agents[0].recommended_mode == "code"
     assert response.favorite_agents[0].quick_phrases == ["agent phrase 202"]
     assert response.favorite_agents[0].input_presets[0].prompt == "agent phrase 202"
 

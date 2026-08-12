@@ -12,6 +12,7 @@
 mod anthropic;
 mod chat;
 mod fork;
+mod harness_protocol;
 mod history;
 mod vision;
 
@@ -30,6 +31,7 @@ use axum::{
     routing::{post, MethodRouter},
 };
 use futures_util::{Stream, StreamExt};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -41,6 +43,7 @@ use fork::{codex_forked_from_thread_id, prepare_fork_request};
 pub(crate) const API_KEY: &str = "wework-local-router";
 pub(crate) const ROUTE: &str = "/v1/codex-router/responses";
 pub(crate) const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
+pub(crate) const HARNESS_MESSAGES_ROUTE: &str = "/v1/harness-router/{token}/v1/messages";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -69,7 +72,14 @@ where
     post(handle_token_route).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
 }
 
-#[derive(Debug, Clone)]
+pub(crate) fn harness_messages_route<S>() -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    post(handle_harness_messages).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct LocalModelProxyUpstream {
     pub base_url: String,
     pub request_url: Option<String>,
@@ -83,6 +93,45 @@ pub(crate) struct LocalModelProxyUpstream {
     pub model_id: Option<String>,
     pub routing_model_id: Option<String>,
     pub max_output_tokens: Option<u64>,
+}
+
+pub(crate) fn register_harness(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let token = registry
+        .tokens_by_scope
+        .get(route_scope)
+        .cloned()
+        .unwrap_or_else(|| {
+            let token = generate_registration_token(&registry);
+            registry
+                .tokens_by_scope
+                .insert(route_scope.to_owned(), token.clone());
+            token
+        });
+    registry.routes.insert(
+        token.clone(),
+        RegisteredUpstream {
+            upstream,
+            vision_sidecar: None,
+            history: Default::default(),
+            thread_ids: HashSet::new(),
+            last_routed_model: None,
+            pending_model_switch_cleanup: false,
+            last_used: Instant::now(),
+            active_references: 1,
+        },
+    );
+    log_executor_event(
+        "harness model proxy registered",
+        &[
+            ("active_registrations", registry.routes.len().to_string()),
+            ("route_scope", route_scope.to_owned()),
+        ],
+    );
+    token
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -267,6 +316,21 @@ pub(crate) fn unregister(token: &str) {
     );
 }
 
+pub(crate) fn unregister_harness(token: &str) {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let removed = registry.routes.remove(token).is_some();
+    registry.tokens_by_scope.retain(|_, value| value != token);
+    log_executor_event(
+        "harness model proxy unregistered",
+        &[
+            ("removed", removed.to_string()),
+            ("active_registrations", registry.routes.len().to_string()),
+        ],
+    );
+}
+
 fn generate_registration_token(registry: &LocalModelProxyRegistry) -> String {
     loop {
         let mut bytes = [0_u8; 24];
@@ -324,6 +388,129 @@ pub(super) async fn handle_token_route(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     handle_for_token(token, headers, body).await
+}
+
+async fn handle_harness_messages(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    let request_started_at = Instant::now();
+    let upstream = {
+        let mut registry = registry()
+            .lock()
+            .expect("local model proxy registry should not be poisoned");
+        prune_registry(&mut registry);
+        let registered = registry.routes.get_mut(&token).ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "unknown or expired harness model route".to_owned(),
+        })?;
+        registered.last_used = Instant::now();
+        registered.upstream.clone()
+    };
+    let request_url = upstream
+        .request_url
+        .clone()
+        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_body = harness_protocol::adapt_messages_request(
+        &body,
+        &upstream.api_format,
+        upstream.model_id.as_deref(),
+    )?;
+    log_executor_event(
+        "harness model proxy request started",
+        &[
+            ("api_format", upstream.api_format.clone()),
+            ("upstream", safe_url(&request_url)),
+            ("body_bytes", request_body.len().to_string()),
+        ],
+    );
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok());
+    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let upstream_response = send_upstream_request_with_rate_limit_retry(
+        &client,
+        &upstream,
+        &request_url,
+        &request_body,
+        user_agent,
+    )
+    .await?;
+    let status = upstream_response.status();
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    log_executor_event(
+        "harness model proxy upstream headers received",
+        &[
+            ("api_format", upstream.api_format.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                request_started_at.elapsed().as_millis().to_string(),
+            ),
+        ],
+    );
+    if !status.is_success() {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read harness model error response: {error}"),
+        })?;
+        let mut response = Response::new(Body::from(response_body));
+        *response.status_mut() = status;
+        if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::CONTENT_TYPE, value);
+        }
+        return Ok(response);
+    }
+    if upstream.api_format == "anthropic-messages" {
+        let mut response = Response::new(Body::from_stream(upstream_response.bytes_stream()));
+        *response.status_mut() = status;
+        if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::CONTENT_TYPE, value);
+        }
+        return Ok(response);
+    }
+    if !content_type
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read harness model response: {error}"),
+        })?;
+        let value = serde_json::from_slice::<Value>(&response_body).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Harness upstream returned invalid JSON: {error}"),
+        })?;
+        let converted =
+            harness_protocol::adapt_upstream_json_response(&upstream.api_format, &value)?;
+        let mut response = Response::new(Body::from(converted.to_string()));
+        *response.status_mut() = status;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        return Ok(response);
+    }
+    let stream = diagnostic_upstream_stream(
+        upstream_response.bytes_stream(),
+        upstream.api_format.clone(),
+        request_started_at,
+    );
+    let mut response = Response::new(Body::from_stream(harness_protocol::adapt_upstream_sse(
+        upstream.api_format,
+        stream,
+    )));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    Ok(response)
 }
 
 async fn handle_bound_thread(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {

@@ -37,6 +37,7 @@ import {
   listenEmbeddedBrowserInvalidTlsCertificates,
   listenEmbeddedBrowserLocalFilePreview,
   listenEmbeddedBrowserPageStateChanges,
+  isEmbeddedBrowserLabelTransferred,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -1092,7 +1093,13 @@ export function WorkspaceBrowserTabPanel({
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+      if (
+        !embeddedBrowserAvailable ||
+        !nativeBrowserOpenRef.current ||
+        isEmbeddedBrowserLabelTransferred(label)
+      ) {
+        return
+      }
       const host = browserHostRef.current
       if (!host) {
         if (!visible) {
@@ -1113,7 +1120,13 @@ export function WorkspaceBrowserTabPanel({
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
-    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+    if (
+      !embeddedBrowserAvailable ||
+      !nativeBrowserOpenRef.current ||
+      isEmbeddedBrowserLabelTransferred(label)
+    ) {
+      return
+    }
     await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
   }, [embeddedBrowserAvailable, label])
 

@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => {
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
   const localChatStreamSubscribe = vi.fn(() => vi.fn())
   const cloudRuntimeChatStreamSubscribe = vi.fn(() => vi.fn())
+  const invoke = vi.fn()
+  const localUploadAttachment = vi.fn()
+  const localDeleteAttachment = vi.fn()
+  const cloudUploadAttachment = vi.fn()
   const captureRuntimeIpcOptions = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
@@ -77,6 +81,10 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: localArchiveProjectConversations,
     },
     userApi: { updateCurrentUser: localUpdateCurrentUser },
+    attachmentApi: {
+      uploadAttachment: localUploadAttachment,
+      deleteAttachment: localDeleteAttachment,
+    },
     chatStream: { subscribe: localChatStreamSubscribe },
   }
 
@@ -114,6 +122,10 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: cloudArchiveProjectConversations,
       getImNotificationSettings: vi.fn(),
     },
+    attachmentApi: {
+      uploadAttachment: cloudUploadAttachment,
+      deleteAttachment: vi.fn(),
+    },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
     workspaceSessionApi: cloudWorkspaceSessionApi,
@@ -144,6 +156,10 @@ const mocks = vi.hoisted(() => {
     cloudRuntimeIpcSubscribe,
     localChatStreamSubscribe,
     cloudRuntimeChatStreamSubscribe,
+    invoke,
+    localUploadAttachment,
+    localDeleteAttachment,
+    cloudUploadAttachment,
     captureRuntimeIpcOptions,
     localListArchivedConversations,
     cloudListArchivedConversations,
@@ -217,6 +233,10 @@ vi.mock('@/api/local/localServices', () => ({
       getImNotificationSettings: vi.fn(),
     }
   },
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: mocks.invoke,
 }))
 
 vi.mock('@/api/backend/backendServices', () => ({
@@ -406,6 +426,47 @@ describe('createHybridWorkbenchServices', () => {
         { kind: 'process', label: 'Process', command: 'wegent-executor' },
       ],
     })
+    mocks.invoke.mockResolvedValue([])
+    mocks.cloudUploadAttachment.mockResolvedValue({
+      id: 42,
+      filename: 'screenshot.png',
+      file_size: 4,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-08-11T00:00:00.000Z',
+    })
+  })
+
+  it('uploads a local attachment to the connected cloud backend on demand', async () => {
+    mocks.invoke.mockResolvedValue([
+      {
+        name: 'screenshot.png',
+        bytes: [1, 2, 3, 4],
+      },
+    ])
+    const services = createServices()
+
+    const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
+      id: -1,
+      filename: 'screenshot.png',
+      file_size: 4,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-08-11T00:00:00.000Z',
+      local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+    })
+
+    expect(mocks.invoke).toHaveBeenCalledWith('read_dropped_files', {
+      paths: ['/Users/me/.wework/workspace/attachments/draft/screenshot.png'],
+    })
+    expect(mocks.cloudUploadAttachment).toHaveBeenCalledWith(expect.any(File))
+    const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
+    expect(file.name).toBe('screenshot.png')
+    expect(file.type).toBe('image/png')
+    expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
+    expect(uploaded?.id).toBe(42)
   })
 
   it('routes runtime stream events through exactly one transport by device identity', () => {

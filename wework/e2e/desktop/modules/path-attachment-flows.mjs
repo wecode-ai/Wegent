@@ -17,9 +17,10 @@ import {
   PASTED_ZIP_FILENAME,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
+  SIDE_CHAT_GUIDANCE_FOLLOW_UP,
+  SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
   SIDE_CHAT_QUEUE_FOLLOW_UP,
-  SIDE_CHAT_QUEUE_INITIAL,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
@@ -318,10 +319,10 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
 
-  control.setScenario('side_chat_queue')
-  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_INITIAL })
+  control.setScenario('side_chat_guidance')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_INITIAL })
   await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
-  await control.awaitScenarioRequestCount('side_chat_queue', 1)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 1)
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
@@ -335,7 +336,34 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
-  control.releaseSideChatQueueResponse()
+  await control.command('click', `${sideChatSelector} [data-testid^="queue-cancel-button-"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The side-chat queued follow-up could not be cancelled',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
+
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_FOLLOW_UP })
+  await control.command('click', `${sideChatSelector} [data-testid="send-mode-menu-button"]`)
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
+    text: SIDE_CHAT_GUIDANCE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const sideChatGuidanceStatus = await control.command(
+    'getText',
+    `${sideChatSelector} [data-testid="conversation-queue-panel"]`
+  )
+  assert.match(
+    sideChatGuidanceStatus,
+    /引导中|Guiding/,
+    'The side-chat follow-up was queued instead of guiding the active turn'
+  )
+  await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
+  control.releaseSideChatGuidanceResponse()
+  await control.awaitScenarioRequestCount('side_chat_guidance', 2)
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(
@@ -364,7 +392,7 @@ async function verifySideChatAttachmentIsolation({
     0,
     'The main task composer remained visible behind the expanded temporary chat'
   )
-  await captureVerificationScreenshot(control, '05-side-chat-expanded-single-composer.png')
+  await captureVerificationScreenshot(control, '06-side-chat-expanded-single-composer.png')
 
   await control.command(
     'click',
@@ -384,7 +412,7 @@ async function verifySideChatAttachmentIsolation({
     2,
     'Restoring the split view did not restore the two independent composers'
   )
-  await captureVerificationScreenshot(control, '05-side-chat-restored-two-composers.png')
+  await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []

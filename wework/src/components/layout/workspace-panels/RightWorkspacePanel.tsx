@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
@@ -107,6 +107,7 @@ interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
   expanded?: boolean
+  allowTemporaryChat?: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
@@ -118,6 +119,7 @@ interface RightWorkspacePanelProps {
   fileWorkspaceTargets?: WorkspaceTarget[]
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
+  workspaceActions?: WorkspaceAddMenuItem[]
   workspaceSessionApi?: WorkspaceSessionApi
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
@@ -206,6 +208,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
   expanded = false,
+  allowTemporaryChat = true,
   activeView,
   openTabs,
   currentProject,
@@ -217,6 +220,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   fileWorkspaceTargets,
   preferLocalTerminal = false,
   terminalContextTitle,
+  workspaceActions = [],
   workspaceSessionApi,
   workspaceFileApi,
   openFileRequest,
@@ -245,7 +249,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
+  const availableTabs = allowTemporaryChat
+    ? openTabs
+    : openTabs.filter(tab => !isRightWorkspaceChatTab(tab))
+  const visibleTabs = canBrowseFiles ? availableTabs : availableTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
   const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
@@ -273,7 +280,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       if (key === 'r' && canOpenReview) {
         event.preventDefault()
         onSelectReview()
-      } else if (key === 's') {
+      } else if (key === 's' && allowTemporaryChat) {
         event.preventDefault()
         onSelectChat()
       } else if (key === 'f' && canBrowseFiles) {
@@ -285,6 +292,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
+    allowTemporaryChat,
     canBrowseFiles,
     canOpenReview,
     onSelectBrowser,
@@ -303,6 +311,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       onSelectTab(tab)
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
+    ...workspaceActions,
     {
       id: 'review',
       testId: 'right-workspace-review-option',
@@ -327,14 +336,18 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       shortcut: getRightWorkspaceShortcuts(platform).browser,
       onSelect: onSelectBrowser,
     },
-    {
-      id: 'chat',
-      testId: 'right-workspace-chat-option',
-      icon: MessageCircle,
-      label: t('workbench.workspace_tab_chat', '临时聊天'),
-      shortcut: getRightWorkspaceShortcuts(platform).chat,
-      onSelect: onSelectChat,
-    },
+    ...(allowTemporaryChat
+      ? [
+          {
+            id: 'chat' as const,
+            testId: 'right-workspace-chat-option',
+            icon: MessageCircle,
+            label: t('workbench.workspace_tab_chat', '临时聊天'),
+            shortcut: getRightWorkspaceShortcuts(platform).chat,
+            onSelect: onSelectChat,
+          },
+        ]
+      : []),
     ...(canBrowseFiles
       ? [
           {
@@ -407,7 +420,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       ) : null}
     </header>
   ) : null
-  const chatTabs = openTabs.filter(isRightWorkspaceChatTab)
+  const chatTabs = allowTemporaryChat ? openTabs.filter(isRightWorkspaceChatTab) : []
 
   return (
     <section
@@ -424,6 +437,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           <RightWorkspaceLauncher
             canOpenReview={canOpenReview}
             canBrowseFiles={canBrowseFiles}
+            allowTemporaryChat={allowTemporaryChat}
+            workspaceActions={workspaceActions}
             onSelectReview={onSelectReview}
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
@@ -609,7 +624,7 @@ function RightWorkspaceTabIcon({
   iconSrc,
   testId,
 }: {
-  icon: typeof File
+  icon: ComponentType<{ className?: string }>
   iconSrc?: string | null
   testId: string
 }) {
@@ -657,6 +672,8 @@ function PlanWorkspacePanel({ content }: { content: string }) {
 function RightWorkspaceLauncher({
   canOpenReview,
   canBrowseFiles,
+  allowTemporaryChat,
+  workspaceActions,
   onSelectReview,
   onSelectBrowser,
   onSelectFiles,
@@ -664,6 +681,8 @@ function RightWorkspaceLauncher({
 }: {
   canOpenReview: boolean
   canBrowseFiles: boolean
+  allowTemporaryChat: boolean
+  workspaceActions: WorkspaceAddMenuItem[]
   onSelectReview: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
@@ -678,6 +697,17 @@ function RightWorkspaceLauncher({
       className="flex min-h-0 flex-1 items-center justify-center px-8"
     >
       <div className="flex w-full max-w-xl flex-col gap-1.5">
+        {workspaceActions.map(action => (
+          <RightWorkspaceLauncherItem
+            key={action.id}
+            data-testid={action.testId ?? `right-workspace-${action.id}-option`}
+            icon={action.icon}
+            label={action.label}
+            shortcut={action.shortcut}
+            onClick={() => void action.onSelect()}
+            disabled={action.disabled}
+          />
+        ))}
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-review-option"
           icon={FileDiff}
@@ -693,13 +723,15 @@ function RightWorkspaceLauncher({
           shortcut={getRightWorkspaceShortcuts(platform).browser}
           onClick={onSelectBrowser}
         />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-chat-option"
-          icon={MessageCircle}
-          label={t('workbench.workspace_tab_chat', '临时聊天')}
-          shortcut={getRightWorkspaceShortcuts(platform).chat}
-          onClick={onSelectChat}
-        />
+        {allowTemporaryChat && (
+          <RightWorkspaceLauncherItem
+            data-testid="right-workspace-chat-option"
+            icon={MessageCircle}
+            label={t('workbench.workspace_tab_chat', '临时聊天')}
+            shortcut={getRightWorkspaceShortcuts(platform).chat}
+            onClick={onSelectChat}
+          />
+        )}
         {canBrowseFiles && (
           <RightWorkspaceLauncherItem
             data-testid="right-workspace-file-option"
@@ -722,9 +754,9 @@ function RightWorkspaceLauncherItem({
   onClick,
   'data-testid': testId,
 }: {
-  icon: typeof File
+  icon: ComponentType<{ className?: string }>
   label: string
-  shortcut: string
+  shortcut?: string
   disabled?: boolean
   onClick: () => void
   'data-testid': string
@@ -739,9 +771,11 @@ function RightWorkspaceLauncherItem({
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
-        {shortcut}
-      </span>
+      {shortcut && (
+        <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+          {shortcut}
+        </span>
+      )}
     </button>
   )
 }

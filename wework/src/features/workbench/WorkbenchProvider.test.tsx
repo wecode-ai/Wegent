@@ -5764,7 +5764,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toBe(true)
   })
 
-  test('sends local image attachments as runtime attachments when creating a runtime task', async () => {
+  test('uploads local image attachments before creating a cloud runtime task', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => ({
         accepted: true,
@@ -5774,8 +5774,15 @@ describe('WorkbenchProvider runtime tasks', () => {
         runtime: 'claude_code',
       })),
     })
+    const uploadLocalAttachmentToCloud = vi
+      .fn()
+      .mockResolvedValue(createImageAttachment({ id: 46 }))
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      attachmentApi: {
+        uploadAttachment: vi.fn(),
+        uploadLocalAttachmentToCloud,
+      },
     })
 
     renderWorkbench(<ProjectSendProbe />, services)
@@ -5788,13 +5795,19 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
-    expect(request.attachmentIds).toEqual([])
-    expect(request.attachments).toEqual([
+    expect(uploadLocalAttachmentToCloud).toHaveBeenCalledWith(
       expect.objectContaining({
         id: -45,
         filename: 'photo.png',
         local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
-        local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
+      })
+    )
+    expect(request.attachmentIds).toEqual([46])
+    expect(request.attachments).toEqual([
+      expect.objectContaining({
+        id: 46,
+        filename: 'photo.png',
+        mime_type: 'image/png',
       }),
     ])
   })
@@ -11011,8 +11024,15 @@ describe('WorkbenchProvider runtime tasks', () => {
       guideRuntimeTask,
       setRuntimeGoal,
     })
+    const uploadLocalAttachmentToCloud = vi
+      .fn()
+      .mockResolvedValue(createImageAttachment({ id: 46 }))
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      attachmentApi: {
+        uploadAttachment: vi.fn(),
+        uploadLocalAttachmentToCloud,
+      },
       chatStream: {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
@@ -11068,12 +11088,20 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(guideRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         message: '继续修',
+        attachmentIds: [46],
         attachments: [
           expect.objectContaining({
-            local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+            id: 46,
+            filename: 'photo.png',
             mime_type: 'image/png',
           }),
         ],
+      })
+    )
+    expect(uploadLocalAttachmentToCloud).toHaveBeenCalledWith(
+      expect.objectContaining({
+        local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+        mime_type: 'image/png',
       })
     )
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
@@ -12052,7 +12080,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
   })
 
-  test('sends local image attachments with current runtime task follow-up messages', async () => {
+  test('uploads local image attachments before cloud runtime task follow-up messages', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,
       taskId: 'runtime-a',
@@ -12066,8 +12094,15 @@ describe('WorkbenchProvider runtime tasks', () => {
       }),
       sendRuntimeMessage,
     })
+    const uploadLocalAttachmentToCloud = vi
+      .fn()
+      .mockResolvedValue(createImageAttachment({ id: 46 }))
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      attachmentApi: {
+        uploadAttachment: vi.fn(),
+        uploadLocalAttachmentToCloud,
+      },
     })
 
     renderWorkbench(
@@ -12087,6 +12122,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send follow-up'))
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(uploadLocalAttachmentToCloud).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: -45,
+        filename: 'photo.png',
+        local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+      })
+    )
     expect(sendRuntimeMessage).toHaveBeenCalledWith({
       address: {
         deviceId: 'device-1',
@@ -12096,12 +12138,12 @@ describe('WorkbenchProvider runtime tasks', () => {
       clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
+      attachmentIds: [46],
       attachments: [
         expect.objectContaining({
-          id: -45,
+          id: 46,
           filename: 'photo.png',
-          local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
-          local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
+          mime_type: 'image/png',
         }),
       ],
     })

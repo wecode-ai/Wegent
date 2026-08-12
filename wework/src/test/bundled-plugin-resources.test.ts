@@ -90,6 +90,7 @@ describe('bundled plugin resources', () => {
 
     expect(workflow).toContain('Beta versions are always generated automatically')
     expect(workflow).toContain('node wework/scripts/resolve-release-version.mjs')
+    expect(workflow).toContain('node wework/scripts/resolve-previous-release-tag.mjs')
     expect(workflow).toContain('releases/download/wework-updater/{{target}}-{{arch}}.json')
     expect(workflow).toContain('publish_channel "$RELEASE_CHANNEL"')
     expect(workflow).toContain('publish_channel beta')

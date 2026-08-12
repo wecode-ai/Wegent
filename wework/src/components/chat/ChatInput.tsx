@@ -186,6 +186,8 @@ export interface ChatInputProps {
   inputLeadingContext?: ReactNode
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
+  modelSelectorOverride?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -585,6 +587,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputLeadingContext,
     onDismissInputLeadingContext,
     toolbarLeadingContext,
+    projectWorkBarTrailingContext,
+    modelSelectorOverride,
     onCompactContext,
     goal,
     goalContinuing = false,
@@ -716,9 +720,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       !isSameModel(controls.activeModel, model)
     ) {
       setPendingModelSelection({ model, options })
-      return
+      return false
     }
     applyModelSelection(model, options)
+    return true
   }
 
   const confirmModelSelection = () => {
@@ -921,6 +926,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             }
           }
           showProjectWorkBar={showProjectWorkBar}
+          projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+          modelSelectorOverride={modelSelectorOverride}
           onListLocalSkills={controls.listLocalSkills}
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}

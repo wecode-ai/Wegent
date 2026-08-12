@@ -111,6 +111,7 @@ describe('createLocalAppServices', () => {
             ui: expect.objectContaining({
               family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
               familyLabel: '本地推理',
+              reasoningEfforts: [],
             }),
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
@@ -164,6 +165,123 @@ describe('createLocalAppServices', () => {
       totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('registers harness models through the executor Messages proxy', async () => {
+    const config = saveLocalModelConfig({
+      id: 'harness-model',
+      displayName: 'Harness Model',
+      modelId: 'upstream-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      apiKey: 'provider-secret',
+      catalogReady: false,
+    })
+    saveLocalProxyUrl('socks5://127.0.0.1:7890')
+    const request = vi.fn().mockImplementation(async method => {
+      if (method === 'runtime.harness_proxy.register') {
+        return {
+          token: 'proxy-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', {
+      key: 'local',
+      label: 'Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${config.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Harness Model',
+        modelId: 'upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:opencode:/),
+        upstream: {
+          base_url: 'https://models.example.com/v1',
+          request_url: 'https://models.example.com/v1/chat/completions',
+          api_format: 'openai-chat-completions',
+          convert_custom_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
+          api_key: 'provider-secret',
+          default_headers: [],
+          proxy_url: 'socks5://127.0.0.1:7890',
+          model_id: 'upstream-model',
+          routing_model_id: null,
+          max_output_tokens: null,
+        },
+      })
+    )
+    expect(launch).toMatchObject({
+      modelId: 'wework-messages/wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('provider-secret')
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('socks5://')
+
+    const secondConfig = saveLocalModelConfig({
+      id: 'second-harness-model',
+      displayName: 'Second Harness Model',
+      modelId: 'second-upstream-model',
+      baseUrl: 'https://second-model.example.com/v1',
+      apiFormat: 'anthropic-messages',
+      requestPath: '/messages',
+      apiKey: 'second-provider-secret',
+      catalogReady: false,
+    })
+    const secondLaunch = await services.localHarnessModelApi?.resolveLaunch('claude_code', {
+      key: 'second-local',
+      label: 'Second Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${secondConfig.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Second Harness Model',
+        modelId: 'second-upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:claude_code:/),
+        upstream: expect.objectContaining({
+          request_url: 'https://second-model.example.com/v1/messages',
+          api_format: 'anthropic-messages',
+          api_key: 'second-provider-secret',
+          model_id: 'second-upstream-model',
+        }),
+      })
+    )
+    expect(secondLaunch).toMatchObject({
+      modelId: 'wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(secondLaunch?.env).not.toEqual(
+      expect.objectContaining({ ANTHROPIC_API_KEY: 'second-provider-secret' })
+    )
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
@@ -653,6 +771,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
+            status: 'ready',
             subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
@@ -666,6 +785,55 @@ describe('createLocalAppServices', () => {
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('keeps backend attachment metadata in direct runtime execution requests', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'task-cloud-attachment',
+      workspacePath: '/workspace/project',
+      runtime: 'codex',
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'cloud-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'task-cloud-attachment',
+      runtime: 'codex',
+      message: 'inspect the image',
+      attachments: [
+        {
+          id: 42,
+          filename: 'cloud-image.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-08-11T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.attachments).toEqual([
+      {
+        id: 42,
+        filename: 'cloud-image.png',
+        original_filename: 'cloud-image.png',
+        file_size: 1200,
+        mime_type: 'image/png',
+        status: 'ready',
+        subtask_id: expect.any(String),
+        file_extension: '.png',
+      },
+    ])
   })
 
   test('rejects local runtime task creation without a workspace path', async () => {
@@ -1023,6 +1191,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
+              status: 'ready',
               subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',

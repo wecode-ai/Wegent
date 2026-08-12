@@ -136,6 +136,7 @@ export function EmbeddedLocalTerminal({
       }
     }
     currentResource?.dispose()
+    lastSizeRef.current = null
 
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
@@ -150,11 +151,13 @@ export function EmbeddedLocalTerminal({
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
+    let terminalInputReady = false
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
     }
     const dataDisposable = terminal.onData(data => {
+      if (!terminalInputReady) return
       inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
     })
@@ -171,6 +174,7 @@ export function EmbeddedLocalTerminal({
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
+        if (!terminalInputReady) return
         inputFallback.noteData(data)
         void writeLocalTerminal(sessionId, data)
       },
@@ -204,18 +208,20 @@ export function EmbeddedLocalTerminal({
       const lastSize = lastSizeRef.current
       if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
 
-      lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
-      void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
+      const nextSize = { rows: terminal.rows, cols: terminal.cols }
+      lastSizeRef.current = nextSize
+      void resizeLocalTerminal(sessionId, nextSize.rows, nextSize.cols)
     }
 
     const resizeObserver = new ResizeObserver(fitAndResize)
     resizeObserver.observe(container)
     const removeRenderRecovery = installXtermRenderRecovery(fitAndResize)
+    fitAndResize()
     requestAnimationFrame(fitAndResize)
 
     void connectLocalTerminal(
       sessionId,
-      payload => {
+      (payload, source) => {
         if (!disposed && payload.session_id === sessionId) {
           const context = contextRef.current
           appendRuntimeTerminalContext({
@@ -227,8 +233,14 @@ export function EmbeddedLocalTerminal({
             kind: 'local',
             data: payload.data,
           })
-          terminal.write(payload.data)
-          scheduleThemeSync()
+          terminal.write(payload.data, () => {
+            if (disposed) return
+            if (source === 'snapshot') {
+              terminalInputReady = true
+              refreshXterm(terminal)
+            }
+            scheduleThemeSync()
+          })
         }
       },
       payload => {
@@ -306,7 +318,7 @@ export function EmbeddedLocalTerminal({
           terminal,
           terminalKind: 'local',
         })
-        terminal.focus()
+        terminal.textarea?.focus({ preventScroll: true })
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current
           if (lastSize?.rows !== terminal.rows || lastSize.cols !== terminal.cols) {

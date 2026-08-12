@@ -1635,7 +1635,7 @@ function ChatAreaContent({
         skillSelector.setSelectedSkillNames(options.selected_skill_names)
       }
 
-      const prompt = preset.prompt?.trim()
+      const prompt = preset.prompt?.trim() || preset.title.trim()
       if (prompt) {
         handleQuickPhraseSelect(prompt)
       }
