@@ -1611,12 +1611,31 @@ fn decode_output(bytes: Vec<u8>) -> String {
 }
 
 #[cfg(windows)]
-pub fn hide_windows_console<C>(command: &mut C)
-where
-    C: std::os::windows::process::CommandExt,
-{
+mod windows_console {
+    use std::os::windows::process::CommandExt;
+
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+
+    pub trait HideConsole {
+        fn hide_console(&mut self);
+    }
+
+    impl HideConsole for std::process::Command {
+        fn hide_console(&mut self) {
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+
+    impl HideConsole for tokio::process::Command {
+        fn hide_console(&mut self) {
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn hide_windows_console<C: windows_console::HideConsole>(command: &mut C) {
+    command.hide_console();
 }
 
 #[cfg(not(windows))]
