@@ -89,6 +89,7 @@ import {
   getLocalPathKind,
   isLocalHarnessAvailable,
   listLocalHarnesses,
+  localPathExists,
   resolveLocalHarnessPluginRoots,
   startLocalHarness,
   type LocalHarnessDescriptor,
@@ -759,6 +760,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const [harnessResumeLaunchError, setHarnessResumeLaunchError] = useState<{
+    sessionId: string
+    message: string
+  } | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
@@ -1696,6 +1701,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) ?? null)
       : null
   const activeHarnessResumeModelKey = activeLocalHarnessSession?.modelKey?.trim() || null
+  const harnessModelsReady = projectChat.isModelSelectionReady ?? true
   const activeHarnessResumeModel =
     activeLocalHarnessSession && activeHarnessResumePreference
       ? (getHarnessModelOptions(activeHarnessResumePreference.id).find(
@@ -1709,38 +1715,75 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             name: localHarnessLabel(activeLocalHarnessSession.harnessId),
             defaultValue: `${localHarnessLabel(activeLocalHarnessSession.harnessId)} 已禁用，无法恢复会话`,
           })
-        : activeHarnessResumeModelKey && !activeHarnessResumeModel
+        : harnessModelsReady && activeHarnessResumeModelKey && !activeHarnessResumeModel
           ? t('workbench.harness_model_required', '请选择可用的 Wework 模型')
           : null
       : null
+  const activeHarnessDisplayError =
+    activeHarnessResumeError ??
+    (harnessResumeLaunchError &&
+    harnessResumeLaunchError.sessionId === activeLocalHarnessSession?.sessionId
+      ? harnessResumeLaunchError.message
+      : null) ??
+    centralHarnessError
+  useEffect(() => {
+    harnessResumeRequestsRef.current.clear()
+  }, [activeLocalHarnessSession?.sessionId])
   useEffect(() => {
     if (!activeLocalHarnessSession || activeLocalHarnessSession.active) return
     const resumeRequests = harnessResumeRequestsRef.current
     if (resumeRequests.has(activeLocalHarnessSession.sessionId)) return
     if (
       !activeHarnessResumePreference ||
+      (activeHarnessResumeModelKey && !harnessModelsReady) ||
       (activeHarnessResumeModelKey && !activeHarnessResumeModel)
     ) {
       return
     }
     const sessionId = activeLocalHarnessSession.sessionId
     let started = false
+    let cancelled = false
     resumeRequests.add(sessionId)
     const timer = window.setTimeout(() => {
       started = true
-      void launchHarnessSession({
-        preference: activeHarnessResumePreference,
-        model: activeHarnessResumeModel,
-        prompt: '',
-        isPrimary: activeLocalHarnessSession.isPrimary,
-        projectId: activeLocalHarnessSession.projectId,
-        cwd: activeLocalHarnessSession.cwd,
-        resumeSession: activeLocalHarnessSession,
-      }).finally(() => {
-        resumeRequests.delete(sessionId)
-      })
+      setHarnessResumeLaunchError(current => (current?.sessionId === sessionId ? null : current))
+      void localPathExists(activeLocalHarnessSession.cwd)
+        .then(exists => {
+          if (cancelled) return
+          if (!exists) {
+            setHarnessResumeLaunchError({
+              sessionId,
+              message: t('workbench.harness_resume_workspace_missing', {
+                path: activeLocalHarnessSession.cwd,
+                defaultValue: `原工作区不存在，无法恢复会话：${activeLocalHarnessSession.cwd}`,
+              }),
+            })
+            return
+          }
+          return launchHarnessSession({
+            preference: activeHarnessResumePreference,
+            model: activeHarnessResumeModel,
+            prompt: '',
+            isPrimary: activeLocalHarnessSession.isPrimary,
+            projectId: activeLocalHarnessSession.projectId,
+            cwd: activeLocalHarnessSession.cwd,
+            resumeSession: activeLocalHarnessSession,
+          })
+        })
+        .catch(error => {
+          if (!cancelled) {
+            setHarnessResumeLaunchError({
+              sessionId,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : t('workbench.harness_start_failed', '启动编码工具失败'),
+            })
+          }
+        })
     }, 0)
     return () => {
+      cancelled = true
       window.clearTimeout(timer)
       if (!started) {
         resumeRequests.delete(sessionId)
@@ -1751,7 +1794,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeHarnessResumeModelKey,
     activeHarnessResumePreference,
     activeLocalHarnessSession,
+    harnessModelsReady,
     launchHarnessSession,
+    t,
   ])
   const resolvePrimaryHarnessCwd = useCallback(async () => {
     if (!centralHarnessCwd) {
@@ -3265,11 +3310,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   data-testid="local-harness-session-resuming"
                   className={cn(
                     'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
-                    activeHarnessResumeError ? 'text-destructive' : 'text-text-secondary'
+                    activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
                   )}
                 >
-                  {activeHarnessResumeError ? (
-                    activeHarnessResumeError
+                  {activeHarnessDisplayError ? (
+                    activeHarnessDisplayError
                   ) : (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />

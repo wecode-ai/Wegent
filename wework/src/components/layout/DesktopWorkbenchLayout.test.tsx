@@ -3610,6 +3610,7 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('resumes an inactive persisted harness session with the same Wework session id', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
     const listLocalSkills = vi.fn().mockRejectedValue(new Error('must not reload plugins'))
     listLocalHarnessesMock.mockResolvedValue([
       {
@@ -3671,6 +3672,144 @@ describe('DesktopWorkbenchLayout', () => {
       'local-harness-persisted'
     )
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('重启后继续修复')
+  })
+
+  test('waits for Wework models before resuming a persisted OpenCode session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.18.16',
+      },
+    ])
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-model-loading',
+        harness_id: 'opencode',
+        title: '等待模型加载',
+        cwd: '/workspace/github_wegent',
+        created_at: 1234,
+        is_primary: true,
+        project_id: 1,
+        active: false,
+        model_key: 'wework:runtime:::local-model%3Atest',
+        plugin_roots: [],
+      },
+    ])
+    startLocalHarnessMock.mockResolvedValue('local-harness-model-loading')
+
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [],
+          isModelSelectionReady: false,
+        }}
+      />
+    )
+
+    const sessionRow = await screen.findByTestId(
+      'local-harness-session-row-local-harness-model-loading'
+    )
+    expect(sessionRow).toHaveTextContent('等待模型加载')
+    expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
+      '正在恢复 OpenCode 会话'
+    )
+    expect(screen.getByTestId('local-harness-session-resuming')).not.toHaveTextContent(
+      '请选择可用的 Wework 模型'
+    )
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    await userEvent.click(sessionRow)
+    expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
+      '正在恢复 OpenCode 会话'
+    )
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        projectChat={{
+          ...baseProps.projectChat,
+          models: [harnessTestModel],
+          isModelSelectionReady: true,
+        }}
+      />
+    )
+
+    await waitFor(() =>
+      expect(resolveLocalHarnessLaunchMock).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({ label: 'Test Model' })
+      )
+    )
+    await waitFor(() =>
+      expect(startLocalHarnessMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          harnessId: 'opencode',
+          cwd: '/workspace/github_wegent',
+          modelKey: 'wework:runtime:::local-model%3Atest',
+          resumeSessionId: 'local-harness-model-loading',
+        })
+      )
+    )
+    expect(await screen.findByTestId('central-harness-terminal')).toBeVisible()
+  })
+
+  test('shows one resume error instead of retrying a missing OpenCode workspace forever', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessesMock.mockResolvedValue([
+      {
+        id: 'opencode',
+        installed: true,
+        executable_path: '/usr/local/bin/opencode',
+        version: '1.18.16',
+      },
+    ])
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-missing-workspace',
+        harness_id: 'opencode',
+        title: '工作区已删除',
+        cwd: '/workspace/deleted-worktree',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: false,
+        model_key: null,
+        plugin_roots: [],
+      },
+    ])
+    localPathExistsMock.mockResolvedValue(false)
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(
+      await screen.findByTestId('local-harness-session-row-local-harness-missing-workspace')
+    ).toHaveTextContent('工作区已删除')
+    await waitFor(() =>
+      expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
+        '原工作区不存在，无法恢复会话：/workspace/deleted-worktree'
+      )
+    )
+    const missingWorkspaceChecks = () =>
+      localPathExistsMock.mock.calls.filter(([path]) => path === '/workspace/deleted-worktree')
+        .length
+    const checksAfterError = missingWorkspaceChecks()
+    expect(checksAfterError).toBeGreaterThan(0)
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      rerender(<DesktopWorkbenchLayout {...baseProps} />)
+    })
+    expect(missingWorkspaceChecks()).toBe(checksAfterError)
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
   })
 
   test('starts Claude Code without overriding its native model by default', async () => {
