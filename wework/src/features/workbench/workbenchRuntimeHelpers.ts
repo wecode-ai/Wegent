@@ -138,9 +138,6 @@ export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: { workspacePath?: string | null }
 ): string {
-  if (workspace.workspaceKind === 'worktree' || workspace.worktreeId) {
-    return workspace.workspacePath
-  }
   return task.workspacePath || workspace.workspacePath
 }
 
