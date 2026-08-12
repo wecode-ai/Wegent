@@ -229,6 +229,32 @@ class ProjectAutomationService:
         db.refresh(row)
         return self._rule_view(db, row)
 
+    def rotate_webhook_secret(
+        self,
+        db: Session,
+        project_id: str,
+        automation_id: str,
+        user_id: int,
+    ) -> dict:
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        row = self._rule(db, project_id, automation_id, for_update=True)
+        metadata = _metadata(row)
+        if metadata.get("trigger_type") != "event":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Only event automations have webhook secrets",
+            )
+        webhook_secret = secrets.token_urlsafe(32)
+        metadata["webhook_secret_encrypted"] = encrypt_sensitive_data_with_embedded_iv(
+            webhook_secret
+        )
+        row.metadata_json = metadata
+        row.updated_by_user_id = user_id
+        row.version += 1
+        db.commit()
+        db.refresh(row)
+        return self._rule_view(db, row, webhook_secret=webhook_secret)
+
     def delete(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> None:
@@ -251,6 +277,11 @@ class ProjectAutomationService:
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
+        if _metadata(rule).get("trigger_type") == "event":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Event automations can only run from a matching event",
+            )
         run = self._create_run(db, rule, "manual", utcnow(), None)
         await self._dispatch_if_available(db, rule, run)
         return self._run_view(
@@ -813,7 +844,11 @@ class ProjectAutomationService:
             ),
             "execution_device_id": config.get("execution_device_id"),
             "enabled": row.status == "enabled",
-            "next_run_at": _utc_aware(row.due_at),
+            "next_run_at": (
+                None
+                if loop_datetime_value_is_unset(row.due_at)
+                else _utc_aware(row.due_at)
+            ),
             "last_run_at": _utc_aware(
                 datetime.fromisoformat(last_run) if last_run else None
             ),

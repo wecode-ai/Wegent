@@ -178,6 +178,12 @@ export function createProjectAutomationApi(client: HttpClient) {
     delete(projectId: string, automationId: string) {
       return client.delete<void>(`/v1/cloud-projects/${projectId}/automations/${automationId}`)
     },
+    rotateWebhookSecret(projectId: string, automationId: string) {
+      return client.post<ProjectAutomationRule>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/rotate-webhook-secret`,
+        {}
+      )
+    },
     runNow(projectId: string, automationId: string) {
       return client.post<ProjectAutomationRun>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,

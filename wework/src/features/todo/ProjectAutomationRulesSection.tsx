@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarClock, Clock3, Loader2, Pause, Play, Plus, Trash2 } from 'lucide-react'
+import { CalendarClock, Clock3, Loader2, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import type {
   ProjectAutomationInput,
   ProjectAutomationRule,
@@ -309,6 +309,23 @@ export function ProjectAutomationRulesSection({
     }
   }
 
+  const rotateWebhookSecret = async (rule: ProjectAutomationRule) => {
+    if (!api || !window.confirm(t('workbench.project_automation_rotate_secret_confirm'))) return
+    setBusy(true)
+    setError('')
+    try {
+      const updated = await api.rotateWebhookSecret(projectId, rule.id)
+      if (updated.webhookEventId && updated.webhookSecret) {
+        setCreatedWebhook({ eventId: updated.webhookEventId, secret: updated.webhookSecret })
+      }
+      await load()
+    } catch (rotateError) {
+      setError(rotateError instanceof Error ? rotateError.message : String(rotateError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const cancelRun = async (runId: string) => {
     if (!api || !selected) return
     setBusy(true)
@@ -426,9 +443,11 @@ export function ProjectAutomationRulesSection({
                 <span className="shrink-0 text-right text-xs text-text-muted">
                   {rule.lastRunStatus
                     ? statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'running']
-                    : rule.nextRunAt
-                      ? `${formatTimestamp(rule.nextRunAt, rule.timezone)} · ${timezoneLabel(rule.timezone, t)}`
-                      : t('workbench.project_automation_disabled')}
+                    : rule.triggerType === 'event' && rule.enabled
+                      ? t('workbench.project_automation_waiting_event')
+                      : rule.nextRunAt
+                        ? `${formatTimestamp(rule.nextRunAt, rule.timezone)} · ${timezoneLabel(rule.timezone, t)}`
+                        : t('workbench.project_automation_disabled')}
                 </span>
                 <span
                   className="shrink-0"
@@ -610,6 +629,26 @@ export function ProjectAutomationRulesSection({
                 <code className="mt-1 block break-all text-code text-text-primary">
                   {backendUrl}/api/v1/cloud-projects/automation-events/{selected.webhookEventId}
                 </code>
+                {createdWebhook?.eventId === selected.webhookEventId ? (
+                  <>
+                    <p className="mt-3 text-xs text-text-muted">
+                      {t('workbench.project_automation_webhook_secret')}
+                    </p>
+                    <code className="mt-1 block break-all text-code text-text-primary">
+                      {createdWebhook.secret}
+                    </code>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  data-testid="project-automation-rotate-webhook-secret"
+                  disabled={busy || !canManage}
+                  onClick={() => void rotateWebhookSecret(selected)}
+                  className="mt-3 flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-background disabled:opacity-50"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {t('workbench.project_automation_rotate_secret')}
+                </button>
               </div>
             ) : null}
 
@@ -760,20 +799,22 @@ export function ProjectAutomationRulesSection({
             <div className="flex items-center gap-1">
               {selected ? (
                 <>
-                  <button
-                    type="button"
-                    data-testid="project-automation-run-now"
-                    disabled={busy}
-                    onClick={() => void runNow(selected)}
-                    className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm hover:bg-surface disabled:opacity-50"
-                  >
-                    {busy ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                    {t('workbench.project_automation_run_now')}
-                  </button>
+                  {selected.triggerType === 'schedule' ? (
+                    <button
+                      type="button"
+                      data-testid="project-automation-run-now"
+                      disabled={busy}
+                      onClick={() => void runNow(selected)}
+                      className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm hover:bg-surface disabled:opacity-50"
+                    >
+                      {busy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      {t('workbench.project_automation_run_now')}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => void remove(selected)}

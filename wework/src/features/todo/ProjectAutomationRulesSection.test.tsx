@@ -63,6 +63,7 @@ describe('ProjectAutomationRulesSection', () => {
       create: vi.fn().mockResolvedValue(eventRule),
       update: vi.fn(),
       delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
@@ -120,6 +121,7 @@ describe('ProjectAutomationRulesSection', () => {
       create: vi.fn().mockResolvedValue(rule),
       update: vi.fn(),
       delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
@@ -182,6 +184,7 @@ describe('ProjectAutomationRulesSection', () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([waitingRun]),
       cancelRun: vi.fn(),
@@ -227,6 +230,7 @@ describe('ProjectAutomationRulesSection', () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([finishedRun]),
       cancelRun: vi.fn(),
@@ -248,5 +252,45 @@ describe('ProjectAutomationRulesSection', () => {
       'Robot is unavailable'
     )
     expect(screen.queryByTestId('project-automation-cancel-run-run-2')).not.toBeInTheDocument()
+  })
+
+  it('rotates an event rule webhook secret and shows the replacement once', async () => {
+    const eventRule = {
+      ...rule,
+      triggerType: 'event' as const,
+      eventType: 'task.created' as const,
+      webhookEventId: rule.id,
+      webhookSecret: null,
+      cronExpression: null,
+      nextRunAt: null,
+    }
+    const rotated = { ...eventRule, webhookSecret: 'replacement-secret', version: 2 }
+    const api = {
+      list: vi.fn().mockResolvedValue([eventRule]),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      rotateWebhookSecret: vi.fn().mockResolvedValue(rotated),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn(),
+    }
+    const agentApi = {
+      list: vi.fn().mockResolvedValue([agent]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<ProjectAutomationRulesSection projectId="1" api={api} agentApi={agentApi} canManage />)
+    fireEvent.click(await screen.findByTestId('project-automation-rule-rule-1'))
+    expect(screen.getByTestId('project-automation-rules')).toHaveTextContent(
+      'workbench.project_automation_waiting_event'
+    )
+    expect(screen.queryByTestId('project-automation-run-now')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('project-automation-rotate-webhook-secret'))
+
+    await waitFor(() => expect(api.rotateWebhookSecret).toHaveBeenCalledWith('1', rule.id))
+    expect((await screen.findAllByText('replacement-secret')).length).toBeGreaterThan(0)
   })
 })

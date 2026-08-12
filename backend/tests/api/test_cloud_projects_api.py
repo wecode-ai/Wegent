@@ -1268,6 +1268,17 @@ def test_project_automation_webhook_verifies_github_signature(
     ).json()
     assert listed[0]["webhookSecret"] is None
 
+    rotated_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}"
+        "/rotate-webhook-secret",
+        headers=_auth(test_token),
+    )
+    assert rotated_response.status_code == 200, rotated_response.text
+    rotated = rotated_response.json()
+    assert rotated["webhookSecret"]
+    assert rotated["webhookSecret"] != rule["webhookSecret"]
+    assert rotated["version"] == rule["version"] + 1
+
     captured: dict[str, object] = {}
 
     async def fake_process(
@@ -1285,7 +1296,7 @@ def test_project_automation_webhook_verifies_github_signature(
     body = json.dumps(payload, separators=(",", ":")).encode()
     signature = (
         "sha256="
-        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+        + hmac.new(rotated["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
     )
     rejected = test_client.post(
         f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
@@ -1309,6 +1320,26 @@ def test_project_automation_webhook_verifies_github_signature(
     assert getattr(event, "event_type") == "task.created"
     assert getattr(event, "subject_id") == f"{project['project_key']}-42"
     assert getattr(event, "actor_user_id") == test_user.id
+
+    old_signature = (
+        "sha256="
+        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    )
+    old_secret_response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": old_signature,
+        },
+    )
+    assert old_secret_response.status_code == 401
+
+    manual_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
+        headers=_auth(test_token),
+    )
+    assert manual_response.status_code == 409
 
 
 def test_project_automation_webhook_verifies_gitlab_token(

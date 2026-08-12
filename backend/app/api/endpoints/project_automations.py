@@ -196,6 +196,21 @@ def delete_automation(
 
 
 @router.post(
+    "/{project_id}/automations/{automation_id}/rotate-webhook-secret",
+    response_model=ProjectAutomationView,
+)
+def rotate_automation_webhook_secret(
+    project_id: str,
+    automation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationView:
+    return project_automation_service.rotate_webhook_secret(
+        db, project_id, automation_id, current_user.id
+    )
+
+
+@router.post(
     "/{project_id}/automations/{automation_id}/run",
     response_model=ProjectAutomationRunView,
 )
