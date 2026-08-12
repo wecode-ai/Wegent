@@ -26,9 +26,10 @@ import {
 } from './shared.mjs'
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, workspacePath }) {
+  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
+    this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
   }
 
@@ -101,7 +102,7 @@ class RealCloudEnvironment {
   async startRemoteExecutor(executorBinary) {
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,

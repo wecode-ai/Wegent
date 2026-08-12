@@ -449,6 +449,108 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   }
 }
 
+async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('automation-button'),
+    'Automations remained hidden behind the experimental-features preference'
+  )
+  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="create-automation-button"]')
+  await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="automation-name-input"]', {
+    value: `${AUTOMATION_NAME} Cloud`,
+  })
+  await control.command('fill', '[data-testid="automation-prompt-input"]', {
+    value: AUTOMATION_PROMPT,
+  })
+
+  await control.command('click', '[data-testid="automation-source-select"]')
+  await control.command('click', '[data-testid="automation-source-select-option-cloud"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes('Wework E2E Cloud Device') &&
+      (snapshot.text.includes('云端') || snapshot.text.includes('Cloud')),
+    'The cloud automation source did not select the remote executor'
+  )
+
+  await control.command('click', '[data-testid="automation-device-select"]')
+  const deviceSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(`automation-device-select-option-${cloudDeviceId}`),
+    'The cloud automation device selector did not list the remote executor'
+  )
+  assert.ok(
+    deviceSnapshot.text.includes('Wework E2E Cloud Device'),
+    'The cloud automation device selector did not show the remote executor name'
+  )
+  await control.command('click', `[data-testid="automation-device-select-option-${cloudDeviceId}"]`)
+
+  await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const createdSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(`${AUTOMATION_NAME} Cloud`) &&
+      snapshot.testIds.some(testId => testId.startsWith('automation-open-')),
+    'The cloud automation was not persisted by the remote Executor'
+  )
+  const automationActions = createdSnapshot.testIds.find(testId =>
+    testId.startsWith('automation-detail-actions-')
+  )
+  assert.ok(automationActions, 'The cloud automation detail did not expose its actions menu')
+
+  const previousScenario = control.scenario
+  control.setScenario('automation')
+  try {
+    await control.command('click', `[data-testid="${automationActions}"]`)
+    await control.command('click', '[data-testid="automation-run-now-button"]')
+    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+
+    const taskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') &&
+            !initialSnapshot.testIds.includes(testId)
+        ),
+      'The cloud automation run did not expose its completed runtime task',
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    const taskRow = taskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
+    )
+    assert.ok(taskRow, 'The cloud automation run did not expose its runtime task')
+    if (!taskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
+      await control.command('click', `[data-testid="${taskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+    }
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    assert.equal(
+      debugSnapshot.workbench?.currentRuntimeTask?.deviceId,
+      cloudDeviceId,
+      'The cloud automation task ran on the local device'
+    )
+    await captureVerificationScreenshot(control, 'automations-03-cloud-complete.png')
+  } finally {
+    control.setScenario(previousScenario)
+  }
+}
+
 async function verifySitesPluginAutoInstall(control) {
   assert.equal(
     control.sitesConnectionBootstrapRequests,
@@ -743,6 +845,7 @@ export {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
+  verifyCloudAutomationLifecycle,
   verifySitesPluginAutoInstall,
   sitesMarketplacePlugin,
   installedSitesPlugin,
