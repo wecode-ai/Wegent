@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Enforce one active activity comment per runtime identity.
+"""Enforce one activity comment per runtime identity.
 
 Robot runs (empty trigger) and chat continuations (own trigger) previously
 relied on a check-then-insert convention, so concurrent openers could create
@@ -32,40 +32,11 @@ def upgrade() -> None:
         sa.Column(
             "runtime_activity_key",
             sa.String(64),
-            nullable=True,
+            nullable=False,
             comment=(
-                "One agent message per (runtime device, task, trigger); "
-                "NULL for user messages and soft-deleted rows"
+                "Stable runtime identity for agent activity; message identity otherwise"
             ),
         ),
-    )
-    # Backfill only the latest message of each identity group so pre-existing
-    # duplicate placeholders never block the unique index.
-    op.execute(
-        """
-        UPDATE project_chat_messages m
-        JOIN (
-            SELECT runtime_device_id, runtime_task_id, trigger_message_id, MAX(id) AS max_id
-            FROM project_chat_messages
-            WHERE sender_type = 'agent'
-              AND runtime_device_id <> ''
-              AND runtime_task_id <> ''
-              AND deleted_at = '1970-01-01 00:00:00'
-            GROUP BY runtime_device_id, runtime_task_id, trigger_message_id
-        ) latest
-          ON latest.runtime_device_id = m.runtime_device_id
-         AND latest.runtime_task_id = m.runtime_task_id
-         AND latest.trigger_message_id = m.trigger_message_id
-         AND latest.max_id = m.id
-        SET m.runtime_activity_key = SHA2(
-            CONCAT(
-                m.runtime_device_id, CHAR(0),
-                m.runtime_task_id, CHAR(0),
-                m.trigger_message_id
-            ),
-            256
-        )
-        """
     )
     op.create_index(
         "uniq_project_chat_runtime_activity",

@@ -747,6 +747,31 @@ def test_runtime_activity_key_unique_index_blocks_duplicate_activity(
     test_db.rollback()
 
 
+def test_user_message_gets_non_null_unique_activity_key(
+    test_db: Session, test_user: User
+) -> None:
+    """Ordinary messages satisfy the strict non-null database invariant."""
+
+    project = create_project(test_db, test_user)
+    result = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name="User",
+        request=ProjectChatSend(
+            projectId=str(project.id),
+            clientMessageId=str(uuid.uuid4()),
+            content="ordinary comment",
+        ),
+    )
+    row = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == result.message.message_id)
+        .one()
+    )
+    assert row.runtime_activity_key
+    assert len(row.runtime_activity_key) == 64
+
+
 def _running_ai_task(
     test_db: Session, user: User, project: CloudProject
 ) -> tuple[LoopItem, ProjectChatMessage]:

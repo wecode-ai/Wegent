@@ -2038,7 +2038,9 @@ describe('TaskActivityView', () => {
     await screen.findByText('Code Reviewer')
     expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-task-activity-reject-WEG-1')).not.toBeInTheDocument()
-    expect(screen.getByText('待 Alice 批准')).toBeInTheDocument()
+    const status = screen.getByTestId('cloud-task-activity-execution-status-WEG-1')
+    expect(status).toHaveAttribute('data-status', 'waiting')
+    expect(status).toHaveAccessibleName('待 Alice 批准')
   })
 
   it('shows approve/reject when the backend marks the run as approvable by the current user', async () => {

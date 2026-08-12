@@ -916,7 +916,7 @@ class ProjectChatService:
                 runtime_activity_key=self._runtime_activity_key(
                     parent.runtime_device_id or "",
                     parent.runtime_task_id or "",
-                    parent.message_id,
+                    f"{parent.message_id}:{child_id}",
                 ),
                 status="completed",
             )

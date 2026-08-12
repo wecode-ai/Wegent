@@ -29,7 +29,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
-from app.models.project_chat_message import ProjectChatMessage
+from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 
 logger = logging.getLogger(__name__)
 
@@ -784,7 +784,9 @@ class LoopItemExecutionService:
             if (row.content or "").strip():
                 continue
             row.deleted_at = utcnow()
-            row.runtime_activity_key = None
+            row.runtime_activity_key = project_chat_message_key(
+                row.message_id, deleted=True
+            )
         db.commit()
 
     def complete(
