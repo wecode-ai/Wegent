@@ -16,6 +16,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ContextItem, DingTalkDocContext } from '@/types/context'
@@ -155,35 +156,33 @@ function DingTalkSyncToolbar({
   if (!onSync) return null
 
   const syncLabel = syncing ? t('dingtalkDocs.syncing') : t('dingtalkDocs.sync')
-  const syncTimeLabel = lastSyncedAt
-    ? formatSyncTimeShort(lastSyncedAt)
-    : t('dingtalkDocs.neverSynced')
-  const syncTimeTitle = lastSyncedAt
-    ? t('dingtalkDocs.lastSynced', { time: new Date(lastSyncedAt).toLocaleString() })
-    : undefined
   return (
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">
-      <span
-        className="truncate text-xs text-text-muted"
-        title={syncTimeTitle}
-        aria-label={syncTimeTitle}
-      >
-        {syncTimeLabel}
-      </span>
-      <button
-        type="button"
-        onClick={onSync}
-        disabled={syncing}
-        aria-label={syncLabel}
-        title={syncLabel}
-        className={cn(
-          'flex min-h-11 min-w-11 shrink-0 items-center justify-center text-primary transition-colors hover:text-primary/80',
-          syncing && 'cursor-not-allowed opacity-50'
-        )}
-        data-testid="dingtalk-sync-button"
-      >
-        <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
-      </button>
+      <TruncatedText
+        text={lastSyncedAt ? formatSyncTimeShort(lastSyncedAt) : t('dingtalkDocs.neverSynced')}
+        tooltipText={
+          lastSyncedAt
+            ? t('dingtalkDocs.lastSynced', { time: new Date(lastSyncedAt).toLocaleString() })
+            : undefined
+        }
+        focusable={false}
+        className="cursor-pointer text-xs text-text-muted"
+      />
+      <LongTextTooltip content={syncLabel}>
+        <button
+          type="button"
+          onClick={onSync}
+          disabled={syncing}
+          aria-label={syncLabel}
+          className={cn(
+            'flex min-h-11 min-w-11 shrink-0 items-center justify-center text-primary transition-colors hover:text-primary/80',
+            syncing && 'cursor-not-allowed opacity-50'
+          )}
+          data-testid="dingtalk-sync-button"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
+        </button>
+      </LongTextTooltip>
     </div>
   )
 }
@@ -433,9 +432,11 @@ export function DingTalkWikispaceRows({
                 <span className="flex min-w-0 items-center gap-2">
                   <Database className="h-4 w-4 shrink-0 text-text-muted" />
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium" title={node.name}>
-                      {node.name}
-                    </span>
+                    <TruncatedText
+                      text={node.name}
+                      focusable={false}
+                      className="text-sm font-medium"
+                    />
                     <span className="block text-xs text-text-muted">
                       {t('knowledge:picker.count.documents', {
                         count: countDingTalkNodes(node.children ?? []),
@@ -482,9 +483,11 @@ function DingTalkDocumentHeader({
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-text-primary" title={title}>
-          {title}
-        </div>
+        <TruncatedText
+          text={title}
+          focusable={false}
+          className="text-sm font-semibold text-text-primary"
+        />
         <div className="text-xs text-text-muted">
           {t('picker.count.documents', { count: documentCount })}
         </div>
@@ -640,9 +643,7 @@ function DingTalkDocumentNode({
         >
           <span className="flex min-w-0 items-center gap-2">
             <Icon className="h-4 w-4 shrink-0 text-text-muted" />
-            <span className="truncate text-text-primary" title={node.name}>
-              {node.name}
-            </span>
+            <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
           </span>
           {!isFolder ? <SelectionIndicator checked={selected} /> : null}
         </button>

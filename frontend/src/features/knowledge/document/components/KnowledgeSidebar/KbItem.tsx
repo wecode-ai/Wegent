@@ -52,8 +52,11 @@ export function KbItem({
         <KnowledgeBaseIcon kbType={kb.kb_type} />
       </span>
 
-      {/* Name */}
-      <span className="flex-1 truncate text-sm">{kb.name}</span>
+      {/* Name. Titled because it truncates: a code wiki is named after its
+          repository, which is routinely longer than a narrow sidebar. */}
+      <span className="flex-1 truncate text-sm" title={kb.name}>
+        {kb.name}
+      </span>
 
       {/* Secondary text (e.g., time ago) */}
       {secondaryText && (
