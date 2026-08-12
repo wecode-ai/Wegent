@@ -5,8 +5,10 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 
 import { listGroups } from '@/apis/groups'
+import { listSkillMarketProviders } from '@/apis/skillMarketplace'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
 
 const mockReplace = jest.fn()
@@ -29,6 +31,28 @@ jest.mock('@/apis/groups', () => ({
       },
     ],
   }),
+}))
+
+jest.mock('@/apis/skillMarketplace', () => ({
+  listSkillMarketProviders: jest.fn(),
+}))
+
+jest.mock('@/features/resource-library/components/SkillMarketplaceSearch', () => ({
+  SkillMarketplaceSearch: ({
+    provider,
+    namespace,
+  }: {
+    provider: { key: string; name: string }
+    namespace: string
+  }) => (
+    <div data-testid={`external-skill-marketplace-${provider.key}`} data-namespace={namespace}>
+      {provider.name}
+    </div>
+  ),
+}))
+
+jest.mock('@/features/resource-library/components/McpMarketplace', () => ({
+  McpMarketplace: () => <div data-testid="mcp-marketplace">MCP 市场</div>,
 }))
 
 jest.mock('@/features/resource-library/components/MyResources', () => ({
@@ -86,10 +110,20 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
     resourceType,
     targetNamespace,
     systemOnly,
+    externalMarketplaces,
+    activeExternalMarketplaceKey,
+    onExternalMarketplaceChange,
   }: {
     resourceType: string
     targetNamespace?: string
     systemOnly?: boolean
+    externalMarketplaces?: Array<{
+      key: string
+      label: string
+      content: ReactNode
+    }>
+    activeExternalMarketplaceKey?: string | null
+    onExternalMarketplaceChange?: (key: string | null) => void
   }) => (
     <div
       data-testid="discover-resources"
@@ -98,6 +132,20 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
       data-system-only={String(Boolean(systemOnly))}
     >
       发现能力
+      {externalMarketplaces?.map(marketplace => (
+        <button
+          key={marketplace.key}
+          type="button"
+          data-testid={`marketplace-external-source-${marketplace.key}`}
+          onClick={() => onExternalMarketplaceChange?.(marketplace.key)}
+        >
+          {marketplace.label}
+        </button>
+      ))}
+      {
+        externalMarketplaces?.find(marketplace => marketplace.key === activeExternalMarketplaceKey)
+          ?.content
+      }
     </div>
   ),
 }))
@@ -161,6 +209,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.skill': '技能',
         'market_filters.agent': '智能体市场',
         'market_filters.skill': '技能市场',
+        'market_filters.mcp': 'MCP 市场',
         'filters.model': '模型',
         'filters.shell': '执行器',
         'filters.retriever': '检索器',
@@ -185,6 +234,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.view_capabilities': '查看当前能力',
         'actions.add_capability': '从资源库添加',
         'actions.retry': '重试',
+        'external_skill_market.providers_load_failed': '技能市场加载失败',
         'fields.type': '类型',
         'fields.source': '来源',
         'fields.team_scope': '团队范围',
@@ -205,11 +255,15 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockedListGroups = listGroups as jest.MockedFunction<typeof listGroups>
+const mockedListSkillMarketProviders = listSkillMarketProviders as jest.MockedFunction<
+  typeof listSkillMarketProviders
+>
 
 describe('ResourceLibraryPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockSearchParams = new URLSearchParams()
+    mockedListSkillMarketProviders.mockResolvedValue([])
   })
 
   it('shows system-only agent and skill marketplaces', () => {
@@ -219,6 +273,7 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-view-toggle')).toHaveTextContent('我的能力')
     expect(screen.getByRole('tab', { name: '智能体市场' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('tab', { name: '技能市场' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'MCP 市场' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '模型' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-source-select')).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-header-search')).not.toBeInTheDocument()
@@ -231,6 +286,15 @@ describe('ResourceLibraryPage', () => {
     )
   })
 
+  it('opens the MCP marketplace as a top-level market', () => {
+    mockSearchParams = new URLSearchParams('type=mcp')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByRole('tab', { name: 'MCP 市场' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('mcp-marketplace')).toBeInTheDocument()
+    expect(screen.queryByTestId('discover-resources')).not.toBeInTheDocument()
+  })
+
   it('shows only system resources in the skill marketplace', () => {
     mockSearchParams = new URLSearchParams('type=skill')
     render(<ResourceLibraryPage />)
@@ -239,6 +303,45 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'skill')
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
     expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('opens any registered skill market provider from the skill marketplace', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders.mockResolvedValue([
+      { key: 'community', name: 'Community Hub' },
+      { key: 'partner', name: 'Partner Skills' },
+    ])
+    mockSearchParams = new URLSearchParams('type=skill')
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
+    )
+    await user.click(screen.getByTestId('marketplace-external-source-partner'))
+
+    expect(screen.getByTestId('external-skill-marketplace-partner')).toHaveAttribute(
+      'data-namespace',
+      'default'
+    )
+  })
+
+  it('shows and retries skill marketplace provider discovery errors', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders
+      .mockRejectedValueOnce(new Error('service unavailable'))
+      .mockResolvedValueOnce([{ key: 'community', name: 'Community Hub' }])
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('skill-marketplace-providers-error')).toHaveTextContent(
+      'service unavailable'
+    )
+    await user.click(screen.getByTestId('skill-marketplace-providers-retry'))
+
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
+    )
   })
 
   it('moves all management types and source filtering into My Capabilities', () => {

@@ -180,6 +180,7 @@
     "harness_model_selector": "Choose coding tool model",
     "harness_model_unspecified": "Don't specify a model",
     "harness_model_required": "Choose a Wework model",
+    "harness_resume_workspace_missing": "The original workspace no longer exists, so this session cannot be resumed: {{path}}",
     "harness_model_source_local": "Local",
     "harness_model_source_cloud": "Cloud",
     "harness_default_args": "Default arguments",

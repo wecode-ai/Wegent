@@ -20,6 +20,8 @@ export type ResourceLibraryModelCategoryFilter = 'all' | 'llm' | 'embedding' | '
 
 export type ResourceLibraryTypeFilter = 'all' | ManagedResourceType
 
+export type ResourceNavigationType = ResourceLibraryTypeFilter | 'mcp'
+
 export type MarketplaceResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
 
 export type ManagedResourceSourceFilter = 'all' | 'mine' | 'personal' | 'group' | 'system'

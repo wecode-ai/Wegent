@@ -66,6 +66,11 @@ their project. Reopening one uses the native continue or resume mechanism of Ope
 or Kimi Code and restores bounded terminal scrollback. Explicitly closing a session terminates its
 process and removes the persisted record.
 
+Wework resumes a session only in the original workspace recorded when it was created. If that
+directory or temporary worktree has been removed, Wework reports that the original workspace is
+missing instead of launching the session in another directory. Restore the original workspace or
+create a new harness session in the current workspace.
+
 After selecting OpenCode, Claude Code, or Kimi Code, the ordinary Codex model picker is replaced by
 the harness model picker. Its default is **Don't specify a model**: Wework does not pass a
 `--model` argument, model proxy endpoint, or model credential, so the tool reads its own native

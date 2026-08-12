@@ -12,7 +12,7 @@ and provides a registry mechanism for dynamic provider registration.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,12 @@ class ISkillMarketProvider(ABC):
 
     @property
     @abstractmethod
+    def key(self) -> str:
+        """Stable provider identifier used by API clients"""
+        pass
+
+    @property
+    @abstractmethod
     def name(self) -> str:
         """Provider name for display"""
         pass
@@ -143,46 +149,64 @@ class SkillMarketProviderRegistry:
     """
     Skill Market Provider Registry
 
-    Manages the registered skill market provider.
-    Only one provider can be active at a time.
-    If multiple providers are registered, the last one wins.
+    Manages registered skill market providers by stable provider key.
     """
 
-    def __init__(self):
-        self._provider: Optional[ISkillMarketProvider] = None
+    def __init__(self) -> None:
+        self._providers: Dict[str, ISkillMarketProvider] = {}
 
     def register(self, provider: ISkillMarketProvider) -> None:
         """
         Register a skill market provider.
-        If a provider is already registered, it will be replaced.
+        A provider with the same key is replaced.
 
         Args:
             provider: The provider to register
         """
-        logger.info(f"[SkillMarketRegistry] Registering provider: {provider.name}")
-        self._provider = provider
+        logger.info(
+            "[SkillMarketRegistry] Registering provider: key=%s name=%s",
+            provider.key,
+            provider.name,
+        )
+        self._providers[provider.key] = provider
 
-    def get_provider(self) -> Optional[ISkillMarketProvider]:
+    def get_provider(self, provider_key: str) -> Optional[ISkillMarketProvider]:
         """
         Get the registered provider.
 
         Returns:
-            The registered provider or None if none
+            The registered provider or None if the key is unknown
         """
-        return self._provider
+        return self._providers.get(provider_key)
 
-    def has_provider(self) -> bool:
+    def list_providers(self) -> List[ISkillMarketProvider]:
+        """Return providers in registration order."""
+        return list(self._providers.values())
+
+    def has_provider(self, provider_key: Optional[str] = None) -> bool:
         """
         Check if a provider is registered.
 
         Returns:
             True if a provider is registered
         """
-        return self._provider is not None
+        if provider_key is not None:
+            return provider_key in self._providers
+        return bool(self._providers)
+
+    def get_single_provider(self) -> Optional[ISkillMarketProvider]:
+        """Return the only registered provider for legacy callers."""
+        if len(self._providers) != 1:
+            return None
+        return next(iter(self._providers.values()))
+
+    def count(self) -> int:
+        """Return the number of registered providers."""
+        return len(self._providers)
 
     def clear(self) -> None:
         """Clear the registered provider"""
-        self._provider = None
+        self._providers.clear()
 
 
 # Singleton instance
