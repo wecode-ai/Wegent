@@ -19,6 +19,7 @@ export interface ProjectAutomationRule {
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
   webhookEventId: string | null
+  webhookSecret: string | null
   cronExpression: string | null
   timezone: string
   agentId: string

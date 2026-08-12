@@ -11,6 +11,7 @@ const rule = {
   eventType: null,
   eventConfig: {},
   webhookEventId: null,
+  webhookSecret: null,
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
   agentId: 'agent-1',

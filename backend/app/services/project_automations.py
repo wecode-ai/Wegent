@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -38,6 +39,7 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import bot_config
+from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,9 @@ class ProjectAutomationService:
             if values.trigger_type == "schedule"
             else None
         )
+        webhook_secret = (
+            secrets.token_urlsafe(32) if values.trigger_type == "event" else None
+        )
         row = ProjectAutomationRule(
             cloud_project_id=project_id,
             title=values.name,
@@ -132,6 +137,11 @@ class ProjectAutomationService:
                 "trigger_type": values.trigger_type,
                 "event_type": values.event_type,
                 "event_config": values.event_config,
+                "webhook_secret_encrypted": (
+                    encrypt_sensitive_data_with_embedded_iv(webhook_secret)
+                    if webhook_secret
+                    else None
+                ),
                 "cron_expression": values.cron_expression,
                 "timezone": values.timezone,
                 "last_run_at": None,
@@ -140,7 +150,7 @@ class ProjectAutomationService:
         db.add(row)
         db.commit()
         db.refresh(row)
-        return self._rule_view(db, row)
+        return self._rule_view(db, row, webhook_secret=webhook_secret)
 
     def update(
         self,
@@ -723,7 +733,13 @@ class ProjectAutomationService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation not found")
         return row
 
-    def _rule_view(self, db: Session, row: ProjectAutomationRule) -> dict:
+    def _rule_view(
+        self,
+        db: Session,
+        row: ProjectAutomationRule,
+        *,
+        webhook_secret: str | None = None,
+    ) -> dict:
         metadata = _metadata(row)
         agent = db.get(ProjectChatAgent, row.assignee_agent_id)
         last_run_row = (
@@ -745,6 +761,7 @@ class ProjectAutomationService:
             "webhook_event_id": (
                 row.id if metadata.get("trigger_type") == "event" else None
             ),
+            "webhook_secret": webhook_secret,
             "cron_expression": metadata.get("cron_expression"),
             "timezone": str(metadata.get("timezone") or "Asia/Shanghai"),
             "agent_id": row.assignee_agent_id,

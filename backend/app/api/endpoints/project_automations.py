@@ -3,13 +3,25 @@
 
 """Wework project automation endpoints."""
 
+import hashlib
+import hmac
+import json
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.core.security import get_current_user
 from app.models.delivery import (
     CloudProject,
     ProjectAutomationRule,
@@ -30,6 +42,7 @@ from app.services.project_automations import (
     project_automation_processor,
     project_automation_service,
 )
+from shared.utils.crypto import decrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
 
@@ -39,17 +52,34 @@ router = APIRouter()
 )
 async def trigger_automation_event(
     webhook_event_id: str,
-    payload: dict[str, Any],
+    request: Request,
+    x_hub_signature_256: str = Header(default="", alias="X-Hub-Signature-256"),
+    x_gitlab_token: str = Header(default="", alias="X-Gitlab-Token"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible_for_executor),
 ) -> dict[str, int | str]:
     rule = db.get(ProjectAutomationRule, webhook_event_id)
     if rule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
     project_automation_service._rule(db, str(rule.cloud_project_id), webhook_event_id)
-    require_cloud_project_role(
-        db, str(rule.cloud_project_id), current_user.id, BaseRole.Maintainer
+    project = db.get(CloudProject, rule.cloud_project_id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
+    raw_body = await request.body()
+    _verify_webhook_signature(
+        rule,
+        project.task_provider,
+        raw_body,
+        x_hub_signature_256=x_hub_signature_256,
+        x_gitlab_token=x_gitlab_token,
     )
+    try:
+        payload = json.loads(raw_body)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Invalid webhook payload"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook payload")
     event_name = str(payload.get("event_type") or payload.get("eventType") or "")
     if not event_name and isinstance(payload.get("issue"), dict):
         event_name = f"issues.{payload.get('action')}"
@@ -64,7 +94,6 @@ async def trigger_automation_event(
         object_attributes = payload.get("object_attributes")
         issue = object_attributes if isinstance(object_attributes, dict) else payload
     number = issue.get("number") or issue.get("iid")
-    project = db.get(CloudProject, rule.cloud_project_id)
     if not number or project is None or not project.project_key:
         return {"status": "ignored", "dispatched": 0}
     subject_id = f"{project.project_key}-{number}"
@@ -76,12 +105,44 @@ async def trigger_automation_event(
             project_id=str(rule.cloud_project_id),
             subject_id=subject_id,
             source=source,
-            actor_user_id=current_user.id,
+            actor_user_id=rule.created_by_user_id,
             payload=issue,
         ),
         automation_id=webhook_event_id,
     )
     return {"status": "accepted", "dispatched": dispatched}
+
+
+def _verify_webhook_signature(
+    rule: ProjectAutomationRule,
+    provider: str,
+    raw_body: bytes,
+    *,
+    x_hub_signature_256: str,
+    x_gitlab_token: str,
+) -> None:
+    metadata = rule.metadata_json if isinstance(rule.metadata_json, dict) else {}
+    encrypted = metadata.get("webhook_secret_encrypted")
+    secret = (
+        decrypt_sensitive_data_with_embedded_iv(encrypted)
+        if isinstance(encrypted, str) and encrypted
+        else None
+    )
+    if not secret:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Webhook secret unavailable")
+    if provider == "github":
+        expected = (
+            "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        )
+        valid = hmac.compare_digest(x_hub_signature_256, expected)
+    elif provider == "gitlab":
+        valid = hmac.compare_digest(x_gitlab_token, secret)
+    else:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Webhook provider unsupported"
+        )
+    if not valid:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid webhook signature")
 
 
 @router.get("/{project_id}/automations", response_model=list[ProjectAutomationView])

@@ -4,7 +4,10 @@
 
 """API tests for cloud projects, TODOs, and local task associations."""
 
+import hashlib
+import hmac
 import io
+import json
 from datetime import datetime
 from typing import BinaryIO
 
@@ -14,7 +17,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
+from app.models.delivery import (
+    CloudProject,
+    Delivery,
+    DeliveryAsset,
+    LoopItem,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
@@ -1177,12 +1186,11 @@ def test_task_created_event_assigns_matching_project_automation_robot(
     assert runs.json()[0]["taskId"] == task.json()["id"]
 
 
-def test_project_automation_webhook_accepts_api_key(
+def test_project_automation_webhook_verifies_github_signature(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
-    test_api_key: tuple[str, object],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(
@@ -1202,7 +1210,15 @@ def test_project_automation_webhook_accepts_api_key(
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={"project_key": "hook", "name": "Webhook project"},
+        json={
+            "project_key": "hook",
+            "name": "Webhook project",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/hook",
+                "token": "provider-token",
+            },
+        },
     ).json()
     agent = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
@@ -1225,6 +1241,12 @@ def test_project_automation_webhook_accepts_api_key(
             "agentId": agent["id"],
         },
     ).json()
+    assert rule["webhookSecret"]
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+    ).json()
+    assert listed[0]["webhookSecret"] is None
 
     captured: dict[str, object] = {}
 
@@ -1239,12 +1261,27 @@ def test_project_automation_webhook_accepts_api_key(
         "app.api.endpoints.project_automations.project_automation_processor.process",
         fake_process,
     )
+    payload = {"action": "opened", "issue": {"number": 42, "title": "Bug"}}
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    signature = (
+        "sha256="
+        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    )
+    rejected = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": "sha256=bad",
+        },
+    )
     response = test_client.post(
         f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        headers={"X-API-Key": test_api_key[0]},
-        json={"action": "opened", "issue": {"number": 42, "title": "Bug"}},
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
     )
 
+    assert rejected.status_code == 401
     assert response.status_code == 202, response.text
     assert response.json() == {"status": "accepted", "dispatched": 1}
     assert captured["automation_id"] == rule["id"]
@@ -1252,6 +1289,69 @@ def test_project_automation_webhook_accepts_api_key(
     assert getattr(event, "event_type") == "task.created"
     assert getattr(event, "subject_id") == f"{project['project_key']}-42"
     assert getattr(event, "actor_user_id") == test_user.id
+
+
+def test_project_automation_webhook_verifies_gitlab_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "labhook",
+            "name": "GitLab webhook project",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "acme/hook",
+                "token": "provider-token",
+            },
+        },
+    ).json()
+    agent = ProjectChatAgent(
+        cloud_project_id=project["id"],
+        name="Dispatcher",
+        title="Dispatcher",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"runtime": "codex"},
+    )
+    test_db.add(agent)
+    test_db.commit()
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "External issue",
+            "prompt": "Dispatch the issue.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "agentId": agent.id,
+        },
+    ).json()
+
+    async def fake_process(
+        db: Session, event: object, *, automation_id: str | None = None
+    ) -> int:
+        return 1
+
+    monkeypatch.setattr(
+        "app.api.endpoints.project_automations.project_automation_processor.process",
+        fake_process,
+    )
+    response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        headers={"X-Gitlab-Token": rule["webhookSecret"]},
+        json={
+            "object_kind": "issue",
+            "object_attributes": {"action": "open", "iid": 7, "title": "Bug"},
+        },
+    )
+
+    assert response.status_code == 202, response.text
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(

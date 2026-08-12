@@ -139,6 +139,10 @@ export function ProjectAutomationRulesSection({
   const [schedule, setSchedule] = useState<VisualSchedule>(defaultSchedule)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [createdWebhook, setCreatedWebhook] = useState<{
+    eventId: string
+    secret: string
+  } | null>(null)
 
   const load = useCallback(async () => {
     if (!api || !agentApi) return
@@ -192,6 +196,7 @@ export function ProjectAutomationRulesSection({
     input.agentId = agents[0]?.id ?? ''
     setSelected(null)
     setRuns([])
+    setCreatedWebhook(null)
     setDraft(input)
     setSchedule(defaultSchedule())
   }
@@ -213,7 +218,12 @@ export function ProjectAutomationRulesSection({
       if (selected) {
         await api.update(projectId, selected.id, { ...input, version: selected.version })
       } else {
-        await api.create(projectId, input)
+        const created = await api.create(projectId, input)
+        setCreatedWebhook(
+          created.webhookEventId && created.webhookSecret
+            ? { eventId: created.webhookEventId, secret: created.webhookSecret }
+            : null
+        )
       }
       setSelected(null)
       setDraft(null)
@@ -331,6 +341,22 @@ export function ProjectAutomationRulesSection({
       </div>
 
       {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+      {createdWebhook ? (
+        <div className="mb-3 rounded-xl border border-border bg-surface px-4 py-3">
+          <p className="text-xs text-text-muted">
+            {t('workbench.project_automation_webhook_event_id')}
+          </p>
+          <code className="mt-1 block break-all text-code text-text-primary">
+            {backendUrl}/api/v1/cloud-projects/automation-events/{createdWebhook.eventId}
+          </code>
+          <p className="mt-3 text-xs text-text-muted">
+            {t('workbench.project_automation_webhook_secret')}
+          </p>
+          <code className="mt-1 block break-all text-code text-text-primary">
+            {createdWebhook.secret}
+          </code>
+        </div>
+      ) : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
         {rules.length ? (
           rules.map(rule => (
