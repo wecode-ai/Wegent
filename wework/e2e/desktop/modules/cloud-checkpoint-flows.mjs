@@ -123,15 +123,20 @@ async function createCloudProjectFixture(control, workspacePath) {
     'The cloud checkpoint folder picker did not retain the workspace path'
   )
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  const projectSnapshot = await waitForCloudProject(
+  await waitForCloudProject(
     control,
     projectMenusBeforeCreate,
     'The cloud checkpoint project was not shown in the sidebar'
   )
-  const projectMenuTestId = projectSnapshot.testIds.find(
+  await control.command('waitFor', '[data-testid^="project-device-status-"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS * 2,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const stableProjectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const projectMenuTestId = stableProjectSnapshot.testIds.find(
     testId => testId.startsWith('project-menu-') && !projectMenusBeforeCreate.has(testId)
   )
-  assert.ok(projectMenuTestId, 'The cloud checkpoint project identity was unavailable')
+  assert.ok(projectMenuTestId, 'The stable cloud checkpoint project identity was unavailable')
   const projectId = projectMenuTestId.slice('project-menu-'.length)
   const projectRowSelector = `[data-testid="project-row-${projectId}"]`
   await control.command(

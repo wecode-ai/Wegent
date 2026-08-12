@@ -61,6 +61,7 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
+      FRONTEND_URL: this.modelServerUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',

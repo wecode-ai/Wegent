@@ -472,10 +472,7 @@ async function main() {
     {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
-      executorHome:
-        CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY
-          ? join(resultDir, 'cloud-executor-home')
-          : executorHome,
+      executorHome,
       homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
