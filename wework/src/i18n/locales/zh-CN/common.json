@@ -933,6 +933,7 @@
     "project_git_branch_no_results": "没有匹配的分支",
     "project_git_branch_default_suffix": "（默认）",
     "environment_create_pr": "创建拉取请求",
+    "environment_create_mr": "创建合并请求",
     "environment_change_request_open": "进行中",
     "environment_change_request_closed": "已关闭",
     "environment_change_request_merged": "已合并",

@@ -248,7 +248,7 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.queryByText('-0')).not.toBeInTheDocument()
   })
 
-  test('shows and opens the pull request associated with the current branch', async () => {
+  test('renders the pull request associated with the current branch', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)
     portalContainers.push(popoverContainer)
@@ -317,6 +317,7 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     expect(screen.getByTestId('create-pull-request-button')).toBeEnabled()
+    expect(screen.getByTestId('create-pull-request-button')).toHaveTextContent('创建合并请求')
     expect(screen.getByTestId('change-request-lookup-hint')).toHaveTextContent(
       '安装 GitLab CLI（glab）后可查询合并请求状态'
     )

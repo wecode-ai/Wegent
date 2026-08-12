@@ -148,6 +148,8 @@ function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
         'canceled',
         'timed_out',
         'action_required',
+        'startup_failure',
+        'stale',
       ].includes(status)
     )
   ) {
@@ -164,6 +166,7 @@ function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
         'waiting_for_resource',
         'preparing',
         'scheduled',
+        'waiting',
       ].includes(status)
     )
   ) {
@@ -257,13 +260,18 @@ async function loadChangeRequest(
       : undefined
   if (!provider) return undefined
 
-  const response = await api.executeCommand(deviceId, {
-    command_key: provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
-    path,
-    args: [branch],
-    timeout_seconds: 20,
-    max_output_bytes: 256 * 1024,
-  })
+  let response: DeviceCommandResponse
+  try {
+    response = await api.executeCommand(deviceId, {
+      command_key: provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
+      path,
+      args: [branch],
+      timeout_seconds: 20,
+      max_output_bytes: 256 * 1024,
+    })
+  } catch {
+    return { provider, state: 'error' }
+  }
   if (!response.success) {
     return { provider, state: classifyChangeRequestCommandError(response) }
   }
@@ -650,9 +658,7 @@ async function loadProjectEnvironmentUncached(
       runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
     ])
     const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
-    const changeRequest = await loadChangeRequest(api, deviceId, path, remoteUrl, branchName).catch(
-      () => undefined
-    )
+    const changeRequest = await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).

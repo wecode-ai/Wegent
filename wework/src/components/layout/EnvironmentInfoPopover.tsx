@@ -571,7 +571,9 @@ export function EnvironmentInfoPopover({
                             <GitPullRequest className="h-[18px] w-[18px]" />
                           </span>
                           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                            {t('workbench.environment_create_pr', '创建拉取请求')}
+                            {info.changeRequest?.provider === 'gitlab'
+                              ? t('workbench.environment_create_mr', '创建合并请求')
+                              : t('workbench.environment_create_pr', '创建拉取请求')}
                           </span>
                         </button>
                       )}

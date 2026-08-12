@@ -934,6 +934,7 @@
     "project_git_branch_no_results": "No matching branches",
     "project_git_branch_default_suffix": " (default)",
     "environment_create_pr": "Create pull request",
+    "environment_create_mr": "Create merge request",
     "environment_change_request_open": "Open",
     "environment_change_request_closed": "Closed",
     "environment_change_request_merged": "Merged",
