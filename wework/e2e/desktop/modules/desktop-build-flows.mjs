@@ -832,6 +832,8 @@ async function verifyCloudProjectFlow(
     control,
     snapshot =>
       snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      !snapshot.testIds.includes('device-folder-path-input') &&
+      !snapshot.testIds.includes('confirm-device-folder-picker-button') &&
       snapshot.text.includes('replacement-workspace'),
     'The duplicate regression cloud project was not created'
   )
