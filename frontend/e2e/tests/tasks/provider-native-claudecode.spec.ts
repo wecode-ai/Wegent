@@ -243,13 +243,11 @@ test.describe('Provider-native ClaudeCode access', () => {
   }
 
   async function openClaudeChat(page: Page): Promise<void> {
-    const originalTeamId = resources.teamId
-    resources.teamId = claudeTeamId
-    try {
-      await openProviderNativeChat(page, resources)
-    } finally {
-      resources.teamId = originalTeamId
-    }
+    await openProviderNativeChat(page, {
+      ...resources,
+      teamId: claudeTeamId,
+      teamName: CLAUDE_TEAM_NAME,
+    })
     const modelSelector = page.getByTestId('model-selector')
     await expect(modelSelector).toBeEnabled()
     await modelSelector.click()

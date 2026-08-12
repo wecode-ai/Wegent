@@ -379,8 +379,9 @@ jobs:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           CI: true
-        run: pnpm exec playwright test --project=provider-native-chromium --workers=1
+        run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
 
       - name: Stop Mock Model Server
         if: always()
