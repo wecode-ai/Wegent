@@ -8,4 +8,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN node --version \
   && pnpm --version \
-  && test -x /ms-playwright/chromium-*/chrome-linux/chrome
+  && find /ms-playwright -type f \
+    \( -name chrome -o -name headless_shell \) \
+    -perm -111 -print -quit \
+  | grep -q .
