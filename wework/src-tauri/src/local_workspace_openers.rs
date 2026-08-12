@@ -23,6 +23,7 @@ enum OpenerCategory {
 // Fields are read only by cfg-gated platform code, so they appear unused on
 // other targets.
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 struct WindowsDef {
     env_vars: &'static [&'static str],
     cli: Option<&'static str>,
@@ -287,7 +288,7 @@ fn opener_available(def: &OpenerDef, _app: &tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn pick_local_workspace_opener_exe(
+pub async fn pick_local_workspace_opener_exe(
     app: tauri::AppHandle,
     opener: String,
 ) -> Result<Option<String>, String> {
@@ -297,9 +298,11 @@ pub fn pick_local_workspace_opener_exe(
         if opener.is_empty() {
             return Err("Workspace opener is empty".to_string());
         }
+        let dialog_app = app.clone();
         let picked = tauri::async_runtime::spawn_blocking(move || {
             use tauri_plugin_dialog::DialogExt;
-            app.dialog()
+            dialog_app
+                .dialog()
                 .file()
                 .add_filter("Executable", &["exe"])
                 .blocking_pick_file()
