@@ -6,6 +6,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
+  ModelSelectionConfig,
   RuntimeSupervisorMode,
   RuntimeSupervisorState,
   RuntimeSupervisorSuggestion,
@@ -15,7 +16,7 @@ import type {
 export interface TaskSupervisorConfig {
   mode: RuntimeSupervisorMode
   instructions: string
-  modelId: string | null
+  modelSelection: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
@@ -29,7 +30,7 @@ interface TaskSupervisorControlProps {
   onSet: (
     mode: RuntimeSupervisorMode,
     instructions: string,
-    modelId: string | null,
+    modelSelection: ModelSelectionConfig | null,
     intervalSeconds: number
   ) => Promise<RuntimeSupervisorState | null>
   onClear: () => Promise<void>
@@ -51,7 +52,7 @@ export function TaskSupervisorControl({
 
   return (
     <TaskSupervisorDialogContent
-      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelId ?? initialConfig?.modelId ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
+      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelSelection?.modelName ?? initialConfig?.modelSelection?.modelName ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
       supervisor={supervisor}
       initialConfig={initialConfig}
       defaultInstructions={defaultInstructions}
@@ -130,13 +131,23 @@ function TaskSupervisorDialogContent({
   className,
 }: Omit<TaskSupervisorControlProps, 'open'>) {
   const { t } = useTranslation('common')
+  const configuredModelSelection = supervisor?.modelSelection ?? initialConfig?.modelSelection
+  const configuredModel = models.find(
+    model =>
+      model.name === configuredModelSelection?.modelName &&
+      (!configuredModelSelection.modelType || model.type === configuredModelSelection.modelType)
+  )
   const [mode, setMode] = useState<RuntimeSupervisorMode>(
     supervisor?.mode ?? initialConfig?.mode ?? 'suggest'
   )
   const [instructions, setInstructions] = useState(
     supervisor?.instructions ?? initialConfig?.instructions ?? defaultInstructions
   )
-  const [modelId, setModelId] = useState(supervisor?.modelId ?? initialConfig?.modelId ?? '')
+  const [modelKey, setModelKey] = useState(
+    configuredModel
+      ? `${configuredModel.type}:${configuredModel.name}`
+      : modelSelectionKey(models[0])
+  )
   const [intervalSeconds, setIntervalSeconds] = useState(
     supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30
   )
@@ -157,7 +168,19 @@ function TaskSupervisorDialogContent({
     setSaving(true)
     setError(null)
     try {
-      await onSet(mode, instructions, modelId || null, intervalSeconds)
+      const model = models.find(candidate => modelSelectionKey(candidate) === modelKey)
+      const modelSelection =
+        model && model.namespace && model.resourceUserId !== undefined
+          ? {
+              modelName: model.name,
+              modelType: model.type,
+              options: {
+                weworkCloudModelNamespace: model.namespace,
+                weworkCloudModelResourceUserId: String(model.resourceUserId),
+              },
+            }
+          : null
+      await onSet(mode, instructions, modelSelection, intervalSeconds)
       onOpenChange(false)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
@@ -261,13 +284,12 @@ function TaskSupervisorDialogContent({
               {t('workbench.supervisor_model')}
               <select
                 data-testid="task-supervisor-model"
-                value={modelId}
-                onChange={event => setModelId(event.target.value)}
+                value={modelKey}
+                onChange={event => setModelKey(event.target.value)}
                 className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-primary"
               >
-                <option value="">{t('workbench.supervisor_model_current')}</option>
                 {models.map(model => (
-                  <option key={`${model.type}:${model.name}`} value={model.name}>
+                  <option key={`${model.type}:${model.name}`} value={modelSelectionKey(model)}>
                     {model.displayName || model.name}
                   </option>
                 ))}
@@ -330,7 +352,7 @@ function TaskSupervisorDialogContent({
               variant="primary"
               size="sm"
               data-testid="task-supervisor-save-button"
-              disabled={saving}
+              disabled={saving || !modelKey}
               onClick={save}
             >
               {saving && <Loader2 className="animate-spin" />}
@@ -342,6 +364,10 @@ function TaskSupervisorDialogContent({
     </div>,
     document.body
   )
+}
+
+function modelSelectionKey(model: UnifiedModel | undefined): string {
+  return model ? `${model.type}:${model.name}` : ''
 }
 
 interface SupervisorSuggestionCardsProps {

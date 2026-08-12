@@ -30,6 +30,14 @@ describe('TaskSupervisorControl', () => {
       <TaskSupervisorControl
         open
         supervisor={null}
+        models={[
+          {
+            name: 'review-model',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+        ]}
         onOpenChange={vi.fn()}
         onSet={onSet}
         onClear={vi.fn()}
@@ -44,7 +52,19 @@ describe('TaskSupervisorControl', () => {
     fireEvent.click(screen.getByTestId('task-supervisor-save-button'))
 
     await waitFor(() =>
-      expect(onSet).toHaveBeenCalledWith('auto', 'Stop destructive operations', null, 30)
+      expect(onSet).toHaveBeenCalledWith(
+        'auto',
+        'Stop destructive operations',
+        {
+          modelName: 'review-model',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+          },
+        },
+        30
+      )
     )
   })
 
@@ -55,20 +75,42 @@ describe('TaskSupervisorControl', () => {
         supervisor={null}
         open
         onOpenChange={vi.fn()}
-        models={[{ name: 'gpt-5.6-luna', type: 'codex', displayName: 'GPT 5.6 Luna' }]}
+        models={[
+          {
+            name: 'gpt-5.6-luna',
+            type: 'public',
+            displayName: 'GPT 5.6 Luna',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+        ]}
         onSet={onSet}
         onClear={vi.fn()}
       />
     )
     fireEvent.change(screen.getByTestId('task-supervisor-model'), {
-      target: { value: 'gpt-5.6-luna' },
+      target: { value: 'public:gpt-5.6-luna' },
     })
     fireEvent.change(screen.getByTestId('task-supervisor-frequency'), {
       target: { value: '60' },
     })
     fireEvent.click(screen.getByTestId('task-supervisor-save-button'))
 
-    await waitFor(() => expect(onSet).toHaveBeenCalledWith('suggest', '', 'gpt-5.6-luna', 60))
+    await waitFor(() =>
+      expect(onSet).toHaveBeenCalledWith(
+        'suggest',
+        '',
+        {
+          modelName: 'gpt-5.6-luna',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+          },
+        },
+        60
+      )
+    )
   })
 
   test('reopens supervision configured before the task starts', () => {
@@ -79,10 +121,25 @@ describe('TaskSupervisorControl', () => {
         initialConfig={{
           mode: 'auto',
           instructions: 'Review from the first turn',
-          modelId: 'gpt-5.6-luna',
+          modelSelection: {
+            modelName: 'gpt-5.6-luna',
+            modelType: 'public',
+            options: {
+              weworkCloudModelNamespace: 'default',
+              weworkCloudModelResourceUserId: '0',
+            },
+          },
           intervalSeconds: 60,
         }}
-        models={[{ name: 'gpt-5.6-luna', type: 'codex', displayName: 'GPT 5.6 Luna' }]}
+        models={[
+          {
+            name: 'gpt-5.6-luna',
+            type: 'public',
+            displayName: 'GPT 5.6 Luna',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+        ]}
         onOpenChange={vi.fn()}
         onSet={vi.fn()}
         onClear={vi.fn()}
@@ -93,7 +150,7 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-instructions')).toHaveValue(
       'Review from the first turn'
     )
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('gpt-5.6-luna')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:gpt-5.6-luna')
     expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('60')
     expect(screen.getByTestId('task-supervisor-disable-button')).toBeInTheDocument()
   })

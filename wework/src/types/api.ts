@@ -404,7 +404,7 @@ export interface RuntimeSupervisorState {
   mode: RuntimeSupervisorMode
   status: RuntimeSupervisorStatus
   instructions: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds?: number
   lastEvaluatedAt?: number | null
   lastError?: string | null
@@ -781,7 +781,7 @@ export interface RuntimeSupervisorSetRequest {
   address: RuntimeTaskAddress
   mode: RuntimeSupervisorMode
   instructions?: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
