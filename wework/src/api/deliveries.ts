@@ -165,6 +165,7 @@ export interface CloudLoopItemAttachment {
 
 export interface CloudProject {
   id: CloudProjectId
+  location?: 'local' | 'cloud'
   public_id: string
   project_key: string
   name: string

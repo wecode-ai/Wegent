@@ -40,6 +40,7 @@ import {
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FEATURES_ONLY,
+  CLOUD_DEVELOPMENT_ONLY,
   CLOUD_ONLY,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
@@ -362,7 +363,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
-          CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
+          CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_DEVELOPMENT_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
@@ -496,6 +497,202 @@ async function verifyCloudVisionFlows(control, composerSelector) {
     modelCase: CLOUD_MULTIMODAL_VISION_CASE,
     projectRowSelector,
   })
+}
+
+async function verifyCloudDevelopmentWorkflowFlow(control, cloudEnvironment) {
+  const fixture = await cloudEnvironment.seedDevelopmentWorkflowFixture()
+  await control.command('navigate', 'body', { value: '/todo' })
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="cloud-project-space-${fixture.project.id}"]`, {
+    text: fixture.project.name,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="cloud-project-space-${fixture.project.id}"]`)
+  await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-project-automation-view"]')
+  await control.command('waitFor', '[data-testid="project-dev-workflows"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="project-workflow-automations"]', {
+    text: fixture.automation.name,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', '[data-testid="project-workflow-list"]')
+  await captureVerificationScreenshot(control, 'ai-development-01a-workflow-definition.png')
+  await control.command('scrollIntoView', '[data-testid="project-workflow-automations"]')
+  await captureVerificationScreenshot(control, 'ai-development-01b-workflow-automation.png')
+
+  await control.command('click', '[data-testid="cloud-project-board-view"]')
+  await control.command('waitFor', `[data-testid="cloud-todo-card-${fixture.task.id}"]`, {
+    text: fixture.task.title,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="cloud-todo-card-${fixture.task.id}"]`)
+  await control.command('waitFor', '[data-testid="task-workflow-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid^="task-workflow-stage-approve-"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'ai-development-02-plan-approval.png')
+  await control.command('click', '[data-testid^="task-workflow-stage-approve-"]')
+
+  const development = await cloudEnvironment.getDevelopmentFixture(fixture)
+  assert.equal(development.length, 1, 'Workflow task did not create one development link')
+  const branchName = development[0].branchName
+  await cloudEnvironment.submitDevelopmentProviderEvent(fixture, {
+    providerEventId: 'desktop-e2e-review-failure',
+    deliveryId: `desktop-e2e-review-failure-${process.pid}`,
+    eventType: 'pull_request_review.submitted',
+    branchName,
+    headCommit: 'a'.repeat(40),
+    pullRequestId: 'desktop-e2e-pr',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/wegent/wegent/pull/42',
+    pullRequestState: 'open',
+    mergeableState: 'clean',
+    reviewDecision: 'changes_requested',
+    ciState: 'failure',
+    checks: [
+      {
+        id: 'desktop-e2e',
+        name: 'desktop-e2e',
+        status: 'completed',
+        conclusion: 'failure',
+        detailsUrl: 'https://github.com/wegent/wegent/actions/runs/42',
+      },
+    ],
+    reviewThreads: [
+      {
+        id: 'desktop-e2e-thread',
+        commentId: 'desktop-e2e-comment',
+        path: 'wework/src/features/todo/TaskWorkflowPanel.tsx',
+        line: 560,
+        side: 'right',
+        author: 'workflow-reviewer',
+        body: 'Retry must preserve the same task workspace and workflow context.',
+        url: 'https://github.com/wegent/wegent/pull/42#discussion_r42',
+        status: 'open',
+        reviewState: 'changes_requested',
+      },
+    ],
+  })
+  await control.command('clickWhenEnabled', '[data-testid="task-workflow-refresh"]')
+  await control.command('click', '[data-testid="task-development-refresh"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="task-development-review-threads-' + development[0].id + '"]',
+    {
+      text: 'Retry must preserve the same task workspace',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', '[data-testid^="task-workflow-stage-retry-"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'ai-development-03-ci-review-failed.png')
+  await control.command(
+    'scrollIntoView',
+    `[data-testid="task-development-review-threads-${development[0].id}"]`
+  )
+  await captureVerificationScreenshot(control, 'ai-development-03b-review-thread-open.png')
+
+  let failedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  let retryIds = failedSnapshot.testIds.filter(testId =>
+    testId.startsWith('task-workflow-stage-retry-')
+  )
+  assert.ok(retryIds.length >= 2, 'CI and review failure did not expose both retry actions')
+  for (const retryId of retryIds) {
+    await control.command('clickWhenEnabled', `[data-testid="${retryId}"]`)
+  }
+  await cloudEnvironment.submitDevelopmentProviderEvent(fixture, {
+    providerEventId: 'desktop-e2e-review-success',
+    deliveryId: `desktop-e2e-review-success-${process.pid}`,
+    eventType: 'check_suite.completed',
+    branchName,
+    headCommit: 'b'.repeat(40),
+    pullRequestId: 'desktop-e2e-pr',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/wegent/wegent/pull/42',
+    pullRequestState: 'open',
+    mergeableState: 'clean',
+    reviewDecision: 'approved',
+    ciState: 'success',
+    checks: [
+      {
+        id: 'desktop-e2e',
+        name: 'desktop-e2e',
+        status: 'completed',
+        conclusion: 'success',
+        detailsUrl: 'https://github.com/wegent/wegent/actions/runs/43',
+      },
+    ],
+    reviewThreads: [
+      {
+        id: 'desktop-e2e-thread',
+        commentId: 'desktop-e2e-comment-resolved',
+        path: 'wework/src/features/todo/TaskWorkflowPanel.tsx',
+        line: 560,
+        side: 'right',
+        author: 'workflow-reviewer',
+        body: 'Workspace context is preserved across retries.',
+        url: 'https://github.com/wegent/wegent/pull/42#discussion_r42',
+        status: 'resolved',
+        reviewState: 'approved',
+      },
+    ],
+  })
+  await control.command('clickWhenEnabled', '[data-testid="task-workflow-refresh"]')
+  await control.command('click', '[data-testid="task-development-refresh"]')
+  await control.command('waitFor', '[data-testid="task-development-panel"]', {
+    text: 'success',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'scrollIntoView',
+    `[data-testid="task-development-review-threads-${development[0].id}"]`
+  )
+  await captureVerificationScreenshot(control, 'ai-development-04-ci-review-passed.png')
+
+  await cloudEnvironment.submitDevelopmentProviderEvent(fixture, {
+    providerEventId: 'desktop-e2e-pr-merged',
+    deliveryId: `desktop-e2e-pr-merged-${process.pid}`,
+    eventType: 'pull_request.closed',
+    branchName,
+    headCommit: 'b'.repeat(40),
+    pullRequestId: 'desktop-e2e-pr',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/wegent/wegent/pull/42',
+    pullRequestState: 'merged',
+    mergeableState: 'clean',
+    reviewDecision: 'approved',
+    ciState: 'success',
+    mergedCommit: 'c'.repeat(40),
+  })
+  await control.command('clickWhenEnabled', '[data-testid="task-workflow-refresh"]')
+  await control.command('click', '[data-testid="task-development-refresh"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="task-workflow-status"][data-status="completed"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', '[data-testid="task-development-panel"]', {
+    text: 'merged',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'scrollIntoView',
+    '[data-testid^="task-workflow-stage-"][data-node-key="done"][data-stage-status="passed"]'
+  )
+  await captureVerificationScreenshot(control, 'ai-development-05-merged-and-completed.png')
+  await control.command('scrollIntoView', '[data-testid="task-development-panel"]')
+  await captureVerificationScreenshot(control, 'ai-development-05b-merged-development.png')
 }
 
 async function verifyCloudProjectFlow(
@@ -890,6 +1087,7 @@ async function verifyCloudProjectFlow(
     'Restarting Wework restored the removed project instead of the replacement'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
+  await verifyCloudDevelopmentWorkflowFlow(control, cloudEnvironment)
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {
@@ -1130,6 +1328,7 @@ export {
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,
+  verifyCloudDevelopmentWorkflowFlow,
   verifyCloudProjectFlow,
   verifyRetryFailureRestoration,
   verifyModelProtocolMatrix,

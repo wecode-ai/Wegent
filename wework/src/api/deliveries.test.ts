@@ -3,7 +3,7 @@ import type { HttpClient } from './http'
 import { ApiError } from './http'
 import { createDeliveryApi, type CloudLoopItem, type CloudTaskContext } from './deliveries'
 
-describe('createDeliveryApi queue and assignment routes', () => {
+describe('createDeliveryApi queue routes', () => {
   it('lists loop items with queue filters', async () => {
     const client = {
       get: vi.fn(async () => ({ items: [] })),
@@ -66,65 +66,6 @@ describe('createDeliveryApi queue and assignment routes', () => {
 
     expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/executions/202/stop')
     expect(response).toMatchObject({ id: 202, status: 'cancelled' })
-  })
-
-  it('assigns a task to a robot through the project route', async () => {
-    const client = {
-      post: vi.fn(async () => ({})),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.assignLoopItem(123, 'task-1', {
-      version: 3,
-      assigneeType: 'agent',
-      assigneeId: 'bot-1',
-    })
-
-    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
-      version: 3,
-      assigneeType: 'agent',
-      assigneeId: 'bot-1',
-    })
-  })
-
-  it('assigns a task to a project member with a string user id', async () => {
-    const client = {
-      post: vi.fn(async () => ({})),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.assignLoopItem(123, 'task-1', {
-      version: 3,
-      assigneeType: 'user',
-      assigneeId: '42',
-    })
-
-    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/123/loop-items/task-1/assign', {
-      version: 3,
-      assigneeType: 'user',
-      assigneeId: '42',
-    })
-  })
-
-  it('approves and rejects pending robot runs', async () => {
-    const client = {
-      post: vi.fn(async () => ({})),
-    } as unknown as HttpClient
-    const api = createDeliveryApi(client)
-
-    await api.approveLoopItemRun(123, 'task-1', 4)
-    await api.rejectLoopItemRun(123, 'task-1', 4, 'not now')
-
-    expect(client.post).toHaveBeenNthCalledWith(
-      1,
-      '/v1/cloud-projects/123/loop-items/task-1/approve',
-      { version: 4 }
-    )
-    expect(client.post).toHaveBeenNthCalledWith(
-      2,
-      '/v1/cloud-projects/123/loop-items/task-1/reject',
-      { version: 4, reason: 'not now' }
-    )
   })
 })
 

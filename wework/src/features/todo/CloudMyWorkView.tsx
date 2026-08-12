@@ -11,7 +11,6 @@ export type MyWorkView = 'group' | 'list' | 'calendar' | 'timeline'
 interface CloudMyWorkViewProps {
   items: CloudMyWorkItem[]
   onSelectItem: (item: CloudMyWorkItem) => void
-  onApproveItem?: (item: CloudMyWorkItem) => void | Promise<void>
 }
 
 const GROUP_ORDER: MyWorkGroupKey[] = ['approval', 'action', 'running', 'review', 'done']
@@ -105,10 +104,9 @@ interface GroupSectionProps {
   groupKey: MyWorkGroupKey
   items: CloudMyWorkItem[]
   onSelectItem: (item: CloudMyWorkItem) => void
-  onApproveItem?: (item: CloudMyWorkItem) => void | Promise<void>
 }
 
-function GroupSection({ groupKey, items, onSelectItem, onApproveItem }: GroupSectionProps) {
+function GroupSection({ groupKey, items, onSelectItem }: GroupSectionProps) {
   const { t } = useTranslation('common')
   const meta = GROUP_META[groupKey]
   return (
@@ -128,22 +126,7 @@ function GroupSection({ groupKey, items, onSelectItem, onApproveItem }: GroupSec
           >
             <span className="shrink-0 font-mono text-xs text-text-muted">{item.id}</span>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
-            <span className="shrink-0 text-xs text-text-muted transition-opacity group-hover:opacity-0">
-              {item.project_name}
-            </span>
-            {groupKey === 'approval' && onApproveItem ? (
-              <button
-                type="button"
-                data-testid={`my-work-approve-${item.id}`}
-                onClick={event => {
-                  event.stopPropagation()
-                  void onApproveItem(item)
-                }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-lg bg-text-primary px-2.5 py-1 text-xs font-medium text-background opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-90 focus-visible:opacity-100"
-              >
-                {t('workbench.my_work_approve', '批准')}
-              </button>
-            ) : null}
+            <span className="shrink-0 text-xs text-text-muted">{item.project_name}</span>
           </div>
         ))}
       </div>
@@ -339,7 +322,7 @@ const VIEW_TABS: Array<{
   { key: 'timeline', icon: Clock, labelKey: 'todo.my_work_view_timeline', fallback: '时间线' },
 ]
 
-export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyWorkViewProps) {
+export function CloudMyWorkView({ items, onSelectItem }: CloudMyWorkViewProps) {
   const { t } = useTranslation('common')
   const [view, setView] = useState<MyWorkView>('group')
 
@@ -360,7 +343,6 @@ export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyW
                     groupKey={groupKey}
                     items={items.filter(GROUP_FILTERS[groupKey])}
                     onSelectItem={onSelectItem}
-                    onApproveItem={onApproveItem}
                   />
                 ))}
               </div>

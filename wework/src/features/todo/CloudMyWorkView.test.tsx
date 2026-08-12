@@ -108,19 +108,12 @@ describe('CloudMyWorkView', () => {
     expect(screen.queryByTestId('my-work-group-action-WEG-6')).not.toBeInTheDocument()
   })
 
-  it('approves a pending run from the approval group without opening the task', async () => {
+  it('opens a pending workflow approval in the task panel', async () => {
     const onSelectItem = vi.fn()
-    const onApproveItem = vi.fn(async () => undefined)
-    render(
-      <CloudMyWorkView items={items} onSelectItem={onSelectItem} onApproveItem={onApproveItem} />
-    )
+    render(<CloudMyWorkView items={items} onSelectItem={onSelectItem} />)
 
-    expect(screen.getByTestId('my-work-approve-WEG-6')).toBeInTheDocument()
-    expect(screen.queryByTestId('my-work-approve-WEG-1')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('my-work-approve-WEG-6'))
-    expect(onApproveItem).toHaveBeenCalledWith(items[5])
-    expect(onSelectItem).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('my-work-group-approval-WEG-6'))
+    expect(onSelectItem).toHaveBeenCalledWith(items[5])
   })
 
   it('switches to the list view sorted by due date', async () => {

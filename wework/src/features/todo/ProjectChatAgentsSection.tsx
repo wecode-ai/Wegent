@@ -11,6 +11,26 @@ import { isSupportedModelFamily } from '@/lib/model-ui'
 import type { UnifiedModel } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
 
+function resourceRefs(value: string) {
+  return value
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean)
+    .map(name => ({ namespace: 'default', name }))
+}
+
+function resourceRefText(refs: ProjectChatAgent['skillRefs'] | undefined) {
+  return (refs ?? []).map(ref => ref.name).join(', ')
+}
+
+function parsePolicy(value: string, label: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value || '{}')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object`)
+  }
+  return parsed as Record<string, unknown>
+}
+
 export function ProjectChatAgentsSection({
   project,
   projectChatAgentApi,
@@ -39,8 +59,20 @@ export function ProjectChatAgentsSection({
   const [creatingChatAgent, setCreatingChatAgent] = useState(false)
   const [editingChatAgent, setEditingChatAgent] = useState<ProjectChatAgent | null>(null)
   const [agentName, setAgentName] = useState('')
+  const [agentHarness, setAgentHarness] = useState<ProjectChatAgent['harness']>('codex')
   const [agentModel, setAgentModel] = useState('')
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
+  const [agentSkillRefs, setAgentSkillRefs] = useState('')
+  const [agentPluginRefs, setAgentPluginRefs] = useState('')
+  const [agentMcpServerRefs, setAgentMcpServerRefs] = useState('')
+  const [agentConnectorRefs, setAgentConnectorRefs] = useState('')
+  const [agentSecretRefs, setAgentSecretRefs] = useState('')
+  const [agentConcurrency, setAgentConcurrency] = useState(1)
+  const [agentTimeoutSeconds, setAgentTimeoutSeconds] = useState(3600)
+  const [agentWorkspacePolicy, setAgentWorkspacePolicy] = useState('{}')
+  const [agentGitPolicy, setAgentGitPolicy] = useState('{}')
+  const [agentPermissionPolicy, setAgentPermissionPolicy] = useState('{}')
+  const [agentApprovalPolicy, setAgentApprovalPolicy] = useState('{}')
   const [agentVisibility, setAgentVisibility] =
     useState<ProjectChatAgent['visibility']>('creator_admin')
   const [agentExecutionEnvironment, setAgentExecutionEnvironment] =
@@ -156,8 +188,20 @@ export function ProjectChatAgentsSection({
     setCreatingChatAgent(true)
     setEditingChatAgent(null)
     setAgentName(t('workbench.project_chat_new_agent'))
+    setAgentHarness('codex')
     setAgentModel('')
     setAgentSystemPrompt('')
+    setAgentSkillRefs('')
+    setAgentPluginRefs('')
+    setAgentMcpServerRefs('')
+    setAgentConnectorRefs('')
+    setAgentSecretRefs('')
+    setAgentConcurrency(1)
+    setAgentTimeoutSeconds(3600)
+    setAgentWorkspacePolicy('{}')
+    setAgentGitPolicy('{}')
+    setAgentPermissionPolicy('{}')
+    setAgentApprovalPolicy('{}')
     setAgentVisibility('creator_admin')
     setAgentExecutionEnvironment('local')
     setAgentExecutionMode('auto')
@@ -186,8 +230,20 @@ export function ProjectChatAgentsSection({
   function editChatAgent(agent: ProjectChatAgent) {
     setEditingChatAgent(agent)
     setAgentName(agent.name)
+    setAgentHarness(agent.harness ?? 'codex')
     setAgentModel(agent.model ?? '')
     setAgentSystemPrompt(agent.systemPrompt)
+    setAgentSkillRefs(resourceRefText(agent.skillRefs))
+    setAgentPluginRefs(resourceRefText(agent.pluginRefs))
+    setAgentMcpServerRefs(resourceRefText(agent.mcpServerRefs))
+    setAgentConnectorRefs(resourceRefText(agent.connectorRefs))
+    setAgentSecretRefs((agent.secretRefs ?? []).map(ref => `${ref.name}:${ref.purpose}`).join(', '))
+    setAgentConcurrency(agent.concurrency ?? 1)
+    setAgentTimeoutSeconds(agent.timeoutSeconds ?? 3600)
+    setAgentWorkspacePolicy(JSON.stringify(agent.workspacePolicy ?? {}, null, 2))
+    setAgentGitPolicy(JSON.stringify(agent.gitPolicy ?? {}, null, 2))
+    setAgentPermissionPolicy(JSON.stringify(agent.permissionPolicy ?? {}, null, 2))
+    setAgentApprovalPolicy(JSON.stringify(agent.approvalPolicy ?? {}, null, 2))
     setAgentVisibility(agent.visibility)
     setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
     setAgentExecutionMode(agent.executionMode)
@@ -215,10 +271,52 @@ export function ProjectChatAgentsSection({
       return
     setAgentBusy(true)
     try {
+      const capabilities = {
+        harness: agentHarness,
+        modelSelection: null,
+        skillRefs: resourceRefs(agentSkillRefs),
+        pluginRefs: resourceRefs(agentPluginRefs),
+        mcpServerRefs: resourceRefs(agentMcpServerRefs),
+        connectorRefs: resourceRefs(agentConnectorRefs),
+        secretRefs: agentSecretRefs
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean)
+          .map(value => {
+            const [name, ...purpose] = value.split(':')
+            return { name: name.trim(), purpose: purpose.join(':').trim() || 'runtime' }
+          }),
+        concurrency: agentConcurrency,
+        timeoutSeconds: agentTimeoutSeconds,
+        workspacePolicy: parsePolicy(agentWorkspacePolicy, 'workspacePolicy'),
+        gitPolicy: parsePolicy(agentGitPolicy, 'gitPolicy'),
+        permissionPolicy: parsePolicy(agentPermissionPolicy, 'permissionPolicy'),
+        approvalPolicy: parsePolicy(agentApprovalPolicy, 'approvalPolicy'),
+      }
+      const validation =
+        typeof projectChatAgentApi.validate === 'function'
+          ? await projectChatAgentApi.validate(project.id, {
+              name: agentName.trim(),
+              runtime: 'codex',
+              ...capabilities,
+              model: agentModel.trim(),
+              systemPrompt: agentSystemPrompt,
+              visibility: agentVisibility,
+              executionEnvironment: agentExecutionEnvironment,
+              executionMode: agentExecutionMode,
+              executionDeviceId: agentExecutionDeviceId,
+              localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
+            })
+          : { valid: true, issues: [] }
+      if (!validation.valid) {
+        setError(validation.issues.join('；'))
+        return
+      }
       if (creatingChatAgent) {
         const agent = await projectChatAgentApi.create(project.id, {
           name: agentName.trim(),
           runtime: 'codex',
+          ...capabilities,
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
           visibility: agentVisibility,
@@ -233,6 +331,7 @@ export function ProjectChatAgentsSection({
         const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
           version: editingChatAgent.version,
           name: agentName.trim(),
+          ...capabilities,
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
           visibility: agentVisibility,
@@ -548,6 +647,107 @@ export function ProjectChatAgentsSection({
               </SettingsGroup>
             </div>
 
+            <details className="mt-5 rounded-xl border border-border p-4">
+              <summary className="cursor-pointer text-sm font-medium">
+                {t('workbench.project_chat_agent_capabilities', 'Skills、工具与安全策略')}
+              </summary>
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">Harness</span>
+                  <select
+                    data-testid="cloud-project-chat-agent-harness"
+                    value={agentHarness}
+                    onChange={event =>
+                      setAgentHarness(event.target.value as ProjectChatAgent['harness'])
+                    }
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  >
+                    <option value="codex">Codex</option>
+                    <option value="opencode">OpenCode</option>
+                    <option value="claude_code">Claude Code</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">
+                    {t('workbench.project_chat_agent_concurrency', '并发数')}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    data-testid="cloud-project-chat-agent-concurrency"
+                    value={agentConcurrency}
+                    onChange={event => setAgentConcurrency(Number(event.target.value))}
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs text-text-muted">
+                    {t('workbench.project_chat_agent_timeout', '超时（秒）')}
+                  </span>
+                  <input
+                    type="number"
+                    min={60}
+                    max={86400}
+                    data-testid="cloud-project-chat-agent-timeout"
+                    value={agentTimeoutSeconds}
+                    onChange={event => setAgentTimeoutSeconds(Number(event.target.value))}
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                  />
+                </label>
+                {[
+                  ['skills', agentSkillRefs, setAgentSkillRefs, 'Skills（逗号分隔）'],
+                  ['plugins', agentPluginRefs, setAgentPluginRefs, '插件（逗号分隔）'],
+                  ['mcp', agentMcpServerRefs, setAgentMcpServerRefs, 'MCP 服务（逗号分隔）'],
+                  ['connectors', agentConnectorRefs, setAgentConnectorRefs, '连接器（逗号分隔）'],
+                ].map(([key, value, setter, label]) => (
+                  <label key={key as string} className="block">
+                    <span className="mb-1 block text-xs text-text-muted">{label as string}</span>
+                    <input
+                      data-testid={`cloud-project-chat-agent-${key}`}
+                      value={value as string}
+                      onChange={event =>
+                        (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)
+                      }
+                      className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                    />
+                  </label>
+                ))}
+              </div>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-xs text-text-muted">
+                  Secret 引用（name:purpose，逗号分隔）
+                </span>
+                <input
+                  data-testid="cloud-project-chat-agent-secrets"
+                  value={agentSecretRefs}
+                  onChange={event => setAgentSecretRefs(event.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+                />
+              </label>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {[
+                  ['workspace-policy', agentWorkspacePolicy, setAgentWorkspacePolicy],
+                  ['git-policy', agentGitPolicy, setAgentGitPolicy],
+                  ['permission-policy', agentPermissionPolicy, setAgentPermissionPolicy],
+                  ['approval-policy', agentApprovalPolicy, setAgentApprovalPolicy],
+                ].map(([key, value, setter]) => (
+                  <label key={key as string} className="block">
+                    <span className="mb-1 block text-xs text-text-muted">{key as string}</span>
+                    <textarea
+                      data-testid={`cloud-project-chat-agent-${key}`}
+                      value={value as string}
+                      rows={3}
+                      onChange={event =>
+                        (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs outline-none"
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
+
             {error ? (
               <p className="mt-4 text-sm text-red-600" data-testid="cloud-project-chat-agent-error">
                 {error}
@@ -570,7 +770,14 @@ export function ProjectChatAgentsSection({
               type="button"
               data-testid="cloud-project-chat-agent-save"
               disabled={
-                agentBusy || !agentName.trim() || !agentModel.trim() || !agentExecutionDeviceId
+                agentBusy ||
+                !agentName.trim() ||
+                !agentModel.trim() ||
+                !agentExecutionDeviceId ||
+                agentConcurrency < 1 ||
+                agentConcurrency > 20 ||
+                agentTimeoutSeconds < 60 ||
+                agentTimeoutSeconds > 86400
               }
               onClick={() => void saveChatAgent()}
               className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-40"

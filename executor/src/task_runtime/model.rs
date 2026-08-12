@@ -88,15 +88,40 @@ pub struct TaskUpdate {
     pub priority: Option<String>,
     pub parent_id: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
-    pub assignee_agent_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentCreate {
     pub name: String,
+    #[serde(default = "default_harness")]
+    pub harness: String,
     pub model: Option<String>,
+    #[serde(default)]
+    pub model_selection: Option<Value>,
     pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub skill_refs: Vec<Value>,
+    #[serde(default)]
+    pub plugin_refs: Vec<Value>,
+    #[serde(default)]
+    pub mcp_server_refs: Vec<Value>,
+    #[serde(default)]
+    pub connector_refs: Vec<Value>,
+    #[serde(default)]
+    pub secret_refs: Vec<Value>,
+    #[serde(default = "default_agent_concurrency")]
+    pub concurrency: i64,
+    #[serde(default = "default_agent_timeout_seconds")]
+    pub timeout_seconds: i64,
+    #[serde(default)]
+    pub workspace_policy: Value,
+    #[serde(default)]
+    pub git_policy: Value,
+    #[serde(default)]
+    pub permission_policy: Value,
+    #[serde(default)]
+    pub approval_policy: Value,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
     pub execution_mode: Option<String>,
@@ -107,12 +132,54 @@ pub struct ChatAgentCreate {
     pub created_by_user_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl Default for ChatAgentCreate {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            harness: default_harness(),
+            model: None,
+            model_selection: None,
+            system_prompt: None,
+            skill_refs: Vec::new(),
+            plugin_refs: Vec::new(),
+            mcp_server_refs: Vec::new(),
+            connector_refs: Vec::new(),
+            secret_refs: Vec::new(),
+            concurrency: default_agent_concurrency(),
+            timeout_seconds: default_agent_timeout_seconds(),
+            workspace_policy: Value::Object(Default::default()),
+            git_policy: Value::Object(Default::default()),
+            permission_policy: Value::Object(Default::default()),
+            approval_policy: Value::Object(Default::default()),
+            visibility: None,
+            execution_environment: None,
+            execution_mode: None,
+            execution_device_id: None,
+            local_project_id: None,
+            created_by_user_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ChatAgentUpdate {
     pub version: i64,
     pub name: Option<String>,
+    pub harness: Option<String>,
     pub model: Option<String>,
+    pub model_selection: Option<Value>,
     pub system_prompt: Option<String>,
+    pub skill_refs: Option<Vec<Value>>,
+    pub plugin_refs: Option<Vec<Value>>,
+    pub mcp_server_refs: Option<Vec<Value>>,
+    pub connector_refs: Option<Vec<Value>>,
+    pub secret_refs: Option<Vec<Value>>,
+    pub concurrency: Option<i64>,
+    pub timeout_seconds: Option<i64>,
+    pub workspace_policy: Option<Value>,
+    pub git_policy: Option<Value>,
+    pub permission_policy: Option<Value>,
+    pub approval_policy: Option<Value>,
     pub status: Option<String>,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
@@ -129,8 +196,21 @@ pub struct ChatAgent {
     pub project_id: String,
     pub name: String,
     pub runtime: String,
+    pub harness: String,
     pub model: Option<String>,
+    pub model_selection: Option<Value>,
     pub system_prompt: String,
+    pub skill_refs: Vec<Value>,
+    pub plugin_refs: Vec<Value>,
+    pub mcp_server_refs: Vec<Value>,
+    pub connector_refs: Vec<Value>,
+    pub secret_refs: Vec<Value>,
+    pub concurrency: i64,
+    pub timeout_seconds: i64,
+    pub workspace_policy: Value,
+    pub git_policy: Value,
+    pub permission_policy: Value,
+    pub approval_policy: Value,
     pub status: String,
     pub visibility: String,
     pub execution_environment: String,
@@ -141,6 +221,18 @@ pub struct ChatAgent {
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn default_harness() -> String {
+    "codex".to_owned()
+}
+
+fn default_agent_concurrency() -> i64 {
+    1
+}
+
+fn default_agent_timeout_seconds() -> i64 {
+    3600
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -384,8 +476,6 @@ pub struct LoopItem {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee_agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

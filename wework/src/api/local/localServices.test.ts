@@ -1025,6 +1025,100 @@ describe('createLocalAppServices', () => {
     expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
   })
 
+  test('maps local project workflow automations onto the shared runtime scheduler', async () => {
+    const now = '2026-08-12T09:00:00.000Z'
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.automations.create') {
+          return {
+            automation: {
+              ...(data.automation as Record<string, unknown>),
+              id: 'automation-local-1',
+              version: 1,
+              createdAt: now,
+              updatedAt: now,
+              nextRunAt: '2026-08-12T10:00:00.000Z',
+              lastRunAt: null,
+            },
+          }
+        }
+        if (method === 'runtime.automations.run_now') {
+          return {
+            run: {
+              id: 'automation-run-1',
+              automationId: 'automation-local-1',
+              scheduledFor: now,
+              trigger: 'manual',
+              status: 'succeeded',
+              taskId: 'task-local-1',
+              workflowRunId: 'workflow-run-local-1',
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const created = await services.projectWorkflowApi?.createAutomation('project-local-1', {
+      name: 'Hourly implementation',
+      description: 'Create and execute a board task',
+      triggerType: 'interval',
+      triggerConfig: { value: 1, unit: 'hours', timezone: 'Asia/Shanghai' },
+      workflowId: 'workflow-local-1',
+      repositoryBindingId: 'repository-local-1',
+      executionTarget: { type: 'registered_device', id: 'device-uuid' },
+      workspaceMode: 'git_worktree',
+      taskTemplate: {
+        title: 'Implement scheduled change',
+        description: 'Run the complete development workflow',
+        priority: 'high',
+      },
+      payloadMapping: { title: 'task.title' },
+      enabled: true,
+    })
+    const run = await services.projectWorkflowApi?.runAutomation(
+      'project-local-1',
+      'automation-local-1',
+      { idempotencyKey: 'ui:ignored-locally' }
+    )
+
+    expect(created).toMatchObject({
+      id: 'automation-local-1',
+      projectId: 'project-local-1',
+      triggerType: 'interval',
+      workflowId: 'workflow-local-1',
+      executionTarget: { type: 'registered_device', id: 'device-uuid' },
+    })
+    expect(request).toHaveBeenCalledWith('runtime.automations.create', {
+      automation: expect.objectContaining({
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'Asia/Shanghai',
+        taskPayload: {
+          projectWorkflowAutomation: expect.objectContaining({
+            projectId: 'project-local-1',
+            workflowId: 'workflow-local-1',
+            repositoryBindingId: 'repository-local-1',
+            executionTarget: { type: 'registered_device', id: 'device-uuid' },
+            workspaceMode: 'git_worktree',
+          }),
+        },
+      }),
+    })
+    expect(run).toMatchObject({
+      status: 'succeeded',
+      loopItemId: 'task-local-1',
+      workflowRunId: 'workflow-run-local-1',
+    })
+  })
+
   test('creates a git worktree from the current branch before creating a local runtime task', async () => {
     const request = vi
       .fn()

@@ -311,6 +311,10 @@ build_matrix() {
     for segment in "${cloud_segments[@]}"; do
       cloud_segment_entries+=("$segment")
     done
+    append_matrix_entry \
+      cloud-development \
+      "Cloud / AI development workflow" \
+      e2e:desktop:cloud-development
   fi
 
   local shard

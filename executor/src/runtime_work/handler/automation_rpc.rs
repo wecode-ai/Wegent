@@ -3,9 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::Utc;
+use serde_json::Value;
 
 use super::*;
 use crate::runtime_work::automations::{Automation, ConversationMode};
+use crate::{
+    project_workflows::{ExecutionTargetRef, TaskBindingInput},
+    task_runtime::{TaskCreate, TaskRuntime},
+};
 
 const AUTOMATION_SCHEDULER_INTERVAL_SECONDS: u64 = 30;
 
@@ -127,6 +132,15 @@ impl RuntimeWorkRpcHandler {
         automation: Automation,
         run: crate::runtime_work::automations::AutomationRun,
     ) {
+        if let Some(configuration) = automation
+            .task_payload
+            .get("projectWorkflowAutomation")
+            .cloned()
+        {
+            self.execute_project_workflow_automation(automation, run, configuration)
+                .await;
+            return;
+        }
         let mut payload = match automation.conversation_mode {
             ConversationMode::Independent => automation.task_payload.clone(),
             ConversationMode::ContinueThread => automation
@@ -173,6 +187,97 @@ impl RuntimeWorkRpcHandler {
                 let _ = self
                     .automation_store
                     .mark_failed(&run.id, error.message.clone());
+                self.emit_automation_runs_changed(&automation.id, &run.id);
+            }
+        }
+    }
+
+    async fn execute_project_workflow_automation(
+        &self,
+        automation: Automation,
+        run: crate::runtime_work::automations::AutomationRun,
+        configuration: Value,
+    ) {
+        let result = async {
+            let project_id = required_configuration_string(&configuration, "projectId")?;
+            let workflow_id = required_configuration_string(&configuration, "workflowId")?;
+            let user_id = configuration
+                .get("userId")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let task_template = configuration
+                .get("taskTemplate")
+                .cloned()
+                .unwrap_or_else(|| json!({"title": automation.name}));
+            let task = serde_json::from_value::<TaskCreate>(task_template)
+                .map_err(|error| format!("invalid workflow automation task template: {error}"))?;
+            let execution_target = serde_json::from_value::<ExecutionTargetRef>(
+                configuration
+                    .get("executionTarget")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!({
+                            "type": "registered_device",
+                            "id": self.device_id,
+                        })
+                    }),
+            )
+            .map_err(|error| format!("invalid workflow automation execution target: {error}"))?;
+            let repository_binding_id = configuration
+                .get("repositoryBindingId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let workspace_mode = configuration
+                .get("workspaceMode")
+                .and_then(Value::as_str)
+                .unwrap_or("git_worktree")
+                .to_owned();
+            let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+            let task = runtime
+                .create_task(&project_id, task)
+                .await
+                .map_err(|error| error.to_string())?;
+            runtime
+                .upsert_workflow_task_binding(
+                    &project_id,
+                    &task.id,
+                    user_id,
+                    TaskBindingInput {
+                        version: None,
+                        actor: None,
+                        workflow_id: Some(workflow_id),
+                        repository_binding_id,
+                        execution_target,
+                        workspace_mode,
+                        start_after_save: false,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            let workflow_run = runtime
+                .start_workflow_run(
+                    &project_id,
+                    &task.id,
+                    user_id,
+                    &format!("automation:{}:{}", automation.id, run.id),
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((task.id, workflow_run.id))
+        }
+        .await;
+
+        match result {
+            Ok((task_id, workflow_run_id)) => {
+                let _ = self.automation_store.mark_project_workflow_succeeded(
+                    &run.id,
+                    task_id,
+                    workflow_run_id,
+                );
+                self.emit_automation_runs_changed(&automation.id, &run.id);
+            }
+            Err(error) => {
+                let _ = self.automation_store.mark_failed(&run.id, error);
                 self.emit_automation_runs_changed(&automation.id, &run.id);
             }
         }
@@ -250,6 +355,15 @@ fn automation_store_error(error: String) -> AppIpcError {
         "bad_request"
     };
     AppIpcError::new(code, error)
+}
+
+fn required_configuration_string(configuration: &Value, key: &str) -> Result<String, String> {
+    configuration
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("{key} is required"))
 }
 
 fn set_payload_string(payload: &mut Value, key: &str, value: &str) {

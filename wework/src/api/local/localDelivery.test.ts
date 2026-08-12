@@ -49,7 +49,6 @@ describe('local delivery API', () => {
         return [
           {
             ...taskRecord,
-            assignee_agent_id: 'LA-1',
             execution_id: 5,
             execution_state: 'pending_approval',
           },
@@ -61,7 +60,6 @@ describe('local delivery API', () => {
     const { items } = await api.listLoopItems('project-1')
     expect(items[0].execution_id).toBe(5)
     expect(items[0].execution_state).toBe('pending_approval')
-    expect(items[0].assignee_agent_id).toBe('LA-1')
   })
 
   test('local robot create sends the creator id', async () => {

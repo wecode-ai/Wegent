@@ -5,6 +5,7 @@
 """Focused contracts for the unified robot queue dispatcher."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,11 +15,24 @@ from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.project_workflow import (
+    ProjectRepositoryBinding,
+    TaskDevelopmentLink,
+    TaskStageRun,
+    TaskWorkflowArtifact,
+    TaskWorkflowRun,
+    TaskWorkspace,
+)
 from app.models.user import User
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
-from app.tasks.robot_queue_tasks import _dispatch_execution
+from app.tasks.robot_queue_tasks import (
+    _apply_workflow_runtime_context,
+    _cleanup_completed_workflow_resources,
+    _dispatch_execution,
+    _dispatch_managed_container,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +166,377 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert execution.runtime_device_id == "local-device"
     assert execution.runtime_task_id == f"codex-queue-{execution.id}"
     assert execution.status == "running"
+
+
+def test_registered_device_dispatches_wegent_team_without_project_agent(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Run Wegent Team",
+        description="Use the selected Team.",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(item)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent_id="",
+        actor_type="wegent_team",
+        actor_id="42",
+        actor_snapshot={
+            "type": "wegent_team",
+            "teamId": 42,
+            "namespace": "default",
+            "name": "Developer",
+            "userId": test_user.id,
+        },
+        execution_target_type="registered_device",
+        execution_target_id="local-device",
+        execution_environment="local",
+        execution_device_id="local-device",
+        assigner_user_id=test_user.id,
+        status="running",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    test_db.refresh(execution)
+
+    payload = {
+        "taskId": "placeholder",
+        "executionRequest": {
+            "task_id": "placeholder",
+            "subtask_id": "placeholder-assistant",
+            "bot": [{"id": 1, "shell_type": "codex"}],
+        },
+    }
+    emit_rpc = AsyncMock(return_value={"emitted": True})
+    online = AsyncMock(return_value=True)
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
+            online,
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks._build_wegent_team_runtime_payload",
+            return_value=("Team prompt", payload),
+        ) as build_team_payload,
+    ):
+        import asyncio
+
+        asyncio.run(_dispatch_execution(test_db, execution))
+
+    build_team_payload.assert_called_once()
+    emitted = emit_rpc.await_args.kwargs["payload"]
+    assert emitted["taskId"] == f"codex-queue-{execution.id}"
+    assert emitted["executionRequest"]["task_id"] == f"codex-queue-{execution.id}"
+    test_db.refresh(execution)
+    assert execution.runtime_task_id == f"codex-queue-{execution.id}"
+
+
+def test_workflow_runtime_context_injects_workspace_contract_and_artifacts(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Implement from plan",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    repository = ProjectRepositoryBinding(
+        id=uuid.uuid4().hex,
+        cloud_project_id=str(project.id),
+        provider="github",
+        repository_identity="wegent-ai/Wegent",
+        repository_url="https://github.com/wegent-ai/Wegent.git",
+        default_branch="main",
+        created_by_user_id=test_user.id,
+    )
+    workspace = TaskWorkspace(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        repository_binding_id=repository.id,
+        execution_target_type="registered_device",
+        execution_target_id="local-device",
+        workspace_path="/workspace/worktrees/123/Wegent",
+        workspace_kind="git_worktree",
+        branch_name="feature/WEG-123-runtime",
+        base_branch="main",
+        status="ready",
+    )
+    run = TaskWorkflowRun(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        repository_binding_id=repository.id,
+        workflow_definition_snapshot={"stages": []},
+        execution_target_type="registered_device",
+        execution_target_id="local-device",
+        execution_target_snapshot={"type": "registered_device", "id": "local-device"},
+        status="running",
+        started_by_id=str(test_user.id),
+        idempotency_key=uuid.uuid4().hex,
+    )
+    stage = TaskStageRun(
+        id=uuid.uuid4().hex,
+        workflow_run_id=run.id,
+        group_key="develop",
+        node_key="implement",
+        node_type="agent",
+        target_type="project_agent",
+        target_id=agent.id,
+        target_snapshot={"type": "project_agent", "id": agent.id},
+        execution_target_type="registered_device",
+        execution_target_id="local-device",
+        workspace_id=workspace.id,
+        status="running",
+        input_snapshot={
+            "workflowNode": {
+                "prompt_template": "Implement the approved plan.",
+            },
+            "inputArtifacts": ["implementation_plan"],
+            "requiredOutputs": ["code_change_summary", "test_report"],
+        },
+    )
+    artifact = TaskWorkflowArtifact(
+        id=uuid.uuid4().hex,
+        workflow_run_id=run.id,
+        stage_run_id=stage.id,
+        artifact_type="implementation_plan",
+        schema_version=1,
+        content_json={"steps": ["edit", "test"]},
+    )
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent_id=agent.id,
+        actor_type="project_agent",
+        actor_id=agent.id,
+        execution_target_type="registered_device",
+        execution_target_id="local-device",
+        execution_environment="local",
+        execution_device_id="local-device",
+        assigner_user_id=test_user.id,
+        status="running",
+        workflow_run_id=run.id,
+        stage_run_id=stage.id,
+    )
+    test_db.add_all([item, repository, workspace, run, stage, artifact, execution])
+    test_db.commit()
+    payload = {
+        "message": "old",
+        "executionRequest": {
+            "prompt": "old",
+            "standalone_chat_workspace": True,
+        },
+    }
+
+    import asyncio
+
+    asyncio.run(
+        _apply_workflow_runtime_context(
+            test_db,
+            execution=execution,
+            payload=payload,
+            user_id=test_user.id,
+        )
+    )
+
+    request = payload["executionRequest"]
+    assert request["workspace_source"] == "git_worktree"
+    assert request["project_workspace_path"] == workspace.workspace_path
+    assert request["git_url"] == repository.repository_url
+    assert request["standalone_chat_workspace"] is False
+    contract = payload["additionalContext"]["projectWorkflowStage"]["value"]
+    assert contract["branchName"] == "feature/WEG-123-runtime"
+    assert contract["requiredOutputs"] == ["code_change_summary", "test_report"]
+    assert contract["artifacts"][0]["content"] == {"steps": ["edit", "test"]}
+
+
+def test_managed_container_dispatch_writes_runtime_stage_linkage(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Run in managed container",
+        description="Provision an isolated coding environment.",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    run = TaskWorkflowRun(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        workflow_definition_snapshot={"stages": []},
+        execution_target_type="managed_container",
+        execution_target_snapshot={"type": "managed_container"},
+        status="running",
+        started_by_id=str(test_user.id),
+        idempotency_key=uuid.uuid4().hex,
+    )
+    stage = TaskStageRun(
+        id=uuid.uuid4().hex,
+        workflow_run_id=run.id,
+        group_key="develop",
+        node_key="implement",
+        node_type="agent",
+        target_type="project_agent",
+        target_id=agent.id,
+        target_snapshot={
+            "type": "project_agent",
+            "id": agent.id,
+            "timeoutSeconds": 600,
+        },
+        execution_target_type="managed_container",
+        status="running",
+        input_snapshot={"requiredOutputs": ["execution_result"]},
+    )
+    test_db.add_all([item, run, stage])
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent_id=agent.id,
+        actor_type="project_agent",
+        actor_id=agent.id,
+        actor_snapshot=stage.target_snapshot,
+        execution_target_type="managed_container",
+        execution_environment="cloud",
+        execution_device_id="managed-container:default",
+        assigner_user_id=test_user.id,
+        status="running",
+        workflow_run_id=run.id,
+        stage_run_id=stage.id,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    stage.loop_item_execution_id = execution.id
+    test_db.commit()
+
+    client = SimpleNamespace(
+        create_sandbox=AsyncMock(
+            return_value=(SimpleNamespace(sandbox_id="sandbox-123"), None)
+        ),
+        execute_sandbox=AsyncMock(return_value=({"execution_id": "runtime-456"}, None)),
+    )
+    with patch(
+        "app.services.execution.get_executor_runtime_client",
+        return_value=client,
+    ):
+        import asyncio
+
+        asyncio.run(_dispatch_managed_container(test_db, execution))
+
+    client.create_sandbox.assert_awaited_once()
+    client.execute_sandbox.assert_awaited_once()
+    test_db.refresh(execution)
+    test_db.refresh(stage)
+    assert execution.runtime_device_id == "sandbox-123"
+    assert execution.runtime_task_id == "runtime-456"
+    assert stage.runtime_instance_id == "sandbox-123"
+    assert stage.runtime_task_id == "runtime-456"
+    assert stage.status == "running"
+
+
+def test_completed_workflow_cleanup_removes_managed_sandbox(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Merged workflow",
+        description="Clean its managed container.",
+        status="completed",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    repository = ProjectRepositoryBinding(
+        id=uuid.uuid4().hex,
+        cloud_project_id=str(project.id),
+        provider="github",
+        repository_identity="wegent/wegent",
+        repository_url="https://github.com/wegent/wegent.git",
+        default_branch="main",
+        execution_target_type="managed_container",
+        created_by_user_id=test_user.id,
+    )
+    workspace = TaskWorkspace(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        repository_binding_id=repository.id,
+        execution_target_type="managed_container",
+        workspace_path="/workspace/task",
+        workspace_kind="git_worktree",
+        branch_name="feature/merged",
+        base_branch="main",
+        status="released",
+        cleanup_policy="after_merge",
+    )
+    link = TaskDevelopmentLink(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        repository_binding_id=repository.id,
+        workspace_id=workspace.id,
+        branch_name=workspace.branch_name,
+        base_branch="main",
+        provider="github",
+        pull_request_state="merged",
+    )
+    run = TaskWorkflowRun(
+        id=uuid.uuid4().hex,
+        loop_item_id=item.id,
+        repository_binding_id=repository.id,
+        workflow_definition_snapshot={"stages": []},
+        execution_target_type="managed_container",
+        execution_target_snapshot={"type": "managed_container"},
+        status="completed",
+        started_by_id=str(test_user.id),
+        idempotency_key=uuid.uuid4().hex,
+    )
+    stage = TaskStageRun(
+        id=uuid.uuid4().hex,
+        workflow_run_id=run.id,
+        group_key="develop",
+        node_key="implement",
+        node_type="agent",
+        execution_target_type="managed_container",
+        status="passed",
+        runtime_instance_id="sandbox-cleanup-1",
+    )
+    test_db.add_all([item, repository, workspace, link, run, stage])
+    test_db.commit()
+    client = SimpleNamespace(delete_sandbox=AsyncMock(return_value=(True, None)))
+
+    with patch(
+        "app.services.execution.get_executor_runtime_client",
+        return_value=client,
+    ):
+        import asyncio
+
+        cleaned = asyncio.run(_cleanup_completed_workflow_resources(test_db))
+
+    test_db.refresh(workspace)
+    assert cleaned == 1
+    assert workspace.status == "cleaned"
+    assert workspace.workspace_path == ""
+    client.delete_sandbox.assert_awaited_once_with("sandbox-cleanup-1")
 
 
 def test_dispatch_execution_fails_when_executor_never_starts_session(

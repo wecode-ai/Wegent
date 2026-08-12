@@ -117,6 +117,8 @@ pub(crate) struct AutomationRun {
     #[serde(default)]
     pub task_id: Option<String>,
     #[serde(default)]
+    pub workflow_run_id: Option<String>,
+    #[serde(default)]
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -270,6 +272,7 @@ impl AutomationStore {
                 trigger: "scheduled".to_owned(),
                 status,
                 task_id: None,
+                workflow_run_id: None,
                 error: if active {
                     Some("previous automation run is still active".to_owned())
                 } else if status == AutomationRunStatus::Skipped {
@@ -327,6 +330,7 @@ impl AutomationStore {
                 AutomationRunStatus::Pending
             },
             task_id: None,
+            workflow_run_id: None,
             error: active.then(|| "previous automation run is still active".to_owned()),
             created_at: now,
             updated_at: now,
@@ -349,6 +353,20 @@ impl AutomationStore {
         self.update_run(run_id, |run| {
             run.status = AutomationRunStatus::Failed;
             run.error = Some(error);
+        })
+    }
+
+    pub fn mark_project_workflow_succeeded(
+        &self,
+        run_id: &str,
+        task_id: String,
+        workflow_run_id: String,
+    ) -> Result<(), String> {
+        self.update_run(run_id, |run| {
+            run.status = AutomationRunStatus::Succeeded;
+            run.task_id = Some(task_id);
+            run.workflow_run_id = Some(workflow_run_id);
+            run.error = None;
         })
     }
 

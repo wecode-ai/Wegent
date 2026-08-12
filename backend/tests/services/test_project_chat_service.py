@@ -273,6 +273,28 @@ def test_send_is_idempotent_and_assigns_durable_sequence(
     assert first.message.metadata["mentions"][0]["id"] == "12"
 
 
+def test_send_rejects_attachment_not_owned_by_sender(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+
+    with pytest.raises(HTTPException) as exc_info:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                content="Use this attachment",
+                attachmentIds=[999_999],
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+
+
 def test_send_and_agent_response_record_requested_model_metadata(
     test_db: Session, test_user: User
 ) -> None:
@@ -458,7 +480,6 @@ def test_subagent_runtime_event_becomes_compact_task_activity(
         title="Run this task",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -519,7 +540,6 @@ def test_task_agent_response_updates_task_ai_state(
         title="Run this task",
         description="",
         status="todo",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -575,7 +595,6 @@ def test_expired_task_ai_lease_terminates_streaming_message(
         title="Lease expired task",
         description="",
         status="todo",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -782,7 +801,6 @@ def _running_ai_task(
         title="Reconcile task",
         description="",
         status="todo",
-        assignee_agent_id="12",
         created_by_user_id=user.id,
     )
     test_db.add(task)
@@ -977,7 +995,6 @@ def test_task_assignment_agent_response_updates_task_ai_state_without_user_comme
         title="Run assigned task",
         description="",
         status="todo",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1014,7 +1031,6 @@ def test_task_agent_failure_updates_task_ai_state(
         title="Run this task",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1073,7 +1089,6 @@ def test_auto_retry_failure_increments_budget_but_manual_rerun_does_not(
         title="Run this task",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1143,7 +1158,6 @@ def test_agent_response_creates_distinct_message_for_each_runtime_run(
         title="Review the project count",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1267,7 +1281,7 @@ def test_local_runtime_completion_persists_the_agent_response(
     assert completed[0].type == "text"
 
 
-def test_runtime_completion_advances_assigned_task_to_review(
+def test_runtime_completion_leaves_task_transition_to_workflow(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -1280,7 +1294,6 @@ def test_runtime_completion_advances_assigned_task_to_review(
         status="in_progress",
         priority="none",
         sort_order=0,
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1322,7 +1335,7 @@ def test_runtime_completion_advances_assigned_task_to_review(
     )
 
     test_db.refresh(task)
-    assert task.status == "in_review"
+    assert task.status == "in_progress"
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
 
@@ -1337,7 +1350,6 @@ def test_runtime_task_terminal_status_closes_the_task_ai_state(
         title="Implement task",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1370,7 +1382,7 @@ def test_runtime_task_terminal_status_closes_the_task_ai_state(
     assert completed[0].status == "completed"
     assert completed[0].metadata["run_status"] == "completed"
     test_db.refresh(task)
-    assert task.status == "in_review"
+    assert task.status == "in_progress"
     assert task.metadata_json["ai_state"]["run_id"] == response.metadata["run_id"]
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
@@ -1386,7 +1398,6 @@ def test_runtime_done_event_closes_the_task_ai_state(
         title="Close from done",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1419,7 +1430,7 @@ def test_runtime_done_event_closes_the_task_ai_state(
     assert completed[0].status == "completed"
     assert completed[0].content == "done from executor"
     test_db.refresh(task)
-    assert task.status == "in_review"
+    assert task.status == "in_progress"
     assert task.metadata_json["ai_state"]["run_id"] == response.metadata["run_id"]
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
@@ -1435,7 +1446,6 @@ def test_loop_item_response_reconciles_expired_task_ai_lease(
         title="Recover lost runtime",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1483,7 +1493,6 @@ def test_loop_item_response_reconciles_terminal_ai_message(
         title="Recover terminal message",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1615,7 +1624,6 @@ def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
         title="Recover stale run",
         description="",
         status="in_progress",
-        assignee_agent_id="12",
         created_by_user_id=test_user.id,
     )
     test_db.add(task)
@@ -1656,7 +1664,7 @@ def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     )
     assert stored_message.status == "completed"
     test_db.refresh(task)
-    assert task.status == "in_review"
+    assert task.status == "in_progress"
 
 
 def test_reply_thread_resolves_root_and_carries_reply_to(

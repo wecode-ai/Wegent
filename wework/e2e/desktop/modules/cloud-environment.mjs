@@ -367,6 +367,151 @@ class RealCloudEnvironment {
     )
   }
 
+  async seedDevelopmentWorkflowFixture() {
+    const headers = {
+      Authorization: `Bearer ${this.authToken}`,
+      'Content-Type': 'application/json',
+    }
+    const post = (path, body) =>
+      fetchJson(`${this.backendUrl}/api${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+    const put = (path, body) =>
+      fetchJson(`${this.backendUrl}/api${path}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(body),
+      })
+    const project = await post('/v1/cloud-projects', {
+      projectKey: 'AIDEV',
+      name: 'AI Development Workflow',
+      description: 'Desktop E2E project for the complete AI development workflow.',
+      taskProvider: 'local',
+      visibility: 'private',
+    })
+    const repository = await post(`/v1/cloud-projects/${project.id}/repositories`, {
+      provider: 'github',
+      repositoryIdentity: 'wegent/wegent',
+      repositoryUrl: 'https://github.com/wegent/wegent.git',
+      defaultBranch: 'main',
+      defaultExecutionTarget: { type: 'managed_container' },
+      workspacePolicy: { cleanup: 'after_merge' },
+      gitPolicy: { branchTemplate: 'feature/{projectKey}-{taskId}-{slug}' },
+      providerSettings: { requireCi: true, requireReview: true },
+    })
+    const workflow = await post(`/v1/cloud-projects/${project.id}/workflows`, {
+      name: 'Complete AI delivery',
+      description: 'Plan approval, CI, review, merge, and completion.',
+      triggerMode: 'manual',
+      repositoryBindingId: repository.id,
+      failurePolicy: 'pause',
+      isDefault: true,
+      stages: [
+        {
+          key: 'plan',
+          name: 'Plan approval',
+          nodes: [{ key: 'approve-plan', name: 'Approve plan', type: 'human_gate' }],
+        },
+        {
+          key: 'quality',
+          name: 'Quality gates',
+          execution: 'parallel',
+          completion: 'all',
+          nodes: [
+            {
+              key: 'ci',
+              name: 'CI checks',
+              type: 'ci_gate',
+              condition: 'ci_passed',
+            },
+            {
+              key: 'review',
+              name: 'Code review',
+              type: 'ci_gate',
+              condition: 'review_approved',
+            },
+          ],
+        },
+        {
+          key: 'merge',
+          name: 'Merge',
+          nodes: [
+            {
+              key: 'merged',
+              name: 'PR merged',
+              type: 'merge',
+              condition: 'pr_merged',
+            },
+          ],
+        },
+        {
+          key: 'complete',
+          name: 'Complete',
+          nodes: [{ key: 'done', name: 'Complete task', type: 'complete' }],
+        },
+      ],
+    })
+    const automation = await post(`/v1/cloud-projects/${project.id}/workflow-automations`, {
+      name: 'Daily dependency maintenance',
+      description: 'Create a board task and run the complete delivery workflow.',
+      triggerType: 'cron',
+      triggerConfig: { expression: '0 9 * * 1-5', timezone: 'Asia/Shanghai' },
+      workflowId: workflow.id,
+      repositoryBindingId: repository.id,
+      executionTarget: { type: 'managed_container' },
+      workspaceMode: 'git_worktree',
+      taskTemplate: {
+        title: 'Automated dependency maintenance',
+        description: 'Update dependencies and verify the complete delivery path.',
+        priority: 'high',
+      },
+      payloadMapping: { title: 'task.title', description: 'task.description' },
+      enabled: true,
+    })
+    const task = await post(`/v1/cloud-projects/${project.id}/loop-items`, {
+      title: 'Implement complete AI development workflow',
+      description: 'Verify planning, development, CI, review, merge, and cleanup.',
+      status: 'in_progress',
+      priority: 'high',
+    })
+    await put(`/v1/cloud-projects/${project.id}/loop-items/${task.id}/execution-binding`, {
+      workflowId: workflow.id,
+      repositoryBindingId: repository.id,
+      executionTarget: { type: 'managed_container' },
+      workspaceMode: 'git_worktree',
+    })
+    const run = await post(
+      `/v1/cloud-projects/${project.id}/loop-items/${task.id}/workflow/start`,
+      { idempotencyKey: `desktop-e2e-${process.pid}` }
+    )
+    return { project, repository, workflow, automation, task, run }
+  }
+
+  async submitDevelopmentProviderEvent(fixture, event) {
+    return fetchJson(
+      `${this.backendUrl}/api/v1/cloud-projects/${fixture.project.id}/repositories/${fixture.repository.id}/provider-events`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(event),
+      }
+    )
+  }
+
+  async getDevelopmentFixture(fixture) {
+    return fetchJson(
+      `${this.backendUrl}/api/v1/cloud-projects/${fixture.project.id}/loop-items/${fixture.task.id}/development`,
+      {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      }
+    )
+  }
+
   async cancelRunningTasks() {
     if (!this.backendUrl || !this.authToken) return
     const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {

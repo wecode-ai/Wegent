@@ -96,8 +96,6 @@ function executionToItem(execution: QueueExecution): CloudLoopItem {
     parent_id: null,
     created_by_user_id: execution.assigner_user_id,
     assignee_user_id: null,
-    assignee_agent_id: execution.agent_id,
-    assignee_agent_name: undefined,
     title: execution.task_title,
     description: '',
     status: execution.task_status ?? 'inbox',
@@ -276,14 +274,7 @@ export function ProjectQueueView({
               .map(executionToItem)
           }
         } else {
-          for (const agent of nextAgents) {
-            const response = await api.listLoopItems(project.id, {
-              assigneeType: 'agent',
-              assigneeId: agent.id,
-            })
-            if (!active || seq !== loadSeq) return
-            queues[agent.id] = response.items.filter(isInQueue)
-          }
+          for (const agent of nextAgents) queues[agent.id] = []
         }
         setBotQueues(queues)
         setError(null)

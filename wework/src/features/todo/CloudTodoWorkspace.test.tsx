@@ -455,7 +455,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
   })
 
-  it('renders a robot assignee on the board card instead of 未指定', async () => {
+  it('does not render a legacy robot assignment as the human assignee', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [
@@ -478,14 +478,12 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
-    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
-    expect(assignee).toHaveTextContent('发布机器人')
-    expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
+    expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('发布机器人')
   })
 
-  it('resolves a local robot assignee name from the project chat agents', async () => {
+  it('keeps local AI execution actors separate from the human assignee', async () => {
     const cloudServices = services()
     cloudServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [] }))
     const localServices = services()
@@ -540,15 +538,12 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
-    const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
-    expect(assignee).toHaveTextContent('发布机器人')
-    expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
-    expect(cloudServices.localProjectChatAgentApi!.list).toHaveBeenCalledWith(project.id)
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
+    expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('发布机器人')
   })
 
-  it('keeps robot-assigned tasks out of the unassigned assignee group', async () => {
+  it('treats legacy robot-assigned tasks as human-unassigned', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [
@@ -580,15 +575,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-board-group-by'))
     await userEvent.click(screen.getByTestId('cloud-board-group-option-assignee'))
 
-    expect(screen.getByTestId('cloud-todo-column-assignee-agent-agent-1')).toHaveTextContent(
-      'Implement cloud MCP'
-    )
     expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).toHaveTextContent(
       '无人负责的任务'
     )
-    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).not.toHaveTextContent(
+    expect(screen.getByTestId('cloud-todo-column-assignee-unassigned')).toHaveTextContent(
       'Implement cloud MCP'
     )
+    expect(screen.queryByTestId('cloud-todo-column-assignee-agent-agent-1')).not.toBeInTheDocument()
   })
 
   it('renders DingTalk records by live table fields without exposing provider record ids', async () => {

@@ -229,6 +229,7 @@ class LoopItemExecutionService:
             row.execution_note = self._execution_note(note)
         db.commit()
         self._finish_project_automation_run(db, row.loop_item_id, "cancelled", note)
+        self._sync_workflow_state(db, row)
         db.refresh(row)
         return row
 
@@ -413,6 +414,65 @@ class LoopItemExecutionService:
             execution=candidate,
             runtime_device_id=execution_device_id,
         )
+        return candidate
+
+    def claim_next_managed_container(
+        self,
+        db: Session,
+        *,
+        capacity: int,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ) -> Optional[LoopItemExecution]:
+        """Claim one managed-container run from the shared container pool."""
+
+        running_count = (
+            db.query(func.count(LoopItemExecution.id))
+            .filter(
+                LoopItemExecution.execution_target_type == "managed_container",
+                LoopItemExecution.status == STATUS_RUNNING,
+            )
+            .scalar()
+            or 0
+        )
+        if running_count >= capacity:
+            return None
+        candidate = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.execution_target_type == "managed_container",
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .order_by(
+                LoopItemExecution.priority_weight.desc(),
+                LoopItemExecution.queued_at.asc(),
+                LoopItemExecution.id.asc(),
+            )
+            .limit(1)
+            .first()
+        )
+        if candidate is None:
+            return None
+        now = utcnow()
+        claimed = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == candidate.id,
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .update(
+                {
+                    "status": STATUS_RUNNING,
+                    "started_at": now,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "version": LoopItemExecution.version + 1,
+                }
+            )
+        )
+        db.commit()
+        if claimed != 1:
+            return None
+        db.refresh(candidate)
         return candidate
 
     def claim_batch_for_device(
@@ -673,6 +733,7 @@ class LoopItemExecutionService:
         if runtime_task_id:
             row.runtime_task_id = runtime_task_id
         db.commit()
+        self._sync_workflow_state(db, row)
         db.refresh(row)
         return row
 
@@ -712,6 +773,8 @@ class LoopItemExecutionService:
         """
 
         if not execution.runtime_device_id or not execution.runtime_task_id:
+            return None
+        if execution.actor_type and execution.actor_type != "project_agent":
             return None
         from app.schemas.project_chat import ProjectChatAgentStart
         from app.services.project_chat.service import bot_config, project_chat_service
@@ -810,6 +873,7 @@ class LoopItemExecutionService:
             content=note,
         )
         self._finish_project_automation_run(db, row.loop_item_id, "succeeded", note)
+        self._sync_workflow_state(db, row)
         db.refresh(row)
         return row
 
@@ -867,6 +931,7 @@ class LoopItemExecutionService:
                 error=error,
             )
             self._finish_project_automation_run(db, row.loop_item_id, "failed", error)
+        self._sync_workflow_state(db, row)
         db.refresh(row)
         return row
 
@@ -997,6 +1062,22 @@ class LoopItemExecutionService:
         return note[:500]
 
     @staticmethod
+    def _sync_workflow_state(
+        db: Session,
+        row: LoopItemExecution,
+    ) -> None:
+        """Project queue state into its owning workflow, when one exists."""
+
+        if not row.workflow_run_id or not row.stage_run_id:
+            return
+        from app.services.project_workflows.service import project_workflow_service
+
+        project_workflow_service.sync_execution_state(
+            db,
+            execution_id=row.id,
+        )
+
+    @staticmethod
     def _error_text(error: Any) -> str:
         """Normalize a runtime error value to a readable one-line string."""
 
@@ -1063,6 +1144,7 @@ class LoopItemExecutionService:
         db.commit()
         if terminal == STATUS_COMPLETED:
             self._finish_project_automation_run(db, row.loop_item_id, "succeeded", None)
+            self._sync_workflow_state(db, row)
         db.refresh(row)
         return row
 
@@ -1123,6 +1205,12 @@ class LoopItemExecutionService:
         if creator is None:
             return None
         team = self._resolve_default_team(db, creator.id)
+        capabilities = self._resolve_project_agent_capabilities(
+            db,
+            agent=agent,
+            user_id=creator.id,
+        )
+        trigger_context = self._workflow_trigger_context(db, execution)
         model = bot_config(agent).get("model")
         model_config = {}
         if isinstance(model, str) and model:
@@ -1169,6 +1257,8 @@ class LoopItemExecutionService:
             prompt=self.build_robot_prompt(agent),
             model_config=model_config,
             runtime_task_id=runtime_task_id,
+            capabilities=capabilities,
+            trigger_context=trigger_context,
         )
         request = payload.get("executionRequest") or {}
         bot = request.get("bot") if isinstance(request, dict) else None
@@ -1188,6 +1278,45 @@ class LoopItemExecutionService:
             or None,
         )
         return payload
+
+    @staticmethod
+    def _workflow_trigger_context(
+        db: Session,
+        execution: LoopItemExecution,
+    ) -> Optional[dict[str, Any]]:
+        if not execution.workflow_run_id:
+            return None
+        from app.models.project_workflow import TaskWorkflowRun
+
+        run = db.get(TaskWorkflowRun, execution.workflow_run_id)
+        if run is None or not run.trigger_message_id:
+            return None
+        message = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == run.trigger_message_id,
+                ProjectChatMessage.project_id == execution.cloud_project_id,
+                ProjectChatMessage.task_id == execution.loop_item_id,
+                ProjectChatMessage.sender_type == "user",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .first()
+        )
+        if message is None:
+            return None
+        metadata = (
+            message.metadata_json if isinstance(message.metadata_json, dict) else {}
+        )
+        attachment_ids = [
+            value
+            for value in metadata.get("attachment_ids", [])
+            if isinstance(value, int) and value > 0
+        ]
+        return {
+            "messageId": message.message_id,
+            "content": message.content,
+            "attachmentIds": list(dict.fromkeys(attachment_ids)),
+        }
 
     @staticmethod
     def build_robot_prompt(agent: object) -> str:
@@ -1243,12 +1372,15 @@ class LoopItemExecutionService:
         prompt: str,
         model_config: Optional[dict] = None,
         runtime_task_id: str,
+        capabilities: Optional[dict] = None,
+        trigger_context: Optional[dict[str, Any]] = None,
     ) -> dict:
         """Build the same runtime.tasks.create payload the App sends."""
 
         from app.services.project_chat.service import bot_config
 
         config = bot_config(agent)
+        capabilities = capabilities or {}
         system_prompt = config.get("system_prompt") or ""
         model = config.get("model")
         model = model if isinstance(model, str) else None
@@ -1280,6 +1412,27 @@ class LoopItemExecutionService:
             if system_prompt
             else f"你是 {agent_name}，这个项目任务的 AI 执行者。"
         )
+        trigger_context = trigger_context or {}
+        trigger_comment = str(trigger_context.get("content") or "").strip()
+        attachment_ids = [
+            value
+            for value in trigger_context.get("attachmentIds", [])
+            if isinstance(value, int) and value > 0
+        ]
+        project_chat_context = (
+            f"This run is bound to task cloud://projects/"
+            f"{getattr(item, 'cloud_project_id', '')}/todos/{getattr(item, 'id', '')} "
+            "in the current project space. Read the task with the wework_space "
+            "get_board_item tool before executing; the task link already "
+            "contains the space_id and item_id, so do not call list_spaces to "
+            "find the project. Your final response is a reviewable task comment. "
+            "Report actual changes, verification, unfinished work, and risks."
+        )
+        if trigger_comment:
+            project_chat_context += (
+                "\n\nThe workflow was triggered by this task comment. Treat it as the "
+                f"current user instruction:\n{trigger_comment}"
+            )
         execution_request = {
             "task_id": task_id,
             "subtask_id": subtask_id,
@@ -1301,6 +1454,9 @@ class LoopItemExecutionService:
                     "name": agent_name,
                     "shell_type": "codex",
                     "system_prompt": identity,
+                    "skills": capabilities.get("skill_names", []),
+                    "skill_refs": capabilities.get("skill_refs", {}),
+                    "mcp_servers": capabilities.get("mcp_servers", []),
                 }
             ],
             "system_prompt": identity,
@@ -1313,8 +1469,15 @@ class LoopItemExecutionService:
             # a `reasoning` parameter that some otherwise supported gateway
             # models reject before the automation can start.
             "enable_deep_thinking": False,
-            "skill_names": [],
-            "mcp_servers": [],
+            "skill_names": capabilities.get("skill_names", []),
+            "skill_refs": capabilities.get("skill_refs", {}),
+            "mcp_servers": capabilities.get("mcp_servers", []),
+            "plugin_refs": config.get("plugin_refs", []),
+            "connector_refs": config.get("connector_refs", []),
+            "permission_policy": config.get("permission_policy", {}),
+            "approval_policy": config.get("approval_policy", {}),
+            "timeout_seconds": config.get("timeout_seconds", 3600),
+            **({"attachment_ids": attachment_ids} if attachment_ids else {}),
         }
         return {
             "taskId": task_id,
@@ -1323,27 +1486,105 @@ class LoopItemExecutionService:
             "message": prompt,
             "title": title,
             **({"modelId": runtime_model_id} if runtime_model_id else {}),
+            "ephemeral": True,
+            "continuable": True,
+            **({"attachmentIds": attachment_ids} if attachment_ids else {}),
             "cloudProjectId": str(getattr(item, "cloud_project_id", "")),
             **({"local_project_id": local_project_id} if local_project_id > 0 else {}),
             "executionRequest": execution_request,
             "additionalContext": {
                 "projectChat": {
                     "kind": "application",
-                    "value": (
-                        f"This run is bound to task cloud://projects/"
-                        f"{getattr(item, 'cloud_project_id', '')}/todos/{getattr(item, 'id', '')} "
-                        "in the current project space. Read the task with the wework_space "
-                        "get_board_item tool before executing; the task link already "
-                        "contains the space_id and item_id, so do not call list_spaces to "
-                        "find the project. Your final response is a reviewable task comment. "
-                        "Report actual changes, verification, unfinished work, and risks."
-                    ),
+                    "value": project_chat_context,
                 },
                 "projectChatAgent": {
                     "kind": "application",
                     "value": identity,
                 },
             },
+        }
+
+    @staticmethod
+    def _resolve_project_agent_capabilities(
+        db: Session,
+        *,
+        agent: ProjectChatAgent,
+        user_id: int,
+    ) -> dict:
+        """Resolve explicit project Agent capability refs without exposing secrets."""
+
+        from app.models.kind import Kind
+        from app.schemas.installed_mcp import InstalledMCP
+        from app.services.project_chat.service import bot_config
+        from app.services.skill_resolution import (
+            build_skill_ref_meta,
+            find_skill_by_ref,
+        )
+
+        config = bot_config(agent)
+        skill_names: list[str] = []
+        skill_refs: dict[str, dict] = {}
+        for raw_ref in config.get("skill_refs", []) or []:
+            if not isinstance(raw_ref, dict):
+                continue
+            name = str(raw_ref.get("name") or "")
+            namespace = str(raw_ref.get("namespace") or "default")
+            skill_id = raw_ref.get("id")
+            skill = find_skill_by_ref(
+                db,
+                skill_name=name,
+                namespace=namespace,
+                is_public=False,
+                user_id=user_id,
+                skill_id=int(skill_id) if skill_id else None,
+            )
+            if skill is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Project Agent skill is unavailable: {namespace}/{name}",
+                )
+            skill_names.append(skill.name)
+            skill_refs[skill.name] = build_skill_ref_meta(skill)
+
+        mcp_servers: list[dict] = []
+        for raw_ref in config.get("mcp_server_refs", []) or []:
+            if not isinstance(raw_ref, dict):
+                continue
+            query = db.query(Kind).filter(
+                Kind.kind == "InstalledMCP",
+                Kind.user_id == user_id,
+                Kind.namespace == str(raw_ref.get("namespace") or "default"),
+                Kind.name == str(raw_ref.get("name") or ""),
+                Kind.is_active.is_(True),
+            )
+            if raw_ref.get("id"):
+                query = query.filter(Kind.id == int(raw_ref["id"]))
+            row = query.first()
+            if row is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Project Agent MCP server is unavailable: "
+                    f"{raw_ref.get('name') or ''}",
+                )
+            installed = InstalledMCP.model_validate(row.json)
+            if not installed.spec.enabled:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Project Agent MCP server is disabled: {row.name}",
+                )
+            mcp_servers.append(
+                {
+                    "name": row.name,
+                    **installed.spec.server.model_dump(
+                        mode="json",
+                        exclude_none=True,
+                    ),
+                }
+            )
+        return {
+            "skill_names": skill_names,
+            "skill_refs": skill_refs,
+            "mcp_servers": mcp_servers,
         }
 
     @staticmethod

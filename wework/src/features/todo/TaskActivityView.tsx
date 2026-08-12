@@ -19,6 +19,12 @@ import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projec
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import type {
+  ExecutionActorRef,
+  ProjectAgentSquad,
+  TaskExecutionBinding,
+  createProjectWorkflowApi,
+} from '@/api/projectWorkflows'
 import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -35,6 +41,7 @@ import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   buildRobotRoleDescription,
   mergeProjectChatMessages,
@@ -51,6 +58,7 @@ interface TaskActivityViewProps {
   currentUserId?: string | number
   onTaskUpdated?: (task: CloudLoopItem) => void
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectWorkflowApi?: ReturnType<typeof createProjectWorkflowApi>
   localProjects?: ProjectWithTasks[]
   // When true, the chat client owns the AI execution lifecycle (local project
   // spaces enqueue a robot run inside send), so the shared runtime-task start
@@ -69,6 +77,7 @@ export function TaskActivityView({
   currentUserId,
   onTaskUpdated,
   projectChatAgentApi,
+  projectWorkflowApi,
   localProjects = [],
   selfManagedExecution = false,
   rail = false,
@@ -172,6 +181,9 @@ export function TaskActivityView({
   )
   const [messages, setMessages] = useState<ProjectChatMessage[]>([])
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
+  const [squads, setSquads] = useState<ProjectAgentSquad[]>([])
+  const [executionBinding, setExecutionBinding] = useState<TaskExecutionBinding | null>(null)
+  const [executionActorKey, setExecutionActorKey] = useState('')
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [cardAiErrors, setCardAiErrors] = useState<Record<string, string>>({})
   const [newCommentDraft, setNewCommentDraft] = useState('')
@@ -199,6 +211,32 @@ export function TaskActivityView({
         )
       })
   }, [project.id, projectChatAgentApi, services.projectChatAgentApi, t])
+
+  useEffect(() => {
+    const workflowApi = projectWorkflowApi ?? services.projectWorkflowApi
+    if (!workflowApi) return
+    let active = true
+    void Promise.all([
+      workflowApi.listSquads(project.id),
+      workflowApi.getTaskBinding(project.id, task.id),
+    ])
+      .then(([nextSquads, binding]) => {
+        if (!active) return
+        setSquads(nextSquads.filter(squad => squad.status === 'active'))
+        setExecutionBinding(binding)
+        if (binding?.targetType === 'project_agent' || binding?.targetType === 'project_squad') {
+          setExecutionActorKey(`${binding.targetType}:${binding.targetId}`)
+        }
+      })
+      .catch(cause => {
+        if (active) {
+          setError(cause instanceof Error ? cause.message : '加载 AI 执行配置失败')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [project.id, projectWorkflowApi, services.projectWorkflowApi, task.id])
 
   useEffect(() => {
     if (!client) {
@@ -391,6 +429,69 @@ export function TaskActivityView({
   const assignedAgent = useMemo(
     () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
     [agents, task.assignee_agent_id]
+  )
+  const selectedExecutionActor = useMemo(() => {
+    const [type, id] = executionActorKey.split(':', 2)
+    if (type === 'project_agent') {
+      const agent = agents.find(candidate => candidate.id === id && candidate.status === 'active')
+      return agent
+        ? {
+            actor: { type: 'project_agent', id: agent.id } satisfies ExecutionActorRef,
+            mention: { type: 'agent' as const, id: agent.id, label: agent.name },
+          }
+        : null
+    }
+    if (type === 'project_squad') {
+      const squad = squads.find(candidate => candidate.id === id && candidate.status === 'active')
+      return squad
+        ? {
+            actor: { type: 'project_squad', id: squad.id } satisfies ExecutionActorRef,
+            mention: { type: 'squad' as const, id: squad.id, label: squad.name },
+          }
+        : null
+    }
+    return null
+  }, [agents, executionActorKey, squads])
+  const workflowApiAvailable = Boolean(projectWorkflowApi ?? services.projectWorkflowApi)
+  const workflowManagedExecution = workflowApiAvailable && Boolean(selectedExecutionActor)
+  const effectiveCommentAgent = workflowApiAvailable
+    ? executionActorKey.startsWith('project_agent:')
+      ? (agents.find(agent => `project_agent:${agent.id}` === executionActorKey) ?? null)
+      : null
+    : assignedAgent
+
+  const startSelectedWorkflow = useCallback(
+    async (triggerMessageId: string) => {
+      const workflowApi = projectWorkflowApi ?? services.projectWorkflowApi
+      if (!workflowApi || !selectedExecutionActor) return false
+      if (!executionBinding) {
+        throw new Error('请先在任务执行面板配置运行设备和工作区')
+      }
+      let binding = executionBinding
+      if (
+        binding.targetType !== selectedExecutionActor.actor.type ||
+        binding.targetId !== selectedExecutionActor.actor.id
+      ) {
+        binding = await workflowApi.upsertTaskBinding(project.id, task.id, {
+          version: binding.version,
+          actor: selectedExecutionActor.actor,
+          repositoryBindingId: binding.repositoryBindingId ?? undefined,
+          executionTarget: binding.executionTarget,
+          workspaceMode: binding.workspaceMode,
+        })
+        setExecutionBinding(binding)
+      }
+      await workflowApi.startRun(project.id, task.id, triggerMessageId, triggerMessageId)
+      return true
+    },
+    [
+      executionBinding,
+      project.id,
+      projectWorkflowApi,
+      selectedExecutionActor,
+      services.projectWorkflowApi,
+      task.id,
+    ]
   )
   const robotBoundProject = useMemo(
     () =>
@@ -617,15 +718,26 @@ export function TaskActivityView({
     setSending(true)
     setError(null)
     try {
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const activeMentions = selectedExecutionActor
+        ? [selectedExecutionActor.mention]
+        : effectiveCommentAgent
+          ? [
+              {
+                type: 'agent' as const,
+                id: effectiveCommentAgent.id,
+                label: effectiveCommentAgent.name,
+              },
+            ]
+          : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
         clientMessageId: crypto.randomUUID(),
         text,
         mentions: activeMentions,
+        workflowManaged: workflowManagedExecution,
+        attachmentIds: remoteAttachmentIds(attachments),
+        attachments: localRuntimeAttachments(attachments),
         // Card composer replies are always one-level replies under the parent
         // comment.
         replyToMessageId: rootId,
@@ -637,7 +749,9 @@ export function TaskActivityView({
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
-      if (assignedAgent && !selfManagedExecution) {
+      if (workflowManagedExecution) {
+        await startSelectedWorkflow(message.messageId)
+      } else if (effectiveCommentAgent && !selfManagedExecution) {
         // The comment is already posted; keep the input cleared and let the
         // AI start settle in the background, surfacing failures in the card.
         void startTaskAiRun({
@@ -646,7 +760,7 @@ export function TaskActivityView({
           runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
           project,
           task,
-          agent: assignedAgent,
+          agent: effectiveCommentAgent,
           executionProject: robotBoundProject,
           prompt: text,
           trigger: message,
@@ -692,15 +806,26 @@ export function TaskActivityView({
           ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
           : null
       const executionProject = userSelectedProject ?? robotBoundProject
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const activeMentions = selectedExecutionActor
+        ? [selectedExecutionActor.mention]
+        : effectiveCommentAgent
+          ? [
+              {
+                type: 'agent' as const,
+                id: effectiveCommentAgent.id,
+                label: effectiveCommentAgent.name,
+              },
+            ]
+          : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
         clientMessageId: crypto.randomUUID(),
         text,
         mentions: activeMentions,
+        workflowManaged: workflowManagedExecution,
+        attachmentIds: remoteAttachmentIds(attachments),
+        attachments: localRuntimeAttachments(attachments),
         replyToMessageId: null,
         model: selectedModel?.name ?? null,
         ...(projectLocation === 'local' && executionProject
@@ -712,14 +837,16 @@ export function TaskActivityView({
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
-      if (assignedAgent && !selfManagedExecution) {
+      if (workflowManagedExecution) {
+        await startSelectedWorkflow(message.messageId)
+      } else if (effectiveCommentAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
           services,
           runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
           project,
           task,
-          agent: assignedAgent,
+          agent: effectiveCommentAgent,
           executionProject,
           prompt: text,
           trigger: message,
@@ -1081,6 +1208,33 @@ export function TaskActivityView({
             !compact && 'pt-2'
           )}
         >
+          {workflowApiAvailable && (agents.length > 0 || squads.length > 0) ? (
+            <label className="mb-2 flex items-center gap-2 text-xs text-text-secondary">
+              <Bot className="h-3.5 w-3.5" />
+              <span>AI 执行对象</span>
+              <select
+                data-testid="task-comment-execution-actor"
+                aria-label="AI 执行对象"
+                value={executionActorKey}
+                onChange={event => setExecutionActorKey(event.target.value)}
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-text-primary"
+              >
+                <option value="">仅发表评论</option>
+                {agents
+                  .filter(agent => agent.status === 'active')
+                  .map(agent => (
+                    <option key={agent.id} value={`project_agent:${agent.id}`}>
+                      机器人 · {agent.name}
+                    </option>
+                  ))}
+                {squads.map(squad => (
+                  <option key={squad.id} value={`project_squad:${squad.id}`}>
+                    机器人小队 · {squad.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <div className="task-detail-comment-chat-input">
             <ChatInput
               value={newCommentDraft}

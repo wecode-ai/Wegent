@@ -1218,7 +1218,6 @@ fn issue_loop_item(
         created_at,
         updated_at,
         completed_at: closed_at,
-        assignee_agent_id: None,
         execution_id: None,
         execution_state: None,
     }

@@ -22,12 +22,15 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.project_workflow import ProjectAgentSquad
+from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
+    ProjectChatAgentValidation,
     ProjectChatAgentView,
     ProjectChatMessageView,
     ProjectChatSend,
@@ -102,6 +105,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return {
+        "runtime": metadata.get("runtime", "codex"),
+        "harness": metadata.get("harness", "codex"),
         "visibility": metadata.get(BOT_VISIBILITY_KEY, BOT_DEFAULT_VISIBILITY),
         "execution_environment": metadata.get(
             BOT_EXECUTION_ENVIRONMENT_KEY, BOT_DEFAULT_EXECUTION_ENVIRONMENT
@@ -111,7 +116,19 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "execution_device_id": row.device_id,
         "model": metadata.get("model"),
+        "model_selection": metadata.get("model_selection"),
         "system_prompt": metadata.get("system_prompt", ""),
+        "skill_refs": metadata.get("skill_refs", []),
+        "plugin_refs": metadata.get("plugin_refs", []),
+        "mcp_server_refs": metadata.get("mcp_server_refs", []),
+        "connector_refs": metadata.get("connector_refs", []),
+        "secret_refs": metadata.get("secret_refs", []),
+        "concurrency": metadata.get("concurrency", 1),
+        "timeout_seconds": metadata.get("timeout_seconds", 3600),
+        "workspace_policy": metadata.get("workspace_policy", {}),
+        "git_policy": metadata.get("git_policy", {}),
+        "permission_policy": metadata.get("permission_policy", {}),
+        "approval_policy": metadata.get("approval_policy", {}),
     }
 
 
@@ -176,8 +193,31 @@ class ProjectChatService:
             local_project_id=request.local_project_id,
             metadata_json={
                 "runtime": request.runtime,
+                "harness": request.harness,
                 "model": request.model,
+                "model_selection": request.model_selection,
                 "system_prompt": request.system_prompt,
+                "skill_refs": [
+                    ref.model_dump(mode="json") for ref in request.skill_refs
+                ],
+                "plugin_refs": [
+                    ref.model_dump(mode="json") for ref in request.plugin_refs
+                ],
+                "mcp_server_refs": [
+                    ref.model_dump(mode="json") for ref in request.mcp_server_refs
+                ],
+                "connector_refs": [
+                    ref.model_dump(mode="json") for ref in request.connector_refs
+                ],
+                "secret_refs": [
+                    ref.model_dump(mode="json") for ref in request.secret_refs
+                ],
+                "concurrency": request.concurrency,
+                "timeout_seconds": request.timeout_seconds,
+                "workspace_policy": request.workspace_policy,
+                "git_policy": request.git_policy,
+                "permission_policy": request.permission_policy,
+                "approval_policy": request.approval_policy,
                 BOT_VISIBILITY_KEY: request.visibility,
                 BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
                 BOT_EXECUTION_MODE_KEY: request.execution_mode,
@@ -187,6 +227,46 @@ class ProjectChatService:
         db.commit()
         db.refresh(row)
         return self.agent_to_view(row, db=db)
+
+    def validate_agent_config(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        project_id: str,
+        request: ProjectChatAgentCreate,
+    ) -> ProjectChatAgentValidation:
+        self._require_scope(
+            db,
+            user_id=user_id,
+            project_id=project_id,
+            task_id=None,
+            required_role=BaseRole.Reporter,
+        )
+        issues: list[str] = []
+        try:
+            self._validate_execution_device(
+                db,
+                user_id=user_id,
+                environment=request.execution_environment,
+                execution_device_id=request.execution_device_id,
+            )
+        except HTTPException as error:
+            issues.append(str(error.detail))
+        if request.harness != "codex" and request.model_selection is None:
+            issues.append(
+                "OpenCode and Claude Code robots require an explicit model selection"
+            )
+        if (
+            request.execution_environment == "local"
+            and request.local_project_id is None
+        ):
+            issues.append("Local execution requires a bound code project")
+        if request.secret_refs and not request.permission_policy:
+            issues.append("Secret references require an explicit permission policy")
+        if request.git_policy and not request.workspace_policy:
+            issues.append("Git policy requires an explicit workspace policy")
+        return ProjectChatAgentValidation(valid=not issues, issues=issues)
 
     def update_agent(
         self,
@@ -212,6 +292,36 @@ class ProjectChatService:
             row.name = request.name
             row.title = request.name
         metadata = dict(row.metadata_json or {})
+        capability_fields = (
+            "harness",
+            "model_selection",
+            "skill_refs",
+            "plugin_refs",
+            "mcp_server_refs",
+            "connector_refs",
+            "secret_refs",
+            "concurrency",
+            "timeout_seconds",
+            "workspace_policy",
+            "git_policy",
+            "permission_policy",
+            "approval_policy",
+        )
+        for field_name in capability_fields:
+            if field_name not in request.model_fields_set:
+                continue
+            value = getattr(request, field_name)
+            if isinstance(value, list):
+                metadata[field_name] = [
+                    (
+                        item.model_dump(mode="json")
+                        if hasattr(item, "model_dump")
+                        else item
+                    )
+                    for item in value
+                ]
+            else:
+                metadata[field_name] = value
         if request.model is not None:
             metadata["model"] = request.model
         if request.system_prompt is not None:
@@ -312,7 +422,7 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
+        self._validate_execution_mentions(db, project, request)
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -331,11 +441,33 @@ class ProjectChatService:
             return ProjectChatWriteResult(self.to_view(existing), created=False)
 
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+        attachment_ids = list(dict.fromkeys(request.attachment_ids))
+        if attachment_ids:
+            valid_ids = {
+                row.id
+                for row in db.query(SubtaskContext.id)
+                .filter(
+                    SubtaskContext.id.in_(attachment_ids),
+                    SubtaskContext.user_id == user_id,
+                    SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                    SubtaskContext.status == ContextStatus.READY.value,
+                    SubtaskContext.subtask_id == 0,
+                )
+                .all()
+            }
+            invalid_ids = set(attachment_ids) - valid_ids
+            if invalid_ids:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
+                )
         metadata = {
             "mentions": [
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if attachment_ids:
+            metadata["attachment_ids"] = attachment_ids
         if request.model is not None:
             metadata["model"] = request.model
         reply_to_message_id, root_message_id = self._resolve_reply_context(
@@ -777,7 +909,17 @@ class ProjectChatService:
                 agent=None,
                 status_value="completed",
             )
-            self._advance_task_to_review(db, row)
+            from app.services.loop_item_executions.service import (
+                loop_item_execution_service,
+            )
+
+            execution = loop_item_execution_service.execution_for_runtime(
+                db,
+                runtime_device_id=row.runtime_device_id or "",
+                runtime_task_id=row.runtime_task_id or "",
+            )
+            if execution is None or not execution.workflow_run_id:
+                self._advance_task_to_review(db, row)
             return
         if not row.content and isinstance(content, str) and content:
             row.content = content
@@ -1161,8 +1303,6 @@ class ProjectChatService:
         row.status = status_value
         row.message_type = "text"
         row.metadata_json = {**metadata, "run_status": status_value}
-        if status_value == "completed":
-            self._advance_task_to_review(db, row)
         logger.warning(
             "[ProjectChat] Reconciled streaming AI message from loop_item AI state: "
             "project_id=%s task_id=%s message_id=%s run_status=%s",
@@ -1182,7 +1322,7 @@ class ProjectChatService:
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
-        """Move the work item to human review when its assigned AI finishes."""
+        """Move a legacy robot-assigned task to review after its run finishes."""
 
         if not row.task_id or not row.agent_id:
             return
@@ -1201,7 +1341,6 @@ class ProjectChatService:
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
         ):
-            # External provider tasks keep their status in provider labels.
             return
         task.status = "in_review"
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
@@ -1300,14 +1439,12 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         return project
 
-    def _validate_agent_mentions(
+    def _validate_execution_mentions(
         self, db: Session, project: LoopItem, request: ProjectChatSend
     ) -> None:
         agent_mentions = [
             mention for mention in request.mentions if mention.type == "agent"
         ]
-        if not agent_mentions:
-            return
         unknown = [
             mention.id
             for mention in agent_mentions
@@ -1320,6 +1457,26 @@ class ProjectChatService:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Mentioned AI is not a member of this project chat",
+            )
+        squad_mentions = [
+            mention for mention in request.mentions if mention.type == "squad"
+        ]
+        unknown_squads = [
+            mention.id
+            for mention in squad_mentions
+            if db.query(ProjectAgentSquad)
+            .filter(
+                ProjectAgentSquad.id == mention.id,
+                ProjectAgentSquad.cloud_project_id == project.id,
+                ProjectAgentSquad.status == "active",
+            )
+            .first()
+            is None
+        ]
+        if unknown_squads:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Mentioned squad is not active in this project",
             )
 
     @staticmethod
@@ -1417,12 +1574,29 @@ class ProjectChatService:
             project_id=row.cloud_project_id,
             name=row.title or row.name or "AI",
             runtime="codex",
+            harness=config.get("harness") or "codex",
             model=config.get("model") if isinstance(config.get("model"), str) else None,
+            model_selection=(
+                config.get("model_selection")
+                if isinstance(config.get("model_selection"), dict)
+                else None
+            ),
             system_prompt=(
                 config.get("system_prompt")
                 if isinstance(config.get("system_prompt"), str)
                 else ""
             ),
+            skill_refs=config.get("skill_refs") or [],
+            plugin_refs=config.get("plugin_refs") or [],
+            mcp_server_refs=config.get("mcp_server_refs") or [],
+            connector_refs=config.get("connector_refs") or [],
+            secret_refs=config.get("secret_refs") or [],
+            concurrency=int(config.get("concurrency") or 1),
+            timeout_seconds=int(config.get("timeout_seconds") or 3600),
+            workspace_policy=config.get("workspace_policy") or {},
+            git_policy=config.get("git_policy") or {},
+            permission_policy=config.get("permission_policy") or {},
+            approval_policy=config.get("approval_policy") or {},
             status="archived" if row.status == "archived" else "active",
             visibility=config.get("visibility") or BOT_DEFAULT_VISIBILITY,
             execution_environment=(

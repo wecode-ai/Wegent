@@ -44,6 +44,7 @@ import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import type { createProjectWorkflowApi } from '@/api/projectWorkflows'
 import type {
   LocalHarnessModelLaunchConfig,
   LocalHarnessModelOption,
@@ -135,6 +136,7 @@ export interface WorkbenchServices {
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  projectWorkflowApi?: ReturnType<typeof createProjectWorkflowApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   localHarnessModelApi?: {

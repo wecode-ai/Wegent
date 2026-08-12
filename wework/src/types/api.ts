@@ -36,6 +36,7 @@ export interface ProjectWorkPreference {
 
 export interface Team {
   id: number
+  user_id?: number
   name: string
   namespace?: string | null
   displayName?: string | null

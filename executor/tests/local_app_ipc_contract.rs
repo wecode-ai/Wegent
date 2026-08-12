@@ -482,7 +482,7 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .await
         .unwrap();
     let task_id = task["id"].as_str().unwrap().to_owned();
-    server
+    let updated_task = server
         .dispatch(
             "todos.update",
             json!({
@@ -490,7 +490,22 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
                 "task_id": task_id,
                 "todo": {
                     "version": task["version"],
-                    "assignee_agent_id": agent_id
+                    "priority": "urgent"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_task["priority"], "urgent");
+    server
+        .dispatch(
+            "executions.enqueue",
+            json!({
+                "project_id": project_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "payload": {
+                    "source": "workflow"
                 }
             }),
         )

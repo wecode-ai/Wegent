@@ -11,6 +11,11 @@ use super::{
     TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
     TaskUpdate,
 };
+use crate::project_workflows::{
+    ConfigurationValidation, ProjectWorkflowStore, Repository, RepositoryInput, RepositoryUpdate,
+    Squad, SquadInput, SquadUpdate, TaskBinding as WorkflowTaskBinding, TaskBindingInput,
+    WorkflowDefinition, WorkflowInput, WorkflowRun, WorkflowRunDetail, WorkflowUpdate,
+};
 
 /// Routes project and task operations to the provider configured on each project.
 ///
@@ -20,6 +25,7 @@ use super::{
 #[derive(Clone)]
 pub struct TaskRuntime {
     local_store: LocalTaskStore,
+    project_workflows: ProjectWorkflowStore,
     issue_provider: IssueProvider,
     aitable_provider: AITableProvider,
 }
@@ -30,10 +36,12 @@ impl TaskRuntime {
     }
 
     pub fn new(local_store: LocalTaskStore) -> Result<Self, TaskRuntimeError> {
+        let project_workflows = ProjectWorkflowStore::open(local_store.path())?;
         let issue_provider = IssueProvider::new(local_store.path().to_owned())?;
         let aitable_provider = AITableProvider::new(local_store.path().to_owned())?;
         Ok(Self {
             local_store,
+            project_workflows,
             issue_provider,
             aitable_provider,
         })
@@ -623,7 +631,9 @@ impl TaskRuntime {
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
-        self.local_store.approve_execution(execution_id)
+        let execution = self.local_store.approve_execution(execution_id)?;
+        self.project_workflows.on_execution_approved(execution_id)?;
+        Ok(execution)
     }
 
     pub fn reject_execution(
@@ -631,14 +641,26 @@ impl TaskRuntime {
         execution_id: i64,
         reason: Option<String>,
     ) -> Result<LocalExecution, TaskRuntimeError> {
-        self.local_store.reject_execution(execution_id, reason)
+        let execution = self.local_store.reject_execution(execution_id, reason)?;
+        self.project_workflows.on_execution_rejected(
+            execution_id,
+            execution
+                .rejected_reason
+                .as_deref()
+                .unwrap_or("Execution rejected"),
+        )?;
+        Ok(execution)
     }
 
     pub fn claim_next_local_execution(
         &self,
         claim: LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        self.local_store.claim_next_local_execution(&claim)
+        let execution = self.local_store.claim_next_local_execution(&claim)?;
+        if let Some(execution) = execution.as_ref() {
+            self.project_workflows.on_execution_claimed(execution.id)?;
+        }
+        Ok(execution)
     }
 
     pub fn heartbeat_execution(
@@ -648,12 +670,20 @@ impl TaskRuntime {
         runtime_task_id: Option<&str>,
         lease_seconds: u64,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        self.local_store.heartbeat_execution(
+        let execution = self.local_store.heartbeat_execution(
             execution_id,
             runtime_device_id,
             runtime_task_id,
             lease_seconds,
-        )
+        )?;
+        if execution.is_some() {
+            self.project_workflows.on_execution_started(
+                execution_id,
+                runtime_device_id,
+                runtime_task_id,
+            )?;
+        }
+        Ok(execution)
     }
 
     pub fn complete_execution(
@@ -661,7 +691,15 @@ impl TaskRuntime {
         execution_id: i64,
         note: Option<&str>,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        self.local_store.complete_execution(execution_id, note)
+        let execution = self.local_store.complete_execution(execution_id, note)?;
+        if execution.is_some() {
+            self.project_workflows.on_execution_terminal(
+                execution_id,
+                true,
+                note.unwrap_or("Execution completed"),
+            )?;
+        }
+        Ok(execution)
     }
 
     pub fn fail_execution(
@@ -670,12 +708,206 @@ impl TaskRuntime {
         error: &str,
         requeue: bool,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        self.local_store
-            .fail_execution(execution_id, error, requeue)
+        let execution = self
+            .local_store
+            .fail_execution(execution_id, error, requeue)?;
+        if execution
+            .as_ref()
+            .is_some_and(|execution| execution.status == "failed")
+        {
+            self.project_workflows
+                .on_execution_terminal(execution_id, false, error)?;
+        }
+        Ok(execution)
     }
 
     pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {
-        self.local_store.recover_stale_local_executions()
+        let result = self.local_store.recover_stale_local_executions()?;
+        self.project_workflows.recover()?;
+        Ok(result)
+    }
+
+    pub fn list_workflow_squads(&self, project_id: &str) -> Result<Vec<Squad>, TaskRuntimeError> {
+        self.project_workflows.list_squads(project_id)
+    }
+
+    pub fn create_workflow_squad(
+        &self,
+        project_id: &str,
+        user_id: i64,
+        input: SquadInput,
+    ) -> Result<Squad, TaskRuntimeError> {
+        self.project_workflows
+            .create_squad(project_id, user_id, input)
+    }
+
+    pub fn update_workflow_squad(
+        &self,
+        project_id: &str,
+        squad_id: &str,
+        input: SquadUpdate,
+    ) -> Result<Squad, TaskRuntimeError> {
+        self.project_workflows
+            .update_squad(project_id, squad_id, input)
+    }
+
+    pub fn list_workflow_repositories(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Repository>, TaskRuntimeError> {
+        self.project_workflows.list_repositories(project_id)
+    }
+
+    pub fn create_workflow_repository(
+        &self,
+        project_id: &str,
+        user_id: i64,
+        input: RepositoryInput,
+    ) -> Result<Repository, TaskRuntimeError> {
+        self.project_workflows
+            .create_repository(project_id, user_id, input)
+    }
+
+    pub fn update_workflow_repository(
+        &self,
+        project_id: &str,
+        binding_id: &str,
+        input: RepositoryUpdate,
+    ) -> Result<Repository, TaskRuntimeError> {
+        self.project_workflows
+            .update_repository(project_id, binding_id, input)
+    }
+
+    pub fn validate_workflow_repository(
+        &self,
+        binding_id: &str,
+    ) -> Result<ConfigurationValidation, TaskRuntimeError> {
+        self.project_workflows
+            .validate_repository_binding(binding_id)
+    }
+
+    pub fn list_workflow_definitions(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<WorkflowDefinition>, TaskRuntimeError> {
+        self.project_workflows.list_workflows(project_id)
+    }
+
+    pub fn validate_workflow_definition(&self, input: &WorkflowInput) -> ConfigurationValidation {
+        self.project_workflows.validate_workflow_input(input)
+    }
+
+    pub fn create_workflow_definition(
+        &self,
+        project_id: &str,
+        user_id: i64,
+        input: WorkflowInput,
+    ) -> Result<WorkflowDefinition, TaskRuntimeError> {
+        self.project_workflows
+            .create_workflow(project_id, user_id, input)
+    }
+
+    pub fn update_workflow_definition(
+        &self,
+        project_id: &str,
+        workflow_id: &str,
+        input: WorkflowUpdate,
+    ) -> Result<WorkflowDefinition, TaskRuntimeError> {
+        self.project_workflows
+            .update_workflow(project_id, workflow_id, input)
+    }
+
+    pub fn get_workflow_task_binding(
+        &self,
+        item_id: &str,
+    ) -> Result<Option<WorkflowTaskBinding>, TaskRuntimeError> {
+        self.project_workflows.get_task_binding(item_id)
+    }
+
+    pub fn upsert_workflow_task_binding(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        user_id: i64,
+        input: TaskBindingInput,
+    ) -> Result<WorkflowTaskBinding, TaskRuntimeError> {
+        self.project_workflows
+            .upsert_task_binding(project_id, item_id, user_id, input)
+    }
+
+    pub fn list_workflow_runs(&self, item_id: &str) -> Result<Vec<WorkflowRun>, TaskRuntimeError> {
+        self.project_workflows.list_runs(item_id)
+    }
+
+    pub fn get_workflow_run(&self, run_id: &str) -> Result<WorkflowRunDetail, TaskRuntimeError> {
+        self.project_workflows.get_run(run_id)
+    }
+
+    pub fn get_workflow_task_development(
+        &self,
+        item_id: &str,
+    ) -> Result<Vec<serde_json::Value>, TaskRuntimeError> {
+        self.project_workflows.get_task_development(item_id)
+    }
+
+    pub fn start_workflow_run(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        user_id: i64,
+        idempotency_key: &str,
+        trigger_message_id: Option<&str>,
+    ) -> Result<WorkflowRun, TaskRuntimeError> {
+        self.project_workflows.start_run(
+            project_id,
+            item_id,
+            user_id,
+            idempotency_key,
+            trigger_message_id,
+        )
+    }
+
+    pub fn approve_workflow_stage(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        stage_id: &str,
+        version: i64,
+        reason: Option<&str>,
+    ) -> Result<WorkflowRunDetail, TaskRuntimeError> {
+        self.project_workflows
+            .approve_stage(project_id, run_id, stage_id, version, reason)
+    }
+
+    pub fn reject_workflow_stage(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        stage_id: &str,
+        version: i64,
+        reason: Option<&str>,
+    ) -> Result<WorkflowRunDetail, TaskRuntimeError> {
+        self.project_workflows
+            .reject_stage(project_id, run_id, stage_id, version, reason)
+    }
+
+    pub fn retry_workflow_stage(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        stage_id: &str,
+        version: i64,
+    ) -> Result<WorkflowRunDetail, TaskRuntimeError> {
+        self.project_workflows
+            .retry_stage(project_id, run_id, stage_id, version)
+    }
+
+    pub fn cancel_workflow_run(
+        &self,
+        run_id: &str,
+        version: i64,
+    ) -> Result<WorkflowRunDetail, TaskRuntimeError> {
+        self.project_workflows.cancel_run(run_id, version)
     }
 
     pub fn find_task_binding(

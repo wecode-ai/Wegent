@@ -20,6 +20,8 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
+from app.models.project_workflow import TaskWorkflowRun
 from app.models.user import User
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
@@ -701,8 +703,8 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert "do not call list_spaces" in project_chat
     assert f"/todos/{item.id}" in project_chat
     assert payload["cloudProjectId"] == str(project.id)
-    assert "ephemeral" not in payload
-    assert "continuable" not in payload
+    assert payload["ephemeral"] is True
+    assert payload["continuable"] is True
     assert payload["runtime"] == "codex"
 
 
@@ -1016,8 +1018,63 @@ def test_automation_run_uses_the_same_generic_project_context_as_other_tasks(
     assert "report_automation_bug" not in project_chat
     assert "automation scan" not in project_chat
     assert "run-123" not in project_chat
+def test_workflow_runtime_payload_includes_trigger_comment_and_attachments(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    trigger_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    test_db.add(
+        ProjectChatMessage(
+            message_id=trigger_id,
+            client_message_id=str(uuid.uuid4()),
+            project_id=str(project.id),
+            task_id=item.id,
+            sender_type="user",
+            sender_id=str(test_user.id),
+            sender_name=test_user.user_name,
+            message_type="text",
+            content="Implement the API contract described in the attached spec.",
+            metadata_json={"attachment_ids": [17, 23, 17]},
+            status="completed",
+        )
+    )
+    test_db.add(
+        TaskWorkflowRun(
+            id=run_id,
+            loop_item_id=item.id,
+            workflow_definition_snapshot={},
+            execution_target_snapshot={},
+            status="running",
+            started_by_type="user",
+            started_by_id=str(test_user.id),
+            idempotency_key=trigger_id,
+            trigger_message_id=trigger_id,
+        )
+    )
+    execution.workflow_run_id = run_id
+    test_db.commit()
 
+    payload = loop_item_execution_service.build_runtime_payload(
+        test_db,
+        execution=execution,
+        task=loop_item_execution_service.resolve_task_context(
+            test_db,
+            execution=execution,
+            user_id=test_user.id,
+        ),
+    )
 
+    assert payload is not None
+    assert payload["attachmentIds"] == [17, 23]
+    assert payload["executionRequest"]["attachment_ids"] == [17, 23]
+    project_chat = payload["additionalContext"]["projectChat"]["value"]
+    assert "current user instruction" in project_chat
+    assert "Implement the API contract" in project_chat
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
     test_db: Session, test_user: User
 ) -> None:

@@ -22,6 +22,7 @@ pub mod logging;
 pub mod mcp_utils;
 pub mod process;
 pub mod process_environment;
+pub mod project_workflows;
 pub mod prompt_enrichment;
 pub mod protocol;
 pub mod runner;

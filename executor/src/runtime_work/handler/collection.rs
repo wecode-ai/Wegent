@@ -810,6 +810,16 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
+                link.status = "active".to_owned();
+                link.thread_status = "idle".to_owned();
+                link.turn_status = Some(
+                    match status {
+                        "failed" => "failed",
+                        "cancelled" => "interrupted",
+                        _ => "completed",
+                    }
+                    .to_owned(),
+                );
             }
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);

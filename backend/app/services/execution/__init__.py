@@ -159,6 +159,38 @@ class _ExecutorRuntimeClient:
         except Exception as e:
             return None, self._format_http_error(e)
 
+    async def execute_sandbox(
+        self,
+        sandbox_id: str,
+        *,
+        prompt: str,
+        timeout: int,
+        metadata: dict,
+    ):
+        """Start one execution inside an existing managed sandbox."""
+
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}/execute"
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    json={
+                        "prompt": prompt,
+                        "timeout": timeout,
+                        "metadata": metadata,
+                    },
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                return response.json(), None
+        except Exception as e:
+            return None, self._format_http_error(e)
+
     async def delete_sandbox(self, sandbox_id: str):
         """Delete a sandbox via executor_manager API."""
         import httpx

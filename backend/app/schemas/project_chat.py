@@ -22,11 +22,35 @@ class ProjectChatSchema(BaseModel):
     model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
 
 
+class ProjectAgentResourceRef(ProjectChatSchema):
+    namespace: str = Field(default="default", min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    id: int | None = Field(default=None, ge=1)
+
+
+class ProjectAgentSecretRef(ProjectChatSchema):
+    name: str = Field(min_length=1, max_length=255)
+    purpose: str = Field(min_length=1, max_length=100)
+
+
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
     runtime: Literal["codex"] = "codex"
+    harness: Literal["codex", "opencode", "claude_code"] = "codex"
     model: str | None = Field(default=None, max_length=255)
+    model_selection: dict[str, Any] | None = None
     system_prompt: str = Field(default="", max_length=20_000)
+    skill_refs: list[ProjectAgentResourceRef] = Field(default_factory=list)
+    plugin_refs: list[ProjectAgentResourceRef] = Field(default_factory=list)
+    mcp_server_refs: list[ProjectAgentResourceRef] = Field(default_factory=list)
+    connector_refs: list[ProjectAgentResourceRef] = Field(default_factory=list)
+    secret_refs: list[ProjectAgentSecretRef] = Field(default_factory=list)
+    concurrency: int = Field(default=1, ge=1, le=20)
+    timeout_seconds: int = Field(default=3600, ge=60, le=86_400)
+    workspace_policy: dict[str, Any] = Field(default_factory=dict)
+    git_policy: dict[str, Any] = Field(default_factory=dict)
+    permission_policy: dict[str, Any] = Field(default_factory=dict)
+    approval_policy: dict[str, Any] = Field(default_factory=dict)
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
@@ -37,8 +61,21 @@ class ProjectChatAgentCreate(ProjectChatSchema):
 class ProjectChatAgentUpdate(ProjectChatSchema):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    harness: Literal["codex", "opencode", "claude_code"] | None = None
     model: str | None = Field(default=None, max_length=255)
+    model_selection: dict[str, Any] | None = None
     system_prompt: str | None = Field(default=None, max_length=20_000)
+    skill_refs: list[ProjectAgentResourceRef] | None = None
+    plugin_refs: list[ProjectAgentResourceRef] | None = None
+    mcp_server_refs: list[ProjectAgentResourceRef] | None = None
+    connector_refs: list[ProjectAgentResourceRef] | None = None
+    secret_refs: list[ProjectAgentSecretRef] | None = None
+    concurrency: int | None = Field(default=None, ge=1, le=20)
+    timeout_seconds: int | None = Field(default=None, ge=60, le=86_400)
+    workspace_policy: dict[str, Any] | None = None
+    git_policy: dict[str, Any] | None = None
+    permission_policy: dict[str, Any] | None = None
+    approval_policy: dict[str, Any] | None = None
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
     execution_environment: BotExecutionEnvironment | None = None
@@ -52,8 +89,21 @@ class ProjectChatAgentView(ProjectChatSchema):
     project_id: str
     name: str
     runtime: Literal["codex"]
+    harness: Literal["codex", "opencode", "claude_code"]
     model: str | None
+    model_selection: dict[str, Any] | None
     system_prompt: str
+    skill_refs: list[ProjectAgentResourceRef]
+    plugin_refs: list[ProjectAgentResourceRef]
+    mcp_server_refs: list[ProjectAgentResourceRef]
+    connector_refs: list[ProjectAgentResourceRef]
+    secret_refs: list[ProjectAgentSecretRef]
+    concurrency: int
+    timeout_seconds: int
+    workspace_policy: dict[str, Any]
+    git_policy: dict[str, Any]
+    permission_policy: dict[str, Any]
+    approval_policy: dict[str, Any]
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment
@@ -80,6 +130,11 @@ class LoopItemApproval(ProjectChatSchema):
 
     version: int = Field(ge=1)
     reason: str | None = Field(default=None, max_length=2_000)
+
+
+class ProjectChatAgentValidation(ProjectChatSchema):
+    valid: bool
+    issues: list[str] = Field(default_factory=list)
 
 
 class LoopItemExecutionClaim(ProjectChatSchema):
@@ -176,7 +231,7 @@ class LoopItemExecutionListResponse(ProjectChatSchema):
 
 
 class ProjectChatMention(ProjectChatSchema):
-    type: Literal["user", "agent"]
+    type: Literal["user", "agent", "squad"]
     id: str = Field(min_length=1, max_length=128)
     label: str = Field(min_length=1, max_length=255)
 
@@ -187,6 +242,7 @@ class ProjectChatSend(ProjectChatSchema):
     task_id: str | None = Field(default=None, max_length=64)
     content: str = Field(min_length=1, max_length=100_000)
     mentions: list[ProjectChatMention] = Field(default_factory=list, max_length=64)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     reply_to_message_id: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=255)
 
