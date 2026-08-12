@@ -18,6 +18,12 @@ metadata:
     aigc.weibo.com/email: "weibo_ai_coding@staff.sina.com"
     kubus.weibo.com/pod-resource: '{"cpu":"2","memory":"6Gi"}'
     kubus.weibo.com/custom-dlc-mem-high-factor: "0.8"
+    {% if is_warm_pool %}
+    # Dynamic runtime metadata populated when the standby Pod is bound.
+    aigc.weibo.com/auth-token: ""
+    aigc.weibo.com/callback-url: ""
+    aigc.weibo.com/heartbeat-id: ""
+    {% endif %}
   labels:
     aigc.weibo.com/team-mode: "{{ mode }}"
     app: {{ executor_name }}
@@ -35,10 +41,6 @@ metadata:
     # Warm pool labels
     aigc.weibo.com/warm-pool: "true"
     aigc.weibo.com/pool-state: "{{ pool_state }}"
-    # Dynamic config labels for Downward API (updated at bind time)
-    aigc.weibo.com/auth-token: "{{ auth_token }}"
-    aigc.weibo.com/callback-url: "{{ callback_url }}"
-    aigc.weibo.com/heartbeat-id: "{{ heartbeat_id }}"
     {% endif %}
 spec:
   {% if init_container %}
@@ -153,9 +155,7 @@ spec:
           value: "true"
         {% endif %}
         {% if is_warm_pool %}
-        # Heartbeat for warm pool pods
-        - name: HEARTBEAT_TYPE
-          value: "warm_pool"
+        # The runtime binding API selects sandbox or task heartbeat after claim.
         - name: HEARTBEAT_ENABLED
           value: "true"
         - name: EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
@@ -272,14 +272,14 @@ spec:
       secret:
         secretName: wegent-executor-secret
     {% if is_warm_pool %}
-    # Warm pool dynamic config - Downward API mounting labels to files
+    # Warm pool dynamic config - Downward API mounting metadata to files
     - name: wegent-config
       downwardAPI:
         defaultMode: 420
         items:
           - fieldRef:
               apiVersion: v1
-              fieldPath: metadata.labels['aigc.weibo.com/auth-token']
+              fieldPath: metadata.annotations['aigc.weibo.com/auth-token']
             path: auth_token
           - fieldRef:
               apiVersion: v1
@@ -287,11 +287,11 @@ spec:
             path: task_id
           - fieldRef:
               apiVersion: v1
-              fieldPath: metadata.labels['aigc.weibo.com/callback-url']
+              fieldPath: metadata.annotations['aigc.weibo.com/callback-url']
             path: callback_url
           - fieldRef:
               apiVersion: v1
-              fieldPath: metadata.labels['aigc.weibo.com/heartbeat-id']
+              fieldPath: metadata.annotations['aigc.weibo.com/heartbeat-id']
             path: heartbeat_id
           - fieldRef:
               apiVersion: v1

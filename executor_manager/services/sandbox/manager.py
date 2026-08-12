@@ -42,6 +42,7 @@ from executor_manager.services.sandbox.health_checker import (
     get_container_health_checker,
 )
 from executor_manager.services.sandbox.repository import get_sandbox_repository
+from executor_manager.services.sandbox.runtime_binding import get_sandbox_runtime_binder
 from executor_manager.services.sandbox.skill_sync import (
     ResolvedTaskSkills,
     SandboxSkillSyncError,
@@ -99,6 +100,7 @@ class SandboxManager(metaclass=SingletonMeta):
         self._health_checker = get_container_health_checker()
         self._execution_runner = get_execution_runner()
         self._skill_synchronizer = SandboxSkillSynchronizer()
+        self._runtime_binder = get_sandbox_runtime_binder()
         self._lifecycle_lock = DistributedLock()
         self._scheduler: Optional["SandboxScheduler"] = None
         self._shutting_down = False
@@ -219,6 +221,32 @@ class SandboxManager(metaclass=SingletonMeta):
                     f"Timed out waiting for sandbox lifecycle lock for task {task_key}",
                 )
             await asyncio.sleep(min(SANDBOX_TASK_LOCK_RETRY_INTERVAL, remaining))
+
+    async def _try_acquire_task_lifecycle_lease(
+        self, task_key: str
+    ) -> Optional[_TaskLifecycleLease]:
+        """Acquire a lifecycle lease without waiting for another owner."""
+        lock_name = f"task-lifecycle:{task_key}"
+        try:
+            owner_token = await asyncio.to_thread(
+                self._lifecycle_lock.acquire_owned,
+                lock_name,
+                SANDBOX_TASK_LOCK_TTL,
+            )
+        except DistributedLockUnavailableError as exc:
+            logger.error(
+                "[SandboxManager] Lifecycle lock unavailable during heartbeat "
+                "check task_id=%s error=%s",
+                task_key,
+                exc,
+            )
+            return None
+        if not owner_token:
+            return None
+
+        lease = _TaskLifecycleLease(lock_name=lock_name, owner_token=owner_token)
+        lease.renew_task = asyncio.create_task(self._renew_task_lifecycle_lease(lease))
+        return lease
 
     async def _renew_task_lifecycle_lease(self, lease: _TaskLifecycleLease) -> None:
         """Renew a lifecycle lease until its owner finishes the operation."""
@@ -418,6 +446,19 @@ class SandboxManager(metaclass=SingletonMeta):
         base_url = await self._wait_for_container_ready(executor, container_name)
         if base_url is None:
             return f"Container {container_name} failed to become ready"
+
+        try:
+            await self._runtime_binder.bind(base_url, sandbox.sandbox_id)
+            sandbox.metadata["heartbeat_monitoring"] = "active"
+        except Exception as exc:
+            sandbox.metadata["heartbeat_monitoring"] = "unavailable"
+            logger.warning(
+                "[SandboxManager] Optional runtime heartbeat activation failed "
+                "sandbox_id=%s error=%s",
+                sandbox.sandbox_id,
+                exc,
+                exc_info=True,
+            )
 
         sandbox.set_running(base_url)
         self._repository.save_sandbox(sandbox)
@@ -1474,32 +1515,70 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox = await self._repository.load_sandbox_async(task_id_str)
                 if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                     continue
+                if sandbox.metadata.get("heartbeat_monitoring") == "unavailable":
+                    continue
 
                 # Check heartbeat using async method to avoid blocking event loop
                 if not await heartbeat_mgr.check_heartbeat(task_id_str):
-                    # Get last heartbeat time (may be None if key expired)
-                    last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id_str)
-
                     # Check if sandbox has been running long enough to expect heartbeat
                     # Grace period: sandbox needs some time to start sending heartbeats
                     sandbox_age = time.time() - sandbox.created_at
 
                     if sandbox_age > grace_period:
-                        # Sandbox is old enough - missing heartbeat means dead
-                        # Note: last_heartbeat may be None if key already expired from Redis
-                        logger.warning(
-                            f"[SandboxManager] Heartbeat timeout for sandbox {task_id_str}, "
-                            f"age={sandbox_age:.1f}s, last_heartbeat={last_heartbeat}"
-                        )
-                        await self._handle_executor_dead(
-                            task_id_str, last_heartbeat or sandbox.last_activity_at
-                        )
+                        await self._handle_heartbeat_timeout(task_id_str)
 
             except Exception as e:
                 logger.debug(
                     f"[SandboxManager] Heartbeat check error for {task_id_str}: {e}"
                 )
                 continue
+
+    async def _handle_heartbeat_timeout(self, sandbox_id: str) -> None:
+        """Recheck a suspected dead sandbox under its lifecycle lease."""
+        lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            logger.debug(
+                "[SandboxManager] Heartbeat cleanup skipped; lifecycle lock is busy "
+                "sandbox_id=%s",
+                sandbox_id,
+            )
+            return
+
+        try:
+            sandbox = await self._repository.load_sandbox_async(sandbox_id)
+            if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
+                return
+
+            heartbeat_mgr = get_heartbeat_manager()
+            if await heartbeat_mgr.check_heartbeat(sandbox_id):
+                return
+            last_heartbeat = await heartbeat_mgr.get_last_heartbeat(sandbox_id)
+
+            if sandbox.base_url and await self._check_container_health(
+                sandbox.base_url
+            ):
+                logger.warning(
+                    "[SandboxManager] Heartbeat missing but runtime health check passed; "
+                    "preserving sandbox_id=%s base_url=%s",
+                    sandbox_id,
+                    sandbox.base_url,
+                )
+                return
+
+            sandbox_age = time.time() - sandbox.created_at
+            logger.warning(
+                "[SandboxManager] Heartbeat timeout and runtime health check failed "
+                "sandbox_id=%s age=%.1fs last_heartbeat=%s",
+                sandbox_id,
+                sandbox_age,
+                last_heartbeat,
+            )
+            await self._handle_executor_dead(
+                sandbox_id,
+                last_heartbeat or sandbox.last_activity_at,
+            )
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def _handle_executor_dead(
         self, sandbox_id: str, last_heartbeat: float
