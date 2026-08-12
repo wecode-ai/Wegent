@@ -900,7 +900,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorModels = projectChat.models.filter(
     model =>
       model.isActive !== false &&
-      !model.compatibilityDisabled &&
       ['public', 'user', 'group'].includes(model.type) &&
       Boolean(model.namespace) &&
       model.resourceUserId !== undefined
@@ -1033,6 +1032,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       throw new Error(response.error || t('workbench.supervisor_clear_failed'))
     }
   }, [currentRuntimeTask, runtimeWorkApi, setPendingSupervisorConfig, t])
+
+  const runTaskSupervisorNow = useCallback(async () => {
+    if (!currentRuntimeTask || !runtimeWorkApi) return null
+    const response = await runtimeWorkApi.runRuntimeSupervisorNow({
+      address: currentRuntimeTask,
+    })
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.supervisor_run_now_failed'))
+    }
+    return response.supervisor
+  }, [currentRuntimeTask, runtimeWorkApi, t])
 
   const resolveTaskSupervisorSuggestion = useCallback(
     async (suggestion: RuntimeSupervisorSuggestion, status: 'accepted' | 'dismissed') => {
@@ -4144,6 +4154,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
+          onRunNow={currentRuntimeTask ? runTaskSupervisorNow : undefined}
         />
         <TransientNotice
           message={continueInIm.notice?.message ?? null}

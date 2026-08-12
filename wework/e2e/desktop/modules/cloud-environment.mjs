@@ -4,6 +4,7 @@ import {
   CLOUD_DEVICE_ID,
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
+  CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -144,28 +145,43 @@ class RealCloudEnvironment {
   }
 
   async seedCloudProtocolModels() {
-    const items = CLOUD_MODEL_CASES.map(model => ({
-      name: model.optionIds[0],
-      env: {
-        model: model.protocol === 'anthropic' ? 'claude' : 'openai',
-        model_id: model.modelId,
-        base_url: `${this.modelServerUrl}/v1`,
-        api_key: MODEL_API_KEY,
-      },
-      is_active: true,
-      wework_available: true,
-      protocol:
-        model.protocol === 'responses'
-          ? 'openai-responses'
+    const items = [
+      ...CLOUD_MODEL_CASES.map(model => ({
+        name: model.optionIds[0],
+        env: {
+          model: model.protocol === 'anthropic' ? 'claude' : 'openai',
+          model_id: model.modelId,
+          base_url: `${this.modelServerUrl}/v1`,
+          api_key: MODEL_API_KEY,
+        },
+        is_active: true,
+        wework_available: true,
+        protocol:
+          model.protocol === 'responses'
+            ? 'openai-responses'
+            : model.protocol === 'chat'
+              ? 'openai'
+              : 'anthropic-messages',
+        ...(model.protocol === 'responses'
+          ? { api_format: 'responses' }
           : model.protocol === 'chat'
-            ? 'openai'
-            : 'anthropic-messages',
-      ...(model.protocol === 'responses'
-        ? { api_format: 'responses' }
-        : model.protocol === 'chat'
-          ? { api_format: 'chat/completions' }
-          : {}),
-    }))
+            ? { api_format: 'chat/completions' }
+            : {}),
+      })),
+      {
+        name: CLOUD_PUBLIC_MODEL_NAME,
+        env: {
+          model: 'openai',
+          model_id: 'desktop-e2e-public-upstream-model',
+          base_url: `${this.modelServerUrl}/v1`,
+          api_key: MODEL_API_KEY,
+        },
+        is_active: true,
+        wework_available: true,
+        protocol: 'openai-responses',
+        api_format: 'responses',
+      },
+    ]
     await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
       headers: {

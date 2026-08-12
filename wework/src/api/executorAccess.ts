@@ -15,6 +15,7 @@ import type {
   RuntimeSupervisorGetRequest,
   RuntimeSupervisorResolveRequest,
   RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
@@ -121,6 +122,9 @@ export interface ExecutorRuntimeClient {
   setRuntimeSupervisor: (data: RuntimeSupervisorSetRequest) => Promise<RuntimeSupervisorResponse>
   clearRuntimeSupervisor: (
     data: RuntimeSupervisorClearRequest
+  ) => Promise<RuntimeSupervisorResponse>
+  runRuntimeSupervisorNow: (
+    data: RuntimeSupervisorRunNowRequest
   ) => Promise<RuntimeSupervisorResponse>
   resolveRuntimeSupervisor: (
     data: RuntimeSupervisorResolveRequest

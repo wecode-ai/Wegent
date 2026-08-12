@@ -21,10 +21,10 @@ use super::{
     resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
     script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
     should_replay_browser_open_request, update_logical_entry_if_native_matches,
-    wait_for_browser_ready_with_observer, DirectoryEntry, EmbeddedBrowserBridgeRequest,
-    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    wait_for_browser_ready_with_observer, wait_for_main_thread_barrier, DirectoryEntry,
+    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -462,6 +462,24 @@ fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
     assert!(!waiter.is_finished());
     *readiness.lock().unwrap() = EmbeddedBrowserReadiness::Ready;
     assert_eq!(waiter.join().unwrap(), Ok(()));
+}
+
+#[test]
+fn main_thread_barrier_waits_for_scheduled_work() {
+    assert_eq!(
+        wait_for_main_thread_barrier(
+            |sender| sender.send(()).map_err(|error| error.to_string()),
+            Duration::from_millis(10),
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn main_thread_barrier_reports_missing_completion() {
+    let error = wait_for_main_thread_barrier(|_sender| Ok(()), Duration::ZERO).unwrap_err();
+
+    assert!(error.starts_with("Timed out waiting for the main thread:"));
 }
 
 #[test]

@@ -805,6 +805,9 @@ export function createHybridWorkbenchServices(
     clearRuntimeSupervisor(data) {
       return routeByAddress(data.address).clearRuntimeSupervisor(data)
     },
+    runRuntimeSupervisorNow(data) {
+      return routeByAddress(data.address).runRuntimeSupervisorNow(data)
+    },
     resolveRuntimeSupervisor(data) {
       return routeByAddress(data.address).resolveRuntimeSupervisor(data)
     },

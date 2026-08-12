@@ -27,6 +27,7 @@ import type {
   RuntimeSupervisorGetRequest,
   RuntimeSupervisorResolveRequest,
   RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
@@ -180,6 +181,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeSupervisorClearRequest
     ): Promise<RuntimeSupervisorResponse> {
       return client.post('/runtime-work/supervisor/clear', data)
+    },
+    runRuntimeSupervisorNow(
+      data: RuntimeSupervisorRunNowRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/run-now', data)
     },
     resolveRuntimeSupervisor(
       data: RuntimeSupervisorResolveRequest

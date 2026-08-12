@@ -665,6 +665,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.supervisor.get" => self.get_task_supervisor(payload).await,
             "runtime.tasks.supervisor.set" => self.set_task_supervisor(payload).await,
             "runtime.tasks.supervisor.clear" => self.clear_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.run_now" => self.run_task_supervisor_now(payload).await,
             "runtime.tasks.supervisor.resolve" => self.resolve_task_supervisor(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
