@@ -395,7 +395,8 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request)?;
+            self.spawn_claude_turn(local_task_id.clone(), request)
+                .await?;
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
             let mut side_source = side_source_thread(&payload);
@@ -406,6 +407,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.spawn_turn(SpawnTurnRequest {
                 local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
                 request,
                 direct_thread_id: None,
                 fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
@@ -413,7 +415,8 @@ impl RuntimeWorkRpcHandler {
                 resume_thread_id: None,
                 initial_thread_name: Some(title.clone()),
                 initial_thread_goal,
-            })?;
+            })
+            .await?;
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -636,7 +639,8 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request)?;
+            self.spawn_claude_turn(local_task_id.clone(), request)
+                .await?;
             let queue_position = self
                 .queued_local_task_position(&local_task_id)
                 .map(|position| position + 1);
@@ -723,6 +727,7 @@ impl RuntimeWorkRpcHandler {
 
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id,
             fork_thread_id: None,
@@ -730,7 +735,11 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_name: None,
             initial_thread_goal,
-        })?;
+        })
+        .await?;
+        let queue_position = self
+            .queued_local_task_position(&local_task_id)
+            .map(|position| position + 1);
 
         Ok(json!({
             "success": true,
@@ -738,6 +747,8 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "runtime": "codex",
+            "status": if queue_position.is_some() { "queued" } else { "running" },
+            "queuePosition": queue_position,
         }))
     }
 
@@ -903,6 +914,7 @@ impl RuntimeWorkRpcHandler {
         );
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id: Some(thread_id),
             fork_thread_id: None,
@@ -910,7 +922,8 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: None,
             initial_thread_name: None,
             initial_thread_goal: None,
-        })?;
+        })
+        .await?;
 
         Ok(json!({
             "success": true,
@@ -1174,7 +1187,7 @@ impl RuntimeWorkRpcHandler {
             })
             .or_else(|| self.local_task_link(&local_task_id));
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if self.remove_queued_turn(&local_task_id)? {
+        if self.remove_queued_turn(&local_task_id).await? {
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -1215,16 +1228,13 @@ impl RuntimeWorkRpcHandler {
             .get_task(&local_task_id)
             .map(|link| link.runtime)
             .unwrap_or_else(|| "codex".to_owned());
-        let queued_turn = {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, queued_turn, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
-            let Some(position) = scheduler
-                .queued_turns
-                .iter()
-                .position(|turn| turn.local_task_id == local_task_id)
-            else {
+            if scheduler.queued_position(&local_task_id).is_none() {
                 return Ok(json!({
                     "success": false,
                     "accepted": false,
@@ -1233,20 +1243,21 @@ impl RuntimeWorkRpcHandler {
                     "error": "runtime task is not queued",
                     "code": "not_queued",
                 }));
-            };
-            let mut remaining_turns = scheduler.queued_turns.clone();
-            let Some(turn) = remaining_turns.remove(position) else {
-                return Err(AppIpcError::new(
-                    "runtime_queue_failed",
-                    "queued runtime task disappeared",
-                ));
-            };
-            turns::write_runtime_turn_queue(&self.turn_queue_path, &remaining_turns)
-                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
-            scheduler.queued_turns.remove(position);
-            scheduler.active_tasks += 1;
-            turn
+            }
+            let previous = scheduler.clone();
+            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
+                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
+            })?;
+            (previous, turn, scheduler.queued_turns.clone())
         };
+        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            return Err(error);
+        }
+        drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
             &[("local_task_id", local_task_id.clone())],
@@ -1277,7 +1288,8 @@ impl RuntimeWorkRpcHandler {
                 "queuePosition must be at least 1",
             ));
         }
-        let ordered_task_ids = {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, ordered_task_ids, reordered) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
@@ -1295,15 +1307,22 @@ impl RuntimeWorkRpcHandler {
             let reordered = scheduler
                 .reordered_queue(&local_task_id, target_position as usize)
                 .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
-            turns::write_runtime_turn_queue(&self.turn_queue_path, &reordered)
-                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
-            scheduler.queued_turns = reordered;
-            scheduler
+            let previous = scheduler.clone();
+            scheduler.queued_turns = reordered.clone();
+            let ordered_task_ids = scheduler
                 .queued_turns
                 .iter()
                 .map(|turn| turn.local_task_id.clone())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (previous, ordered_task_ids, reordered)
         };
+        if let Err(error) = self.persist_turn_queue(reordered).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            return Err(error);
+        }
         log_executor_event(
             "runtime work queued turn reordered",
             &[

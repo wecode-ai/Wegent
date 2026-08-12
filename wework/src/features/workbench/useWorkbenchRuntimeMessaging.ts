@@ -1130,7 +1130,20 @@ export function useWorkbenchRuntimeMessaging({
             runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           }
         }
-        lifecycleStore.sendAccepted(address)
+        if (response.status === 'queued') {
+          lifecycleStore.syncRuntimeTask(address, {
+            taskId: address.taskId,
+            workspacePath: resolvedWorkspacePath ?? '',
+            title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
+            runtime,
+            running: false,
+            status: 'queued',
+            queuePosition: response.queuePosition,
+            optimistic: true,
+          })
+        } else {
+          lifecycleStore.sendAccepted(address)
+        }
         track('conversation_created', {
           execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
         })

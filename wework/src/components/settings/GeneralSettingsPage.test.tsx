@@ -125,15 +125,6 @@ vi.mock('@/api/wegentUsage', () => ({
   getWegentUsageDisplay: getWegentUsageDisplayMock,
 }))
 
-vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: () => ({
-    runtimeWorkApi: {
-      getRuntimeSettings: getRuntimeSettingsMock,
-      updateRuntimeSettings: updateRuntimeSettingsMock,
-    },
-  }),
-}))
-
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useOptionalCloudConnection: () => ({
     isConnected: true,
@@ -190,7 +181,22 @@ describe('GeneralSettingsPage', () => {
 
   test('loads and updates the maximum parallel task count', async () => {
     getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
-    render(<GeneralSettingsPage />)
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {
+              runtimeWorkApi: {
+                getRuntimeSettings: getRuntimeSettingsMock,
+                updateRuntimeSettings: updateRuntimeSettingsMock,
+              },
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
 
     const select = await screen.findByTestId('general-max-concurrent-tasks-select')
     await waitFor(() => expect(select).toBeEnabled())

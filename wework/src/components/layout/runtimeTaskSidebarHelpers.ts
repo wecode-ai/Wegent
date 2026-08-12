@@ -13,6 +13,10 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.updatedAt || task.createdAt || undefined
 }
 
+export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
+  return task.status?.trim().toLowerCase() === 'queued'
+}
+
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
   const value = task.completedAt ?? task.createdAt ?? task.updatedAt
   if (value == null) return 0
@@ -21,7 +25,7 @@ function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
 }
 
 function getRuntimeTaskQueuePosition(task: RuntimeTaskSummary) {
-  if (task.status?.trim().toLowerCase() !== 'queued') return null
+  if (!isRuntimeTaskQueued(task)) return null
   if (!Number.isInteger(task.queuePosition) || Number(task.queuePosition) <= 0) return null
   return Number(task.queuePosition)
 }

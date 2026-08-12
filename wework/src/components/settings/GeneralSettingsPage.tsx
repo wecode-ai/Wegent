@@ -35,7 +35,6 @@ import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { createLocalAppServices } from '@/api/local/localServices'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -69,6 +68,7 @@ export function GeneralSettingsPage() {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const workbench = useContext(WorkbenchContext)
+  const runtimeWorkApi = workbench?.services?.runtimeWorkApi
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
   const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -82,7 +82,7 @@ export function GeneralSettingsPage() {
     let cancelled = false
 
     const runtimeSettings = Promise.resolve()
-      .then(() => createLocalAppServices().runtimeWorkApi?.getRuntimeSettings())
+      .then(() => runtimeWorkApi?.getRuntimeSettings())
       .catch(runtimeSettingsError => {
         console.debug('[Wework] Runtime settings are unavailable', runtimeSettingsError)
         return null
@@ -111,7 +111,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [runtimeWorkApi, t])
 
   useEffect(() => {
     if (!cloudConnection.isConnected) return
@@ -304,7 +304,7 @@ export function GeneralSettingsPage() {
     const useTaskModel = modelKey === FRIENDLY_TITLE_TASK_MODEL_VALUE
     const [modelType, ...nameParts] = modelKey.split(':')
     const modelName = nameParts.join(':')
-    const selectedModel = workbench?.projectChat.models.find(
+    const selectedModel = workbench?.projectChat?.models.find(
       model => `${model.type}:${model.name}` === `${modelType ?? ''}:${modelName}`
     )
     const execution = selectedModel ? selectedModelExecutionFields(selectedModel, {}) : null
@@ -343,7 +343,7 @@ export function GeneralSettingsPage() {
     setSaving(true)
     setError(null)
     try {
-      const settings = await createLocalAppServices().runtimeWorkApi?.updateRuntimeSettings({
+      const settings = await runtimeWorkApi?.updateRuntimeSettings({
         maxConcurrentTasks: value,
       })
       setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
@@ -357,7 +357,7 @@ export function GeneralSettingsPage() {
   }
 
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
-  const friendlyTitleModels = workbench?.projectChat.models ?? []
+  const friendlyTitleModels = workbench?.projectChat?.models ?? []
   const friendlyTitleModelKey = friendlyTitleModel
     ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
     : FRIENDLY_TITLE_TASK_MODEL_VALUE
@@ -538,7 +538,7 @@ export function GeneralSettingsPage() {
                 disabled={
                   loading ||
                   saving ||
-                  (!friendlyTitleModel?.modelName && !workbench?.projectChat.selectedModel)
+                  (!friendlyTitleModel?.modelName && !workbench?.projectChat?.selectedModel)
                 }
                 onCheckedChange={checked => {
                   void saveFriendlyTaskTitles(checked, friendlyTitleModelKey)

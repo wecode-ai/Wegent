@@ -133,6 +133,8 @@ const MAX_MAX_CONCURRENT_TASKS: usize = 20;
 #[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
     local_task_id: String,
+    #[serde(default = "default_turn_runtime")]
+    runtime: String,
     request: ExecutionRequest,
     direct_thread_id: Option<String>,
     fork_thread_id: Option<String>,
@@ -142,6 +144,11 @@ struct SpawnTurnRequest {
     initial_thread_goal: Option<Value>,
 }
 
+fn default_turn_runtime() -> String {
+    "codex".to_owned()
+}
+
+#[derive(Clone)]
 struct RuntimeTurnScheduler {
     max_concurrent_tasks: usize,
     active_tasks: usize,
@@ -188,20 +195,11 @@ impl RuntimeTurnScheduler {
         Ok(reordered)
     }
 
-    #[cfg(test)]
-    fn finish(&mut self) -> Option<SpawnTurnRequest> {
+    fn finish(&mut self) -> Vec<SpawnTurnRequest> {
         self.active_tasks = self.active_tasks.saturating_sub(1);
-        if self.active_tasks >= self.max_concurrent_tasks {
-            return None;
-        }
-        let next_turn = self.queued_turns.pop_front();
-        if next_turn.is_some() {
-            self.active_tasks += 1;
-        }
-        next_turn
+        self.take_available()
     }
 
-    #[cfg(test)]
     fn force_start(&mut self, local_task_id: &str) -> Option<SpawnTurnRequest> {
         let position = self
             .queued_turns
@@ -212,10 +210,13 @@ impl RuntimeTurnScheduler {
         Some(turn)
     }
 
-    #[cfg(test)]
     fn update_limit(&mut self, max_concurrent_tasks: usize) -> Vec<SpawnTurnRequest> {
         self.max_concurrent_tasks = max_concurrent_tasks;
-        let available = max_concurrent_tasks.saturating_sub(self.active_tasks);
+        self.take_available()
+    }
+
+    fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
+        let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
         let turns = (0..available)
             .filter_map(|_| self.queued_turns.pop_front())
             .collect::<Vec<_>>();
@@ -410,6 +411,7 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
@@ -471,6 +473,27 @@ struct RuntimeThreadEventRoute {
     active: bool,
 }
 
+struct ScheduledTurnGuard {
+    handler: RuntimeWorkRpcHandler,
+}
+
+impl ScheduledTurnGuard {
+    fn new(handler: RuntimeWorkRpcHandler) -> Self {
+        Self { handler }
+    }
+}
+
+impl Drop for ScheduledTurnGuard {
+    fn drop(&mut self) {
+        let handler = self.handler.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                handler.finish_scheduled_turn().await;
+            });
+        }
+    }
+}
+
 struct SideSourceThread {
     thread_id: String,
     thread_path: Option<String>,
@@ -514,6 +537,7 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
@@ -608,7 +632,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        self.resume_persisted_turns();
+        self.resume_persisted_turns().await;
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.search" => self.search_tasks(payload).await,

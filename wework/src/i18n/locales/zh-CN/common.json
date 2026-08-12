@@ -1734,6 +1734,7 @@
     "general_settings_max_concurrent_tasks_description": "达到上限后，新任务会进入队列，并在运行中的任务结束后按顺序自动开始。",
     "runtime_task_queued": "排队中",
     "runtime_task_queue_position": "第 {{position}} 位",
+    "runtime_task_cancel_failed": "无法取消任务",
     "runtime_task_force_start": "立即执行",
     "runtime_task_force_start_failed": "无法立即执行任务",
     "runtime_task_queue_move_first": "移到队首",

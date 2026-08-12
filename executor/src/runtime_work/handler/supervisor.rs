@@ -466,6 +466,7 @@ impl RuntimeWorkRpcHandler {
         );
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id: link.ephemeral.then(|| thread_id.clone()),
             fork_thread_id: None,
@@ -474,6 +475,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_name: None,
             initial_thread_goal: None,
         })
+        .await
         .map_err(|error| error.message)?;
         Ok(())
     }

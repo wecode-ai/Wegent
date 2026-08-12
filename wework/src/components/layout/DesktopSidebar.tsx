@@ -154,6 +154,7 @@ import {
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
+  isRuntimeTaskQueued,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
@@ -756,10 +757,6 @@ function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)
   )
-}
-
-function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
-  return task.status?.trim().toLowerCase() === 'queued'
 }
 
 function getRuntimeTaskPriorityReason(

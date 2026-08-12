@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -212,6 +213,7 @@ export function WorkbenchProvider({
   onStartupReadyChange,
   workspaceTabId,
 }: WorkbenchProviderProps) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const resolvedServices = useMemo(
     () =>
@@ -1740,26 +1742,29 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    await executorClient.runtime.cancelRuntimeTask(address)
-    await refreshWorkLists()
+    const response = await executorClient.runtime.cancelRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    }
     await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
   })
   const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     const response = await executorClient.runtime.forceStartRuntimeTask(address)
     if (!response.accepted) {
-      throw new Error(response.error || 'runtime task could not be force started')
+      throw new Error(response.error || t('workbench.runtime_task_force_start_failed'))
     }
-    await refreshWorkLists()
     await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
   })
   const stableReorderQueuedRuntimeTask = useStableEvent(
     async (data: RuntimeTaskQueueReorderRequest) => {
       const response = await executorClient.runtime.reorderQueuedRuntimeTask(data)
       if (!response.accepted) {
-        throw new Error(response.error || 'runtime task queue could not be reordered')
+        throw new Error(response.error || t('workbench.runtime_task_queue_reorder_failed'))
       }
-      await refreshWorkLists()
       await notifyMainRuntimeWorkChanged(data)
+      await refreshWorkLists()
     }
   )
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)

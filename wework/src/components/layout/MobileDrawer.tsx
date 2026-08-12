@@ -52,6 +52,7 @@ import {
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
+  isRuntimeTaskQueued,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
@@ -130,7 +131,10 @@ export function MobileDrawer({
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const workbench = useContext(WorkbenchContext)
   const [forceStartingTaskId, setForceStartingTaskId] = useState<string | null>(null)
-  const [queueReorderingTaskId, setQueueReorderingTaskId] = useState<string | null>(null)
+  const [queueReordering, setQueueReordering] = useState<{
+    taskId: string
+    direction: 'up' | 'down'
+  } | null>(null)
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const {
     scrollRef,
@@ -200,9 +204,13 @@ export function MobileDrawer({
     }
   }
 
-  const reorderQueuedRuntimeTask = async (address: RuntimeTaskAddress, queuePosition: number) => {
-    if (!workbench || queueReorderingTaskId) return
-    setQueueReorderingTaskId(address.taskId)
+  const reorderQueuedRuntimeTask = async (
+    address: RuntimeTaskAddress,
+    queuePosition: number,
+    direction: 'up' | 'down'
+  ) => {
+    if (!workbench || queueReordering) return
+    setQueueReordering({ taskId: address.taskId, direction })
     try {
       await workbench.reorderQueuedRuntimeTask({
         ...address,
@@ -212,7 +220,7 @@ export function MobileDrawer({
       console.error('[Wework] Failed to reorder queued runtime task on mobile', error)
       workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
     } finally {
-      setQueueReorderingTaskId(null)
+      setQueueReordering(null)
     }
   }
 
@@ -229,17 +237,21 @@ export function MobileDrawer({
         disabled={
           !available ||
           !workbench ||
-          Boolean(queueReorderingTaskId) ||
+          Boolean(queueReordering) ||
           queuePosition === null ||
           queuePosition === undefined ||
           queuePosition <= 1
         }
-        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) - 1)}
+        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) - 1, 'up')}
         className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
         title={t('workbench.runtime_task_queue_move_up')}
         aria-label={t('workbench.runtime_task_queue_move_up')}
       >
-        <ArrowUp className="h-4 w-4" />
+        {queueReordering?.taskId === address.taskId && queueReordering.direction === 'up' ? (
+          <RotateCw className="h-4 w-4 animate-spin" />
+        ) : (
+          <ArrowUp className="h-4 w-4" />
+        )}
       </button>
       <button
         type="button"
@@ -247,16 +259,16 @@ export function MobileDrawer({
         disabled={
           !available ||
           !workbench ||
-          Boolean(queueReorderingTaskId) ||
+          Boolean(queueReordering) ||
           queuePosition === null ||
           queuePosition === undefined
         }
-        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) + 1)}
+        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) + 1, 'down')}
         className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
         title={t('workbench.runtime_task_queue_move_down')}
         aria-label={t('workbench.runtime_task_queue_move_down')}
       >
-        {queueReorderingTaskId === address.taskId ? (
+        {queueReordering?.taskId === address.taskId && queueReordering.direction === 'down' ? (
           <RotateCw className="h-4 w-4 animate-spin" />
         ) : (
           <ArrowDown className="h-4 w-4" />
@@ -460,7 +472,7 @@ export function MobileDrawer({
                       )
                       const disabled = !workspace.available || !onOpenRuntimeTask
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
-                      const queued = task.status?.trim().toLowerCase() === 'queued'
+                      const queued = isRuntimeTaskQueued(task)
                       const taskAddress = getRuntimeTaskAddress(workspace, task)
                       return (
                         <div
@@ -653,7 +665,7 @@ export function MobileDrawer({
                                 )
                                 const disabled = !workspace.available || !onOpenRuntimeTask
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
-                                const queued = task.status?.trim().toLowerCase() === 'queued'
+                                const queued = isRuntimeTaskQueued(task)
                                 const taskAddress = getRuntimeTaskAddress(workspace, task)
                                 return (
                                   <div

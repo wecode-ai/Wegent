@@ -28,6 +28,13 @@ fn apply_local_execution_state(
         } else {
             "notLoaded".to_owned()
         };
+        if link
+            .turn_status
+            .as_deref()
+            .is_some_and(runtime_status_is_running)
+        {
+            link.turn_status = Some("completed".to_owned());
+        }
         let mut runtime_handle = link
             .runtime_handle
             .as_object()

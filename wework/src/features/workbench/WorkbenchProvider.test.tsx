@@ -705,6 +705,9 @@ function BootstrapProbe() {
       <button type="button" onClick={() => void workbench.refreshDevices()}>
         Refresh devices
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        Refresh work lists
+      </button>
     </div>
   )
 }
@@ -2022,6 +2025,35 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not let a stale bootstrap runtime request overwrite a manual refresh', async () => {
+    const bootstrapRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const manualRuntimeWork = createRuntimeWork({
+      projects: [],
+      chats: [],
+      totalTasks: 4,
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockImplementationOnce(() => bootstrapRuntimeWork.promise)
+      .mockResolvedValueOnce(manualRuntimeWork)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh work lists' }))
+    await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('4'))
+
+    bootstrapRuntimeWork.resolve(createRuntimeWork({ projects: [], chats: [], totalTasks: 1 }))
+    await act(async () => {
+      await bootstrapRuntimeWork.promise
+    })
+
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('4')
   })
 
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {

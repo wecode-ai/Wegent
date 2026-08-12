@@ -575,6 +575,7 @@ export function useWorkbenchDataRefresh({
     }, 5000)
 
     async function bootstrap() {
+      const bootstrapRevision = ++workListRefreshRevisionRef.current
       const [defaultTeamResult, devicesResult] = await Promise.all([
         timedWorkbenchBootstrapRequest('defaultTeam', services.teamApi.getDefaultWorkbenchTeam()),
         timedWorkbenchBootstrapRequest('devices', executorClient.commands.listDevices()),
@@ -621,7 +622,10 @@ export function useWorkbenchDataRefresh({
                 true
               )
             : EMPTY_RUNTIME_WORK
-        if (runtimeWorkResult.status === 'fulfilled') {
+        if (
+          runtimeWorkResult.status === 'fulfilled' &&
+          bootstrapRevision === workListRefreshRevisionRef.current
+        ) {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',

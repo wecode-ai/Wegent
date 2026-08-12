@@ -38,7 +38,7 @@ Under **Settings → General → Runtime**, choose how many tasks the current de
 
 Queued tasks show their current position in the task list. Move a task forward or backward to change the real order used when execution slots become available. **Run now** temporarily lets a selected task exceed the configured limit. It does not interrupt work that is already running, and no additional queued task starts until the active count falls below the configured limit again.
 
-The waiting queue and its order are encrypted in the local application data directory and mirrored in executor memory while Wework is running. Pending tasks are restored in the saved order after Wework exits or restarts. The queue belongs only to the current device and is not uploaded or synchronized to another device.
+The executor schedules the waiting queue in memory and stores a sealed recovery copy in the local application data directory. Pending tasks are restored in the saved order after Wework exits or restarts. The sealed file avoids plaintext exposure of queued credentials and detects tampering. Its key is stored in the same current-user-private application data directory, so it is not intended to protect against compromise of the local user account. The queue belongs only to the current device and is not uploaded or synchronized to another device.
 
 ## Popout Window
 

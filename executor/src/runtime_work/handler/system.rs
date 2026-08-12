@@ -36,7 +36,7 @@ impl RuntimeWorkRpcHandler {
         write_runtime_settings(&RuntimeSettings {
             max_concurrent_tasks,
         })?;
-        self.update_max_concurrent_tasks(max_concurrent_tasks);
+        self.update_max_concurrent_tasks(max_concurrent_tasks).await;
         Ok(json!({ "maxConcurrentTasks": max_concurrent_tasks }))
     }
 
@@ -589,11 +589,35 @@ fn runtime_settings_path() -> PathBuf {
 }
 
 pub(super) fn read_runtime_settings() -> RuntimeSettings {
-    let Ok(content) = fs::read_to_string(runtime_settings_path()) else {
-        return RuntimeSettings::default();
+    let path = runtime_settings_path();
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return RuntimeSettings::default();
+        }
+        Err(error) => {
+            log_executor_event(
+                "runtime settings read failed",
+                &[
+                    ("path", path.display().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return RuntimeSettings::default();
+        }
     };
-    let Ok(settings) = serde_json::from_str::<RuntimeSettings>(&content) else {
-        return RuntimeSettings::default();
+    let settings = match serde_json::from_str::<RuntimeSettings>(&content) {
+        Ok(settings) => settings,
+        Err(error) => {
+            log_executor_event(
+                "runtime settings parse failed",
+                &[
+                    ("path", path.display().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return RuntimeSettings::default();
+        }
     };
     RuntimeSettings {
         max_concurrent_tasks: settings

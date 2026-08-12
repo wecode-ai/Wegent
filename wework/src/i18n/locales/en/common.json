@@ -1735,6 +1735,7 @@
     "general_settings_max_concurrent_tasks_description": "New tasks join the queue after the limit is reached and start automatically in order as running tasks finish.",
     "runtime_task_queued": "Queued",
     "runtime_task_queue_position": "Position {{position}}",
+    "runtime_task_cancel_failed": "Could not cancel the task",
     "runtime_task_force_start": "Run now",
     "runtime_task_force_start_failed": "Could not start the task immediately",
     "runtime_task_queue_move_first": "Move to front",
