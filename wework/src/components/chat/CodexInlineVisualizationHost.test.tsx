@@ -11,6 +11,29 @@ afterEach(() => {
 })
 
 describe('CodexInlineVisualizationHost', () => {
+  test('loads an absolute ChatGPT visualize path without file change metadata', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:absolute-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <CodexInlineVisualizationHost
+        file="/tmp/codex/visualizations/latency.html"
+        mode="wide"
+        title="Latency"
+      />
+    )
+
+    const host = screen.getByTestId('codex-inline-visualization')
+    const frame = screen.getByTestId('codex-inline-visualization-frame')
+    expect(host).toHaveAttribute('data-visualization-mode', 'wide')
+    expect(frame).toHaveAttribute('title', 'Latency')
+    await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:absolute-visualization'))
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'asset://localhost/tmp/codex/visualizations/latency.html'
+    )
+  })
+
   test('loads the unique nested fragment as a UTF-8 sandbox document and resizes safely', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('<h2>月度趋势</h2><svg style="stroke:var(--viz-series-1)"></svg>')

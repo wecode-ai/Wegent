@@ -48,7 +48,7 @@ interface AssistantMarkdownProps {
 
 type AssistantMarkdownPart =
   | { kind: 'markdown'; content: string; windowed: boolean }
-  | { kind: 'visualization'; file: string }
+  | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
@@ -211,6 +211,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             key={`${part.file}-${index}`}
             file={part.file}
             fileChanges={fileChanges}
+            mode={part.mode}
+            title={part.title}
           />
         ) : part.windowed ? (
           <WindowedMarkdownChunk

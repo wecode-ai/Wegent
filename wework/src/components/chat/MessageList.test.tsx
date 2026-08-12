@@ -70,6 +70,39 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders a ChatGPT visualize content reference from its absolute path', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-chatgpt-visualization',
+            role: 'assistant',
+            content: [
+              '已生成可视化。',
+              '',
+              'visualize{"path":"/tmp/codex/visualizations/latency.html","title":"Latency"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-08-12T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成可视化。')).toBeInTheDocument()
+    expect(screen.queryByText('visualize')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+        'src',
+        'blob:chatgpt-visualization'
+      )
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
