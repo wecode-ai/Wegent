@@ -43,6 +43,7 @@ from app.services.knowledge.code_wiki.version_store import set_page_path
 from app.services.knowledge.index_state_machine import (
     mark_document_index_succeeded,
 )
+from app.services.knowledge.orchestrator import knowledge_orchestrator
 
 
 @pytest.fixture
@@ -149,6 +150,46 @@ def test_a_published_page_is_queued_for_indexing(
         .one()
     )
     assert enqueued == [document.id]
+
+
+def test_a_published_page_uses_the_normal_document_summary_flow(
+    test_db: Session, knowledge_base: Kind, test_user: User, generation
+):
+    """Generated pages need the same post-index summary as user documents."""
+    version = generation()
+    _page(test_db, version, "index", "overview")
+    effects = build_projection_side_effects(
+        test_db, knowledge_base=knowledge_base, user=test_user
+    )
+
+    with patch.object(
+        knowledge_orchestrator,
+        "_schedule_indexing_celery",
+        return_value={"scheduled": True},
+    ) as schedule_indexing:
+        result = publish_generation(
+            test_db,
+            knowledge_base=knowledge_base,
+            generation=version,
+            user_id=test_user.id,
+            effects=effects,
+        )
+
+    document = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == knowledge_base.id)
+        .one()
+    )
+    assert result.published
+    schedule_indexing.assert_called_once_with(
+        db=test_db,
+        knowledge_base=knowledge_base,
+        document=document,
+        user=test_user,
+        trigger_summary=True,
+        replace_active=True,
+        allow_if_success=True,
+    )
 
 
 def test_a_page_stays_invisible_until_its_index_succeeds(
