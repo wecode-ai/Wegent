@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
   ArrowLeftRight,
   Bot,
   ChevronRight,
@@ -3062,7 +3063,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </button>
   ) : undefined
   const closeHarnessButton =
-    activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
+    activeLocalHarnessSession?.harnessId === 'opencode' ? (
+      <button
+        type="button"
+        data-testid={
+          activeLocalHarnessSession.isPrimary
+            ? 'central-harness-archive-button'
+            : 'central-harness-close-button'
+        }
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.archive_harness', '归档编码会话')}
+        title={t('workbench.archive_harness', '归档编码会话')}
+        onClick={() => {
+          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+        }}
+      >
+        <Archive />
+      </button>
+    ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
       <button
         type="button"
         data-testid="central-harness-close-button"

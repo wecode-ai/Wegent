@@ -21,6 +21,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
+  archiveLocalHarnessSession,
   closeLocalTerminal,
   getLocalPathKind,
   getLocalExecutorDeviceId,
@@ -281,6 +282,7 @@ vi.mock('@/features/auth/useAuth', async importOriginal => ({
 }))
 
 vi.mock('@/lib/local-terminal', () => ({
+  archiveLocalHarnessSession: vi.fn(),
   closeLocalTerminal: vi.fn(),
   getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
@@ -294,6 +296,7 @@ vi.mock('@/lib/local-terminal', () => ({
   startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
   updateLocalHarnessSessionTitle: vi.fn(),
+  WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT: 'wework:local-harness-sessions-changed',
 }))
 
 vi.mock('@pierre/diffs/react', async () => {
@@ -464,6 +467,7 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
+const archiveLocalHarnessSessionMock = vi.mocked(archiveLocalHarnessSession)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalHarnessAvailableMock = vi.mocked(isLocalHarnessAvailable)
@@ -661,6 +665,7 @@ describe('DesktopWorkbenchLayout', () => {
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
+    archiveLocalHarnessSessionMock.mockResolvedValue(undefined)
     closeLocalTerminalMock.mockResolvedValue(undefined)
     getLocalCodexUsageDisplayMock.mockResolvedValue({
       status: 'available',
@@ -3301,9 +3306,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('central-harness-archive-button')).toHaveAccessibleName(
+      '归档编码会话'
+    )
     expect(
-      screen.queryByTestId('close-local-harness-session-local-harness-1')
-    ).not.toBeInTheDocument()
+      screen.getByTestId('archive-local-harness-session-local-harness-1')
+    ).toHaveAccessibleName('归档编码会话')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
@@ -3357,12 +3365,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       screen.getAllByTestId('embedded-local-terminal').find(element => !element.hidden)
     ).toHaveAttribute('data-session-id', 'local-harness-2')
-    expect(screen.getByTestId('central-harness-close-button')).toBeInTheDocument()
-    expect(screen.getByTestId('close-local-harness-session-local-harness-2')).toBeInTheDocument()
+    expect(screen.getByTestId('central-harness-close-button')).toHaveAccessibleName('归档编码会话')
+    expect(screen.getByTestId('close-local-harness-session-local-harness-2')).toHaveAccessibleName(
+      '归档编码会话'
+    )
 
     await userEvent.click(screen.getByTestId('central-harness-close-button'))
 
-    await waitFor(() => expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-harness-2'))
+    await waitFor(() =>
+      expect(archiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-2')
+    )
     expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
@@ -3932,10 +3944,15 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(screen.getByTestId('central-harness-terminal')).toBeVisible())
 
     expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('central-harness-archive-button'))
+
+    await waitFor(() =>
+      expect(archiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-1')
+    )
     expect(
-      screen.queryByTestId('close-local-harness-session-local-harness-1')
+      screen.queryByTestId('local-harness-session-row-local-harness-1')
     ).not.toBeInTheDocument()
-    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
   })
 
   test('closes the settings menu when clicking outside it', async () => {
