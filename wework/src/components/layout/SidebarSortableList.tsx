@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { SidebarPointerSensor } from './sidebarDragActivator'
 
@@ -40,12 +40,27 @@ interface SortableItemProps {
 }
 
 function SortableItem({ id, disabled, children }: SortableItemProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
-    useSortable({ id, disabled })
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id, disabled })
+  const setSortableNodeRef = useCallback(
+    (node: HTMLElement | null) => {
+      setNodeRef(node)
+      setActivatorNodeRef(node)
+    },
+    [setActivatorNodeRef, setNodeRef]
+  )
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setSortableNodeRef}
       data-sidebar-sortable-id={id}
       data-dragging={isDragging ? 'true' : undefined}
       className={cn(
