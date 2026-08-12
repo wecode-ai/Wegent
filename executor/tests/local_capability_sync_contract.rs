@@ -1327,7 +1327,9 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
     let old_claude_link = plugins_dir.join("cache/market/old-plugin/1.0.0");
     let old_codex_link = codex_plugins_dir.join("old-plugin-market");
     let old_store_plugin = temp.path().join("store/plugins/old-plugin");
+    let orphan_store_plugin = temp.path().join("store/plugins/orphan-plugin");
     fs::create_dir_all(&old_store_plugin).unwrap();
+    fs::create_dir_all(&orphan_store_plugin).unwrap();
     fs::create_dir_all(&old_claude_link).unwrap();
     fs::write(old_claude_link.join("plugin.txt"), "managed copy").unwrap();
     fs::create_dir_all(&old_codex_link).unwrap();
@@ -1390,6 +1392,7 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
     assert!(!old_claude_link.exists());
     assert!(!old_codex_link.exists());
     assert!(!old_store_plugin.exists());
+    assert!(!orphan_store_plugin.exists());
 }
 
 #[test]
@@ -1473,6 +1476,76 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     let legacy_codex_link = codex_plugins_dir.join("superpowers-wegent");
     fs::create_dir_all(legacy_codex_link.parent().unwrap()).unwrap();
     symlink_dir(&store_plugin_path, &legacy_codex_link);
+    let stale_store_plugin = store_dir.join("plugins/1614-wegent-superpowers-5.0.6");
+    fs::create_dir_all(stale_store_plugin.join(".codex-plugin")).unwrap();
+    let referenced_legacy_zip = plugins_dir.join("cache/wegent/superpowers.zip");
+    let stale_legacy_zip = plugins_dir.join("cache/wegent/dingtalk.zip");
+    let external_cache_target = temp.path().join("external-cache-target");
+    let unreferenced_cache_symlink = plugins_dir.join("cache/wegent/evil-plugin");
+    fs::create_dir_all(referenced_legacy_zip.parent().unwrap()).unwrap();
+    fs::write(&referenced_legacy_zip, b"legacy package").unwrap();
+    fs::write(&stale_legacy_zip, b"stale package").unwrap();
+    fs::create_dir_all(&external_cache_target).unwrap();
+    fs::write(external_cache_target.join("must-survive.txt"), b"safe").unwrap();
+    symlink_dir(&external_cache_target, &unreferenced_cache_symlink);
+    let stale_claude_version = plugins_dir.join("cache/wegent/superpowers/5.0.6");
+    let stale_codex_version = codex_plugins_dir.join("cache/wegent/superpowers/5.0.6");
+    let stale_codex_plugin = codex_plugins_dir.join("cache/wegent/dingtalk/0.2.2");
+    let stale_public_plugin = codex_plugins_dir.join("cache/wework/lark/0.1.0");
+    let personal_plugin = codex_plugins_dir.join("cache/wework-personal/dev-tools/1.0.0");
+    let openai_plugin = codex_plugins_dir.join("cache/openai-curated/github/1.0.0");
+    for path in [
+        &stale_claude_version,
+        &stale_codex_version,
+        &stale_codex_plugin,
+        &stale_public_plugin,
+        &personal_plugin,
+        &openai_plugin,
+    ] {
+        fs::create_dir_all(path).unwrap();
+    }
+    let stale_claude_marketplace_link =
+        plugins_dir.join("marketplaces/wegent/plugins/context7-wegent");
+    let stale_codex_marketplace_link =
+        codex_plugins_dir.join("marketplaces/wegent/plugins/context7");
+    symlink_dir(&stale_store_plugin, &stale_claude_marketplace_link);
+    symlink_dir(&stale_store_plugin, &stale_codex_marketplace_link);
+    let claude_agents_marketplace_path =
+        plugins_dir.join("marketplaces/wegent/.agents/plugins/marketplace.json");
+    fs::create_dir_all(claude_agents_marketplace_path.parent().unwrap()).unwrap();
+    fs::write(
+        &claude_agents_marketplace_path,
+        json!({"name": "wegent", "plugins": [{"name": "context7"}]}).to_string(),
+    )
+    .unwrap();
+    let codex_agents_marketplace_path =
+        codex_plugins_dir.join("marketplaces/wegent/.agents/plugins/marketplace.json");
+    fs::create_dir_all(codex_agents_marketplace_path.parent().unwrap()).unwrap();
+    fs::write(
+        &codex_agents_marketplace_path,
+        json!({"name": "wegent", "plugins": [{"name": "context7"}]}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        codex_plugins_dir.parent().unwrap().join("config.toml"),
+        r#"
+[plugins."superpowers@wegent"]
+enabled = true
+
+[plugins."dingtalk@wegent"]
+enabled = true
+
+[plugins."lark@wework"]
+enabled = true
+
+[plugins."dev-tools@wework-personal"]
+enabled = true
+
+[plugins."github@openai-curated"]
+enabled = true
+"#,
+    )
+    .unwrap();
     let store = GlobalCapabilityStore::new(manifest_path, skills_dir)
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
@@ -1493,6 +1566,22 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     assert!(codex_runtime
         .join("skills/systematic-debugging/SKILL.md")
         .is_file());
+    assert!(!stale_store_plugin.exists());
+    assert!(!stale_claude_version.exists());
+    assert!(!stale_codex_version.exists());
+    assert!(!stale_codex_plugin.exists());
+    assert!(!stale_public_plugin.exists());
+    assert!(referenced_legacy_zip.is_file());
+    assert!(!stale_legacy_zip.exists());
+    assert!(!unreferenced_cache_symlink.exists());
+    assert_eq!(
+        fs::read_to_string(external_cache_target.join("must-survive.txt")).unwrap(),
+        "safe"
+    );
+    assert!(personal_plugin.is_dir());
+    assert!(openai_plugin.is_dir());
+    assert!(!stale_claude_marketplace_link.exists());
+    assert!(!stale_codex_marketplace_link.exists());
     assert!(codex_plugins_dir
         .join("marketplaces/wegent/plugins/superpowers")
         .is_symlink());
@@ -1509,6 +1598,24 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     );
     assert_eq!(
         codex_config["plugins"]["superpowers@wegent"]["enabled"].as_bool(),
+        Some(true)
+    );
+    // Reconciliation never rewrites the complete Codex config. App Server owns
+    // plugin config mutations so concurrent policy writes cannot be lost.
+    assert_eq!(
+        codex_config["plugins"]["dingtalk@wegent"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        codex_config["plugins"]["lark@wework"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        codex_config["plugins"]["dev-tools@wework-personal"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        codex_config["plugins"]["github@openai-curated"]["enabled"].as_bool(),
         Some(true)
     );
     let installed = read_json(plugins_dir.join("installed_plugins.json"));
@@ -1556,17 +1663,44 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
         json!([
             {
                 "description": "",
-                "name": "context7",
-                "source": "./plugins/context7-wegent",
-                "version": "latest"
-            },
-            {
-                "description": "",
                 "name": "superpowers",
                 "source": "./plugins/superpowers-wegent",
                 "version": "5.0.7"
             }
         ])
+    );
+    assert_eq!(
+        read_json(claude_agents_marketplace_path)["plugins"],
+        json!([{"name": "superpowers", "source": {"source": "local", "path": "./plugins/superpowers-wegent"}, "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}}])
+    );
+    assert_eq!(
+        read_json(codex_agents_marketplace_path)["plugins"],
+        json!([{"name": "superpowers", "source": {"source": "local", "path": "./plugins/superpowers"}, "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL", "products": ["CODEX"]}}])
+    );
+}
+
+#[test]
+fn reconcile_managed_plugins_refuses_a_symlinked_cache_root() {
+    let temp = TempRoot::new("capability-sync-symlinked-cache-root");
+    let skills_dir = temp.path().join(".claude/skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join(".codex/plugins");
+    let external_cache = temp.path().join("external-cache");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::create_dir_all(&external_cache).unwrap();
+    fs::write(external_cache.join("must-survive.txt"), b"safe").unwrap();
+    symlink_dir(&external_cache, &plugins_dir.join("cache"));
+    let store = GlobalCapabilityStore::new(temp.path().join("capabilities.json"), skills_dir)
+        .with_plugins_dir(plugins_dir)
+        .with_codex_plugins_dir(codex_plugins_dir)
+        .with_store_dir(temp.path().join("store"));
+
+    let error = store.reconcile_managed_plugins().unwrap_err();
+
+    assert!(error.to_string().contains("managed path symlink"));
+    assert_eq!(
+        fs::read_to_string(external_cache.join("must-survive.txt")).unwrap(),
+        "safe"
     );
 }
 

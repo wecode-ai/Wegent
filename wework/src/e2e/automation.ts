@@ -35,6 +35,7 @@ import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
 import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
+import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -102,7 +103,9 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
-  const value = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
+  const value =
+    getDesktopE2ERuntimeConfig().controlUrl ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
   return value ? value.replace(/\/+$/, '') : null
 }
 
@@ -237,13 +240,20 @@ function createBridge(): WeworkAutomationBridge {
 }
 
 async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl =
+    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
-  const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
+  const modelServerUrl =
+    runtimeConfig.modelServerUrl ??
+    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
+    backendUrl
   const localModelsCatalogReady =
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
-    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
+    runtimeConfig.cloudToken ??
+    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
+    'wework-desktop-e2e-cloud-token'
 
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
@@ -345,6 +355,9 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  if (isTauriRuntime()) {
+    await loadDesktopE2ERuntimeConfig()
+  }
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
@@ -1444,6 +1457,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 }
 
 function installDesktopControlClient() {
+  if (!isTauriRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getCurrentWindow().label
   if (

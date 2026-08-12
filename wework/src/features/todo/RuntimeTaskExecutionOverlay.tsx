@@ -12,8 +12,7 @@ import {
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
 import type { RuntimeTaskAddress } from '@/types/api'
-
-const FAILED_STATUSES = new Set(['failed', 'interrupted', 'stalled', 'cancelled', 'canceled'])
+import { executionDisplayStatus } from './executionStatus'
 
 export interface RuntimeTaskExecutionOverlayProps {
   address: RuntimeTaskAddress
@@ -44,15 +43,9 @@ export function RuntimeTaskExecutionOverlay({
   const device = state.devices.find(candidate => candidate.device_id === address.deviceId)
   const resolvedModel = modelName ?? runtimeTaskSummary?.modelSelection?.modelName ?? '—'
   const resolvedRunId = runId ?? String(address.taskId)
-  const running =
-    session.status.taskExecution.running || runStatus === 'streaming' || runStatus === 'running'
-  const resolvedStatus = (
-    runStatus && !['streaming', 'running', 'queued', 'pending'].includes(runStatus)
-      ? runStatus
-      : runtimeTaskSummary?.status
-  )?.toLowerCase()
-  const completed = resolvedStatus === 'completed'
-  const failed = resolvedStatus ? FAILED_STATUSES.has(resolvedStatus) : false
+  const displayStatus = executionDisplayStatus(runStatus ?? runtimeTaskSummary?.status)
+  const running = session.status.taskExecution.running || displayStatus === 'running'
+  const completed = displayStatus === 'completed'
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -85,35 +78,20 @@ export function RuntimeTaskExecutionOverlay({
     }
   }
 
-  const statusContent = running ? (
-    <>
-      <LoaderCircle className="h-3 w-3 animate-spin" />
-      {t('workbench.project_chat_processing')}
-    </>
-  ) : completed ? (
-    <>
-      <Check className="h-3 w-3" />
-      {t('workbench.project_chat_completed')}
-    </>
-  ) : failed ? (
-    <>
-      <X className="h-3 w-3" />
-      {t('workbench.task_activity_failed')}
-    </>
-  ) : (
-    <>
-      <LoaderCircle className="h-3 w-3 animate-spin" />
-      {t('workbench.project_chat_processing')}
-    </>
-  )
+  const statusContent =
+    running || !completed ? (
+      <>
+        <LoaderCircle className="h-3 w-3 animate-spin" />
+        {t('workbench.project_chat_processing')}
+      </>
+    ) : (
+      <>
+        <Check className="h-3 w-3" />
+        {t('workbench.project_chat_completed')}
+      </>
+    )
 
-  const statusClassName = running
-    ? 'bg-muted text-text-secondary'
-    : completed
-      ? 'bg-emerald-500/10 text-emerald-600'
-      : failed
-        ? 'bg-red-500/10 text-red-600'
-        : 'bg-muted text-text-secondary'
+  const statusClassName = 'bg-muted text-text-secondary'
 
   return createPortal(
     <div

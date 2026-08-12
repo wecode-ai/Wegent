@@ -8,11 +8,13 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
+const DEFAULT_PARALLEL_CHECKPOINTS = 3
 const CHECKPOINT_SCENARIO_MODULES = {
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
+  'project-automation': './scenarios/project-automation.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set(['local-harness'])
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -82,7 +84,12 @@ function runTaskFlow(args, env, label) {
     let resultDir = null
     let outputTail = ''
     let stderrTail = ''
-    const child = spawn(process.execPath, [taskFlowPath, ...args], {
+    const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
+    const command = isolateDisplay ? 'xvfb-run' : process.execPath
+    const commandArgs = isolateDisplay
+      ? ['-a', '--server-args=-screen 0 1280x720x24', process.execPath, taskFlowPath, ...args]
+      : [taskFlowPath, ...args]
+    const child = spawn(command, commandArgs, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -180,7 +187,35 @@ function requestedCheckpointRange(args) {
   return null
 }
 
+function requestedParallelCheckpoints(args) {
+  if (args.length !== 2 || args[0] !== '--parallel-segments') return null
+  const checkpoints = args[1]
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+  if (checkpoints.length === 0) {
+    throw new Error('--parallel-segments requires at least one checkpoint')
+  }
+  for (const checkpoint of checkpoints) {
+    if (!DESKTOP_CHECKPOINTS.includes(checkpoint)) {
+      throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
+    }
+  }
+  return checkpoints
+}
+
+function parallelCheckpointLimit() {
+  const value = Number(process.env.WEWORK_E2E_PARALLEL_CHECKPOINTS ?? DEFAULT_PARALLEL_CHECKPOINTS)
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('WEWORK_E2E_PARALLEL_CHECKPOINTS must be a positive integer')
+  }
+  return value
+}
+
 async function runRequestedArgs() {
+  const parallelCheckpoints = requestedParallelCheckpoints(requestedArgs)
+  if (parallelCheckpoints) return runParallelCheckpoints(parallelCheckpoints)
+
   const checkpoints = requestedCheckpointRange(requestedArgs)
   if (checkpoints) return runCheckpoints(checkpoints)
 
@@ -198,6 +233,56 @@ async function runRequestedArgs() {
     `[desktop-e2e] FAIL ${label}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
   )
   process.exitCode = result.code
+}
+
+async function runParallelCheckpoints(checkpoints) {
+  if (!existingBuildManifest(process.env)) {
+    throw new Error('--parallel-segments requires a prebuilt desktop E2E application and executor')
+  }
+
+  const pending = [...checkpoints]
+  const failures = []
+  const workerCount = Math.min(parallelCheckpointLimit(), pending.length)
+  console.log(
+    `[desktop-e2e] Running ${pending.length} checkpoints with ${workerCount} parallel workers`
+  )
+
+  async function runWorker() {
+    while (pending.length > 0) {
+      const checkpoint = pending.shift()
+      if (!checkpoint) return
+      const env = checkpointScenarioEnv({ ...process.env }, checkpoint)
+      delete env.WEWORK_E2E_CONTROL_SERVER_PORT
+      delete env.WEWORK_E2E_MODEL_SERVER_PORT
+      console.log(`\n[desktop-e2e] START ${checkpoint}`)
+      const result = await runTaskFlow(['--cloud-only', '--segment', checkpoint], env, checkpoint)
+      if (result.code === 0) {
+        console.log(
+          `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
+        )
+        continue
+      }
+      const failure = await readFailureSummary(result)
+      failures.push({ checkpoint, failure, ...result })
+      console.error(
+        `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
+      )
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
+  if (failures.length === 0) {
+    console.log('\n[desktop-e2e] All parallel checkpoints passed.')
+    return
+  }
+
+  console.error('\n[desktop-e2e] Parallel checkpoint failure summary:')
+  for (const failure of failures) {
+    console.error(
+      `- ${failure.checkpoint}: ${failure.failure}${failure.resultDir ? ` (${failure.resultDir})` : ''}`
+    )
+  }
+  process.exitCode = 1
 }
 
 async function runCheckpoints(checkpoints) {

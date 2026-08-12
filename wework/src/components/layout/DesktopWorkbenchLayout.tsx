@@ -178,7 +178,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       .then(restored => {
         if (cancelled) return
         setLocalHarnessSessions(restored)
-        setActiveLocalHarnessSessionId(current => current ?? restored[0]?.sessionId ?? null)
       })
       .catch(error => {
         console.error('Failed to restore local harness sessions:', error)
@@ -888,6 +887,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               <CloudTodoWorkspace
                 user={state.user}
                 localProjects={localTodoProjects}
+                runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 activeProjectId={

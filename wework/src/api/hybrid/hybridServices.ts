@@ -33,7 +33,7 @@ import type {
   ArchivedConversationsListResponse,
   DeleteDeviceWorkspaceRequest,
   DeviceCommandResponse,
-  DeviceInfo,
+  DeviceInfo as RuntimeDeviceInfo,
   DeviceWorkspacePrepareRequest,
   RuntimeArchivedConversationCleanupResponse,
   RuntimeCompactRequest,
@@ -60,6 +60,7 @@ import type {
   User,
 } from '@/types/api'
 import type { Automation } from '@/types/automation'
+import type { DeviceInfo } from '@/types/devices'
 
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
@@ -340,6 +341,10 @@ export function createHybridWorkbenchServices(
   const localRuntimeInstanceIds = new Set<string>()
   const localRuntimeProjectKeys = new Set<string>()
   let rememberedCloudDevices: DeviceInfo[] = []
+  let rememberedCloudDevicesRevision = 0
+  let nextCloudDevicesRevision = 1
+  let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
+  const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
   let rememberedCloudModels: UnifiedModel[] = []
   let cloudModelsLoaded = false
   let cloudModelsRequest: Promise<void> | null = null
@@ -357,8 +362,10 @@ export function createHybridWorkbenchServices(
       }
     })
   }
-  const rememberCloudDevices = (devices: DeviceInfo[]) => {
-    rememberedCloudDevices = mergeDeviceLists(rememberedCloudDevices, devices)
+  const rememberCloudDevices = (devices: DeviceInfo[], revision: number) => {
+    if (revision < rememberedCloudDevicesRevision) return
+    rememberedCloudDevices = devices
+    rememberedCloudDevicesRevision = revision
   }
   const loadCloudModelsInBackground = () => {
     if (cloudModelsLoaded || cloudModelsRequest) return
@@ -394,7 +401,7 @@ export function createHybridWorkbenchServices(
     work.chats.forEach(workspace => localDeviceIds.add(workspace.deviceId))
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
-    Boolean(deviceId && localDeviceIds.has(deviceId))
+    Boolean(deviceId && (deviceId === 'local-device' || localDeviceIds.has(deviceId)))
   const isKnownCloudDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
   const runtimeApiForCreate = async (deviceId?: string | null) => {
@@ -498,7 +505,9 @@ export function createHybridWorkbenchServices(
     rememberLocalDevices(devices)
     return devices
   }
-  const listCloudDevices = async (signal?: AbortSignal) => {
+  const fetchCloudDevices = async (signal?: AbortSignal) => {
+    const revision = nextCloudDevicesRevision
+    nextCloudDevicesRevision += 1
     const devices = (
       signal
         ? await cloudServices.deviceApi.listDevices({ signal })
@@ -507,12 +516,29 @@ export function createHybridWorkbenchServices(
       device =>
         (isCloudDevice(device) || isRemoteDevice(device)) && !isAppDeviceRegistration(device)
     )
-    rememberCloudDevices(devices)
+    rememberCloudDevices(devices, revision)
     return devices
+  }
+  const listCloudDevices = (signal?: AbortSignal): Promise<DeviceInfo[]> => {
+    if (signal) {
+      const existing = cloudDevicesRequestsBySignal.get(signal)
+      if (existing) return existing
+      const request = fetchCloudDevices(signal)
+      cloudDevicesRequestsBySignal.set(signal, request)
+      return request
+    }
+    if (unscopedCloudDevicesRequest) return unscopedCloudDevicesRequest
+    const request = fetchCloudDevices().finally(() => {
+      if (unscopedCloudDevicesRequest === request) {
+        unscopedCloudDevicesRequest = null
+      }
+    })
+    unscopedCloudDevicesRequest = request
+    return request
   }
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeDeviceLists(await listLocalDevices(signal), rememberedCloudDevices)
-  const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
+  const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
     const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
     if (knownDevice) return knownDevice
 
@@ -1132,7 +1158,7 @@ export function createHybridWorkbenchServices(
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },
-    userApi: localServices.userApi,
+    userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,

@@ -548,6 +548,32 @@ fn env_flag_enabled(key: &str) -> bool {
 #[cfg(desktop)]
 const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopE2ERuntimeConfig {
+    cloud_backend_url: Option<String>,
+    cloud_token: Option<String>,
+    control_url: Option<String>,
+    model_server_url: Option<String>,
+    posthog_host: Option<String>,
+}
+
+#[tauri::command]
+fn get_desktop_e2e_runtime_config() -> Option<DesktopE2ERuntimeConfig> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
+        return None;
+    }
+
+    let read = |key| std::env::var(key).ok().and_then(normalized_non_empty);
+    Some(DesktopE2ERuntimeConfig {
+        cloud_backend_url: read("WEWORK_E2E_CLOUD_BACKEND_URL"),
+        cloud_token: read("WEWORK_E2E_CLOUD_TOKEN"),
+        control_url: read("WEWORK_E2E_CONTROL_URL"),
+        model_server_url: read("WEWORK_E2E_MODEL_SERVER_URL"),
+        posthog_host: read("WEWORK_E2E_POSTHOG_HOST"),
+    })
+}
+
 #[cfg(desktop)]
 fn should_activate_main_window() -> bool {
     !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
@@ -904,6 +930,12 @@ struct MainWindowLifecycleState {
     next_frontend_probe_id: AtomicU64,
     acknowledged_frontend_probe_id: AtomicU64,
     last_main_window_unfocused_at: Mutex<Option<std::time::Instant>>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct AppPreferencesWriteState {
+    guard: Mutex<()>,
 }
 
 #[cfg(desktop)]
@@ -1427,8 +1459,13 @@ fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> 
 fn update_app_preferences(
     app: tauri::AppHandle,
     patch: AppPreferencesPatch,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
     telemetry: tauri::State<NativeTelemetryState>,
 ) -> Result<AppPreferences, String> {
+    let _guard = preferences_write
+        .guard
+        .lock()
+        .map_err(|_| "Failed to lock app preferences for update".to_string())?;
     let mut preferences = read_app_preferences_impl(&app);
     let telemetry_was_enabled =
         preferences.telemetry_consent_asked && preferences.telemetry_enabled;
@@ -3243,10 +3280,25 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+fn close_main_window_to_tray(
+    app: tauri::AppHandle,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
+) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    match preferences_write.guard.lock() {
+        Ok(_guard) => {
+            let mut preferences = read_app_preferences_impl(&app);
+            if !preferences.close_to_tray_hint_seen {
+                preferences.close_to_tray_hint_seen = true;
+                if let Err(error) = write_app_preferences_impl(&app, &preferences) {
+                    log::warn!("Failed to persist close-to-tray hint acknowledgement: {error}");
+                }
+            }
+        }
+        Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
+    }
     let state = app.state::<MainWindowLifecycleState>();
     state
         .destroy_to_tray_in_progress
@@ -4929,6 +4981,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -5120,6 +5173,7 @@ pub fn run() {
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
+            get_desktop_e2e_runtime_config,
             get_app_preferences,
             close_main_window_to_tray,
             open_app_log_directory,

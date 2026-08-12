@@ -648,6 +648,9 @@ importers:
       lucide-react:
         specifier: ^1.16.0
         version: 1.17.0(react@19.2.7)
+      lz-string:
+        specifier: 1.5.0
+        version: 1.5.0
       posthog-js:
         specifier: ^1.409.5
         version: 1.413.2(preact-render-to-string@6.6.5(preact@11.0.0-beta.0))

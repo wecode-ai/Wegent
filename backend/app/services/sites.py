@@ -5,6 +5,7 @@
 """Gateway for the external Sites project API."""
 
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -61,10 +62,15 @@ class SitesService:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
-        headers = {}
+        request_headers = {}
         if settings.SITES_API_TOKEN.strip():
-            headers["Authorization"] = f"Bearer {settings.SITES_API_TOKEN.strip()}"
+            request_headers["Authorization"] = (
+                f"Bearer {settings.SITES_API_TOKEN.strip()}"
+            )
+        if headers:
+            request_headers.update(headers)
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                 response = await client.request(
@@ -72,7 +78,7 @@ class SitesService:
                     f"{self._base_url()}{path}",
                     params=params,
                     json=json,
-                    headers=headers or None,
+                    headers=request_headers or None,
                 )
         except SitesNotAvailableError:
             raise
@@ -103,6 +109,8 @@ class SitesService:
 
         if isinstance(payload, dict) and "detail" in payload:
             return payload["detail"]
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            return payload["error"]
         return payload
 
     async def list_sites(
@@ -164,6 +172,31 @@ class SitesService:
                 "username": username,
                 "project_id": siteid,
                 "sitename": sitename,
+            },
+        )
+        return self._parse_site_project(payload, username=username)
+
+    async def update_site_metadata(
+        self,
+        siteid: str,
+        *,
+        username: str,
+        title: str | None = None,
+        custom_domain_prefix: str | None = None,
+        custom_domain_prefix_set: bool = False,
+    ) -> SiteResponse:
+        json_payload: dict[str, Any] = {}
+        if title is not None:
+            json_payload["title"] = title
+        if custom_domain_prefix_set:
+            json_payload["custom_domain_prefix"] = custom_domain_prefix
+        payload = await self._request(
+            "PATCH",
+            f"/api/v1/projects/{siteid}",
+            json=json_payload,
+            headers={
+                "Idempotency-Key": f"project-update-{uuid4().hex}",
+                "X-Wegent-Username": username,
             },
         )
         return self._parse_site_project(payload, username=username)

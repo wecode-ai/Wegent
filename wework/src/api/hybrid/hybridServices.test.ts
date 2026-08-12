@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
   const localGetDefaultWorkbenchTeam = vi.fn()
   const localListProjects = vi.fn()
   const localUpdateCurrentUser = vi.fn()
+  const cloudUpdateCurrentUser = vi.fn()
   const localListSkills = vi.fn()
   const localGetTeamSkills = vi.fn()
   const cloudListTeams = vi.fn()
@@ -137,6 +138,7 @@ const mocks = vi.hoisted(() => {
       uploadAttachment: cloudUploadAttachment,
       deleteAttachment: vi.fn(),
     },
+    userApi: { updateCurrentUser: cloudUpdateCurrentUser },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
     workspaceSessionApi: cloudWorkspaceSessionApi,
@@ -155,6 +157,7 @@ const mocks = vi.hoisted(() => {
     localGetDefaultWorkbenchTeam,
     localListProjects,
     localUpdateCurrentUser,
+    cloudUpdateCurrentUser,
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
@@ -337,6 +340,14 @@ function createServices() {
     socketPath: '/socket.io',
     token: 'cloud-token',
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }
 
 describe('createHybridWorkbenchServices', () => {
@@ -640,6 +651,78 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.deviceApi.listDevices()
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('drops remembered cloud devices after an authoritative empty background sync', async () => {
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    mocks.cloudListDevices.mockResolvedValue([])
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device'])
+  })
+
+  it('does not let an older cloud device response overwrite a newer snapshot', async () => {
+    const olderDevices = deferred<
+      Array<{
+        id: number
+        device_id: string
+        name: string
+        status: 'online'
+        is_default: boolean
+        device_type: 'cloud'
+        bind_shell: 'claudecode'
+      }>
+    >()
+    mocks.cloudListDevices
+      .mockReset()
+      .mockImplementationOnce(() => olderDevices.promise)
+      .mockResolvedValueOnce([
+        {
+          id: 2,
+          device_id: 'new-cloud-device',
+          name: 'New Cloud Executor',
+          status: 'online',
+          is_default: false,
+          device_type: 'cloud',
+          bind_shell: 'claudecode',
+        },
+      ])
+    const services = createServices()
+
+    const olderRequest = services.cloudBackgroundApi!.listDevices!({
+      signal: new AbortController().signal,
+    })
+    await services.cloudBackgroundApi!.listDevices!({ signal: new AbortController().signal })
+    olderDevices.resolve([
+      {
+        id: 1,
+        device_id: 'old-cloud-device',
+        name: 'Old Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    await olderRequest
+
+    const devices = await services.deviceApi.listDevices()
+    expect(devices.map(device => device.device_id)).toEqual(['local-device', 'new-cloud-device'])
+  })
+
+  it('reuses one cloud device snapshot across a background refresh', async () => {
+    const services = createServices()
+    const controller = new AbortController()
+
+    await Promise.all([
+      services.cloudBackgroundApi!.listDevices!({ signal: controller.signal }),
+      services.cloudBackgroundApi!.listRuntimeWork!({ signal: controller.signal }),
+    ])
+
+    expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
   })
 
   it('routes Worktree settings to the selected local or cloud device', async () => {
@@ -1164,18 +1247,33 @@ describe('createHybridWorkbenchServices', () => {
     expect(response?.items.map(item => item.id)).toEqual(['local-archive'])
   })
 
-  it('completes archive-all and local preferences without waiting for cloud services', async () => {
+  it('completes archive-all and persists connected preferences to the cloud account', async () => {
     mocks.cloudArchiveAllConversations.mockReturnValue(new Promise(() => undefined))
     const services = createServices()
 
     const archiveResponse = await services.runtimeWorkApi?.archiveAllConversations()
-    await services.userApi?.updateCurrentUser({ preferences: { theme: 'dark' } })
+    const preferences = {
+      theme: 'dark',
+      wework_new_chat_model_selection: {
+        modelName: 'codex-gpt-5.5',
+        modelType: 'runtime',
+        options: { reasoning: 'medium' },
+      },
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    }
+    await services.userApi?.updateCurrentUser({ preferences })
     await services.projectApi.listProjects()
 
     expect(archiveResponse?.accepted).toBe(true)
     expect(mocks.localArchiveAllConversations).toHaveBeenCalledTimes(1)
     expect(mocks.cloudArchiveAllConversations).toHaveBeenCalledTimes(1)
-    expect(mocks.localUpdateCurrentUser).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudUpdateCurrentUser).toHaveBeenCalledWith({ preferences })
+    expect(mocks.localUpdateCurrentUser).not.toHaveBeenCalled()
     expect(mocks.localListProjects).toHaveBeenCalledTimes(1)
   })
 

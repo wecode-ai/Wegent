@@ -16,7 +16,7 @@ describe('application type definitions', () => {
 
   test('does not expose create capability before cloud descriptors or cached descriptors load', () => {
     expect(defaultResolvedApplicationTypes().map(item => [...item.capabilities])).toEqual([
-      ['publish', 'delete'],
+      ['publish', 'edit', 'delete'],
       ['open_experience'],
     ])
   })

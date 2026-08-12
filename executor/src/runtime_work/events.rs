@@ -52,6 +52,10 @@ fn codex_retry_message(params: &Value) -> String {
         .to_owned()
 }
 
+fn codex_notification_resumes_turn(method: &str) -> bool {
+    method.starts_with("item/") || method.starts_with("turn/")
+}
+
 pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
@@ -227,7 +231,7 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
-        if notification.method != "error" {
+        if codex_notification_resumes_turn(&notification.method) {
             self.clear_reconnecting(&emit_context);
         }
         match notification.method.as_str() {
@@ -2046,6 +2050,21 @@ mod tests {
             "runtime_reconnecting"
         );
         assert!(event_rx.try_recv().is_err());
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &request,
+            json!({
+                "method": "mcpServer/startupStatus/updated",
+                "params": { "name": "wegent_apps", "status": "starting" }
+            }),
+        );
+        assert!(
+            event_rx.try_recv().is_err(),
+            "an unrelated MCP notification cleared the reconnecting block"
+        );
 
         mapper.map(
             &Some(event_tx),

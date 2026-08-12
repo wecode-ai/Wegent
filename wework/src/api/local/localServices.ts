@@ -1433,13 +1433,17 @@ function executionWithWorkspace(
 interface BuildLocalRuntimeExecutionRequestInput {
   taskId?: string | null
   runtime: string
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
@@ -1491,16 +1495,28 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
-  const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(
-      input.runtime,
-      input.modelId,
-      input.modelType,
-      input.modelOptions,
-      input.cloudModelGateway
-    ),
-    input.modelOptions
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
+  const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
+    input.runtime.trim().toLowerCase()
   )
+  const modelConfig =
+    input.modelConfig ??
+    (claudeRuntime && !input.modelId
+      ? {}
+      : applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            input.runtime,
+            input.modelId,
+            input.modelType,
+            input.modelOptions,
+            input.cloudModelGateway,
+            !claudeRuntime
+          ),
+          input.modelOptions
+        ))
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1537,7 +1553,11 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [],
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
+    ...(input.runtimeExecutablePath
+      ? { runtime_executable_path: input.runtimeExecutablePath }
+      : {}),
+    ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
@@ -1724,13 +1744,17 @@ async function createLocalRuntimeTaskPayload(
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
       runtime: normalizedData.runtime,
+      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+      runtimePermissionMode: normalizedData.runtimePermissionMode,
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,
@@ -1781,6 +1805,10 @@ function createLocalRuntimeSendPayload(
     taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
+  const runtime =
+    stringValue(normalizedAddress.runtime) ??
+    stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
+    'codex'
 
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
@@ -1793,7 +1821,7 @@ function createLocalRuntimeSendPayload(
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
-        runtime: 'codex',
+        runtime,
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
@@ -1834,7 +1862,7 @@ function createLocalRuntimeSendPayload(
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
-      runtime: 'codex',
+      runtime,
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,

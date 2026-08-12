@@ -1,10 +1,22 @@
-import { describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  clearLocalConnectorAuthHealthCache,
   isLocalBrowserConnector,
   isLocalConnector,
   isLocalQrConnector,
+  localConnectorAuthHealth,
   localQrManageActionFromHealth,
 } from './localConnectorAuth'
+
+const mocks = vi.hoisted(() => ({
+  ensureLocalExecutorStarted: vi.fn(),
+  requestLocalExecutor: vi.fn(),
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
+  requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
+}))
 
 describe('localQrManageActionFromHealth', () => {
   test('returns logout when session is healthy', () => {
@@ -18,6 +30,23 @@ describe('localQrManageActionFromHealth', () => {
     expect(localQrManageActionFromHealth({ status: 'error' })).toBe('login')
     expect(localQrManageActionFromHealth(null)).toBe('login')
     expect(localQrManageActionFromHealth(undefined)).toBe('login')
+  })
+})
+
+describe('localConnectorAuthHealth cache', () => {
+  beforeEach(() => {
+    clearLocalConnectorAuthHealthCache()
+    mocks.ensureLocalExecutorStarted.mockReset()
+    mocks.requestLocalExecutor.mockReset()
+    mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
+    mocks.requestLocalExecutor.mockResolvedValue({ status: 'ok' })
+  })
+
+  test('reuses a recent ok health probe without calling the executor again', async () => {
+    const target = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk' }
+    await expect(localConnectorAuthHealth(target)).resolves.toEqual({ status: 'ok' })
+    await expect(localConnectorAuthHealth(target)).resolves.toEqual({ status: 'ok' })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -29,7 +29,7 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 插件可以在 `connectors[].localAuth` 中声明设备侧授权。`local_qr` 用于二维码登录；`browser_oauth` 用于需要本机 CLI 打开浏览器的 OAuth。两种模式都必须提供相对插件根目录的 `health` 和 `start` 命令，二维码模式还必须提供非阻塞的 `poll` 命令。`authPolicy: on_install` 会在插件包完成本机同步后检查登录状态，未登录时由 Wework 显示授权界面；取消或失败会终止本次安装。首次使用和运行中授权检查继续作为凭据失效后的恢复入口。
 
-发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。
+发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。带插件引用时也只对消息中提到的插件做 `plugin/read` 补全连接器信息，禁止在发送路径上调用完整 `plugin/list` / `readState`，以免会话打开被拖慢约 10 秒。
 
 `browser_oauth` 使用异步授权会话，状态依次为 `preparing`、`waiting_browser`、`verifying` 和 `ok/error`。关闭界面会调用 Executor 的 `cancel` RPC 并终止登录子进程。CLI 输出必须是单个状态 JSON，不得包含 token、cookie 或其他凭据。
 
@@ -44,7 +44,7 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 仍是普通插件的合法可见性；只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
 
-应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
+应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
 
 连接 Wegent 云端时，Wework 会调用 `POST /api/users/me/wegent-runtime-token` 获取本地应用 Skill 访问 Backend runtime API 的 token，并把它作为 `WEGENT_RUNTIME_AUTH_TOKEN` 写入本机 Codex shell 环境配置；该 token 会按响应中的 `expires_in` 提前刷新。`AUTH_TOKEN` 仍表示单次任务的原有 bearer token，`WEGENT_AUTH_TOKEN` 仍保留给 executor 设备连接使用，三者不能混用。
 

@@ -100,6 +100,27 @@ turn ID 可以把乐观消息重新绑定到正确 turn；失败时必须移除�
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
 stream 结算先于 Goal 持久化完成，active Goal 也能继续约束任务生命周期。
 
+### Claude Code 普通会话执行器
+
+Wework 中的 Claude Code 与 Codex 一样使用普通 runtime task 会话界面，不使用终端
+或 TUI 代替消息列表。executor 通过 Claude Code print mode 启动每个 turn，读取
+`stream-json` 事件并转换为统一的 `chat:start`、文本增量、工具 block 和终态事件。
+首轮返回的 Claude session ID 保存到 LocalTask runtime handle；后续消息、Goal 和
+`/compact` 都通过 `--resume` 继续同一会话。
+
+Claude Code Goal 由 executor 持久化在 LocalTask runtime handle 中。Goal 消息发送为
+Claude 原生 `/goal <objective>`，只有实际执行该 Goal 的 turn 才能把状态更新为
+`complete`；普通 follow-up 不能完成尚未执行的 Goal。turn 结算后，Wework 可以读取
+`runtime.tasks.goal.get` 同步最新快照，但空响应不能覆盖已有 Goal。显式清除只能由
+Goal clear API 或 `runtime.goal.cleared` 事件完成。多个异步快照竞争时，以
+`updatedAt` 较新的快照为准；时间相同时 `complete` 优先于非完成状态。
+
+模型和权限选择属于当前 turn 的执行参数。Wework 把 Claude Code 权限模式映射为
+`default`、`acceptEdits`、`plan`、`auto` 或 `bypassPermissions`，并把当前模型映射为
+Claude CLI 的 `--model`。未提供模型选择不应被误判为显式 Claude runtime 配置。
+Claude Code 的 `/compact` 是普通原生命令；Codex 仍使用其 app-server compact RPC，
+两个 runtime 不能共用 compact 实现。
+
 ## 本地多目录项目与任务归属
 
 本地 Codex 项目可以包含一个有序的根目录列表。第一项是主根，用于 composer

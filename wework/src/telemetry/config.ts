@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from '@/config/runtime'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getPlatform } from '@/lib/platform'
 import type { CommonTelemetryProperties } from './events'
 
@@ -24,9 +25,13 @@ function sampleRate(value: string): number {
 }
 
 export function getTelemetryConfig(): TelemetryConfig {
+  const desktopE2ERuntimeConfig = getDesktopE2ERuntimeConfig()
   return {
     environment: env('VITE_WEWORK_TELEMETRY_ENVIRONMENT') || import.meta.env.MODE,
-    posthogHost: env('VITE_WEWORK_POSTHOG_HOST') || 'https://us.i.posthog.com',
+    posthogHost:
+      desktopE2ERuntimeConfig.posthogHost ||
+      env('VITE_WEWORK_POSTHOG_HOST') ||
+      'https://us.i.posthog.com',
     posthogKey: env('VITE_WEWORK_POSTHOG_KEY'),
     releaseChannel: env('VITE_WEWORK_RELEASE_CHANNEL') || 'development',
     sentryDsn: env('VITE_WEWORK_SENTRY_DSN'),
