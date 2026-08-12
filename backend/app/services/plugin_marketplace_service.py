@@ -249,13 +249,17 @@ class PluginMarketplaceService:
             installed_id = self._installed_item_id(item)
             if device_id and installed_id:
                 device_row = rows_by_install.get((installed_id, device_id))
-                if not self._device_has_release(device_row, item.spec.releaseId):
+                if not self._device_has_materialized_release(device_row):
                     item.spec.installState = (
                         "failed"
                         if device_row and device_row.state == "failed"
                         else "not_installed"
                     )
                     continue
+                if device_row.actual_release_id != item.spec.releaseId:
+                    item.spec.installState = "update_available"
+                    continue
+                item.spec.installState = "installed"
             plugin = db.get(Plugin, plugin_id)
             if plugin and plugin.latest_release_id != item.spec.releaseId:
                 item.spec.installState = "update_available"
@@ -1672,13 +1676,7 @@ class PluginMarketplaceService:
         installed_for_device = bool(
             installed
             and installed.is_active
-            and (
-                not device_id
-                or self._device_has_release(
-                    device_row,
-                    installed_spec.get("releaseId"),
-                )
-            )
+            and (not device_id or self._device_has_materialized_release(device_row))
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
@@ -1728,7 +1726,14 @@ class PluginMarketplaceService:
             sourceProvider=source_provider,
             sourceLabel=self._source_label(plugin),
             updateAvailable=bool(
-                installed_for_device and installed_spec.get("releaseId") != release.id
+                installed_for_device
+                and (
+                    installed_spec.get("releaseId") != release.id
+                    or (
+                        device_row is not None
+                        and device_row.actual_release_id != release.id
+                    )
+                )
             ),
             currentDeviceInstallation=(
                 self._device_installation_item(device_row) if device_row else None
@@ -1796,17 +1801,10 @@ class PluginMarketplaceService:
             .first()
         )
 
-    def _device_has_release(
-        self,
-        row: PluginDeviceInstallation | None,
-        release_id: object,
+    def _device_has_materialized_release(
+        self, row: PluginDeviceInstallation | None
     ) -> bool:
-        return bool(
-            row
-            and isinstance(release_id, int)
-            and row.state == "installed"
-            and row.actual_release_id == release_id
-        )
+        return bool(row and row.actual_release_id)
 
     def _device_installation_item(
         self, row: PluginDeviceInstallation

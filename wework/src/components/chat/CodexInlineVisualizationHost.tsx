@@ -58,9 +58,13 @@ h3, h4, h5, h6 { font-size: calc(var(--font-size-base) * 1.2857142857); font-wei
 export function CodexInlineVisualizationHost({
   file,
   fileChanges,
+  mode,
+  title,
 }: {
   file: string
   fileChanges?: TurnFileChangesSummary
+  mode?: 'wide'
+  title?: string
 }) {
   const sourcePath = resolveVisualizationPath(file, fileChanges)
   const sourceUrl = sourcePath ? localHtmlBrowserUrl(sourcePath) : null
@@ -105,11 +109,12 @@ export function CodexInlineVisualizationHost({
     <div
       data-scroll-anchor
       data-testid="codex-inline-visualization"
+      data-visualization-mode={mode ?? 'inline'}
       className="mb-3 overflow-hidden rounded-xl border border-border bg-background"
     >
       <iframe
         ref={frameRef}
-        title={file}
+        title={title ?? file}
         src={frameUrl}
         sandbox="allow-scripts"
         style={{ height: frameHeight }}
@@ -168,6 +173,7 @@ function resolveVisualizationPath(
   file: string,
   fileChanges?: TurnFileChangesSummary
 ): string | null {
+  if (isAbsoluteVisualizationPath(file)) return file
   if (!fileChanges || fileChanges.status !== 'active') return null
   const normalizedFile = file.replace(/\\/g, '/')
   const exactMatch = fileChanges.files.find(
@@ -186,4 +192,9 @@ function resolveVisualizationPath(
   } catch {
     return null
   }
+}
+
+function isAbsoluteVisualizationPath(file: string): boolean {
+  const normalized = file.trim().replace(/\\/g, '/')
+  return normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)
 }

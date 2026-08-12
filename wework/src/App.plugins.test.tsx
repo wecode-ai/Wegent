@@ -912,7 +912,8 @@ describe('App plugins route', () => {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
     }
-    vi.mocked(fetch).mockResolvedValue({
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue({
       ok: false,
       status: 500,
       text: () => Promise.resolve('Internal server error'),
@@ -924,7 +925,9 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '应用功能尚未推出'
     )
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/sites'))).toBe(
+      false
+    )
     expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
   })
 

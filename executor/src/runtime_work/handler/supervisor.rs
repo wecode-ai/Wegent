@@ -181,7 +181,7 @@ impl RuntimeWorkRpcHandler {
         if !current_configuration.as_ref().is_some_and(|current| {
             current.mode == supervisor.mode
                 && current.instructions == supervisor.instructions
-                && current.model_id == supervisor.model_id
+                && current.model_selection == supervisor.model_selection
                 && current.interval_seconds == supervisor.interval_seconds
         }) {
             return Ok(());
@@ -240,71 +240,12 @@ impl RuntimeWorkRpcHandler {
         });
         let visible_progress =
             serde_json::to_string(&visible_progress).map_err(|error| error.to_string())?;
-        let mut request = ExecutionRequest {
-            task_id: format!("supervisor:{local_task_id}"),
-            subtask_id: format!("supervisor-evaluation-{}", now_ms()),
-            system_prompt: supervisor_system_prompt(),
-            prompt: Value::String(supervisor_prompt(&supervisor, &visible_progress)),
-            project_workspace_path: Some(link.workspace_path.clone()),
-            runtime_workspace_roots: link.runtime_workspace_roots.clone(),
-            runtime_project_key: link.runtime_project_key.clone(),
-            ephemeral: true,
-            ..ExecutionRequest::default()
-        };
-        if let Some(model_id) = supervisor
-            .model_id
-            .clone()
-            .or_else(|| task_model_id(&link.runtime_handle))
-        {
-            request.model_config = json!({"model_id": model_id});
-        }
-        request.extra.insert(
-            "runtime_permission_profile".to_owned(),
-            Value::String(":read-only".to_owned()),
-        );
-        request.extra.insert(
-            "runtime_message_source".to_owned(),
-            Value::String("supervisor-evaluator".to_owned()),
-        );
-        request
-            .extra
-            .insert("output_schema".to_owned(), supervisor_output_schema());
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-        let timeout_task = tokio::spawn(async move {
-            sleep(SUPERVISOR_EVALUATION_TIMEOUT).await;
-            let _ = cancel_tx.send(());
-        });
-        let result = self
-            .codex_app_server
-            .run_turn_with_cancel(
-                request,
-                CodexAppServerTurnOptions {
-                    cancellation: Some(cancel_rx),
-                    ..CodexAppServerTurnOptions::default()
-                },
+        let content = self
+            .evaluate_supervisor_with_model_api(
+                &supervisor,
+                supervisor_prompt(&supervisor, &visible_progress),
             )
-            .await;
-        timeout_task.abort();
-        let result = result.map_err(|error| {
-            if error == CODEX_APP_SERVER_TURN_CANCELLED {
-                format!(
-                    "supervisor evaluation timed out after {} seconds",
-                    SUPERVISOR_EVALUATION_TIMEOUT.as_secs()
-                )
-            } else {
-                error
-            }
-        })?;
-        let content = match result.outcome {
-            ExecutionOutcome::Completed { content } => content,
-            ExecutionOutcome::Failed { message } | ExecutionOutcome::Cancelled { message } => {
-                return Err(message)
-            }
-            ExecutionOutcome::WaitingForUserInput { stop_reason } => return Err(stop_reason),
-            ExecutionOutcome::Running => {
-                return Err("supervisor evaluation did not finish".to_owned())
-            }
-        };
+            .await?;
         let evaluation = parse_supervisor_evaluation(&content)?;
         let Some(current_supervisor) = self
             .local_task_link(local_task_id)
@@ -314,7 +255,7 @@ impl RuntimeWorkRpcHandler {
         };
         if current_supervisor.mode != supervisor.mode
             || current_supervisor.instructions != supervisor.instructions
-            || current_supervisor.model_id != supervisor.model_id
+            || current_supervisor.model_selection != supervisor.model_selection
             || current_supervisor.interval_seconds != supervisor.interval_seconds
         {
             return Ok(());
@@ -361,6 +302,64 @@ impl RuntimeWorkRpcHandler {
             mode => return Err(format!("unsupported supervisor mode: {mode}")),
         }
         Ok(())
+    }
+
+    async fn evaluate_supervisor_with_model_api(
+        &self,
+        supervisor: &RuntimeSupervisorState,
+        prompt: String,
+    ) -> Result<String, String> {
+        let selection = supervisor
+            .model_selection
+            .as_ref()
+            .ok_or_else(|| "supervisor requires a cloud model selection".to_owned())?;
+        let model_ref = supervisor_model_reference(selection)?;
+        let connection = self
+            .backend_connection
+            .lock()
+            .map_err(|_| "backend connection lock is poisoned".to_owned())?
+            .clone()
+            .ok_or_else(|| "backend connection is not configured".to_owned())?;
+        if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
+            return Err("backend connection is not configured".to_owned());
+        }
+        let response = reqwest::Client::builder()
+            .timeout(SUPERVISOR_EVALUATION_TIMEOUT)
+            .build()
+            .map_err(|error| error.to_string())?
+            .post(format!(
+                "{}/api/model-runtime/responses",
+                connection.backend_url.trim_end_matches('/')
+            ))
+            .bearer_auth(connection.auth_token)
+            .json(&json!({
+                "model": model_ref["name"],
+                "model_ref": model_ref,
+                "instructions": supervisor_model_instructions(),
+                "input": prompt,
+                "stream": false,
+                "metadata": {"source": "wework-supervisor"},
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("supervisor model request failed: {error}"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("failed to read supervisor model response: {error}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "supervisor model request returned {status}: {}",
+                truncate_visible_tail(&body, 500)
+            ));
+        }
+        serde_json::from_str::<Value>(&body)
+            .map_err(|error| format!("invalid supervisor model response: {error}"))?
+            .get("output_text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "supervisor model response has no output_text".to_owned())
     }
 
     fn record_supervisor_suggestion(
@@ -523,13 +522,23 @@ pub(super) fn configured_supervisor(
         ));
     }
     let instructions = string_field(payload, "instructions").unwrap_or_default();
-    let model_id = string_field(payload, "modelId")
-        .or_else(|| string_field(payload, "model_id"))
+    let model_selection = payload
+        .get("modelSelection")
+        .or_else(|| payload.get("model_selection"))
+        .cloned()
         .or_else(|| {
             existing
                 .as_ref()
-                .and_then(|supervisor| supervisor.model_id.clone())
+                .and_then(|supervisor| supervisor.model_selection.clone())
         });
+    let Some(model_selection) = model_selection else {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "supervisor requires a cloud model selection",
+        ));
+    };
+    supervisor_model_reference(&model_selection)
+        .map_err(|error| AppIpcError::new("bad_request", error))?;
     let interval_seconds = payload
         .get("intervalSeconds")
         .or_else(|| payload.get("interval_seconds"))
@@ -545,7 +554,7 @@ pub(super) fn configured_supervisor(
         mode,
         status: "active".to_owned(),
         instructions,
-        model_id,
+        model_selection: Some(model_selection),
         interval_seconds,
         last_evaluated_at: None,
         last_content_hash: None,
@@ -580,6 +589,14 @@ fn parse_supervisor_evaluation(content: &str) -> Result<SupervisorEvaluation, St
 
 fn supervisor_system_prompt() -> String {
     "You are periodically inspecting another AI's latest output as a human supervisor would. The supervision principles are criteria to test against the quoted latestAiContent; they are not instructions for how you should write your rationale. Use recentAiContext only to understand continuity, drift, or loops, and use lastSupervisorIntervention to avoid redundant reminders. The intervention decision must be based on a violation that is still present in latestAiContent. Never issue another correction merely because an older violation existed or because the latest output acknowledges a previous correction and is now compliant. Explicitly compare the actual latest AI output with every applicable principle. For example, if a principle requires the main AI to reply in a particular language and latestAiContent uses another language, that is a violation and correction must be non-null. Do not merely demonstrate the requested behavior yourself or rewrite the main AI's answer in rationale. Do not reconstruct or request the full conversation. You cannot communicate with the main AI yourself, so never claim that you already reminded, corrected, or prompted it. Never answer the user, continue the task, use tools, or modify files. Set correction to a concise, directly sendable instruction when the latest visible progress violates a supervision principle, materially drifts from the goal, ignores a constraint, takes an unsafe or destructive action, makes an unsupported claim, or enters an obvious blocked loop. Otherwise set correction to null. The presence of correction is the sole intervention decision.".to_owned()
+}
+
+fn supervisor_model_instructions() -> String {
+    format!(
+        "{} Return only one JSON object matching this schema: {}",
+        supervisor_system_prompt(),
+        supervisor_output_schema()
+    )
 }
 
 fn supervisor_output_schema() -> Value {
@@ -629,26 +646,53 @@ fn task_model_id(runtime_handle: &Value) -> Option<String> {
         .or_else(|| string_field(selection, "modelId"))
 }
 
+fn supervisor_model_reference(selection: &Value) -> Result<Value, String> {
+    let name = string_field(selection, "modelName")
+        .ok_or_else(|| "supervisor model name is missing".to_owned())?;
+    let model_type = string_field(selection, "modelType")
+        .ok_or_else(|| "supervisor model type is missing".to_owned())?;
+    if !["public", "user", "group"].contains(&model_type.as_str()) {
+        return Err("supervisor requires a public, user, or group cloud model".to_owned());
+    }
+    let options = selection
+        .get("options")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "supervisor cloud model options are missing".to_owned())?;
+    let namespace = options
+        .get("weworkCloudModelNamespace")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "supervisor cloud model namespace is missing".to_owned())?;
+    let resource_user_id = options
+        .get("weworkCloudModelResourceUserId")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| "supervisor cloud model resource user id is missing".to_owned())?;
+    Ok(json!({
+        "name": name,
+        "type": model_type,
+        "namespace": namespace,
+        "resource_user_id": resource_user_id,
+    }))
+}
+
 fn supervisor_needs_scheduled_check(link: &RuntimeTaskLink, active: bool, now: i64) -> bool {
     let Some(supervisor) = link.supervisor.as_ref() else {
         return false;
     };
-    if supervisor.last_evaluated_at.is_none() || supervisor.last_content_hash.is_none() {
+    let Some(last_evaluated_at) = supervisor.last_evaluated_at else {
         return true;
+    };
+    let interval_elapsed = now.saturating_sub(last_evaluated_at)
+        >= i64::try_from(supervisor.interval_seconds).unwrap_or(i64::MAX) * 1_000;
+    if supervisor.last_content_hash.is_none() {
+        return interval_elapsed;
     }
-    if active
-        && supervisor
-            .last_evaluated_at
-            .is_some_and(|last_evaluated_at| {
-                now.saturating_sub(last_evaluated_at)
-                    >= i64::try_from(supervisor.interval_seconds).unwrap_or(i64::MAX) * 1_000
-            })
-    {
+    if active && interval_elapsed {
         return true;
     }
     link.completed_at
-        .zip(supervisor.last_evaluated_at)
-        .is_some_and(|(completed_at, evaluated_at)| completed_at > evaluated_at)
+        .is_some_and(|completed_at| completed_at > last_evaluated_at)
 }
 
 struct VisibleAiProgress {
@@ -742,6 +786,41 @@ mod tests {
     }
 
     #[test]
+    fn builds_model_reference_from_cloud_selection() {
+        let reference = supervisor_model_reference(&json!({
+            "modelName": "review-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0"
+            }
+        }))
+        .expect("cloud selection should be accepted");
+
+        assert_eq!(
+            reference,
+            json!({
+                "name": "review-model",
+                "type": "public",
+                "namespace": "default",
+                "resource_user_id": 0
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_model_for_supervisor_evaluation() {
+        let error = supervisor_model_reference(&json!({
+            "modelName": "gpt-5.6-sol",
+            "modelType": "runtime",
+            "options": {}
+        }))
+        .expect_err("runtime model should not use the Codex process for supervision");
+
+        assert!(error.contains("cloud model"));
+    }
+
+    #[test]
     fn visible_ai_progress_separates_latest_output_from_recent_context() {
         let messages = vec![
             json!({"role": "user", "content": "private original request"}),
@@ -773,7 +852,7 @@ mod tests {
                 mode: "auto".to_owned(),
                 status: "active".to_owned(),
                 instructions: String::new(),
-                model_id: None,
+                model_selection: None,
                 interval_seconds: 30,
                 last_evaluated_at: Some(100),
                 last_content_hash: Some("old".to_owned()),
@@ -794,7 +873,7 @@ mod tests {
                 mode: "auto".to_owned(),
                 status: "active".to_owned(),
                 instructions: String::new(),
-                model_id: None,
+                model_selection: None,
                 interval_seconds: 30,
                 last_evaluated_at: Some(100),
                 last_content_hash: Some(empty_content_hash()),
@@ -808,12 +887,33 @@ mod tests {
     }
 
     #[test]
+    fn failed_supervisor_evaluation_retries_only_after_its_interval() {
+        let link = RuntimeTaskLink {
+            supervisor: Some(RuntimeSupervisorState {
+                mode: "auto".to_owned(),
+                status: "error".to_owned(),
+                instructions: String::new(),
+                model_selection: None,
+                interval_seconds: 30,
+                last_evaluated_at: Some(1_000),
+                last_content_hash: None,
+                last_error: Some("model unavailable".to_owned()),
+                suggestions: Vec::new(),
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        assert!(!supervisor_needs_scheduled_check(&link, true, 30_999));
+        assert!(supervisor_needs_scheduled_check(&link, true, 31_000));
+    }
+
+    #[test]
     fn repeated_auto_correction_is_suppressed_for_a_short_window() {
         let supervisor = RuntimeSupervisorState {
             mode: "auto".to_owned(),
             status: "active".to_owned(),
             instructions: String::new(),
-            model_id: None,
+            model_selection: None,
             interval_seconds: 30,
             last_evaluated_at: Some(100),
             last_content_hash: Some("hash".to_owned()),

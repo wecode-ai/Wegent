@@ -3,6 +3,7 @@
 
 """Persistence and authorization for shared project chat messages."""
 
+import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -474,6 +476,11 @@ class ProjectChatService:
             # every queue-dispatched run of the same robot (no user trigger),
             # so server-created agent messages use the unique message id.
             client_message_id=message_id,
+            runtime_activity_key=self._runtime_activity_key(
+                request.runtime_device_id or "",
+                request.runtime_task_id or "",
+                request.trigger_message_id or "",
+            ),
             project_id=request.project_id,
             task_id=request.task_id or "",
             sender_type="agent",
@@ -494,19 +501,49 @@ class ProjectChatService:
             runtime_task_id=request.runtime_task_id or "",
             status="streaming",
         )
-        db.add(row)
-        self._set_task_ai_state(
-            db,
-            row=row,
-            trigger=trigger,
-            agent=configured_agent,
-            status_value="running",
-            prompt=request.prompt,
-            user_id=user_id,
-        )
-        db.commit()
+        try:
+            db.add(row)
+            self._set_task_ai_state(
+                db,
+                row=row,
+                trigger=trigger,
+                agent=configured_agent,
+                status_value="running",
+                prompt=request.prompt,
+                user_id=user_id,
+            )
+            db.commit()
+        except IntegrityError:
+            # A concurrent opener (runtime event upsert vs transport start
+            # report) inserted the activity message first. Reuse it instead of
+            # leaving a duplicate streaming comment behind.
+            db.rollback()
+            existing = self._agent_response_for_runtime(
+                db,
+                trigger_message_id=request.trigger_message_id,
+                agent_id=request.agent_id,
+                runtime_device_id=request.runtime_device_id,
+                runtime_task_id=request.runtime_task_id,
+            )
+            if existing is None:
+                raise
+            db.refresh(existing)
+            return self.to_view(existing)
         db.refresh(row)
         return self.to_view(row)
+
+    @staticmethod
+    def _runtime_activity_key(
+        runtime_device_id: str, runtime_task_id: str, trigger_message_id: str
+    ) -> str | None:
+        """Stable activity identity for the unique per-run comment index."""
+
+        if not runtime_device_id or not runtime_task_id:
+            return None
+        identity = "\0".join(
+            (runtime_device_id, runtime_task_id, trigger_message_id or "")
+        )
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     def project_runtime_event(
         self,
@@ -517,18 +554,13 @@ class ProjectChatService:
         event_name: str,
         payload: dict,
     ) -> tuple[ProjectChatMessageView, str] | None:
-        row = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.runtime_device_id == device_id,
-                ProjectChatMessage.runtime_task_id == runtime_task_id,
-                ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        row = self._streaming_activity_for_runtime(db, device_id, runtime_task_id)
+        if row is None:
+            row = self._open_activity_from_execution(
+                db,
+                runtime_device_id=device_id,
+                runtime_task_id=runtime_task_id,
             )
-            .order_by(ProjectChatMessage.id.desc())
-            .first()
-        )
         if row is None:
             logger.info(
                 "[ProjectChat] Runtime event ignored because no streaming AI message matched: "
@@ -608,9 +640,134 @@ class ProjectChatService:
             if isinstance(snapshot, str):
                 row.content = snapshot
         elif terminal_status == "completed":
-            final_value = self._project_chat_final_text(data, payload)
-            if isinstance(final_value, str) and final_value:
-                row.content = final_value
+            self._finish_activity(
+                db,
+                row,
+                status_value="completed",
+                content=self._project_chat_final_text(data, payload),
+                error=None,
+            )
+        elif terminal_status == "failed":
+            error = data.get("error") or payload.get("error")
+            self._finish_activity(
+                db,
+                row,
+                status_value="failed",
+                content=error,
+                error=error,
+            )
+        else:
+            return None
+        db.commit()
+        db.refresh(row)
+        return self.to_view(row), "snapshot"
+
+    @staticmethod
+    def _streaming_activity_for_runtime(
+        db: Session,
+        runtime_device_id: str,
+        runtime_task_id: str,
+    ) -> ProjectChatMessage | None:
+        """Return the open streaming AI message for one runtime task."""
+
+        return (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.runtime_device_id == runtime_device_id,
+                ProjectChatMessage.runtime_task_id == runtime_task_id,
+                ProjectChatMessage.sender_type == "agent",
+                ProjectChatMessage.status == "streaming",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .order_by(ProjectChatMessage.id.desc())
+            .first()
+        )
+
+    def _open_activity_from_execution(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+    ) -> ProjectChatMessage | None:
+        """Open the activity message from the owning execution.
+
+        Runtime events may arrive before the transport reports the created
+        task (local App puller), so the write-back path opens the message on
+        demand instead of dropping the event. The open stays idempotent.
+        """
+
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
+        )
+
+        execution = loop_item_execution_service.execution_for_runtime(
+            db,
+            runtime_device_id=runtime_device_id,
+            runtime_task_id=runtime_task_id,
+        )
+        if execution is None:
+            return None
+        try:
+            loop_item_execution_service.open_execution_activity(
+                db,
+                execution=execution,
+            )
+        except Exception:
+            logger.exception(
+                "[ProjectChat] Activity open on event failed execution=%s",
+                execution.id,
+            )
+        return self._streaming_activity_for_runtime(
+            db,
+            runtime_device_id,
+            runtime_task_id,
+        )
+
+    def finish_runtime_activity(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        status_value: str,
+        content: object | None,
+        error: object | None = None,
+    ) -> ProjectChatMessageView | None:
+        """Close the streaming activity for a terminal channel report."""
+
+        row = self._streaming_activity_for_runtime(
+            db,
+            runtime_device_id,
+            runtime_task_id,
+        )
+        if row is None:
+            return None
+        self._finish_activity(
+            db,
+            row,
+            status_value=status_value,
+            content=content,
+            error=error,
+        )
+        db.commit()
+        db.refresh(row)
+        return self.to_view(row)
+
+    def _finish_activity(
+        self,
+        db: Session,
+        row: ProjectChatMessage,
+        *,
+        status_value: str,
+        content: object | None,
+        error: object | None,
+    ) -> None:
+        """Apply one terminal state to the streaming AI message."""
+
+        if status_value == "completed":
+            if isinstance(content, str) and content:
+                row.content = content
             row.status = "completed"
             row.message_type = "text"
             self._set_task_ai_state(
@@ -621,24 +778,18 @@ class ProjectChatService:
                 status_value="completed",
             )
             self._advance_task_to_review(db, row)
-        elif terminal_status == "failed":
-            error = data.get("error") or payload.get("error")
-            if not row.content and isinstance(error, str):
-                row.content = error
-            row.status = "failed"
-            self._set_task_ai_state(
-                db,
-                row=row,
-                trigger=None,
-                agent=None,
-                status_value="failed",
-                error=error,
-            )
-        else:
-            return None
-        db.commit()
-        db.refresh(row)
-        return self.to_view(row), "snapshot"
+            return
+        if not row.content and isinstance(content, str) and content:
+            row.content = content
+        row.status = "failed"
+        self._set_task_ai_state(
+            db,
+            row=row,
+            trigger=None,
+            agent=None,
+            status_value="failed",
+            error=error or content,
+        )
 
     @staticmethod
     def _project_chat_terminal_status(
@@ -762,6 +913,11 @@ class ProjectChatService:
                 agent_id=parent.agent_id,
                 runtime_device_id=parent.runtime_device_id or "",
                 runtime_task_id=parent.runtime_task_id or "",
+                runtime_activity_key=self._runtime_activity_key(
+                    parent.runtime_device_id or "",
+                    parent.runtime_task_id or "",
+                    f"{parent.message_id}:{child_id}",
+                ),
                 status="completed",
             )
             db.add(existing)

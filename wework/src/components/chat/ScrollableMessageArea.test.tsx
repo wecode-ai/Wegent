@@ -804,6 +804,18 @@ describe('ScrollableMessageArea', () => {
               '<application_context>',
               '[wework.terminal.current]',
               'Wework terminal context',
+              '[referencedConversations]',
+              JSON.stringify([
+                {
+                  role: 'user',
+                  content:
+                    '<application_context>\\n[source]\\nstate\\n</application_context>\\n\\nReferenced question',
+                },
+                {
+                  role: 'assistant',
+                  content: 'Referenced answer that must stay hidden',
+                },
+              ]),
               '</application_context>',
               '',
               '第二条用户需求',
@@ -890,6 +902,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
     expect(screen.getAllByText('第二条用户需求')).toHaveLength(2)
     expect(screen.queryByText(/application_context/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Referenced answer that must stay hidden/)).not.toBeInTheDocument()
   })
 
   test('renders message navigation in an overlay outside the external scroller', () => {
