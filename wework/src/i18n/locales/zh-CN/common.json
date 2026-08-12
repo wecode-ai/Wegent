@@ -2782,6 +2782,8 @@
     "automation_edit_title": "编辑已安排任务",
     "automation_name": "名称",
     "automation_prompt": "任务说明",
+    "automation_goal_mode": "持续完成目标",
+    "automation_goal_description": "将任务说明作为目标持续推进，直到目标完成",
     "automation_location": "运行位置",
     "automation_local": "本地",
     "automation_cloud": "云端",

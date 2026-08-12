@@ -885,6 +885,11 @@ describe('createLocalAppServices', () => {
         teamId: 0,
         runtime: 'codex',
         message: 'Say hello',
+        initialGoal: {
+          objective: 'Say hello',
+          status: 'active',
+          tokenBudget: null,
+        },
       },
     })
 
@@ -894,6 +899,11 @@ describe('createLocalAppServices', () => {
         automation: expect.objectContaining({
           taskPayload: expect.objectContaining({
             standaloneChatWorkspace: true,
+            initialGoal: {
+              objective: 'Say hello',
+              status: 'active',
+              tokenBudget: null,
+            },
             executionRequest: expect.objectContaining({
               standalone_chat_workspace: true,
             }),

@@ -2784,6 +2784,8 @@
     "automation_edit_title": "Edit scheduled task",
     "automation_name": "Name",
     "automation_prompt": "Task instructions",
+    "automation_goal_mode": "Keep pursuing a goal",
+    "automation_goal_description": "Use the task instructions as a goal and keep working until it is complete",
     "automation_location": "Run location",
     "automation_local": "Local",
     "automation_cloud": "Cloud",
