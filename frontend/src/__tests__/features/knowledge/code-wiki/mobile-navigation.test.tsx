@@ -179,6 +179,7 @@ describe('navigating a wiki on a narrow screen', () => {
     await renderReader()
 
     expect(screen.queryByTestId('code-wiki-configure')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-regenerate')).not.toBeInTheDocument()
   })
 
   it('returns to the unified knowledge-base list', async () => {

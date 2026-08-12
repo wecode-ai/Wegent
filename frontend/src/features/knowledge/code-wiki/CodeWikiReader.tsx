@@ -342,39 +342,43 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             <Settings className="h-4 w-4" />
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmingRegenerate(true)}
-          disabled={control.disabled}
-          title={control.hint || undefined}
-          data-testid="code-wiki-regenerate"
-          className="h-11 sm:h-9"
-        >
-          <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
-          {control.label}
-        </Button>
+        {canConfigure && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmingRegenerate(true)}
+            disabled={control.disabled}
+            title={control.hint || undefined}
+            data-testid="code-wiki-regenerate"
+            className="h-11 sm:h-9"
+          >
+            <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
+            {control.label}
+          </Button>
+        )}
       </div>
 
-      <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
-        <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('codeWiki.reader.regenerateConfirmBody')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRegenerate}
-              data-testid="code-wiki-regenerate-confirm-action"
-            >
-              {t('codeWiki.reader.regenerate')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {canConfigure && (
+        <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
+          <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('codeWiki.reader.regenerateConfirmBody')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleRegenerate}
+                data-testid="code-wiki-regenerate-confirm-action"
+              >
+                {t('codeWiki.reader.regenerate')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
 
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,
