@@ -99,6 +99,15 @@ import {
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
+async function waitForControlText(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if ((await control.command('getText', selector)).trim() === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function writeCodexConfig(
   codexHome,
   modelServerUrl,
@@ -821,7 +830,9 @@ async function verifyCloudProjectFlow(
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   const replacementProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'The duplicate regression cloud project was not created'
   )
   const replacementProjectMenuTestId = replacementProjectSnapshot.testIds.find(testId =>
@@ -834,10 +845,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Creating another cloud project restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${replacementProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${replacementProjectId}"]`,
     'replacement-workspace',
     'Creating another cloud project restored the removed project instead of the replacement'
   )
@@ -846,7 +856,9 @@ async function verifyCloudProjectFlow(
   await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
   await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Creating a local project while cloud work was connected exposed duplicate projects',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -855,7 +867,9 @@ async function verifyCloudProjectFlow(
   await restartDesktopApp()
   const restartedProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -869,10 +883,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Restarting Wework restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${restartedProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${restartedProjectId}"]`,
     'replacement-workspace',
     'Restarting Wework restored the removed project instead of the replacement'
   )
