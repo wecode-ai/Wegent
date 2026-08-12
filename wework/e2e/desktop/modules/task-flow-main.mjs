@@ -3,6 +3,8 @@ import {
   verifyLocalExecutorUsesCloudSocketUrl,
 } from './cloud-environment.mjs'
 
+import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
@@ -112,6 +114,7 @@ import {
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_ONLY,
@@ -501,10 +504,12 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY || CLOUD_VISION_ONLY) {
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
       cloudEnvironment = new RealCloudEnvironment({
         codexBinary,
         modelServerUrl: control.url,
+        scenarioConfigToml:
+          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
         workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -721,7 +726,31 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
-    if (CLOUD_ONLY || CLOUD_VISION_ONLY) {
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+      if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT) {
+        phase = `cloud-${SELECTED_DESKTOP_SEGMENT}`
+        await verifyCloudCheckpoint({
+          app,
+          appIdentifier,
+          cloudEnvironment,
+          control,
+          desktopScenario,
+          restartDesktopApp,
+          setPhase: value => {
+            phase = value
+          },
+          workspacePath,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(
+          `Wework desktop cloud checkpoint ${SELECTED_DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
+        )
+        return
+      }
       if (CLOUD_ONLY) {
         phase = 'server-downlinked-socket-url'
         await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
@@ -749,7 +778,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(
-        `Wework desktop ${CLOUD_VISION_ONLY ? 'cloud-vision' : 'cloud-project'} E2E passed. Diagnostics: ${resultDir}`
+        `Wework desktop ${CLOUD_VISION_ONLY ? 'cloud-vision' : CLOUD_FEATURES_ONLY ? 'cloud-features' : 'cloud-project'} E2E passed. Diagnostics: ${resultDir}`
       )
       return
     }

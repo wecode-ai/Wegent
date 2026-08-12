@@ -48,6 +48,7 @@ interface AutomationDetailWorkspaceProps {
   currentRuntimeTask: RuntimeTaskAddress | null
   runtimeWork: RuntimeWorkListResponse | null
   localDeviceIds: string[]
+  cloudAvailable: boolean
   saving: boolean
   dirty: boolean
   running: boolean
@@ -71,6 +72,7 @@ export function AutomationDetailWorkspace({
   currentRuntimeTask,
   runtimeWork,
   localDeviceIds,
+  cloudAvailable,
   saving,
   dirty,
   running,
@@ -244,7 +246,10 @@ export function AutomationDetailWorkspace({
                   const target = taskOptions.find(option => option.key === value)
                   onChange('continuationAddress', target?.address ?? null)
                   if (target) {
-                    onChange('source', 'local')
+                    onChange(
+                      'source',
+                      localDeviceIds.includes(target.address.deviceId) ? 'local' : 'cloud'
+                    )
                     onChange('deviceId', target.address.deviceId)
                     onChange('workspacePath', target.address.workspacePath ?? '')
                   }
@@ -265,7 +270,7 @@ export function AutomationDetailWorkspace({
                     {
                       value: 'cloud',
                       label: t('workbench.automation_cloud', '云端'),
-                      disabled: true,
+                      disabled: !cloudAvailable,
                     },
                   ]}
                 />
@@ -323,7 +328,6 @@ export function AutomationDetailWorkspace({
                       ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
                       : ''
                   }
-                  disabled={draft.source === 'cloud'}
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
                     onChange('modelType', modelType)
@@ -345,7 +349,6 @@ export function AutomationDetailWorkspace({
                 <InlineSelect
                   dataTestId="automation-reasoning-select"
                   value={reasoning}
-                  disabled={draft.source === 'cloud'}
                   onChange={value =>
                     onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
                   }

@@ -117,6 +117,10 @@ export function AutomationsPage() {
     () => state.devices.filter(device => !isCloudDevice(device)),
     [state.devices]
   )
+  const cloudDevices = useMemo(
+    () => state.devices.filter(device => isCloudDevice(device)),
+    [state.devices]
+  )
   const loadAutomations = useCallback(async () => {
     if (!automationApi) {
       setError(t('workbench.automations_unavailable', '当前运行环境不支持自动化'))
@@ -266,8 +270,9 @@ export function AutomationsPage() {
   }
 
   const changeSource = (source: AutomationSource) => {
-    if (!draft || editing || source !== 'local') return
-    const deviceId = localDevices[0]?.device_id ?? ''
+    if (!draft || editing) return
+    const devices = source === 'cloud' ? cloudDevices : localDevices
+    const deviceId = devices[0]?.device_id ?? ''
     setDraft(current =>
       current
         ? {
@@ -567,12 +572,13 @@ export function AutomationsPage() {
                 automation={editing}
                 runs={runs}
                 locale={locale}
-                devices={localDevices}
+                devices={draft.source === 'cloud' ? cloudDevices : localDevices}
                 projects={state.runtimeWork?.projects ?? []}
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}
                 runtimeWork={state.runtimeWork}
                 localDeviceIds={localDevices.map(device => device.device_id)}
+                cloudAvailable={cloudDevices.length > 0}
                 saving={saving}
                 dirty={dirty}
                 running={Boolean(editing && runningId === editing.id)}

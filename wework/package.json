@@ -30,6 +30,7 @@
     "e2e": "playwright test",
     "e2e:desktop": "node e2e/desktop/run-checkpoints.mjs",
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
+    "e2e:desktop:cloud-features": "node e2e/desktop/task-flow.e2e.mjs --cloud-features-only",
     "e2e:desktop:cloud-vision": "node e2e/desktop/task-flow.e2e.mjs --cloud-vision-only",
     "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",
     "e2e:desktop:memory": "node e2e/desktop/task-flow.e2e.mjs --memory-only",
