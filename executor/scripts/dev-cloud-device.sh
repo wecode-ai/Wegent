@@ -55,11 +55,20 @@ mkdir -p "$HOME_DIR/executor-home" "$HOME_DIR/codex"
 PID_FILE="$HOME_DIR/executor.pid"
 LOG_FILE="$HOME_DIR/executor.log"
 
-if [ -f "$BACKEND_ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$BACKEND_ENV_FILE"
-  set +a
+if [ -f "$BACKEND_ENV_FILE" ] && [ -z "${SECRET_KEY:-}" ]; then
+  BACKEND_PYTHON="$PROJECT_DIR/backend/.venv/bin/python"
+  if [ ! -x "$BACKEND_PYTHON" ]; then
+    echo "Error: Backend Python environment is missing" >&2
+    exit 1
+  fi
+  SECRET_KEY="$($BACKEND_PYTHON - "$BACKEND_ENV_FILE" <<'PY'
+import sys
+
+from dotenv import dotenv_values
+
+print(dotenv_values(sys.argv[1]).get("SECRET_KEY", ""))
+PY
+)"
 fi
 
 is_running() {

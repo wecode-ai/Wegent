@@ -271,6 +271,16 @@ impl CodexGlobalProjectIndex {
         self.project_by_key_or_path(value)
     }
 
+    pub fn project_for_ui_id(
+        &self,
+        state_device_id: &str,
+        project_id: u64,
+    ) -> Option<&CodexGlobalProject> {
+        self.projects
+            .iter()
+            .find(|project| runtime_project_ui_id(state_device_id, &project.key) == project_id)
+    }
+
     fn project_by_key_or_path(&self, value: &str) -> Option<&CodexGlobalProject> {
         let normalized = normalize_path_or_raw(value);
         self.projects_by_key
@@ -278,6 +288,14 @@ impl CodexGlobalProjectIndex {
             .and_then(|index| self.projects.get(*index))
             .or_else(|| self.project_for_path(&normalized))
     }
+}
+
+fn runtime_project_ui_id(state_device_id: &str, project_key: &str) -> u64 {
+    let mut hash = 0_u32;
+    for code_unit in format!("{state_device_id}\0{project_key}").encode_utf16() {
+        hash = hash.wrapping_mul(31).wrapping_add(u32::from(code_unit));
+    }
+    u64::from(hash % 1_000_000_000) + 1
 }
 
 pub(crate) fn reorder_codex_global_projects(
@@ -1755,7 +1773,7 @@ mod tests {
     use super::{
         apply_codex_global_state_ops, codex_app_running_probe_args, index_from_payload,
         is_codex_gui_process_command, remove_codex_global_project_payload,
-        rename_codex_global_project_payload, CodexGlobalStateOplogRecord,
+        rename_codex_global_project_payload, runtime_project_ui_id, CodexGlobalStateOplogRecord,
         ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
         OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
         OPLOG_KIND_PROJECT_APPEARANCE, OPLOG_KIND_REORDER_PROJECT, OPLOG_KIND_REORDER_THREAD,
@@ -1788,6 +1806,39 @@ mod tests {
         assert_eq!(
             CODEX_GLOBAL_STATE_OPLOG_FILENAME,
             ".codex-global-state.oplog.jsonl"
+        );
+    }
+
+    #[test]
+    fn runtime_project_ui_id_matches_the_wework_project_id() {
+        assert_eq!(
+            runtime_project_ui_id("local-device", "local-709d7906a4d8eb2000f25236e148ca82",),
+            573_677_101
+        );
+    }
+
+    #[test]
+    fn resolves_a_device_local_project_id_to_its_workspace() {
+        let index = index_from_payload(&payload(json!({
+            "local-projects": {
+                "entry": {
+                    "id": "local-709d7906a4d8eb2000f25236e148ca82",
+                    "name": "Wegent"
+                }
+            },
+            "project-writable-roots": {
+                "local-709d7906a4d8eb2000f25236e148ca82": [
+                    {"kind": "local", "path": "/Volumes/OuterHD/OuterIdeaProjects/Wegent"}
+                ]
+            }
+        })));
+
+        let project = index
+            .project_for_ui_id("local-device", 573_677_101)
+            .expect("device-local project id should resolve");
+        assert_eq!(
+            project.workspace_path,
+            "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
         );
     }
 

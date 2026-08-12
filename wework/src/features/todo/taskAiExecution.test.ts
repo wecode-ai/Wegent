@@ -242,13 +242,6 @@ describe('startTaskAiRun model resolution', () => {
       address: { deviceId: 'device-1', taskId: 'parent-session-1' },
       message: '请开始执行任务',
     })
-    // The session already carries its environment and thread context, so a
-    // reply only sends the message text.
-    expect(sendArgs).not.toHaveProperty('additionalContext')
-    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ onError: expect.any(Function) })
-    )
     expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
     expect(bindTask).not.toHaveBeenCalled()
     expect(client.startAgentResponse).toHaveBeenCalledWith(
@@ -261,7 +254,7 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('starts a fresh hidden run for a new comment even when the task has a previous binding', async () => {
+  it('starts a fresh persistent run for a new comment even when the task has a previous binding', async () => {
     const previouslyBoundTask = {
       ...task,
       ai_state: {
@@ -275,13 +268,15 @@ describe('startTaskAiRun model resolution', () => {
       { task: previouslyBoundTask }
     )
 
-    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled()
     expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
       '请开始执行任务',
       expect.objectContaining({
         cloudProjectId: '11',
-        hiddenFromSidebar: true,
-        continuable: true,
+        origin: {
+          type: 'board_comment',
+          cloudProjectId: '11',
+          loopItemId: 'WEG-1',
+        },
       })
     )
     expect(bindTask).toHaveBeenCalledWith(
@@ -297,7 +292,38 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('falls back to a fresh hidden run when the replied session cannot be resumed', async () => {
+  it('falls back to a fresh persistent run when the replied session cannot be resumed', async () => {
+    const { runtime, client } = await runWith(
+      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      {
+        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
+        continuationError: 'runtime thread not found',
+      }
+    )
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '请开始执行任务',
+      expect.objectContaining({
+        cloudProjectId: '11',
+        origin: expect.objectContaining({
+          type: 'board_comment',
+          loopItemId: 'WEG-1',
+        }),
+      })
+    )
+    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty(
+      'hiddenFromSidebar'
+    )
+    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty('ephemeral')
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeDeviceId: 'device-1',
+        runtimeTaskId: 'runtime-task-1',
+      })
+    )
+  })
+
+  it('does not start a second run when continuation acknowledgement is ambiguous', async () => {
     const { runtime, client } = await runWith(
       { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
       {
@@ -306,19 +332,10 @@ describe('startTaskAiRun model resolution', () => {
       }
     )
 
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      '请开始执行任务',
-      expect.objectContaining({
-        cloudProjectId: '11',
-        hiddenFromSidebar: true,
-        continuable: true,
-      })
-    )
-    expect(client.startAgentResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeDeviceId: 'device-1',
-        runtimeTaskId: 'runtime-task-1',
-      })
+    expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledOnce()
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(client.failAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: '启动失败' })
     )
   })
 
@@ -333,7 +350,18 @@ describe('startTaskAiRun model resolution', () => {
 
     expect(runtime.sendRuntimePaneMessage).toHaveBeenCalledOnce()
     expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
-    expect(client.startAgentResponse).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeDeviceId: 'device-1',
+        runtimeTaskId: 'parent-session-1',
+      })
+    )
+    expect(client.failAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: agentMessage.messageId,
+        error: 'runtime task is already running',
+      })
+    )
   })
 
   it('scopes rebuilt-session history to the owning comment thread', async () => {
@@ -359,7 +387,7 @@ describe('startTaskAiRun model resolution', () => {
       { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
       {
         replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
-        continuationAccepted: false,
+        continuationError: 'runtime thread not found',
         messages: [ownRoot, otherRoot],
         threadRootId: 'thread-1',
       }

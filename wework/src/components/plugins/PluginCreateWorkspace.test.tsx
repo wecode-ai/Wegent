@@ -150,10 +150,9 @@ describe('PluginCreateWorkspace', () => {
 
     render(<PluginCreateWorkspace />)
 
-    await userEvent.type(
-      screen.getByTestId('plugin-create-prompt-input'),
-      'Create a release-notes plugin'
-    )
+    fireEvent.change(screen.getByTestId('plugin-create-prompt-input'), {
+      target: { value: 'Create a release-notes plugin' },
+    })
     await userEvent.click(screen.getByTestId('plugin-create-submit-button'))
 
     expect(workbench.setSelectedSkills).toHaveBeenCalledWith([

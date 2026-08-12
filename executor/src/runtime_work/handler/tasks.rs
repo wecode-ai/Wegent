@@ -274,10 +274,6 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
-        // Hidden-but-continuable runs (task comments) must keep the Wework-side
-        // link out of the sidebar while still creating a durable Codex thread
-        // (a rollout) so a follow-up can resume the same session after restart.
-        let continuable = bool_field(&payload, "continuable").unwrap_or(false);
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -297,6 +293,15 @@ impl RuntimeWorkRpcHandler {
         let payload_has_workspace_path = payload_workspace_path.is_some();
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
+            .or_else(|| {
+                id_field(&payload, "local_project_id")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .and_then(|project_id| {
+                        CodexGlobalProjectIndex::load()
+                            .project_for_ui_id(&self.device_id, project_id)
+                            .map(|project| project.workspace_path.clone())
+                    })
+            })
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
             .ok_or_else(|| {
                 log_executor_event(
@@ -331,11 +336,7 @@ impl RuntimeWorkRpcHandler {
             title.clone(),
             runtime.clone(),
         );
-        link.ephemeral =
-            request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
-        if continuable {
-            request.ephemeral = false;
-        }
+        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
@@ -375,6 +376,12 @@ impl RuntimeWorkRpcHandler {
             cloud_project_id(&request),
         ) {
             runtime_handle.insert("cloudProjectId".to_owned(), project_id);
+        }
+        if let (Some(runtime_handle), Some(origin)) = (
+            link.runtime_handle.as_object_mut(),
+            payload.get("origin").filter(|value| value.is_object()),
+        ) {
+            runtime_handle.insert("origin".to_owned(), origin.clone());
         }
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);

@@ -34,6 +34,7 @@ import type {
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
+  RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
   RuntimeProjectSpaceRef,
@@ -118,6 +119,7 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   modelId?: string | null
   /** Full execution model fields resolved from a UnifiedModel; replaces the
    * global workbench model when provided, matching task-message execution. */
@@ -136,11 +138,6 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Force the runtime task onto a specific device (robot execution
    * environment), bypassing the default project/standalone device pick. */
   deviceId?: string | null
-  /** Keep task-scoped automation out of the global conversation sidebar. */
-  hiddenFromSidebar?: boolean
-  /** Keep the underlying Codex thread durable so a follow-up can resume the
-   * same executor session after an app restart, even while hidden. */
-  continuable?: boolean
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']

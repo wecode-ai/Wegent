@@ -401,7 +401,7 @@ export function createHybridWorkbenchServices(
     work.chats.forEach(workspace => localDeviceIds.add(workspace.deviceId))
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
-    Boolean(deviceId && localDeviceIds.has(deviceId))
+    Boolean(deviceId && (deviceId === 'local-device' || localDeviceIds.has(deviceId)))
   const isKnownCloudDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
   const runtimeApiForCreate = async (deviceId?: string | null) => {
@@ -1170,7 +1170,7 @@ export function createHybridWorkbenchServices(
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },
-    userApi: localServices.userApi,
+    userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,

@@ -8,6 +8,7 @@ import {
   FolderPlus,
   GitCompareArrows,
   Loader2,
+  MessageCircle,
   Monitor,
   RotateCw,
   Search,
@@ -22,6 +23,7 @@ import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycleStoreSnapshot,
@@ -474,6 +476,11 @@ export function MobileDrawer({
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                       const queued = isRuntimeTaskQueued(task)
                       const taskAddress = getRuntimeTaskAddress(workspace, task)
+                      const boardOrigin = runtimeTaskBoardOrigin(task)
+                      const boardOriginLabel =
+                        boardOrigin === 'board_comment'
+                          ? t('workbench.runtime_task_origin_board_comment', '看板评论')
+                          : t('workbench.runtime_task_origin_board_task', '看板任务')
                       return (
                         <div
                           key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
@@ -495,6 +502,12 @@ export function MobileDrawer({
                                 : 'text-[#111111] hover:bg-[#F7F7F7]',
                             ].join(' ')}
                           >
+                            {boardOrigin ? (
+                              <MessageCircle
+                                className="mr-2 h-4 w-4 shrink-0 text-text-tertiary"
+                                aria-label={boardOriginLabel}
+                              />
+                            ) : null}
                             <span className="min-w-0 flex-1 truncate">{task.title}</span>
                             {queued ? (
                               <span
@@ -667,6 +680,11 @@ export function MobileDrawer({
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                                 const queued = isRuntimeTaskQueued(task)
                                 const taskAddress = getRuntimeTaskAddress(workspace, task)
+                                const boardOrigin = runtimeTaskBoardOrigin(task)
+                                const boardOriginLabel =
+                                  boardOrigin === 'board_comment'
+                                    ? t('workbench.runtime_task_origin_board_comment', '看板评论')
+                                    : t('workbench.runtime_task_origin_board_task', '看板任务')
                                 return (
                                   <div
                                     key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
@@ -688,6 +706,12 @@ export function MobileDrawer({
                                           : 'text-[#111111] hover:bg-[#F7F7F7]',
                                       ].join(' ')}
                                     >
+                                      {boardOrigin ? (
+                                        <MessageCircle
+                                          className="mr-2 h-4 w-4 shrink-0 text-text-tertiary"
+                                          aria-label={boardOriginLabel}
+                                        />
+                                      ) : null}
                                       <span className="min-w-0 flex-1 truncate">{task.title}</span>
                                       {queued ? (
                                         <span

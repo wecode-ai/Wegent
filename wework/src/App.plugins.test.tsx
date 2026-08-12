@@ -913,7 +913,8 @@ describe('App plugins route', () => {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
     }
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue({
       ok: false,
       status: 500,
       text: () => Promise.resolve('Internal server error'),

@@ -1197,11 +1197,13 @@ export interface RuntimeTaskCreateRequest {
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
   message: string
+  bot?: Array<Record<string, unknown>>
   clientUserMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelConfig?: Record<string, unknown>
   modelSelection?: ModelSelectionConfig | null
   friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
@@ -1211,10 +1213,15 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
-  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
+  origin?: {
+    type: 'board_comment' | 'board_task'
+    cloudProjectId: string
+    loopItemId: string
+    rootCommentId?: string
+  }
   additionalContext?: RuntimeAdditionalContext
 }
 

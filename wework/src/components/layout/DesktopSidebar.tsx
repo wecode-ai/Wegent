@@ -47,6 +47,7 @@ import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-rele
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycle,
@@ -1522,6 +1523,11 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
+  const boardOrigin = runtimeTaskBoardOrigin(task)
+  const boardOriginLabel =
+    boardOrigin === 'board_comment'
+      ? t('workbench.runtime_task_origin_board_comment', '看板评论')
+      : t('workbench.runtime_task_origin_board_task', '看板任务')
   const hostLabel =
     workspace.remoteHostId ||
     (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
@@ -1753,7 +1759,7 @@ function RuntimeTaskRow({
               <span
                 data-testid={`runtime-local-task-title-${task.taskId}`}
                 className={cn(
-                  'runtime-task-title relative truncate',
+                  'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
                   titleShimmering && 'is-updated'
                 )}
               >
@@ -1762,6 +1768,13 @@ function RuntimeTaskRow({
                     aria-hidden="true"
                     className="runtime-task-title-shimmer"
                     data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                  />
+                ) : null}
+                {boardOrigin ? (
+                  <MessageCircle
+                    data-testid={`runtime-local-task-board-comment-${task.taskId}`}
+                    className="h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
+                    aria-label={boardOriginLabel}
                   />
                 ) : null}
                 <span
@@ -1798,6 +1811,13 @@ function RuntimeTaskRow({
                   aria-hidden="true"
                   className="runtime-task-title-shimmer"
                   data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                />
+              ) : null}
+              {boardOrigin ? (
+                <MessageCircle
+                  data-testid={`runtime-local-task-board-comment-${task.taskId}`}
+                  className="mr-1 inline h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
+                  aria-label={boardOriginLabel}
                 />
               ) : null}
               <span
