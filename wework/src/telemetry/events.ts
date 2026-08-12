@@ -181,6 +181,7 @@ export interface AnalyticsEventMap {
       | 'open'
       | 'move'
       | 'update'
+      | 'edit'
       | 'rename'
       | 'save_grouping'
       | 'member_invite'
@@ -476,6 +477,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'open',
       'move',
       'update',
+      'edit',
       'rename',
       'save_grouping',
       'member_invite',

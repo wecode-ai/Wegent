@@ -43,8 +43,8 @@ seedProjects()
 function corsHeaders(extra = {}) {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,Idempotency-Key,X-Wegent-Username',
     ...extra,
   }
 }
@@ -168,6 +168,43 @@ function updateProjectName(req, res, body) {
   writeJson(res, 200, project)
 }
 
+function updateProjectMetadata(req, res, body) {
+  if (!requireAuth(req, res)) {
+    return
+  }
+
+  const projectId = new URL(req.url || '/', `http://127.0.0.1:${PORT}`).pathname.split('/').pop()
+  if (!req.headers['idempotency-key'] || !req.headers['x-wegent-username']) {
+    writeJson(res, 400, {
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Missing project metadata headers',
+      },
+    })
+    return
+  }
+  if (!projectId || !projects.has(projectId)) {
+    writeJson(res, 404, {
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Project not found',
+      },
+    })
+    return
+  }
+
+  const payload = parseJsonBody(body)
+  const project = projects.get(projectId)
+  if (typeof payload?.title === 'string' && payload.title.trim()) {
+    project.title = payload.title.trim()
+  }
+  if (Object.hasOwn(payload || {}, 'custom_domain_prefix')) {
+    project.custom_domain_prefix = payload.custom_domain_prefix || null
+  }
+
+  writeJson(res, 200, project)
+}
+
 function deleteProject(req, res, body) {
   if (!requireAuth(req, res)) {
     return
@@ -235,6 +272,11 @@ const server = http.createServer((req, res) => {
 
     if (req.url === '/api/v1/projects/update' && req.method === 'POST') {
       updateProjectName(req, res, body)
+      return
+    }
+
+    if (req.url?.startsWith('/api/v1/projects/') && req.method === 'PATCH') {
+      updateProjectMetadata(req, res, body)
       return
     }
 

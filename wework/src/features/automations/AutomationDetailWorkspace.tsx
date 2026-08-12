@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -48,6 +49,7 @@ interface AutomationDetailWorkspaceProps {
   currentRuntimeTask: RuntimeTaskAddress | null
   runtimeWork: RuntimeWorkListResponse | null
   localDeviceIds: string[]
+  cloudAvailable: boolean
   saving: boolean
   dirty: boolean
   running: boolean
@@ -71,6 +73,7 @@ export function AutomationDetailWorkspace({
   currentRuntimeTask,
   runtimeWork,
   localDeviceIds,
+  cloudAvailable,
   saving,
   dirty,
   running,
@@ -205,6 +208,20 @@ export function AutomationDetailWorkspace({
           action={<Info className="h-4 w-4" />}
         />
         <SettingsGroup>
+          <SettingsRow
+            label={t('workbench.automation_goal_mode', '持续完成目标')}
+            description={t(
+              'workbench.automation_goal_description',
+              '将任务说明作为目标持续推进，直到目标完成'
+            )}
+          >
+            <SettingsSwitch
+              data-testid="automation-goal-switch"
+              checked={draft.goalEnabled}
+              onCheckedChange={checked => onChange('goalEnabled', checked)}
+              aria-label={t('workbench.automation_goal_mode', '持续完成目标')}
+            />
+          </SettingsRow>
           <SettingsRow label={t('workbench.automation_run_in', '运行于')}>
             <InlineSelect
               dataTestId="automation-conversation-mode"
@@ -244,7 +261,10 @@ export function AutomationDetailWorkspace({
                   const target = taskOptions.find(option => option.key === value)
                   onChange('continuationAddress', target?.address ?? null)
                   if (target) {
-                    onChange('source', 'local')
+                    onChange(
+                      'source',
+                      localDeviceIds.includes(target.address.deviceId) ? 'local' : 'cloud'
+                    )
                     onChange('deviceId', target.address.deviceId)
                     onChange('workspacePath', target.address.workspacePath ?? '')
                   }
@@ -265,7 +285,7 @@ export function AutomationDetailWorkspace({
                     {
                       value: 'cloud',
                       label: t('workbench.automation_cloud', '云端'),
-                      disabled: true,
+                      disabled: !cloudAvailable,
                     },
                   ]}
                 />
@@ -323,7 +343,6 @@ export function AutomationDetailWorkspace({
                       ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
                       : ''
                   }
-                  disabled={draft.source === 'cloud'}
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
                     onChange('modelType', modelType)
@@ -345,7 +364,6 @@ export function AutomationDetailWorkspace({
                 <InlineSelect
                   dataTestId="automation-reasoning-select"
                   value={reasoning}
-                  disabled={draft.source === 'cloud'}
                   onChange={value =>
                     onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
                   }
@@ -566,10 +584,23 @@ function SettingsGroup({ children }: { children: ReactNode }) {
   )
 }
 
-function SettingsRow({ label, children }: { label: string; children: ReactNode }) {
+function SettingsRow({
+  label,
+  description,
+  children,
+}: {
+  label: string
+  description?: string
+  children: ReactNode
+}) {
   return (
     <div className="flex min-h-12 items-center justify-between gap-6 py-2">
-      <span className="shrink-0 text-sm font-medium">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-xs leading-4 text-text-secondary">{description}</span>
+        ) : null}
+      </span>
       <span className="flex min-w-0 flex-1 items-center justify-end">{children}</span>
     </div>
   )

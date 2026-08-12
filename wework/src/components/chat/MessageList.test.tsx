@@ -4053,6 +4053,31 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders sent Wegent Sites project links like composer chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-sites-project-link',
+            role: 'user',
+            content: '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动',
+            status: 'done',
+            createdAt: '2026-07-30T10:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const message = screen.getByTestId('message-user')
+    const chip = within(message).getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('产品发布页')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'wegent-sites-project://prj_product')
+    expect(chip).toHaveAttribute('data-composer-link-provider', 'wegent-sites-project')
+    expect(chip.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(message).toHaveTextContent('产品发布页 请说出你要做的改动')
+    expect(message).not.toHaveTextContent('wegent-sites-project://prj_product')
+  })
+
   test('renders GitHub link chips in the edit form and opens the link edit popover', async () => {
     render(
       <MessageList

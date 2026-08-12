@@ -21,6 +21,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  defaultWorkspaceTab: DefaultWorkspaceTab
   systemDragEnabled: boolean
   preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
@@ -87,10 +88,12 @@ export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now())
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type BrowserLinkTarget = 'system' | 'wework'
+export type DefaultWorkspaceTab = 'task' | 'board' | 'agent'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  defaultWorkspaceTab?: DefaultWorkspaceTab
   systemDragEnabled?: boolean
   preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
@@ -143,6 +146,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -175,6 +179,7 @@ export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
+const supportedDefaultWorkspaceTabs = new Set<DefaultWorkspaceTab>(['task', 'board', 'agent'])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -205,6 +210,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    defaultWorkspaceTab:
+      typeof record.defaultWorkspaceTab === 'string' &&
+      supportedDefaultWorkspaceTabs.has(record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        ? (record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        : defaultAppPreferences.defaultWorkspaceTab,
     systemDragEnabled:
       typeof record.systemDragEnabled === 'boolean'
         ? record.systemDragEnabled

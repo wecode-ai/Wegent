@@ -228,6 +228,21 @@ async function waitForBlankConversation(control, composerSelector) {
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const startedAt = Date.now()
+  let lastCurrentRuntimeTask
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const debugSnapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    lastCurrentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
+    if (lastCurrentRuntimeTask === null) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `The new task did not clear the active runtime task before input: ${JSON.stringify(
+      lastCurrentRuntimeTask
+    )}`
+  )
 }
 
 async function verifyConcurrentTaskMemory({ composerSelector, control }) {

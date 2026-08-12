@@ -23,6 +23,7 @@ import {
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
   emptyAutomationDraft,
+  initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
   type AutomationDraft,
 } from '@/features/automations/automationDraft'
@@ -115,6 +116,10 @@ export function AutomationsPage() {
 
   const localDevices = useMemo(
     () => state.devices.filter(device => !isCloudDevice(device)),
+    [state.devices]
+  )
+  const cloudDevices = useMemo(
+    () => state.devices.filter(device => isCloudDevice(device)),
     [state.devices]
   )
   const loadAutomations = useCallback(async () => {
@@ -266,8 +271,9 @@ export function AutomationsPage() {
   }
 
   const changeSource = (source: AutomationSource) => {
-    if (!draft || editing || source !== 'local') return
-    const deviceId = localDevices[0]?.device_id ?? ''
+    if (!draft || editing) return
+    const devices = source === 'cloud' ? cloudDevices : localDevices
+    const deviceId = devices[0]?.device_id ?? ''
     setDraft(current =>
       current
         ? {
@@ -287,6 +293,7 @@ export function AutomationsPage() {
     if (!draft.name.trim() || !draft.prompt.trim()) {
       throw new Error(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
     }
+    const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
       throw new Error(t('workbench.automation_target_task_required', '请选择一个已固定的本地任务'))
     }
@@ -304,6 +311,7 @@ export function AutomationsPage() {
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),
+      ...(initialGoal ? { initialGoal } : {}),
       ...(draft.modelId
         ? {
             modelId: draft.modelId,
@@ -317,6 +325,7 @@ export function AutomationsPage() {
         ? {
             address: draft.continuationAddress,
             message: draft.prompt.trim(),
+            ...(initialGoal ? { initialGoal } : {}),
           }
         : null
     return {
@@ -567,12 +576,13 @@ export function AutomationsPage() {
                 automation={editing}
                 runs={runs}
                 locale={locale}
-                devices={localDevices}
+                devices={draft.source === 'cloud' ? cloudDevices : localDevices}
                 projects={state.runtimeWork?.projects ?? []}
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}
                 runtimeWork={state.runtimeWork}
                 localDeviceIds={localDevices.map(device => device.device_id)}
+                cloudAvailable={cloudDevices.length > 0}
                 saving={saving}
                 dirty={dirty}
                 running={Boolean(editing && runningId === editing.id)}

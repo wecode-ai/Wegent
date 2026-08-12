@@ -89,12 +89,22 @@ pub(crate) struct RuntimeTaskLink {
 
 impl RuntimeTaskLink {
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
+        Self::new_pending_with_runtime(local_task_id, workspace_path, title, "codex")
+    }
+
+    pub fn new_pending_with_runtime(
+        local_task_id: String,
+        workspace_path: String,
+        title: String,
+        runtime: impl Into<String>,
+    ) -> Self {
+        let runtime = runtime.into();
         Self {
             local_task_id,
             thread_id: None,
             workspace_path,
             title,
-            runtime: "codex".to_owned(),
+            runtime: runtime.clone(),
             status: "active".to_owned(),
             running: false,
             continuable: true,
@@ -106,7 +116,7 @@ impl RuntimeTaskLink {
             created_at: now_ms(),
             updated_at: now_ms(),
             completed_at: None,
-            runtime_handle: json!({}),
+            runtime_handle: json!({ "runtime": runtime }),
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -911,6 +921,19 @@ mod tests {
         }))
         .expect("task link should deserialize");
         assert!(!restored.running);
+    }
+
+    #[test]
+    fn pending_runtime_task_link_preserves_selected_runtime() {
+        let link = RuntimeTaskLink::new_pending_with_runtime(
+            "task-claude".to_owned(),
+            "/tmp/project".to_owned(),
+            "Claude task".to_owned(),
+            "claude_code",
+        );
+
+        assert_eq!(link.runtime, "claude_code");
+        assert_eq!(link.runtime_handle["runtime"], "claude_code");
     }
 
     #[test]

@@ -264,6 +264,22 @@ export function queuePluginPromptTrial(
   })
 }
 
+export function queuePluginInputTrial(
+  plugin: InstalledPlugin,
+  input: string,
+  { openInNewChat = false, prompt }: PluginTrialOptions = {}
+): boolean {
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const normalizedInput = input.trim()
+  if (!pluginName || !normalizedInput) return false
+  return queuePendingPluginTrial({
+    input: normalizedInput,
+    pluginName,
+    templates: pluginTrialTemplates(plugin, prompt ?? normalizedInput),
+    openInNewChat,
+  })
+}
+
 export function queuePluginReferenceTrial({
   pluginName,
   marketplaceName,

@@ -1,8 +1,13 @@
-fn cleanup_task_files_preview(link: &RuntimeTaskLink) -> Value {
-    cleanup_task_files_response(link, false, true)
+fn cleanup_task_files_preview(worktrees: &WorktreeManager, link: &RuntimeTaskLink) -> Value {
+    cleanup_task_files_response(worktrees, link, false, true)
 }
-fn cleanup_task_files_response(link: &RuntimeTaskLink, delete: bool, measure_bytes: bool) -> Value {
-    let targets = cleanup_targets_for_task(link);
+fn cleanup_task_files_response(
+    worktrees: &WorktreeManager,
+    link: &RuntimeTaskLink,
+    delete: bool,
+    measure_bytes: bool,
+) -> Value {
+    let targets = cleanup_targets_for_task(worktrees, link);
     let mut cleaned_count = 0_u64;
     let mut skipped_count = 0_u64;
     let mut error_count = 0_u64;
@@ -32,7 +37,7 @@ fn cleanup_task_files_response(link: &RuntimeTaskLink, delete: bool, measure_byt
         }
 
         if delete {
-            match remove_cleanup_target(&target) {
+            match remove_cleanup_target(worktrees, &target) {
                 Ok(()) => {
                     cleaned_count += 1;
                     item["status"] = json!("cleaned");
@@ -122,13 +127,16 @@ struct CleanupTarget {
     path: PathBuf,
 }
 
-fn cleanup_targets_for_task(link: &RuntimeTaskLink) -> Vec<CleanupTarget> {
+fn cleanup_targets_for_task(
+    worktrees: &WorktreeManager,
+    link: &RuntimeTaskLink,
+) -> Vec<CleanupTarget> {
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     push_cleanup_target(
         &mut targets,
         &mut seen,
-        worktree_cleanup_target(&link.workspace_path),
+        worktree_cleanup_target(worktrees, &link.workspace_path),
     );
     push_cleanup_target(
         &mut targets,
@@ -183,9 +191,9 @@ fn push_cleanup_target(
     }
 }
 
-fn worktree_cleanup_target(path: &str) -> Option<CleanupTarget> {
+fn worktree_cleanup_target(worktrees: &WorktreeManager, path: &str) -> Option<CleanupTarget> {
     let normalized = normalize_workspace_path(path);
-    if !is_managed_worktree_path(&normalized) {
+    if !worktrees.is_managed_path(Path::new(&normalized)) {
         return None;
     }
     Some(CleanupTarget {
@@ -277,9 +285,13 @@ fn collect_local_attachment_paths(value: &Value, paths: &mut Vec<String>) {
     }
 }
 
-fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
+fn remove_cleanup_target(
+    worktrees: &WorktreeManager,
+    target: &CleanupTarget,
+) -> Result<(), String> {
     if target.kind == "worktree" {
-        remove_git_worktree_best_effort(&target.path);
+        worktrees.delete(&target.path, false)?;
+        return Ok(());
     }
     if target.path.is_dir() {
         fs::remove_dir_all(&target.path)
@@ -288,13 +300,6 @@ fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
         fs::remove_file(&target.path).map_err(|error| format!("failed to remove file: {error}"))?;
     }
     Ok(())
-}
-
-fn remove_git_worktree_best_effort(path: &Path) {
-    let path = path.to_string_lossy().to_string();
-    let _ = std::process::Command::new("git")
-        .args(["-C", &path, "worktree", "remove", "--force", &path])
-        .output();
 }
 
 fn path_size(path: &Path) -> Option<u64> {
@@ -311,11 +316,6 @@ fn path_size(path: &Path) -> Option<u64> {
         size = size.saturating_add(path_size(&entry.path()).unwrap_or(0));
     }
     Some(size)
-}
-
-fn is_managed_worktree_path(path: &str) -> bool {
-    path.contains("/.wecode/wegent-executor/workspace/worktrees/")
-        || path.contains("/.wegent-executor/workspace/worktrees/")
 }
 
 fn is_local_attachment_draft_path(path: &str) -> bool {

@@ -1697,7 +1697,7 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^\s)\]]+)\)/g
+const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')

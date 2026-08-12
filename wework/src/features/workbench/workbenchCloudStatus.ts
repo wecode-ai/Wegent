@@ -481,11 +481,23 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
   }
 }
 
-export function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
+export function resolveDeviceListWithCache(
+  devices: DeviceInfo[],
+  options: { useCacheFallback?: boolean } = {}
+): DeviceInfo[] {
   const claudeCodeDevices = filterClaudeCodeDevices(devices)
   if (claudeCodeDevices.length > 0) {
     writeCachedDeviceList(claudeCodeDevices)
     return claudeCodeDevices
+  }
+
+  if (options.useCacheFallback === false) {
+    try {
+      window.sessionStorage.removeItem(DEVICE_LIST_CACHE_KEY)
+    } catch {
+      // The authoritative empty result still applies when storage is unavailable.
+    }
+    return devices
   }
 
   const cachedDevices = readCachedDeviceList()

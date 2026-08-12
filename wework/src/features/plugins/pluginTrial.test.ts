@@ -10,6 +10,7 @@ import {
   getPluginUseCount30d,
   pluginTrialInput,
   pluginTrialTemplates,
+  queuePluginInputTrial,
   queuePluginPromptTrial,
   queuePluginReferenceTrial,
   queuePluginTrial,
@@ -190,6 +191,17 @@ describe('plugin trial state', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
     expect(consumePluginTrialInput()).toBeNull()
+  })
+
+  test('queues a custom plugin trial input for a fresh chat', () => {
+    const input = '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动'
+
+    expect(queuePluginInputTrial(pluginWithSkill(), input, { openInNewChat: true })).toBe(true)
+
+    const trial = consumePluginTrial()
+    expect(trial?.input).toBe(input)
+    expect(trial?.pluginName).toBe('Documents')
+    expect(trial?.openInNewChat).toBe(true)
   })
 
   test('queues a canonical plugin reference without an installed plugin record', () => {

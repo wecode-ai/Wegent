@@ -1,10 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
+  readCachedDeviceList,
+  resolveDeviceListWithCache,
   selectCloudWorkStatus,
   selectProjectCreatableDevices,
   selectRuntimeWorkView,
@@ -154,6 +156,26 @@ describe('mergeRuntimeWorkLists', () => {
     }
 
     expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
+  })
+})
+
+describe('resolveDeviceListWithCache', () => {
+  beforeEach(() => sessionStorage.clear())
+
+  test('accepts an authoritative empty device list and clears stale cache', () => {
+    const cachedDevice = device({ device_id: 'stale-device' })
+    resolveDeviceListWithCache([cachedDevice])
+
+    expect(readCachedDeviceList()).toHaveLength(1)
+    expect(resolveDeviceListWithCache([], { useCacheFallback: false })).toEqual([])
+    expect(readCachedDeviceList()).toEqual([])
+  })
+
+  test('retains cached devices when the caller explicitly permits fallback', () => {
+    const cachedDevice = device({ device_id: 'cached-device' })
+    resolveDeviceListWithCache([cachedDevice])
+
+    expect(resolveDeviceListWithCache([]).map(item => item.device_id)).toEqual(['cached-device'])
   })
 })
 

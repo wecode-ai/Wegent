@@ -576,6 +576,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     #[serde(default = "default_true")]
     show_main_window_on_launch: bool,
+    #[serde(default = "default_workspace_tab")]
+    default_workspace_tab: String,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
     #[serde(default = "default_true")]
@@ -770,6 +772,11 @@ fn default_language_preference() -> String {
 }
 
 #[cfg(desktop)]
+fn default_workspace_tab() -> String {
+    "task".to_string()
+}
+
+#[cfg(desktop)]
 fn default_browser_external_link_target() -> String {
     "system".to_string()
 }
@@ -790,6 +797,7 @@ impl Default for AppPreferences {
         Self {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
+            default_workspace_tab: default_workspace_tab(),
             system_drag_enabled: true,
             prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
@@ -847,6 +855,7 @@ where
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -896,6 +905,12 @@ struct MainWindowLifecycleState {
     next_frontend_probe_id: AtomicU64,
     acknowledged_frontend_probe_id: AtomicU64,
     last_main_window_unfocused_at: Mutex<Option<std::time::Instant>>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct AppPreferencesWriteState {
+    guard: Mutex<()>,
 }
 
 #[cfg(desktop)]
@@ -1154,6 +1169,12 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    if !matches!(
+        preferences.default_workspace_tab.as_str(),
+        "task" | "board" | "agent"
+    ) {
+        preferences.default_workspace_tab = default_workspace_tab();
+    }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
@@ -1413,8 +1434,13 @@ fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> 
 fn update_app_preferences(
     app: tauri::AppHandle,
     patch: AppPreferencesPatch,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
     telemetry: tauri::State<NativeTelemetryState>,
 ) -> Result<AppPreferences, String> {
+    let _guard = preferences_write
+        .guard
+        .lock()
+        .map_err(|_| "Failed to lock app preferences for update".to_string())?;
     let mut preferences = read_app_preferences_impl(&app);
     let telemetry_was_enabled =
         preferences.telemetry_consent_asked && preferences.telemetry_enabled;
@@ -1423,6 +1449,9 @@ fn update_app_preferences(
     }
     if let Some(value) = patch.show_main_window_on_launch {
         preferences.show_main_window_on_launch = value;
+    }
+    if let Some(value) = patch.default_workspace_tab {
+        preferences.default_workspace_tab = value;
     }
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
@@ -1521,6 +1550,7 @@ fn update_app_preferences(
 struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
+    default_workspace_tab: String,
     system_drag_enabled: bool,
     prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
@@ -1555,6 +1585,7 @@ struct AppPreferences {
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1589,6 +1620,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
     Ok(AppPreferences {
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
+        default_workspace_tab: "task".to_string(),
         system_drag_enabled: true,
         prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
@@ -1627,6 +1659,10 @@ fn update_app_preferences(
     Ok(AppPreferences {
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
+        default_workspace_tab: patch
+            .default_workspace_tab
+            .filter(|value| matches!(value.as_str(), "task" | "board" | "agent"))
+            .unwrap_or_else(|| "task".to_string()),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
@@ -3219,10 +3255,25 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+fn close_main_window_to_tray(
+    app: tauri::AppHandle,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
+) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    match preferences_write.guard.lock() {
+        Ok(_guard) => {
+            let mut preferences = read_app_preferences_impl(&app);
+            if !preferences.close_to_tray_hint_seen {
+                preferences.close_to_tray_hint_seen = true;
+                if let Err(error) = write_app_preferences_impl(&app, &preferences) {
+                    log::warn!("Failed to persist close-to-tray hint acknowledgement: {error}");
+                }
+            }
+        }
+        Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
+    }
     let state = app.state::<MainWindowLifecycleState>();
     state
         .destroy_to_tray_in_progress
@@ -4905,6 +4956,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -5062,8 +5114,10 @@ pub fn run() {
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
+            local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
+            local_terminal::delete_archived_local_harness_session,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
@@ -5132,12 +5186,14 @@ pub fn run() {
             #[cfg(desktop)]
             system_lock::get_system_session_locked,
             local_terminal::get_local_terminal_snapshot,
+            local_terminal::list_archived_local_harness_sessions,
             local_terminal::list_local_harnesses,
             local_terminal::list_local_harness_sessions,
             local_terminal::resolve_local_harness_plugin_roots,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_harness,
             local_terminal::start_local_terminal,
+            local_terminal::unarchive_local_harness_session,
             local_terminal::update_local_harness_session_title,
             local_terminal::write_local_terminal,
             #[cfg(desktop)]
