@@ -13,7 +13,7 @@ import logging
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -804,6 +804,28 @@ class KnowledgeFolderService:
             )
 
     @staticmethod
+    def _collect_ancestor_ids(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Collect folder IDs and every ancestor in one recursive CTE query."""
+        if not folder_ids:
+            return set()
+
+        try:
+            return KnowledgeFolderService._collect_ancestor_ids_cte(
+                db, folder_ids, kind_id
+            )
+        except (ProgrammingError, OperationalError):
+            logger.warning(
+                "Recursive CTE not supported, falling back to iterative ancestor "
+                "lookup for %d folders",
+                len(folder_ids),
+            )
+            return KnowledgeFolderService._collect_ancestor_ids_bfs(
+                db, folder_ids, kind_id
+            )
+
+    @staticmethod
     def _collect_descendant_ids_cte(db: Session, folder_id: int, kind_id: int) -> set:
         """Single-query recursive CTE implementation.
 
@@ -834,6 +856,41 @@ class KnowledgeFolderService:
         return {row[0] for row in rows}
 
     @staticmethod
+    def _collect_ancestor_ids_cte(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Single-query recursive ancestor traversal for multiple folders.
+
+        The recursive member emits a folder's ``parent_id`` instead of joining the
+        parent row directly.  That preserves a dangling parent ID so the transfer
+        service can raise its existing structured not-found error.
+        """
+        sql = text(
+            """
+            WITH RECURSIVE ancestors AS (
+                SELECT id
+                FROM knowledge_folders
+                WHERE kind_id = :kind_id
+                  AND id IN :folder_ids
+
+                UNION
+
+                SELECT kf.parent_id
+                FROM knowledge_folders kf
+                         INNER JOIN ancestors a ON kf.id = a.id
+                WHERE kf.kind_id = :kind_id
+                  AND kf.parent_id > 0
+            )
+            SELECT id
+            FROM ancestors
+            """
+        ).bindparams(bindparam("folder_ids", expanding=True))
+        rows = db.execute(
+            sql, {"kind_id": kind_id, "folder_ids": list(folder_ids)}
+        ).fetchall()
+        return set(folder_ids) | {row[0] for row in rows}
+
+    @staticmethod
     def _collect_descendant_ids_bfs(db: Session, folder_id: int, kind_id: int) -> set:
         """Iterative BFS fallback using a deque for O(1) pops.
 
@@ -862,6 +919,31 @@ class KnowledgeFolderService:
             current_level = next_level
 
         return descendant_ids
+
+    @staticmethod
+    def _collect_ancestor_ids_bfs(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Fallback ancestor traversal for database dialects without CTE support."""
+        ancestor_ids = set(folder_ids)
+        current_ids = set(folder_ids)
+
+        while current_ids:
+            rows = (
+                db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                .filter(
+                    KnowledgeFolder.kind_id == kind_id,
+                    KnowledgeFolder.id.in_(current_ids),
+                )
+                .all()
+            )
+            current_ids = set()
+            for _, parent_id in rows:
+                if parent_id > 0 and parent_id not in ancestor_ids:
+                    ancestor_ids.add(parent_id)
+                    current_ids.add(parent_id)
+
+        return ancestor_ids
 
     @staticmethod
     def _count_folder_docs(db: Session, folder_id: int, kind_id: int) -> int:

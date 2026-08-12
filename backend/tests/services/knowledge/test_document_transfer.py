@@ -424,6 +424,62 @@ def test_transfer_folders_with_documents(test_db: Session) -> None:
 
 
 @pytest.mark.unit
+def test_collect_ancestor_ids_uses_one_cte_for_multiple_deep_paths(
+    test_db: Session,
+) -> None:
+    """Ancestor collection is one query even when selected folders are deep."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-ancestor-cte")
+    kb_id = _create_kb(test_db, owner.id, "ancestor-cte-kb")
+    root = _create_folder(test_db, kb_id, owner.id, "root")
+    left = _create_folder(test_db, kb_id, owner.id, "left", parent_id=root.id)
+    right = _create_folder(test_db, kb_id, owner.id, "right", parent_id=root.id)
+    left_leaf = _create_folder(test_db, kb_id, owner.id, "left-leaf", parent_id=left.id)
+    right_leaf = _create_folder(
+        test_db, kb_id, owner.id, "right-leaf", parent_id=right.id
+    )
+
+    with patch.object(test_db, "execute", wraps=test_db.execute) as mock_execute:
+        ancestor_ids = KnowledgeFolderService._collect_ancestor_ids(
+            test_db, {left_leaf.id, right_leaf.id}, kb_id
+        )
+
+    assert ancestor_ids == {
+        root.id,
+        left.id,
+        right.id,
+        left_leaf.id,
+        right_leaf.id,
+    }
+    assert mock_execute.call_count == 1
+
+
+@pytest.mark.unit
+def test_collect_ancestor_ids_preserves_a_missing_parent_id(test_db: Session) -> None:
+    """A dangling folder parent remains visible to transfer validation."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-dangling-ancestor")
+    kb_id = _create_kb(test_db, owner.id, "dangling-ancestor-kb")
+    missing_parent_id = 999_999
+    orphan = KnowledgeFolder(
+        kind_id=kb_id,
+        parent_id=missing_parent_id,
+        name="orphan",
+        origin=ContentOrigin.USER.value,
+    )
+    test_db.add(orphan)
+    test_db.flush()
+
+    ancestor_ids = KnowledgeFolderService._collect_ancestor_ids(
+        test_db, {orphan.id}, kb_id
+    )
+
+    assert ancestor_ids == {orphan.id, missing_parent_id}
+
+
+@pytest.mark.unit
 def test_transfer_rejects_generated_documents_and_folders(test_db: Session) -> None:
     """A transfer may not detach content owned by a Code Wiki generation."""
     owner = _create_user(test_db, "owner-generated-transfer")

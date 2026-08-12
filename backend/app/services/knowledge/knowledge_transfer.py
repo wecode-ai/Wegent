@@ -333,29 +333,14 @@ class KnowledgeTransferService:
                 )
                 direct_folder_ids = {fid for (fid,) in doc_folder_ids if fid}
 
-                # Walk all ancestor chains in batches. The folder records needed to
-                # recreate the target hierarchy are loaded once by
-                # ``load_transfer_selection`` below.
-                pending_ids = direct_folder_ids
-                while pending_ids:
-                    current_ids = pending_ids - descendant_folder_ids
-                    if not current_ids:
-                        break
-                    rows = (
-                        db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
-                        .filter(
-                            KnowledgeFolder.kind_id == source_kb_id,
-                            KnowledgeFolder.id.in_(current_ids),
-                        )
-                        .all()
+                # The recursive CTE visits every ancestor path server-side in one
+                # query; ``load_transfer_selection`` then loads those rows once to
+                # validate and lock them before recreating the target hierarchy.
+                descendant_folder_ids.update(
+                    KnowledgeFolderService._collect_ancestor_ids(
+                        db, direct_folder_ids, source_kb_id
                     )
-                    # Preserve a missing requested id until the single source-folder
-                    # load below can report it as a structured not-found error.
-                    descendant_folder_ids.update(current_ids)
-                    pending_ids = set()
-                    for folder_id, parent_id in rows:
-                        if parent_id > 0 and parent_id not in descendant_folder_ids:
-                            pending_ids.add(parent_id)
+                )
 
         return all_doc_ids, descendant_folder_ids
 
