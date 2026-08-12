@@ -66,6 +66,7 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   UnifiedModel,
+  User,
   UserPreferences,
 } from '@/types/api'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
@@ -222,6 +223,19 @@ export function WorkbenchProvider({
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  // Preferences can change while a turn is running. Runtime transports only
+  // need the account identity, so keep their service graph stable across those
+  // updates and avoid an event-subscription gap during terminal delivery.
+  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const runtimeServiceUser = useMemo<User>(
+    () => ({
+      id: workbenchIdentity.id,
+      user_name: workbenchIdentity.user_name,
+      email: workbenchIdentity.email,
+    }),
+    [workbenchIdentity.email, workbenchIdentity.id, workbenchIdentity.user_name]
+  )
   const resolvedServices = useMemo(
     () =>
       services ??
@@ -232,7 +246,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
-        user: cloudConnection.user ?? user,
+        user: runtimeServiceUser,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -241,9 +255,8 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
-      cloudConnection.user,
+      runtimeServiceUser,
       services,
-      user,
     ]
   )
   const executorClient = useMemo(() => {
@@ -262,8 +275,6 @@ export function WorkbenchProvider({
   // no real cloud provider is mounted; never let that placeholder override the
   // authenticated user. With a real connection, the cloud identity is the one
   // used for cloud API calls, so it must drive workbench ownership checks.
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   useEffect(() => {
     if (!workbenchIdentity) return
     if (state.user?.id !== workbenchIdentity.id) {

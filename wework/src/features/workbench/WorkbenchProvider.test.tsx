@@ -2017,6 +2017,51 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('keeps the runtime event subscription across connected user preference updates', async () => {
+    setTauriRuntime()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+    const user = {
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: { send_key: 'enter' as const },
+    }
+    const cloudConnectionValue = (connectedUser: User): CloudConnectionContextValue => ({
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      user: connectedUser,
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    })
+    const renderTree = (connectedUser: User) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue(connectedUser)}>
+        <WorkbenchProvider user={LOCAL_USER}>
+          <WorkbenchProbeSessionProvider>
+            <BootstrapProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+    const rendered = render(renderTree(user))
+
+    await waitFor(() => expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalled())
+    const subscriptionCount = localExecutorMocks.subscribeLocalExecutorEvents.mock.calls.length
+
+    rendered.rerender(
+      renderTree({
+        ...user,
+        preferences: { send_key: 'cmd_enter' },
+      })
+    )
+
+    await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalledTimes(subscriptionCount)
+  })
+
   test('bootstraps projects and runtime work without DB task APIs', async () => {
     const services = createWorkbenchServices()
 
