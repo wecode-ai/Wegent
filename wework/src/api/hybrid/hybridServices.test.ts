@@ -342,6 +342,14 @@ function createServices() {
   })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('createHybridWorkbenchServices', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -643,6 +651,78 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.deviceApi.listDevices()
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('drops remembered cloud devices after an authoritative empty background sync', async () => {
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    mocks.cloudListDevices.mockResolvedValue([])
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device'])
+  })
+
+  it('does not let an older cloud device response overwrite a newer snapshot', async () => {
+    const olderDevices = deferred<
+      Array<{
+        id: number
+        device_id: string
+        name: string
+        status: 'online'
+        is_default: boolean
+        device_type: 'cloud'
+        bind_shell: 'claudecode'
+      }>
+    >()
+    mocks.cloudListDevices
+      .mockReset()
+      .mockImplementationOnce(() => olderDevices.promise)
+      .mockResolvedValueOnce([
+        {
+          id: 2,
+          device_id: 'new-cloud-device',
+          name: 'New Cloud Executor',
+          status: 'online',
+          is_default: false,
+          device_type: 'cloud',
+          bind_shell: 'claudecode',
+        },
+      ])
+    const services = createServices()
+
+    const olderRequest = services.cloudBackgroundApi!.listDevices!({
+      signal: new AbortController().signal,
+    })
+    await services.cloudBackgroundApi!.listDevices!({ signal: new AbortController().signal })
+    olderDevices.resolve([
+      {
+        id: 1,
+        device_id: 'old-cloud-device',
+        name: 'Old Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    await olderRequest
+
+    const devices = await services.deviceApi.listDevices()
+    expect(devices.map(device => device.device_id)).toEqual(['local-device', 'new-cloud-device'])
+  })
+
+  it('reuses one cloud device snapshot across a background refresh', async () => {
+    const services = createServices()
+    const controller = new AbortController()
+
+    await Promise.all([
+      services.cloudBackgroundApi!.listDevices!({ signal: controller.signal }),
+      services.cloudBackgroundApi!.listRuntimeWork!({ signal: controller.signal }),
+    ])
+
+    expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
   })
 
   it('routes Worktree settings to the selected local or cloud device', async () => {
