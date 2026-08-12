@@ -609,7 +609,7 @@ if ! grep -q \
   ! grep -Fq "fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)" \
     <<<"$wework_desktop_cloud_job" ||
   ! grep -Fq -- "--parallel-segments" <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
+  ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
     <<<"$wework_desktop_cloud_job" ||
   ! grep -Fq 'WEWORK_E2E_ISOLATED_XVFB: "true"' \
     <<<"$wework_desktop_cloud_job" ||
