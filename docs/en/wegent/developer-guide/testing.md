@@ -298,7 +298,13 @@ Large caches are prewarmed and owned by `main`. Pull requests and merge-queue
 runs may restore the default-branch cache, but they do not save another copy:
 
 - Linux workspace `node_modules` has one shared cache keyed by the Node version
-  and `pnpm-lock.yaml`. Tests, Lint, platform E2E, and Wework E2E reuse it.
+  and `pnpm-lock.yaml`. Tests, Lint, and platform E2E reuse it.
+- Wework browser and desktop E2E use dependency images published to GHCR. Image
+  tags are derived from the corresponding Dockerfile content hash. The workflow
+  builds and publishes an image only when that tag is missing, then runs
+  downstream jobs directly in the image container instead of installing Node,
+  pnpm, uv, Rust, Playwright browsers, or desktop system packages per job. Local
+  debugging commands do not build these CI images.
 - uv caches downloads and build results only, not project `.venv` directories.
   Python 3.10, 3.11, and 3.12 each have one shared cache whose key includes the
   dependency lockfiles, and CI pruning runs before save.
@@ -315,9 +321,9 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
-- Executor and Tauri system dependency installers first check packages already
-  present on the runner. Only `main` writes the APT download cache; PRs restore
-  it read-only.
+- Outside Wework E2E, Executor and Tauri system dependency installers first
+  check packages already present on the runner. Only `main` writes the APT
+  download cache; PRs restore it read-only.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
 lockfile, or cache implementation changes enter `main`, and rejects manual
