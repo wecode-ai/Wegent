@@ -38,24 +38,13 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
     const triggerRect = triggerRef.current?.getBoundingClientRect()
     const contentRect = contentRef.current?.getBoundingClientRect()
     if (!triggerRect || !contentRect) return
-    let boundaryNode = triggerRef.current?.parentElement ?? null
-    let leftBoundary = 8
-    let rightBoundary = window.innerWidth - 8
-    while (boundaryNode && boundaryNode !== document.body) {
-      const rect = boundaryNode.getBoundingClientRect()
-      if (rect.width >= contentRect.width) {
-        leftBoundary = rect.left
-        rightBoundary = rect.right
-        break
-      }
-      boundaryNode = boundaryNode.parentElement
-    }
+    const sidePanel = document.querySelector('[data-testid="right-workspace-panel"]')
+    const sidePanelRect = sidePanel?.getBoundingClientRect()
+    const rightBoundary =
+      sidePanelRect && sidePanelRect.width > 1 ? sidePanelRect.left : window.innerWidth - 8
     let left = triggerRect.left
     if (left + contentRect.width > rightBoundary) {
       left = rightBoundary - contentRect.width
-    }
-    if (left < leftBoundary) {
-      left = leftBoundary
     }
     left = Math.max(8, left)
     let top = triggerRect.top - contentRect.height - 4

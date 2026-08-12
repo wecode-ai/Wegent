@@ -1,3 +1,4 @@
+import type { BrowserAnnotationContextData } from '@/types/browser-annotation'
 import type { CodeCommentContext } from '@/types/workspace-files'
 
 function lineRangeLabel(context: CodeCommentContext): string {
@@ -60,20 +61,52 @@ function parseContextLines(lines: unknown): [number, number] {
   return [Number(match[1]), match[2] ? Number(match[2]) : Number(match[1])]
 }
 
+function browserTargetFromSelectedText(
+  selectedText: string
+): BrowserAnnotationContextData['target'] | undefined {
+  if (!selectedText) return undefined
+  try {
+    const parsed: unknown = JSON.parse(selectedText)
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed as { type?: unknown }).type === 'browser_annotation' &&
+      (parsed as { target?: unknown }).target &&
+      typeof (parsed as { target?: unknown }).target === 'object'
+    ) {
+      return (parsed as { target: BrowserAnnotationContextData['target'] }).target
+    }
+  } catch {
+    // Not a browser annotation selected-text payload.
+  }
+  return undefined
+}
+
 function deserializeCodeCommentContext(item: unknown, index: number): CodeCommentContext | null {
   if (!item || typeof item !== 'object') return null
   const record = item as Record<string, unknown>
   const [startLine, endLine] = parseContextLines(record.lines)
+  const filePath = typeof record.filePath === 'string' ? record.filePath : ''
+  const selectedText = typeof record.selectedText === 'string' ? record.selectedText : ''
+  const target = browserTargetFromSelectedText(selectedText)
+  const browserAnnotation: BrowserAnnotationContextData | undefined = target
+    ? {
+        scope: { browserTabId: '', pageSessionId: '', url: filePath.replace(/^browser:/, '') },
+        number: typeof record.commentNumber === 'number' ? record.commentNumber : index + 1,
+        target,
+      }
+    : undefined
   return {
     id: `parsed-comment-${typeof record.commentNumber === 'number' ? record.commentNumber : index + 1}-${index}`,
     source: record.source === 'browser_annotation' ? 'browser_annotation' : 'code_selection',
-    filePath: typeof record.filePath === 'string' ? record.filePath : '',
+    filePath,
     fileName: typeof record.fileName === 'string' ? record.fileName : '',
     startLine,
     endLine,
-    selectedText: typeof record.selectedText === 'string' ? record.selectedText : '',
+    selectedText,
     comment: typeof record.userComment === 'string' ? record.userComment : '',
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
+    browserAnnotation,
     adjustments: Array.isArray(record.adjustments)
       ? (record.adjustments as CodeCommentContext['adjustments'])
       : undefined,

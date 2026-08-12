@@ -1153,6 +1153,9 @@ export function WorkspaceBrowserTabPanel({
         }
         setStatus('ready')
         schedulePostOpenBoundsSync(active)
+        if (!annotationModeRef.current) {
+          void suspendAnnotationLayer(label)
+        }
       } catch {
         // No existing native browser for this label.
       }
@@ -1171,6 +1174,7 @@ export function WorkspaceBrowserTabPanel({
     label,
     onTitleChange,
     schedulePostOpenBoundsSync,
+    suspendAnnotationLayer,
     updatePageUrl,
   ])
 

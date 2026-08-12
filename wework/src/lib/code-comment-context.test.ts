@@ -182,6 +182,30 @@ describe('appendCodeCommentContexts', () => {
     expect(parsed?.codeComments).toEqual([])
   })
 
+  test('restores the browser annotation target for history previews', () => {
+    const withTarget: CodeCommentContext = {
+      ...browserComment,
+      selectedText: JSON.stringify({
+        type: 'browser_annotation',
+        url: 'https://example.test/',
+        rect: { x: 10, y: 20, width: 100, height: 80 },
+        target: {
+          tagName: 'button',
+          text: '提交审批',
+          isSimpleText: true,
+          rect: { x: 10, y: 20, width: 100, height: 80 },
+        },
+      }),
+    }
+    const parsed = parseCodeCommentContexts(appendCodeCommentContexts('处理', [withTarget]))
+
+    expect(parsed?.codeComments[0].browserAnnotation?.target).toMatchObject({
+      tagName: 'button',
+      text: '提交审批',
+      isSimpleText: true,
+    })
+  })
+
   test('returns null when there is no context block', () => {
     expect(parseCodeCommentContexts('plain message')).toBeNull()
   })

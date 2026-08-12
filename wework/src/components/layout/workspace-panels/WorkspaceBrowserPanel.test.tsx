@@ -2029,7 +2029,11 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     expect(staleTitleChange).not.toHaveBeenCalledWith('Extension page - stale-context')
-    expect(embeddedBrowserMocks.evalEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(
+      embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.filter(
+        call => !String(call[0]).includes('.suspend')
+      )
+    ).toEqual([])
     expect(screen.getByTestId('workspace-browser-url-input')).not.toHaveValue(extensionUrl)
   })
 
@@ -2057,7 +2061,11 @@ describe('WorkspaceBrowserPanel', () => {
       await pendingInjection
     })
 
-    expect(embeddedBrowserMocks.evalEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(
+      embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.filter(
+        call => !String(call[0]).includes('.suspend')
+      )
+    ).toEqual([])
     expect(
       screen.queryByTestId('workspace-browser-annotation-close-button')
     ).not.toBeInTheDocument()
