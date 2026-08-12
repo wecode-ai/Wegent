@@ -608,6 +608,8 @@ if ! grep -q \
   ! grep -Fq -- "--parallel-segments" <<<"$wework_desktop_cloud_job" ||
   ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
     <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq 'WEWORK_E2E_ISOLATED_XVFB: "true"' \
+    <<<"$wework_desktop_cloud_job" ||
   ! grep -Fq "name: Download shared Wework desktop E2E build" \
     <<<"$wework_desktop_cloud_job" ||
   ! grep -Fq "WEWORK_E2E_APP_BIN:" <<<"$wework_desktop_cloud_job" ||

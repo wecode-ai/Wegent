@@ -83,7 +83,12 @@ function runTaskFlow(args, env, label) {
     let resultDir = null
     let outputTail = ''
     let stderrTail = ''
-    const child = spawn(process.execPath, [taskFlowPath, ...args], {
+    const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
+    const command = isolateDisplay ? 'xvfb-run' : process.execPath
+    const commandArgs = isolateDisplay
+      ? ['-a', '--server-args=-screen 0 1280x720x24', process.execPath, taskFlowPath, ...args]
+      : [taskFlowPath, ...args]
+    const child = spawn(command, commandArgs, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
