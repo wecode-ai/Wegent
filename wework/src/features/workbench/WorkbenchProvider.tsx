@@ -265,6 +265,7 @@ export function WorkbenchProvider({
     }
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
+  const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
   const projectSelectionStartedRef = useRef(false)
@@ -839,23 +840,47 @@ export function WorkbenchProvider({
     [state.devices]
   )
 
+  const enqueueRemoteProjectStateMutation = useCallback(
+    <T,>(mutation: () => Promise<T>): Promise<T> => {
+      const run = remoteProjectMutationQueueRef.current.catch(() => undefined).then(mutation)
+      remoteProjectMutationQueueRef.current = run.then(
+        () => undefined,
+        () => undefined
+      )
+      return run
+    },
+    []
+  )
+
   useEffect(() => {
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
     ).sort((left, right) => left.id.localeCompare(right.id))
-    if (!localRuntimeStateDeviceId || projects.length === 0) return
+    if (!localRuntimeStateDeviceId || projects.length === 0) {
+      remoteProjectSyncSignatureRef.current = ''
+      return
+    }
     const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
     if (remoteProjectSyncSignatureRef.current === signature) return
     remoteProjectSyncSignatureRef.current = signature
-    void executorClient.runtime
-      .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-      .then(() => refreshWorkLists())
-      .catch(error => {
+    void enqueueRemoteProjectStateMutation(() =>
+      executorClient.runtime
+        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+        .then(() => refreshWorkLists())
+    ).catch(error => {
+      if (remoteProjectSyncSignatureRef.current === signature) {
         remoteProjectSyncSignatureRef.current = ''
-        console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
-      })
-  }, [executorClient, localRuntimeStateDeviceId, refreshWorkLists, state.runtimeWork])
+      }
+      console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
+    })
+  }, [
+    enqueueRemoteProjectStateMutation,
+    executorClient,
+    localRuntimeStateDeviceId,
+    refreshWorkLists,
+    state.runtimeWork,
+  ])
 
   useEffect(() => {
     if (lastProjectRestoreAttemptedRef.current || !state.runtimeWork) return
@@ -1431,6 +1456,7 @@ export function WorkbenchProvider({
     markRuntimeProjectRemoved,
     clearRuntimeProjectRemoval,
     rememberExecutionDevice,
+    enqueueRemoteProjectStateMutation,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
     state,
@@ -1592,6 +1618,27 @@ export function WorkbenchProvider({
         })
       })
   })
+  const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
+    const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
+    if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
+
+    void runtimeTasks
+      .getRuntimeGoal(address)
+      .then(response => {
+        if (!response.accepted) return
+        const goal = response.goal
+        if (!goal) return
+        setRuntimeConversationGoal(address, goal)
+        lifecycleStore.goalStatusReceived(address, goal.status)
+      })
+      .catch(error => {
+        console.warn('[Wework] Runtime Goal snapshot sync failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+      })
+  })
   const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
     const normalizedTitle = title.trim()
     if (!normalizedTitle) return
@@ -1682,6 +1729,7 @@ export function WorkbenchProvider({
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
             syncRuntimeTaskSnapshot(address)
+            syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1722,6 +1770,7 @@ export function WorkbenchProvider({
       lifecycleStore,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,

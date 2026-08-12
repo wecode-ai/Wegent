@@ -2114,7 +2114,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
-      '加入看板 · Task Follow-up Board'
+      'Task Follow-up Board'
     )
   })
 
@@ -3487,7 +3487,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('restores active native harness sessions after a WebView reload', async () => {
+  test('lists active native harness sessions without opening one after a WebView reload', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessSessionsMock.mockResolvedValue([
       {
@@ -3508,18 +3508,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       await screen.findByTestId('local-harness-session-row-local-terminal-restored')
     ).toHaveTextContent('继续修复测试')
-    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('继续修复测试')
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
-      'data-session-id',
-      'local-terminal-restored'
-    )
-    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('local-harness-session-row-local-terminal-restored')
+    ).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
-  test('keeps Codex and harness session selection exclusive without reopening the loaded task', async () => {
+  test('keeps the loaded Codex session above and selected before a restored harness session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessSessionsMock.mockResolvedValue([
       {
@@ -3578,29 +3574,55 @@ describe('DesktopWorkbenchLayout', () => {
 
     const harnessRow = await screen.findByTestId('local-harness-session-row-local-harness-restored')
     const codexRow = screen.getByTestId('runtime-local-task-row-runtime-loaded')
+    const sessionRows = [
+      ...screen
+        .getByTestId('runtime-chat-section')
+        .querySelectorAll(
+          '[data-testid^="runtime-local-task-row-"], [data-testid^="local-harness-session-row-"]'
+        ),
+    ]
+    expect(sessionRows.map(row => row.getAttribute('data-testid'))).toEqual([
+      'runtime-local-task-row-runtime-loaded',
+      'local-harness-session-row-local-harness-restored',
+    ])
+    expect(codexRow).toHaveAttribute('aria-current', 'page')
+    expect(harnessRow).not.toHaveAttribute('aria-current')
+
+    await userEvent.click(harnessRow)
+
     expect(harnessRow).toHaveAttribute('aria-current', 'page')
     expect(codexRow).not.toHaveAttribute('aria-current')
 
     await userEvent.click(codexRow)
 
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
-    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(codexRow).toHaveAttribute('aria-current', 'page')
+    expect(harnessRow).not.toHaveAttribute('aria-current')
+  })
+
+  test('opens the new-session interface instead of a restored OpenCode session', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-restored',
+        harness_id: 'opencode',
+        title: 'OpenCode 会话',
+        cwd: '/workspace/project-alpha',
+        created_at: 1234,
+        is_primary: true,
+        project_id: null,
+        active: true,
+        model_key: harnessTestModel.key,
+      },
+    ])
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
     expect(
-      screen.getByTestId('local-harness-session-row-local-harness-restored')
+      await screen.findByTestId('local-harness-session-row-local-harness-restored')
     ).not.toHaveAttribute('aria-current')
-
-    await userEvent.click(screen.getByTestId('local-harness-session-row-local-harness-restored'))
-
-    expect(screen.getByTestId('local-harness-session-row-local-harness-restored')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
-    expect(screen.getByTestId('runtime-local-task-row-runtime-loaded')).not.toHaveAttribute(
-      'aria-current'
-    )
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('reopens the loaded Codex task when switching back from another page', async () => {
@@ -3688,9 +3710,15 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(
-      await screen.findByTestId('local-harness-session-row-local-harness-persisted')
-    ).toHaveTextContent('重启后继续修复')
+    const sessionRow = await screen.findByTestId(
+      'local-harness-session-row-local-harness-persisted'
+    )
+    expect(sessionRow).toHaveTextContent('重启后继续修复')
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+
+    await userEvent.click(sessionRow)
+
     await waitFor(() =>
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'opencode',
@@ -3761,19 +3789,17 @@ describe('DesktopWorkbenchLayout', () => {
       'local-harness-session-row-local-harness-model-loading'
     )
     expect(sessionRow).toHaveTextContent('等待模型加载')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-harness-session-resuming')).not.toBeInTheDocument()
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+
+    await userEvent.click(sessionRow)
+
     expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
       '正在恢复 OpenCode 会话'
     )
     expect(screen.getByTestId('local-harness-session-resuming')).not.toHaveTextContent(
       '请选择可用的 Wework 模型'
-    )
-    expect(startLocalHarnessMock).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('new-chat-button'))
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-    await userEvent.click(sessionRow)
-    expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
-      '正在恢复 OpenCode 会话'
     )
     expect(startLocalHarnessMock).not.toHaveBeenCalled()
 
@@ -3835,9 +3861,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(
-      await screen.findByTestId('local-harness-session-row-local-harness-missing-workspace')
-    ).toHaveTextContent('工作区已删除')
+    const sessionRow = await screen.findByTestId(
+      'local-harness-session-row-local-harness-missing-workspace'
+    )
+    expect(sessionRow).toHaveTextContent('工作区已删除')
+    expect(localPathExistsMock).not.toHaveBeenCalledWith('/workspace/deleted-worktree')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+
+    await userEvent.click(sessionRow)
+
     await waitFor(() =>
       expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
         '原工作区不存在，无法恢复会话：/workspace/deleted-worktree'
@@ -3858,6 +3890,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('starts Claude Code without overriding its native model by default', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessesMock.mockResolvedValue([
       {
@@ -3871,8 +3904,23 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+        state={{
+          ...activeProjectState,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+          input: '分析并修复测试失败',
+        }}
         projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+        onSend={onSend}
       />
     )
 
@@ -3890,25 +3938,18 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.submit(form)
 
     await waitFor(() =>
-      expect(startLocalHarnessMock).toHaveBeenCalledWith({
-        harnessId: 'claude_code',
-        prompt: '分析并修复测试失败',
-        isPrimary: true,
-        projectId: 1,
-        cwd: '/workspace/github_wegent',
-        executablePath: null,
-        args: [],
-        pluginRoots: [],
-        proxyToken: undefined,
-        modelKey: null,
-        resumeSessionId: undefined,
-        env: {
-          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
-        },
-      })
+      expect(onSend).toHaveBeenCalledWith(
+        '分析并修复测试失败',
+        expect.objectContaining({
+          runtime: 'claude_code',
+          runtimeExecutablePath: '/usr/local/bin/claude',
+          modelSelection: null,
+        })
+      )
     )
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
     expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('starts OpenCode from the Wework dev workspace without selecting a project', async () => {
@@ -4726,7 +4767,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo', 'repo')
     expect(onCreateProject).not.toHaveBeenCalled()
     expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
@@ -8705,7 +8746,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const creationStatus = screen.getByTestId('worktree-creation-status')
-    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(creationStatus).toHaveTextContent('正在搭建你的独立工作树')
     expect(screen.getByTestId('desktop-chat-scroll-content')).toContainElement(creationStatus)
     expect(screen.queryByTestId('desktop-chat-scroll-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()

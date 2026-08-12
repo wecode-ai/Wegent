@@ -251,6 +251,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 export interface RuntimeTaskAddress {
   deviceId: string
   taskId: string
+  runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -1180,6 +1181,8 @@ export interface RuntimeTaskCreateRequest {
   taskId?: string
   teamId: number
   runtime: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
   message: string
   clientUserMessageId?: string
   title?: string

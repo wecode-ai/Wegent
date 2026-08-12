@@ -272,6 +272,7 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 native_label: "native-1".to_string(),
                 title: None,
                 url: None,
+                loaded_url: None,
                 opened_at_unix_ms: 0,
                 phase: super::EmbeddedBrowserPhase::Opening,
             },
