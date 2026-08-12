@@ -9,6 +9,8 @@ const PULL_REQUEST_SUFFIX = /\s+\(#(\d+)\)$/
 const VERSION_BUMP_SUBJECT = /^chore\(wework\): bump app version to (.+)$/
 const EMPTY_RELEASE_NOTES =
   '- No Wework app bundle changes detected under `wework/` or `executor/` since the previous Wework release.'
+const GITHUB_LOOKUP_ATTEMPTS = 4
+const GITHUB_LOOKUP_RETRY_DELAY_MS = 1000
 
 export function parseReleaseCommits(output) {
   return output
@@ -84,15 +86,40 @@ export function findPreviousReleaseRef(releaseVersion, releaseSha, runCommand = 
   return previousRelease?.sha ?? ''
 }
 
-export function readGitHubAuthorLogin(repo, sha, runCommand = execFileSync) {
-  return runCommand(
-    'gh',
-    ['api', `repos/${repo}/commits/${sha}`, '--jq', '.author.login // empty'],
-    {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
+function sleepSync(delayMs) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
+}
+
+export function readGitHubAuthorLogin(
+  repo,
+  sha,
+  runCommand = execFileSync,
+  {
+    attempts = GITHUB_LOOKUP_ATTEMPTS,
+    retryDelayMs = GITHUB_LOOKUP_RETRY_DELAY_MS,
+    sleep = sleepSync,
+    log = console.warn,
+  } = {}
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return runCommand(
+        'gh',
+        ['api', `repos/${repo}/commits/${sha}`, '--jq', '.author.login // empty'],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'inherit'],
+        }
+      ).trim()
+    } catch (error) {
+      if (attempt === attempts) throw error
+      const delayMs = retryDelayMs * 2 ** (attempt - 1)
+      log(
+        `GitHub author lookup failed for ${sha} on attempt ${attempt}/${attempts}; retrying in ${delayMs}ms`
+      )
+      sleep(delayMs)
     }
-  ).trim()
+  }
 }
 
 export function generateReleaseNotes(commits, resolveAuthorLogin) {
