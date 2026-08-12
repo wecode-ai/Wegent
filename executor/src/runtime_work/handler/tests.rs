@@ -1765,7 +1765,14 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                 "initialSupervisor": {
                     "mode": "auto",
                     "instructions": "Keep the task focused",
-                    "modelId": "supervisor-model",
+                    "modelSelection": {
+                        "modelName": "supervisor-model",
+                        "modelType": "public",
+                        "options": {
+                            "weworkCloudModelNamespace": "default",
+                            "weworkCloudModelResourceUserId": "0"
+                        }
+                    },
                     "intervalSeconds": 10
                 },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
@@ -1804,7 +1811,17 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
         .expect("initial supervisor should be stored with the task");
     assert_eq!(supervisor.mode, "auto");
     assert_eq!(supervisor.instructions, "Keep the task focused");
-    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(
+        supervisor.model_selection,
+        Some(json!({
+            "modelName": "supervisor-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0"
+            }
+        }))
+    );
     assert_eq!(supervisor.interval_seconds, 10);
     assert_eq!(supervisor.status, "active");
     assert!(supervisor.last_error.is_none());

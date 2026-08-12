@@ -2719,14 +2719,28 @@ describe('createLocalAppServices', () => {
       address: { deviceId: 'local-device', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
       address: { deviceId: 'device-uuid', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
     })
   })

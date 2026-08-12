@@ -35,7 +35,8 @@ pub(crate) struct RuntimeSupervisorState {
     pub mode: String,
     pub status: String,
     pub instructions: String,
-    pub model_id: Option<String>,
+    #[serde(default)]
+    pub model_selection: Option<Value>,
     #[serde(default = "default_supervisor_interval_seconds")]
     pub interval_seconds: u64,
     pub last_evaluated_at: Option<i64>,

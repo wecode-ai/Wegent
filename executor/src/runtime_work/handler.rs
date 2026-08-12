@@ -572,7 +572,6 @@ impl RuntimeWorkRpcHandler {
             handler.hook_service.set_event_sender(sender);
         }
         handler.start_automation_scheduler();
-        handler.start_supervisor_scheduler();
         handler
     }
 
@@ -581,6 +580,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.start_supervisor_scheduler();
         self
     }
 
