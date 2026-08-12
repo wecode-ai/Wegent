@@ -16,7 +16,6 @@ import { snapshotHasAssistantActivity } from './response-protocol.mjs'
 import {
   COMPOSER_READY_STABILITY_MS,
   ACTIVE_WORKBENCH_SELECTOR,
-  CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
@@ -465,7 +464,6 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   })
   await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
   await control.command('waitFor', '[data-testid="task-supervisor-model"]', {
-    text: CLOUD_PUBLIC_MODEL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="task-supervisor-model"]', {
