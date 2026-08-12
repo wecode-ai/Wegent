@@ -396,6 +396,24 @@ fn stale_execution_cannot_finish_its_replacement() {
 }
 
 #[test]
+fn provider_turn_keeps_task_active_when_execution_control_settles_first() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
+
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
+    assert!(handler.is_active_local_task("task-1"));
+
+    handler.clear_active_codex_turn("task-1", execution_id);
+    assert!(!handler.is_active_local_task("task-1"));
+}
+
+#[test]
 fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     let index_path = temp_runtime_work_index_path("persist-failed-assistant");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

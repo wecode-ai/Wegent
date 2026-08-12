@@ -773,9 +773,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
-        self.active_turn_cancellations
+        let has_active_execution = self
+            .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
+            .contains_key(local_task_id);
+        if has_active_execution {
+            return true;
+        }
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
             .contains_key(local_task_id)
     }
 
