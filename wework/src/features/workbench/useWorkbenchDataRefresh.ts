@@ -5,6 +5,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import type {
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
@@ -165,20 +166,25 @@ function removeRuntimeProject(
   projectId: number,
   workspace?: { deviceId: string; workspacePath: string }
 ): RuntimeWorkListResponse {
-  const projects = runtimeWork.projects.filter(
-    project => runtimeProjectUiId(project.project) !== projectId
-  )
   const normalizedDeviceId = workspace?.deviceId.trim()
   const normalizedWorkspacePath = workspace
     ? normalizeRuntimeWorkspacePath(workspace.workspacePath)
     : null
+  const matchesRemovedWorkspace = (candidate: RuntimeDeviceWorkspace) =>
+    Boolean(
+      normalizedDeviceId &&
+      normalizedWorkspacePath &&
+      candidate.deviceId.trim() === normalizedDeviceId &&
+      normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
+    )
+  const projects = runtimeWork.projects.filter(
+    project =>
+      runtimeProjectUiId(project.project) !== projectId &&
+      !project.deviceWorkspaces.some(matchesRemovedWorkspace)
+  )
   const chats =
     normalizedDeviceId && normalizedWorkspacePath
-      ? runtimeWork.chats.filter(
-          chat =>
-            chat.deviceId.trim() !== normalizedDeviceId ||
-            normalizeRuntimeWorkspacePath(chat.workspacePath) !== normalizedWorkspacePath
-        )
+      ? runtimeWork.chats.filter(chat => !matchesRemovedWorkspace(chat))
       : runtimeWork.chats
   const totalTasks =
     projects.reduce(
