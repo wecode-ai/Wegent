@@ -12,12 +12,15 @@ import {
   filterLocalRequirements,
   findFirstLocalNeedingLogin,
   findLocalConnectorsForMessage,
+  installedPluginMatchesName,
+  listMentionedPluginNames,
   messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
   toLocalConnectorAuthTarget,
   type LocalConnectorRequirement,
 } from '@/features/plugins/localConnectorAuthGate'
+import { peekWarmedLocalConnectorAuthPlugins } from '@/features/plugins/prefetchLocalConnectorAuth'
 import type { InstalledPlugin } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
@@ -45,19 +48,24 @@ function hintTitle(
   return t('workbench.plugins_local_qr_login_title', { name: displayName })
 }
 
-function installedPluginLookupId(plugin: InstalledPlugin): string {
-  const labelId = Reflect.get(plugin.metadata.labels ?? {}, 'id')
-  if (typeof labelId === 'string' && labelId.trim()) return labelId.trim()
-  if (typeof labelId === 'number') return String(labelId)
-  return String(plugin.metadata.name)
-}
-
-async function loadInstalledPlugins(): Promise<InstalledPlugin[]> {
+async function loadInstalledPlugins(options?: {
+  pluginNames?: string[]
+}): Promise<InstalledPlugin[]> {
   const api = createLocalCodexPluginApi()
   const response = await api.listInstalledPlugins()
   const items = response.items ?? []
-  return enrichInstalledPluginsForLocalAuth(items, plugin =>
-    api.readInstalledPluginForTrial(installedPluginLookupId(plugin))
+  const pluginNames = options?.pluginNames ?? []
+  // Only detail plugins we might need for this message. Full-catalog enrich used to
+  // call readInstalledPluginForTrial → readState/plugin/list and stalled send by ~10s.
+  return enrichInstalledPluginsForLocalAuth(
+    items,
+    plugin => api.readInstalledPluginDetail(plugin),
+    {
+      shouldEnrich:
+        pluginNames.length > 0
+          ? plugin => pluginNames.some(name => installedPluginMatchesName(plugin, name))
+          : () => false,
+    }
   )
 }
 
@@ -105,6 +113,7 @@ export function useLocalConnectorAuthGate(options: {
   const { t } = useTranslation('common')
   const [pending, setPending] = useState<PendingConnectorAuth | null>(null)
   const pluginsRef = useRef<InstalledPlugin[] | null>(null)
+  const enrichedPluginNamesRef = useRef(new Set<string>())
   const handledResumeKeysRef = useRef<Set<string>>(new Set())
   const pendingRef = useRef(pending)
   const optionsRef = useRef(options)
@@ -114,10 +123,28 @@ export function useLocalConnectorAuthGate(options: {
     optionsRef.current = options
   }, [options, pending])
 
-  const refreshPlugins = useCallback(async () => {
-    const plugins = await loadInstalledPlugins()
-    pluginsRef.current = plugins
-    return plugins
+  const refreshPlugins = useCallback(async (pluginNames?: string[]) => {
+    const names = pluginNames ?? []
+    const plugins = await loadInstalledPlugins({ pluginNames: names })
+    // Merge with prior enriched detail. A later refresh for plugin B must not
+    // wipe connector/localAuth stubs already loaded for plugin A.
+    const previousByKey = new Map(
+      (pluginsRef.current ?? []).map(plugin => [
+        `${plugin.spec.source.marketplace || plugin.metadata.namespace || ''}:${plugin.spec.source.pluginKey}`.toLowerCase(),
+        plugin,
+      ])
+    )
+    const merged = plugins.map(plugin => {
+      const key =
+        `${plugin.spec.source.marketplace || plugin.metadata.namespace || ''}:${plugin.spec.source.pluginKey}`.toLowerCase()
+      if (names.some(name => installedPluginMatchesName(plugin, name))) return plugin
+      return previousByKey.get(key) ?? plugin
+    })
+    pluginsRef.current = merged
+    for (const name of names) {
+      enrichedPluginNamesRef.current.add(name.trim().toLowerCase())
+    }
+    return merged
   }, [])
 
   const gateBeforeSend = useCallback(
@@ -125,10 +152,46 @@ export function useLocalConnectorAuthGate(options: {
       if (pendingRef.current) return 'blocked'
       if (!messageNeedsConnectorPreflight(input)) return 'send'
       try {
-        const plugins = pluginsRef.current ?? (await refreshPlugins())
+        const mentioned = listMentionedPluginNames(input)
+        const hint = resolveLocalConnectorAuthHint(input)
+        const pluginNames = [...mentioned, ...(hint?.pluginKey ? [hint.pluginKey] : [])]
+        const cached = pluginsRef.current
+        const cachedCoversMentions =
+          Boolean(cached) &&
+          pluginNames.length > 0 &&
+          pluginNames.every(name => {
+            const key = name.trim().toLowerCase()
+            return (
+              enrichedPluginNamesRef.current.has(key) &&
+              cached!.some(plugin => installedPluginMatchesName(plugin, name))
+            )
+          })
+        let plugins = cachedCoversMentions ? cached! : null
+        if (!plugins) {
+          const warmed = peekWarmedLocalConnectorAuthPlugins(pluginNames)
+          if (warmed) {
+            const previousByKey = new Map(
+              (pluginsRef.current ?? []).map(plugin => [
+                `${plugin.spec.source.marketplace || plugin.metadata.namespace || ''}:${plugin.spec.source.pluginKey}`.toLowerCase(),
+                plugin,
+              ])
+            )
+            pluginsRef.current = warmed.map(plugin => {
+              const key =
+                `${plugin.spec.source.marketplace || plugin.metadata.namespace || ''}:${plugin.spec.source.pluginKey}`.toLowerCase()
+              if (pluginNames.some(name => installedPluginMatchesName(plugin, name))) return plugin
+              return previousByKey.get(key) ?? plugin
+            })
+            for (const name of pluginNames) {
+              enrichedPluginNamesRef.current.add(name.trim().toLowerCase())
+            }
+            plugins = pluginsRef.current
+          } else {
+            plugins = await refreshPlugins(pluginNames.length > 0 ? pluginNames : undefined)
+          }
+        }
         const requirements = findLocalConnectorsForMessage(input, plugins)
         if (requirements.length === 0) {
-          const hint = resolveLocalConnectorAuthHint(input)
           if (!hint) return 'send'
           const target: LocalConnectorAuthTarget = {
             pluginKey: hint.pluginKey,
@@ -173,9 +236,20 @@ export function useLocalConnectorAuthGate(options: {
     void (async () => {
       try {
         const text = messageText(latest)
-        const plugins = pluginsRef.current ?? (await refreshPlugins())
         const pluginKey = extractConnectorAuthPluginKey(text)
         const connectorSlug = extractConnectorAuthConnectorSlug(text)
+        const hint = resolveLocalConnectorAuthHint(text)
+        const pluginNames = [
+          ...(pluginKey ? [pluginKey] : []),
+          ...(hint?.pluginKey ? [hint.pluginKey] : []),
+        ]
+        const resumeCovered =
+          Boolean(pluginsRef.current) &&
+          pluginNames.length > 0 &&
+          pluginNames.every(name => enrichedPluginNamesRef.current.has(name.trim().toLowerCase()))
+        const plugins = resumeCovered
+          ? pluginsRef.current!
+          : await refreshPlugins(pluginNames.length > 0 ? pluginNames : undefined)
         const requirements = filterLocalRequirements(plugins, {
           pluginKey,
           connectorSlug,
@@ -194,7 +268,6 @@ export function useLocalConnectorAuthGate(options: {
           return
         }
 
-        const hint = resolveLocalConnectorAuthHint(text)
         if (!hint) return
         const hintedRequirements = filterLocalRequirements(plugins, {
           pluginKey: hint.pluginKey,
