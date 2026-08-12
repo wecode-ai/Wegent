@@ -29,3 +29,28 @@ def test_user_preferences_accept_runtime_model_selection():
     assert user.preferences is not None
     assert user.preferences.wework_new_chat_model_selection is not None
     assert user.preferences.wework_new_chat_model_selection.modelType == "runtime"
+
+
+def test_user_preferences_accept_per_project_work_preferences():
+    user = UserInDB(
+        id=1,
+        user_name="admin",
+        email="admin@example.com",
+        preferences=json.dumps(
+            {
+                "wework_project_work_preferences": {
+                    "project:7": {
+                        "executionMode": "git_worktree",
+                        "worktreeBranch": "feature/alpha",
+                    }
+                }
+            }
+        ),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    assert user.preferences is not None
+    preference = user.preferences.wework_project_work_preferences["project:7"]
+    assert preference.executionMode == "git_worktree"
+    assert preference.worktreeBranch == "feature/alpha"

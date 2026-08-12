@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
   const localGetDefaultWorkbenchTeam = vi.fn()
   const localListProjects = vi.fn()
   const localUpdateCurrentUser = vi.fn()
+  const cloudUpdateCurrentUser = vi.fn()
   const localListSkills = vi.fn()
   const localGetTeamSkills = vi.fn()
   const cloudListTeams = vi.fn()
@@ -137,6 +138,7 @@ const mocks = vi.hoisted(() => {
       uploadAttachment: cloudUploadAttachment,
       deleteAttachment: vi.fn(),
     },
+    userApi: { updateCurrentUser: cloudUpdateCurrentUser },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
     workspaceSessionApi: cloudWorkspaceSessionApi,
@@ -155,6 +157,7 @@ const mocks = vi.hoisted(() => {
     localGetDefaultWorkbenchTeam,
     localListProjects,
     localUpdateCurrentUser,
+    cloudUpdateCurrentUser,
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
@@ -1164,7 +1167,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(response?.items.map(item => item.id)).toEqual(['local-archive'])
   })
 
-  it('completes archive-all and local preferences without waiting for cloud services', async () => {
+  it('completes archive-all and persists connected preferences to the cloud account', async () => {
     mocks.cloudArchiveAllConversations.mockReturnValue(new Promise(() => undefined))
     const services = createServices()
 
@@ -1175,7 +1178,10 @@ describe('createHybridWorkbenchServices', () => {
     expect(archiveResponse?.accepted).toBe(true)
     expect(mocks.localArchiveAllConversations).toHaveBeenCalledTimes(1)
     expect(mocks.cloudArchiveAllConversations).toHaveBeenCalledTimes(1)
-    expect(mocks.localUpdateCurrentUser).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudUpdateCurrentUser).toHaveBeenCalledWith({
+      preferences: { theme: 'dark' },
+    })
+    expect(mocks.localUpdateCurrentUser).not.toHaveBeenCalled()
     expect(mocks.localListProjects).toHaveBeenCalledTimes(1)
   })
 

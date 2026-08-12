@@ -1132,7 +1132,7 @@ export function createHybridWorkbenchServices(
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },
-    userApi: localServices.userApi,
+    userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,
