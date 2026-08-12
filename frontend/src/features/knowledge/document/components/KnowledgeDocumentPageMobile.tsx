@@ -37,6 +37,7 @@ import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import type {
+  CodeWikiView,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseType,
@@ -79,17 +80,44 @@ export function KnowledgeDocumentPageMobile({
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
+  const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
     kbId: detailKb?.id ?? 0,
   })
 
   useEffect(() => {
+    if (detailKb?.kb_type === 'code_wiki') {
+      onKnowledgeViewStateChange?.({
+        visible: Boolean(isDetailMode),
+        switcher: 'code-wiki',
+        currentView: codeWikiView,
+        onViewChange: view => {
+          if (view === 'wiki' || view === 'documents') setCodeWikiView(view)
+        },
+      })
+      return
+    }
+
     onKnowledgeViewStateChange?.({
-      visible: Boolean(detailKb && isDetailMode && detailKb.kb_type !== 'code_wiki'),
+      visible: Boolean(detailKb && isDetailMode),
+      switcher: 'document',
       currentView,
-      onViewChange: setCurrentView,
+      onViewChange: view => {
+        if (view === 'documents' || view === 'notebook') setCurrentView(view)
+      },
     })
-  }, [currentView, detailKb, isDetailMode, onKnowledgeViewStateChange, setCurrentView])
+  }, [
+    codeWikiView,
+    currentView,
+    detailKb,
+    isDetailMode,
+    onKnowledgeViewStateChange,
+    setCurrentView,
+  ])
+
+  useEffect(() => {
+    setCodeWikiView('wiki')
+  }, [detailKb?.id])
 
   useEffect(() => {
     if (detailKb?.kb_type === 'code_wiki' && user) {
@@ -367,35 +395,36 @@ export function KnowledgeDocumentPageMobile({
       return (
         <>
           <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
+            {(!isCodeWiki || codeWikiView === 'documents') && (
+              <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  aria-label={t('document.backToList')}
+                  data-testid="knowledge-detail-back-button"
+                  className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-secondary hover:bg-surface"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <span className="truncate text-sm font-medium text-text-primary">
+                  {detailKb!.name}
+                </span>
+              </div>
+            )}
             {!isCodeWiki && (
-              <>
-                <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleBack}
-                    aria-label={t('document.backToList')}
-                    data-testid="knowledge-detail-back-button"
-                    className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-secondary hover:bg-surface"
-                  >
-                    <ArrowLeft className="w-5 h-5" />
-                  </button>
-                  <span className="truncate text-sm font-medium text-text-primary">
-                    {detailKb!.name}
-                  </span>
-                </div>
-                <KnowledgeDetailPanel
-                  key={`${detailKb!.id}-${initialDocPath ?? ''}`}
-                  selectedKb={detailKb}
-                  onSyncKnowledgeBase={setDetailKb}
-                  initialDocPath={initialDocPath}
-                  currentView={currentView}
-                />
-              </>
+              <KnowledgeDetailPanel
+                key={`${detailKb!.id}-${initialDocPath ?? ''}`}
+                selectedKb={detailKb}
+                onSyncKnowledgeBase={setDetailKb}
+                initialDocPath={initialDocPath}
+                currentView={currentView}
+              />
             )}
             {isCodeWiki && (
               <CodeWikiWorkspace
                 key={detailKb!.id}
                 wiki={detailKb!}
+                view={codeWikiView}
                 canConfigure={canConfigureDetailCodeWiki}
                 onConfigure={() => setEditingKb(detailKb!)}
               />

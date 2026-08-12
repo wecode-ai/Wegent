@@ -44,7 +44,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -86,14 +86,41 @@ export function KnowledgeDocumentPageDesktop({
   )
   const selectedKbId = sidebar.selectedKb?.id
   const selectedKbType = sidebar.selectedKb?.kb_type
+  const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
 
   useEffect(() => {
+    if (selectedKbType === 'code_wiki') {
+      onKnowledgeViewStateChange?.({
+        visible: Boolean(selectedKbId),
+        switcher: 'code-wiki',
+        currentView: codeWikiView,
+        onViewChange: view => {
+          if (view === 'wiki' || view === 'documents') setCodeWikiView(view)
+        },
+      })
+      return
+    }
+
     onKnowledgeViewStateChange?.({
-      visible: Boolean(selectedKbId && selectedKbType !== 'code_wiki'),
+      visible: Boolean(selectedKbId),
+      switcher: 'document',
       currentView,
-      onViewChange: setCurrentView,
+      onViewChange: view => {
+        if (view === 'documents' || view === 'notebook') setCurrentView(view)
+      },
     })
-  }, [currentView, onKnowledgeViewStateChange, selectedKbId, selectedKbType, setCurrentView])
+  }, [
+    codeWikiView,
+    currentView,
+    onKnowledgeViewStateChange,
+    selectedKbId,
+    selectedKbType,
+    setCurrentView,
+  ])
+
+  useEffect(() => {
+    setCodeWikiView('wiki')
+  }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
@@ -488,8 +515,11 @@ export function KnowledgeDocumentPageDesktop({
           <CodeWikiWorkspace
             key={sidebar.selectedKb.id}
             wiki={sidebar.selectedKb}
+            view={codeWikiView}
             canConfigure={canConfigureSelectedCodeWiki}
             onConfigure={() => dialogs.setEditingKb(sidebar.selectedKb!)}
+            groupInfo={selectedKbGroupInfo}
+            onGroupClick={handleGroupClick}
           />
         )
       }

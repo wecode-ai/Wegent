@@ -26,7 +26,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { KnowledgeView } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
 import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
 
@@ -55,32 +55,61 @@ function KnowledgePageContent() {
   const knowledgeViewSwitcher = knowledgeViewState.visible ? (
     <Tabs
       value={knowledgeViewState.currentView}
-      onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
+      onValueChange={value =>
+        knowledgeViewState.onViewChange?.(value as KnowledgeView | CodeWikiView)
+      }
       className="flex-shrink-0"
     >
       <TabsList className="h-11 sm:h-8 rounded-md bg-surface/80 p-0 sm:p-0.5">
-        <TabsTrigger
-          value="documents"
-          aria-label={t('knowledge:document.knowledgeBase.typeClassic')}
-          data-testid="knowledge-view-documents-trigger"
-          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
-        >
-          <FileText className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">
-            {t('knowledge:document.knowledgeBase.typeClassic')}
-          </span>
-        </TabsTrigger>
-        <TabsTrigger
-          value="notebook"
-          aria-label={t('knowledge:document.knowledgeBase.typeNotebook')}
-          data-testid="knowledge-view-notebook-trigger"
-          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">
-            {t('knowledge:document.knowledgeBase.typeNotebook')}
-          </span>
-        </TabsTrigger>
+        {knowledgeViewState.switcher === 'code-wiki' ? (
+          <>
+            <TabsTrigger
+              value="wiki"
+              aria-label={t('knowledge:codeWiki.workspace.wiki')}
+              data-testid="code-wiki-view-wiki"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('knowledge:codeWiki.workspace.wiki')}</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="documents"
+              aria-label={t('knowledge:codeWiki.workspace.documents')}
+              data-testid="code-wiki-view-documents"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {t('knowledge:codeWiki.workspace.documents')}
+              </span>
+            </TabsTrigger>
+          </>
+        ) : (
+          <>
+            <TabsTrigger
+              value="documents"
+              aria-label={t('knowledge:document.knowledgeBase.typeClassic')}
+              data-testid="knowledge-view-documents-trigger"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {t('knowledge:document.knowledgeBase.typeClassic')}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="notebook"
+              aria-label={t('knowledge:document.knowledgeBase.typeNotebook')}
+              data-testid="knowledge-view-notebook-trigger"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {t('knowledge:document.knowledgeBase.typeNotebook')}
+              </span>
+            </TabsTrigger>
+          </>
+        )}
       </TabsList>
     </Tabs>
   ) : null

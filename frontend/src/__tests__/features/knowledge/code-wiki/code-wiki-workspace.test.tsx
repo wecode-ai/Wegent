@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import type { KnowledgeBase } from '@/types/knowledge'
 
@@ -40,17 +41,25 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
     contentOrigin,
     readOnly,
     canUpload,
+    headerActions,
+    groupInfo,
   }: {
     contentOrigin?: string
     readOnly?: boolean
     canUpload?: boolean
+    headerActions?: ReactNode
+    groupInfo?: { groupId: string }
   }) => (
-    <div
-      data-testid="mock-code-wiki-document-list"
-      data-origin={contentOrigin}
-      data-read-only={String(readOnly)}
-      data-can-upload={String(canUpload)}
-    />
+    <>
+      <div
+        data-testid="mock-code-wiki-document-list"
+        data-origin={contentOrigin}
+        data-read-only={String(readOnly)}
+        data-can-upload={String(canUpload)}
+        data-group-id={groupInfo?.groupId}
+      />
+      {headerActions}
+    </>
   ),
 }))
 
@@ -75,12 +84,18 @@ const wiki: KnowledgeBase = {
 }
 
 describe('CodeWikiWorkspace', () => {
-  it('keeps Wiki as the default and presents user and generated content as virtual roots', () => {
-    render(<CodeWikiWorkspace wiki={wiki} />)
+  it('renders the supplied top-level view and presents virtual roots in the document header', () => {
+    const { rerender } = render(<CodeWikiWorkspace wiki={wiki} view="wiki" />)
 
     expect(screen.getByTestId('mock-code-wiki-reader')).toBeInTheDocument()
 
-    fireEvent.mouseDown(screen.getByTestId('code-wiki-view-documents'))
+    rerender(
+      <CodeWikiWorkspace
+        wiki={wiki}
+        view="documents"
+        groupInfo={{ groupId: 'default', groupName: 'personal', groupType: 'personal' }}
+      />
+    )
 
     expect(screen.getByTestId('code-wiki-content-roots')).toBeInTheDocument()
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
@@ -94,6 +109,10 @@ describe('CodeWikiWorkspace', () => {
     expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
       'data-can-upload',
       'true'
+    )
+    expect(screen.getByTestId('mock-code-wiki-document-list')).toHaveAttribute(
+      'data-group-id',
+      'default'
     )
 
     fireEvent.mouseDown(screen.getByTestId('code-wiki-content-generated'))

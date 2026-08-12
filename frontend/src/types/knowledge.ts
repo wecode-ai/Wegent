@@ -338,6 +338,7 @@ export function documentViewOf(kbType?: KnowledgeBaseType | null): DocumentViewT
   return kbType === 'notebook' || kbType === 'classic' ? kbType : null
 }
 export type KnowledgeView = 'documents' | 'notebook'
+export type CodeWikiView = 'wiki' | 'documents'
 export type RagConfigMode = 'auto' | 'disabled'
 export type DirectAccessRequirement = 'read' | 'edit'
 

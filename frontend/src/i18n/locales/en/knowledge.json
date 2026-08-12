@@ -1157,8 +1157,8 @@
     "workspace": {
       "wiki": "Wiki",
       "documents": "Document Management",
-      "generatedContent": "Generated Content",
-      "userContent": "User Content",
+      "generatedContent": "Wiki",
+      "userContent": "Documents",
       "permissions": "Permissions"
     },
     "history": {

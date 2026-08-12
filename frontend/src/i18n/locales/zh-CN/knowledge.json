@@ -1157,8 +1157,8 @@
     "workspace": {
       "wiki": "Wiki",
       "documents": "文档管理",
-      "generatedContent": "生成内容",
-      "userContent": "用户内容",
+      "generatedContent": "Wiki",
+      "userContent": "文档",
       "permissions": "权限管理"
     },
     "history": {

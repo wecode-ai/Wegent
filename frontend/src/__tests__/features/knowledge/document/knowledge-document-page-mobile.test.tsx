@@ -360,7 +360,7 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     expect(mockPush).toHaveBeenCalledWith('/knowledge?type=document')
   })
 
-  it('6) code wiki deep-link uses the reader and hides the document view switcher', async () => {
+  it('6) code wiki deep-link uses the reader and exposes its top-level view switcher', async () => {
     const codeWiki = { ...baseKb, id: 7, name: 'Wegent', kb_type: 'code_wiki' as const }
     const onKnowledgeViewStateChange = jest.fn()
     mockTree.personalData = { created_by_me: [codeWiki], shared_with_me: [] }
@@ -380,7 +380,11 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-detail-back-button')).not.toBeInTheDocument()
     expect(onKnowledgeViewStateChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ visible: false })
+      expect.objectContaining({
+        visible: true,
+        switcher: 'code-wiki',
+        currentView: 'wiki',
+      })
     )
   })
 

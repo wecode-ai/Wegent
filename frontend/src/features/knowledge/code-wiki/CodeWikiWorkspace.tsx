@@ -18,16 +18,23 @@ import {
   canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
-import type { KnowledgeBase, KnowledgeContentOrigin } from '@/types/knowledge'
+import type {
+  CodeWikiView,
+  KbGroupInfo,
+  KnowledgeBase,
+  KnowledgeContentOrigin,
+} from '@/types/knowledge'
 import { CodeWikiReader } from './CodeWikiReader'
 
-type CodeWikiView = 'wiki' | 'documents'
 type DocumentManagementView = KnowledgeContentOrigin | 'permissions'
 
 interface CodeWikiWorkspaceProps {
   wiki: KnowledgeBase
+  view: CodeWikiView
   canConfigure?: boolean
   onConfigure?: () => void
+  groupInfo?: KbGroupInfo
+  onGroupClick?: (groupId: string, groupType?: string) => void
 }
 
 /**
@@ -38,13 +45,15 @@ interface CodeWikiWorkspaceProps {
  */
 export function CodeWikiWorkspace({
   wiki,
+  view,
   canConfigure = false,
   onConfigure,
+  groupInfo,
+  onGroupClick,
 }: CodeWikiWorkspaceProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
   const namespaceRoleMap = useNamespaceRoleMap()
-  const [view, setView] = useState<CodeWikiView>('wiki')
   const [documentView, setDocumentView] = useState<DocumentManagementView>('user')
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({ kbId: wiki.id })
 
@@ -74,31 +83,32 @@ export function CodeWikiWorkspace({
     <Tabs
       value={documentView}
       onValueChange={next => setDocumentView(next as DocumentManagementView)}
-      className="w-full"
+      className="flex-shrink-0"
     >
-      <TabsList
-        className={`grid h-11 w-full ${permissions.canManagePermissions ? 'grid-cols-3' : 'grid-cols-2'}`}
-        data-testid="code-wiki-content-roots"
-      >
+      <TabsList className="h-8" data-testid="code-wiki-content-roots">
         <TabsTrigger
           value="generated"
-          className="h-11 gap-1.5"
+          className="h-7 gap-1 px-2 text-xs"
           data-testid="code-wiki-content-generated"
         >
-          <Library className="h-4 w-4" />
+          <Library className="h-3.5 w-3.5" />
           {t('codeWiki.workspace.generatedContent')}
         </TabsTrigger>
-        <TabsTrigger value="user" className="h-11 gap-1.5" data-testid="code-wiki-content-user">
-          <FileText className="h-4 w-4" />
+        <TabsTrigger
+          value="user"
+          className="h-7 gap-1 px-2 text-xs"
+          data-testid="code-wiki-content-user"
+        >
+          <FileText className="h-3.5 w-3.5" />
           {t('codeWiki.workspace.userContent')}
         </TabsTrigger>
         {permissions.canManagePermissions && (
           <TabsTrigger
             value="permissions"
-            className="h-11 gap-1.5"
+            className="h-7 gap-1 px-2 text-xs"
             data-testid="code-wiki-content-permissions"
           >
-            <Shield className="h-4 w-4" />
+            <Shield className="h-3.5 w-3.5" />
             {t('codeWiki.workspace.permissions')}
           </TabsTrigger>
         )}
@@ -108,17 +118,6 @@ export function CodeWikiWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="code-wiki-workspace">
-      <Tabs value={view} onValueChange={next => setView(next as CodeWikiView)}>
-        <TabsList className="grid h-11 w-full grid-cols-2 border-b border-border bg-base px-2">
-          <TabsTrigger value="wiki" className="h-11" data-testid="code-wiki-view-wiki">
-            {t('codeWiki.workspace.wiki')}
-          </TabsTrigger>
-          <TabsTrigger value="documents" className="h-11" data-testid="code-wiki-view-documents">
-            {t('codeWiki.workspace.documents')}
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
       {view === 'wiki' ? (
         <CodeWikiReader wiki={wiki} canConfigure={canConfigure} onConfigure={onConfigure} />
       ) : (
@@ -126,9 +125,33 @@ export function CodeWikiWorkspace({
           className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"
           data-testid="code-wiki-document-management"
         >
-          <div className="mb-4">{contentTabs}</div>
           {documentView === 'permissions' ? (
-            <PermissionManagementTab kbId={wiki.id} kbNamespace={wiki.namespace} />
+            <>
+              <div className="mb-4 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    {groupInfo && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onGroupClick?.(groupInfo.groupId, groupInfo.groupType)}
+                          className="max-w-[120px] truncate text-base font-medium text-text-secondary transition-colors hover:text-primary"
+                          title={groupInfo.groupName}
+                        >
+                          {groupInfo.groupName}
+                        </button>
+                        <span className="text-text-muted">/</span>
+                      </>
+                    )}
+                    <h2 className="truncate text-base font-medium text-text-primary">
+                      {wiki.name}
+                    </h2>
+                  </div>
+                </div>
+                {contentTabs}
+              </div>
+              <PermissionManagementTab kbId={wiki.id} kbNamespace={wiki.namespace} />
+            </>
           ) : (
             <DocumentList
               key={`${wiki.id}-${documentView}`}
@@ -138,6 +161,9 @@ export function CodeWikiWorkspace({
               canUpload={documentView === 'user' && permissions.canManageDocuments}
               canManageAllDocuments={documentView === 'user' && permissions.canManageKb}
               paginationEnabled={true}
+              headerActions={contentTabs}
+              groupInfo={groupInfo}
+              onGroupClick={onGroupClick}
             />
           )}
         </div>
