@@ -557,7 +557,9 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
-        apply_local_execution_state(&mut link, local_active, queue_position);
+        if queue_position.is_some() {
+            apply_local_execution_state(&mut link, local_active, queue_position);
+        }
         if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
