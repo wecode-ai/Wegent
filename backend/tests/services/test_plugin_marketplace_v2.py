@@ -49,6 +49,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncService,
     device_capability_sync_service,
 )
+from app.services.installed_plugin_service import installed_plugin_service
 from app.services.official_plugin_publisher import OfficialPluginPublisher
 from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
@@ -1599,6 +1600,106 @@ def test_catalog_uses_current_device_materialization_state(test_db, test_user):
     assert item.currentDeviceInstallation is not None
     assert item.currentDeviceInstallation.state == "pending"
     assert not item.currentDeviceInstallation.errorMessage
+
+
+def test_catalog_keeps_older_materialized_release_installed(test_db, test_user):
+    installed, old_release = _device_install(test_db, test_user.id)
+    new_release = PluginRelease(
+        plugin_id=old_release.plugin_id,
+        version="1.1.0",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/device-state-1.1.0.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(new_release)
+    test_db.flush()
+    plugin = test_db.get(Plugin, old_release.plugin_id)
+    plugin.latest_release_id = new_release.id
+    service = PluginMarketplaceService()
+    installed.json = service._installed_payload(plugin, new_release)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=new_release.id,
+            actual_release_id=old_release.id,
+            state="failed",
+            error_code="PLUGIN_SYNC_FAILED",
+            error_message="Update failed",
+        )
+    )
+    test_db.commit()
+
+    item = service.list_plugins(
+        test_db,
+        user_id=test_user.id,
+        device_id="current-device",
+    ).items[0]
+
+    assert item.installed is True
+    assert item.updateAvailable is True
+    assert item.currentDeviceInstallation is not None
+    assert item.currentDeviceInstallation.actualReleaseId == old_release.id
+    installed_item = service.enrich_installed_list(
+        test_db,
+        installed_plugin_service.list_installed_plugins(
+            db=test_db,
+            user_id=test_user.id,
+        ),
+        device_id="current-device",
+    ).items[0]
+    assert installed_item.spec.installState == "update_available"
+
+
+def test_reset_failed_update_preserves_materialized_release(test_db, test_user):
+    installed, old_release = _device_install(test_db, test_user.id)
+    new_release = PluginRelease(
+        plugin_id=old_release.plugin_id,
+        version="1.1.0",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/device-state-1.1.0.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(new_release)
+    test_db.flush()
+    installed.json = {
+        **installed.json,
+        "spec": {**installed.json["spec"], "releaseId": new_release.id},
+    }
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=new_release.id,
+            actual_release_id=old_release.id,
+            state="failed",
+        )
+    )
+    test_db.commit()
+
+    changed = PluginDeviceInstallationService().ensure_pending_for_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="current-device",
+        reset_failed=True,
+    )
+
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert changed == 1
+    assert row.state == "pending"
+    assert row.actual_release_id == old_release.id
 
 
 def test_publish_capability_supports_admin_flag_and_user_allowlist(

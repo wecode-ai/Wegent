@@ -1,6 +1,7 @@
 import { Package } from 'lucide-react'
 import type { SlashCommand } from './composerAutocomplete'
 import { groupedSlashCommands } from './composerAutocomplete'
+import { ComposerPluginIcon } from './ComposerPluginIcon'
 
 interface SlashCommandMenuProps {
   commands: SlashCommand[]
@@ -87,7 +88,14 @@ export function SlashCommandMenu({
                     index === selectedIndex ? 'bg-muted' : '',
                   ].join(' ')}
                 >
-                  {command.iconUrl ? (
+                  {command.app ? (
+                    <ComposerPluginIcon
+                      app={command.app}
+                      className="plugin-icon-slot h-6 w-6 rounded-md border-border/30"
+                      initialClassName="text-xs font-medium leading-none text-text-secondary"
+                      testId={`slash-command-icon-${command.testId}`}
+                    />
+                  ) : command.iconUrl ? (
                     <span
                       className={[
                         'plugin-icon-slot h-6 w-6 rounded-md',
