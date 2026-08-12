@@ -173,13 +173,20 @@ describe('appendCodeCommentContexts', () => {
     })
   })
 
-  test('strips the block even when the payload cannot be parsed', () => {
-    const parsed = parseCodeCommentContexts(
-      'before\n\n<workspace_comment_context>\nnot-json\n</workspace_comment_context>'
-    )
+  test('keeps the message untouched when the payload is not a valid annotation payload', () => {
+    expect(
+      parseCodeCommentContexts(
+        'before\n\n<workspace_comment_context>\nnot-json\n</workspace_comment_context>'
+      )
+    ).toBeNull()
+  })
 
-    expect(parsed?.content).toBe('before')
-    expect(parsed?.codeComments).toEqual([])
+  test('keeps user-typed context-like text that is not at the message end', () => {
+    expect(
+      parseCodeCommentContexts(
+        '讨论 <workspace_comment_context>\n[]\n</workspace_comment_context> 这个标签的用法'
+      )
+    ).toBeNull()
   })
 
   test('restores the browser annotation target for history previews', () => {

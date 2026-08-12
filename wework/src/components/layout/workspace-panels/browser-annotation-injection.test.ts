@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { browserAnnotationInjectionScript } from './browser-annotation/injection-script'
 
 interface RuntimeApi {
+  scope: { browserTabId: string; pageSessionId: string; url: string }
   getSnapshot: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
   clear: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
   suspend: () => unknown
@@ -256,5 +257,43 @@ describe('browser annotation injection', () => {
 
     expect(event.defaultPrevented).toBe(true)
     expect(document.querySelector('[data-wework-annotation="editor"]')).not.toBeNull()
+  })
+
+  test('creates a fresh session when the page url changes', () => {
+    const input = openEditor(document.querySelector('#first-target')!)
+    input!.value = 'First comment'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toHaveLength(
+      1
+    )
+
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__!.scope.url = 'https://other.example/page'
+    window.eval(browserAnnotationInjectionScript({ browserTabId: 'test-browser' }))
+
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toEqual([])
+  })
+
+  test('only rolls back overridden styles, preserving page-driven updates', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    target.style.color = 'blue'
+    const input = openEditor(target)
+    input!.value = 'Use a stronger color'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.value = '#ff0000'
+    color.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+    click(saveButton()!)
+
+    target.style.backgroundColor = 'yellow'
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.suspend()
+
+    expect(target.style.color).toBe('blue')
+    expect(target.style.backgroundColor).toBe('yellow')
   })
 })

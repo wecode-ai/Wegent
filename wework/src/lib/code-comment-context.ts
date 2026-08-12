@@ -85,6 +85,13 @@ function browserTargetFromSelectedText(
 function deserializeCodeCommentContext(item: unknown, index: number): CodeCommentContext | null {
   if (!item || typeof item !== 'object') return null
   const record = item as Record<string, unknown>
+  if (
+    typeof record.filePath !== 'string' &&
+    typeof record.selectedText !== 'string' &&
+    typeof record.userComment !== 'string'
+  ) {
+    return null
+  }
   const [startLine, endLine] = parseContextLines(record.lines)
   const filePath = typeof record.filePath === 'string' ? record.filePath : ''
   const selectedText = typeof record.selectedText === 'string' ? record.selectedText : ''
@@ -116,7 +123,7 @@ function deserializeCodeCommentContext(item: unknown, index: number): CodeCommen
 export function parseCodeCommentContexts(
   content: string
 ): { codeComments: CodeCommentContext[]; content: string } | null {
-  const blockMatch = /<workspace_comment_context>[\s\S]*?<\/workspace_comment_context>/.exec(
+  const blockMatch = /<workspace_comment_context>[\s\S]*?<\/workspace_comment_context>\s*$/.exec(
     content
   )
   if (!blockMatch) return null
@@ -124,16 +131,17 @@ export function parseCodeCommentContexts(
   const inner = blockMatch[0]
   const jsonStart = inner.indexOf('[')
   const jsonEnd = inner.lastIndexOf(']')
-  if (jsonStart < 0 || jsonEnd <= jsonStart) return { codeComments: [], content: strippedContent }
+  if (jsonStart < 0 || jsonEnd <= jsonStart) return null
   let payload: unknown
   try {
     payload = JSON.parse(inner.slice(jsonStart, jsonEnd + 1))
   } catch {
-    return { codeComments: [], content: strippedContent }
+    return null
   }
-  if (!Array.isArray(payload)) return { codeComments: [], content: strippedContent }
+  if (!Array.isArray(payload)) return null
   const codeComments = payload
     .map((item, index) => deserializeCodeCommentContext(item, index))
     .filter((item): item is CodeCommentContext => item !== null)
+  if (codeComments.length === 0) return null
   return { codeComments, content: strippedContent }
 }
