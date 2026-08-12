@@ -117,6 +117,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     LocalWorkspaceOpenerId,
     boolean | undefined
   > | null>(null)
+  const [openerLabels, setOpenerLabels] = useState<Record<string, string | undefined>>({})
   const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
   const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
   const showBottomPanelToggle =
@@ -163,13 +164,21 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       LocalWorkspaceOpenerId,
       boolean | undefined
     >
+  const buildLabelMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
+    Object.fromEntries(availability.map(item => [item.id, item.label])) as Record<
+      string,
+      string | undefined
+    >
 
   useEffect(() => {
     if (!localWorkspaceEnabled) return
     let cancelled = false
     void (async () => {
       const availability = await listLocalWorkspaceOpeners()
-      if (!cancelled) setOpenerAvailability(buildAvailabilityMap(availability))
+      if (!cancelled) {
+        setOpenerAvailability(buildAvailabilityMap(availability))
+        setOpenerLabels(buildLabelMap(availability))
+      }
     })()
     return () => {
       cancelled = true
@@ -188,11 +197,12 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     LOCAL_WORKSPACE_OPENERS.find(opener => opener.id === (defaultOpener ?? 'vscode'))?.label ??
     'VS Code'
 
-  const handleLocateOpener = async (opener: LocalWorkspaceOpenerId) => {
-    const picked = await pickLocalWorkspaceOpenerExe(opener)
+  const handleChooseOther = async () => {
+    const picked = await pickLocalWorkspaceOpenerExe()
     if (picked) {
       const availability = await listLocalWorkspaceOpeners()
       setOpenerAvailability(buildAvailabilityMap(availability))
+      setOpenerLabels(buildLabelMap(availability))
     }
   }
 
@@ -338,7 +348,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             availability={
               (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
             }
-            onLocate={handleLocateOpener}
+            labels={openerLabels}
+            onChooseOther={handleChooseOther}
             onSelect={handleOpenLocalWorkspace}
           />
         </div>

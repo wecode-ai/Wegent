@@ -9,6 +9,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
+use std::collections::HashMap;
+
+#[cfg(target_os = "windows")]
 use crate::opener_store;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,7 +81,7 @@ fn opener_defs() -> &'static [OpenerDef] {
         env_vars: &["WEGENT_INTELLIJ_IDEA_PATH"],
         cli: Some("idea64"),
         common_dirs: &[],
-        exe_candidates: &[],
+        exe_candidates: &["idea64.exe", "idea.exe"],
     };
     const WINDOWS_ANDROID_STUDIO_COMMON: WindowsDef = WindowsDef {
         env_vars: &["WEGENT_ANDROID_STUDIO_PATH"],
@@ -103,6 +106,13 @@ fn opener_defs() -> &'static [OpenerDef] {
         cli: Some("powershell"),
         common_dirs: &["%WINDIR%/System32/WindowsPowerShell/v1.0"],
         exe_candidates: &["powershell.exe"],
+    };
+
+    const WINDOWS_CUSTOM: WindowsDef = WindowsDef {
+        env_vars: &[],
+        cli: None,
+        common_dirs: &[],
+        exe_candidates: &[],
     };
 
     const ALL: &[OpenerDef] = &[
@@ -211,6 +221,13 @@ fn opener_defs() -> &'static [OpenerDef] {
             windows: Some(WINDOWS_POWERSHELL),
             linux_cli: None,
         },
+        OpenerDef {
+            id: "custom",
+            category: OpenerCategory::General,
+            macos_app_name: None,
+            windows: Some(WINDOWS_CUSTOM),
+            linux_cli: None,
+        },
     ];
     ALL
 }
@@ -253,19 +270,27 @@ pub struct OpenerInfo {
     id: String,
     category: String,
     available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 #[tauri::command]
-pub fn list_local_workspace_openers(app: tauri::AppHandle) -> Vec<OpenerInfo> {
-    opener_defs()
-        .iter()
-        .filter(|def| is_visible(def))
-        .map(|def| OpenerInfo {
-            id: def.id.to_string(),
-            category: category_name(def.category).to_string(),
-            available: opener_available(def, &app),
-        })
-        .collect()
+pub async fn list_local_workspace_openers(app: tauri::AppHandle) -> Vec<OpenerInfo> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app = &app;
+        opener_defs()
+            .iter()
+            .filter(|def| is_visible(def))
+            .map(|def| OpenerInfo {
+                id: def.id.to_string(),
+                category: category_name(def.category).to_string(),
+                available: opener_available(def, app),
+                label: custom_opener_label(def, app),
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 fn opener_available(def: &OpenerDef, _app: &tauri::AppHandle) -> bool {
@@ -278,6 +303,11 @@ fn opener_available(def: &OpenerDef, _app: &tauri::AppHandle) -> bool {
     }
     #[cfg(target_os = "windows")]
     {
+        // cmd and powershell are system shell built-ins shipped in %WINDIR%; their
+        // launch does not depend on detection, so never gate them on a locate step.
+        if matches!(def.id, "cmd" | "powershell") {
+            return true;
+        }
         detect_windows(def, _app).is_some()
     }
     #[cfg(target_os = "linux")]
@@ -287,17 +317,28 @@ fn opener_available(def: &OpenerDef, _app: &tauri::AppHandle) -> bool {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn custom_opener_label(def: &OpenerDef, app: &tauri::AppHandle) -> Option<String> {
+    if def.id != "custom" {
+        return None;
+    }
+    let saved = opener_store::saved_exe_path(app, "custom")?;
+    std::path::Path::new(&saved)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn custom_opener_label(_def: &OpenerDef, _app: &tauri::AppHandle) -> Option<String> {
+    None
+}
+
 #[tauri::command]
 pub async fn pick_local_workspace_opener_exe(
     app: tauri::AppHandle,
-    opener: String,
 ) -> Result<Option<String>, String> {
     #[cfg(target_os = "windows")]
     {
-        let opener = opener.trim();
-        if opener.is_empty() {
-            return Err("Workspace opener is empty".to_string());
-        }
         let dialog_app = app.clone();
         let picked = tauri::async_runtime::spawn_blocking(move || {
             use tauri_plugin_dialog::DialogExt;
@@ -311,7 +352,7 @@ pub async fn pick_local_workspace_opener_exe(
         .map_err(|error| format!("Failed to pick workspace opener executable: {error}"))?;
         match picked {
             Some(tauri_plugin_dialog::FilePath::Path(path)) => {
-                opener_store::save_exe_path(&app, opener, &path.to_string_lossy())?;
+                opener_store::save_exe_path(&app, "custom", &path.to_string_lossy())?;
                 Ok(Some(path.to_string_lossy().into_owned()))
             }
             Some(tauri_plugin_dialog::FilePath::Url(_)) => Ok(None),
@@ -321,7 +362,7 @@ pub async fn pick_local_workspace_opener_exe(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, opener);
+        let _ = app;
         Ok(None)
     }
 }
@@ -408,7 +449,77 @@ fn detect_windows(def: &OpenerDef, app: &tauri::AppHandle) -> Option<PathBuf> {
         }
     }
 
+    // Fall back to shortcuts pinned in the Start Menu or on the Desktop; their
+    // targets cover installs outside the well-known directories (e.g. JetBrains
+    // Toolbox apps).
+    for candidate in windows.exe_candidates {
+        if let Some(exe) = shortcut_targets().get(&candidate.to_lowercase()) {
+            return Some(exe.clone());
+        }
+    }
+
     None
+}
+
+/// Resolved targets of Start Menu and Desktop shortcuts, keyed by the lowercase
+/// executable file name. Resolving every shortcut on every availability probe is
+/// wasteful, so the scan runs once per process.
+#[cfg(target_os = "windows")]
+fn shortcut_targets() -> &'static HashMap<String, PathBuf> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<HashMap<String, PathBuf>> = OnceLock::new();
+    CACHE.get_or_init(scan_shortcut_targets)
+}
+
+#[cfg(target_os = "windows")]
+fn scan_shortcut_targets() -> HashMap<String, PathBuf> {
+    // One PowerShell pass resolves the target of every .lnk in the user and
+    // all-users Start Menu Programs and Desktop folders. WScript.Shell resolves
+    // each shortcut without any unsafe code or extra dependencies here.
+    const SCRIPT: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$shell = New-Object -ComObject WScript.Shell
+$seen = @{}
+$folders = @(
+  [Environment]::GetFolderPath('Desktop'),
+  [Environment]::GetFolderPath('CommonDesktopDirectory'),
+  [Environment]::GetFolderPath('Programs'),
+  [Environment]::GetFolderPath('CommonPrograms')
+)
+foreach ($dir in $folders) {
+  if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+  Get-ChildItem -LiteralPath $dir -Filter *.lnk -File -Recurse | ForEach-Object {
+    try {
+      $shortcut = $shell.CreateShortcut($_.FullName)
+      $target = $shortcut.TargetPath
+      if ($target -and (Test-Path -LiteralPath $target) -and -not $seen.ContainsKey($target.ToLower())) {
+        $seen[$target.ToLower()] = $true
+        Write-Output ([System.IO.Path]::GetFileName($target) + "`t" + $target)
+      }
+    } catch {}
+  }
+}
+"#;
+    let mut command = std::process::Command::new("powershell");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT]);
+    crate::process::hide_windows_console(&mut command);
+    let Ok(output) = command.output() else {
+        return HashMap::new();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut targets = HashMap::new();
+    for line in text.lines() {
+        let Some((name, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let key = name.trim().to_lowercase();
+        let value = path.trim();
+        if !key.is_empty() && !value.is_empty() {
+            targets.insert(key, PathBuf::from(value));
+        }
+    }
+    targets
 }
 
 #[cfg(target_os = "windows")]

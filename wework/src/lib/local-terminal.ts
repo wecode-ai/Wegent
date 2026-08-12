@@ -137,6 +137,7 @@ export interface LocalWorkspaceOpenerAvailability {
   id: LocalWorkspaceOpenerId
   category: string
   available: boolean
+  label?: string
 }
 
 export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerAvailability[]> {
@@ -147,14 +148,12 @@ export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerA
   return invoke<LocalWorkspaceOpenerAvailability[]>('list_local_workspace_openers')
 }
 
-export async function pickLocalWorkspaceOpenerExe(
-  opener: LocalWorkspaceOpenerId
-): Promise<string | null> {
+export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
   if (!isLocalTerminalAvailable()) {
     return null
   }
 
-  return invoke<string | null>('pick_local_workspace_opener_exe', { opener })
+  return invoke<string | null>('pick_local_workspace_opener_exe')
 }
 
 export async function openLocalFile(path?: string): Promise<void> {
