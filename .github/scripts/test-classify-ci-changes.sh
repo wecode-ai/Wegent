@@ -206,6 +206,9 @@ assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
 assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/install-wework-tauri-system-dependencies.sh"
 
+assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
+  "docker/wework-e2e/desktop.Dockerfile"
+
 assert_desktop_case() {
   local name="$1"
   local expected="$2"
