@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { HTMLAttributes, ReactNode } from 'react'
+import { useState, type HTMLAttributes, type ReactNode } from 'react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { DiscoverResources } from '@/features/resource-library/components/DiscoverResources'
@@ -286,6 +286,57 @@ describe('DiscoverResources', () => {
       cursor: undefined,
       limit: 20,
     })
+  })
+
+  it('shows an external source after Featured and switches to its inline content', async () => {
+    function SkillMarketplace() {
+      const [activeMarketplaceKey, setActiveMarketplaceKey] = useState<string | null>(null)
+      return (
+        <DiscoverResources
+          resourceType="skill"
+          systemOnly
+          externalMarketplaces={[
+            {
+              key: 'community',
+              label: 'Community Hub',
+              content: <div data-testid="community-marketplace-content">Community search</div>,
+            },
+            {
+              key: 'partner',
+              label: 'Partner Skills',
+              content: <div data-testid="partner-marketplace-content">Partner search</div>,
+            },
+          ]}
+          activeExternalMarketplaceKey={activeMarketplaceKey}
+          onExternalMarketplaceChange={setActiveMarketplaceKey}
+        />
+      )
+    }
+
+    render(<SkillMarketplace />)
+
+    const featured = await screen.findByTestId('marketplace-tag-filter-all')
+    const category = screen.getByTestId('marketplace-tag-filter-technical_development')
+    const divider = screen.getByTestId('marketplace-source-divider')
+    const externalSource = screen.getByTestId('marketplace-external-source-community')
+    const partnerSource = screen.getByTestId('marketplace-external-source-partner')
+    expect(category.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(divider.compareDocumentPosition(externalSource)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(externalSource.compareDocumentPosition(partnerSource)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+
+    fireEvent.click(partnerSource)
+
+    expect(screen.getByTestId('partner-marketplace-content')).toBeInTheDocument()
+    expect(partnerSource).toHaveAttribute('aria-pressed', 'true')
+    expect(externalSource).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('resource-library-search-input')).not.toBeInTheDocument()
+
+    fireEvent.click(featured)
+
+    expect(screen.queryByTestId('partner-marketplace-content')).not.toBeInTheDocument()
+    expect(featured).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('includes regular marketplace resources after selecting a category', async () => {

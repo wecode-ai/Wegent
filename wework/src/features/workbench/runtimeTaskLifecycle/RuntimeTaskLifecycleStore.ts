@@ -154,19 +154,17 @@ export class RuntimeTaskLifecycleStore {
       options.preserveActiveTurn === true &&
       (this.getTask(address)?.derived.isRunning ?? false)
 
-    if (transcript.running === true) {
+    if (hasStreamingTurn) {
       this.executorStarted(address)
-    } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
-      this.executorSettled(address)
-    }
-
-    if (hasStreamingTurn && transcript.running !== false) {
       this.dispatch(address, {
         type: 'turn_recovered',
         streaming: true,
         turnId: streamingTurn?.id,
       })
+    } else if (transcript.running === true) {
+      this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
+      this.executorSettled(address)
       this.turnSettled(address)
     }
   }

@@ -42,14 +42,17 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
 import type { Group } from '@/types/group'
+import { listSkillMarketProviders, type SkillMarketProvider } from '@/apis/skillMarketplace'
 import { DiscoverResources } from './components/DiscoverResources'
 import { FeaturedScenarios } from './components/FeaturedScenarios'
 import { InstalledResources } from './components/InstalledResources'
+import { McpMarketplace } from './components/McpMarketplace'
 import { MyResources } from './components/MyResources'
 import { PublishedResources } from './components/PublishedResources'
 import type { ResourceCreateRequest } from './components/ResourceCreateButton'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
-import type { ManagedResourceType } from './types'
+import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
+import type { ManagedResourceType, ResourceNavigationType } from './types'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
 import {
@@ -57,7 +60,9 @@ import {
   type ResourceListState,
 } from '@/features/settings/components/SkillListWithScope'
 
-const discoverTypes: ManagedResourceType[] = ['agent', 'skill']
+type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all'>
+
+const discoverTypes: ActiveResourceNavigationType[] = ['agent', 'skill', 'mcp']
 const mineTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
 const coreCreateTypes: Array<{ type: ManagedResourceType; icon: typeof Bot }> = [
   { type: 'agent', icon: Bot },
@@ -155,6 +160,7 @@ function TeamSkillResources({
 
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
+  const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -164,9 +170,10 @@ export function ResourceLibraryPage() {
   const isPublishedView = tabParam === 'published'
   const isMineView = tabParam === 'mine' || isLegacyTeamView || isPublishedView
   const availableTypes = isMineView ? mineTypes : discoverTypes
-  const resourceType = availableTypes.includes(typeParam as ManagedResourceType)
-    ? (typeParam as ManagedResourceType)
+  const resourceType = availableTypes.includes(typeParam as ActiveResourceNavigationType)
+    ? (typeParam as ActiveResourceNavigationType)
     : 'agent'
+  const managedResourceType: ManagedResourceType = resourceType === 'mcp' ? 'agent' : resourceType
   const sourceParam = searchParams.get('source')
   const legacyScopeParam = searchParams.get('scope')
   const legacySource =
@@ -214,6 +221,11 @@ export function ResourceLibraryPage() {
   const [managedRevision, setManagedRevision] = useState(0)
   const [publishedRevision, setPublishedRevision] = useState(0)
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
+  const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
+  const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
+  const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
+    null
+  )
   const [createRequest, setCreateRequest] = useState<
     (ResourceCreateRequest & { type: ManagedResourceType }) | null
   >(null)
@@ -262,6 +274,44 @@ export function ResourceLibraryPage() {
   useEffect(() => {
     setSearchInput(keywordParam)
   }, [keywordParam])
+
+  useEffect(() => {
+    if (isMineView || resourceType !== 'skill') {
+      setSkillMarketProviders([])
+      setSkillMarketProvidersError('')
+      setActiveSkillMarketProviderKey(null)
+      return
+    }
+
+    let isMounted = true
+    setSkillMarketProvidersError('')
+    listSkillMarketProviders()
+      .then(providers => {
+        if (!isMounted) return
+        setSkillMarketProviders(providers)
+      })
+      .catch(loadError => {
+        if (!isMounted) return
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
+
+  const retrySkillMarketProviders = () => {
+    setSkillMarketProvidersError('')
+    listSkillMarketProviders()
+      .then(setSkillMarketProviders)
+      .catch(loadError => {
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
+      })
+  }
 
   const handleNewCapabilityType = (type: ManagedResourceType) => {
     createRequestId.current += 1
@@ -315,7 +365,8 @@ export function ResourceLibraryPage() {
     })
   }
 
-  const handleTypeChange = (nextType: ManagedResourceType) => {
+  const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
+    if (nextType === 'all') return
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
     const nextSupportsCreatedByMeSource = nextType === 'agent'
     const nextSupportsSystemSource =
@@ -366,20 +417,64 @@ export function ResourceLibraryPage() {
 
   const renderContent = () => {
     if (!isMineView) {
+      if (resourceType === 'mcp') return <McpMarketplace />
       return (
         <>
           {resourceType === 'agent' && <FeaturedScenarios />}
-          <DiscoverResources resourceType={resourceType} systemOnly hideSearch />
+          {resourceType === 'skill' && skillMarketProvidersError && (
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3"
+              role="alert"
+              data-testid="skill-marketplace-providers-error"
+            >
+              <p className="min-w-0 text-sm text-destructive">
+                {skillMarketProvidersLoadFailedLabel}: {skillMarketProvidersError}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 shrink-0"
+                onClick={retrySkillMarketProviders}
+                data-testid="skill-marketplace-providers-retry"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+                {t('actions.retry')}
+              </Button>
+            </div>
+          )}
+          <DiscoverResources
+            resourceType={resourceType}
+            systemOnly
+            hideSearch
+            externalMarketplaces={
+              resourceType === 'skill'
+                ? skillMarketProviders.map(provider => ({
+                    key: provider.key,
+                    label: provider.name,
+                    content: (
+                      <SkillMarketplaceSearch
+                        key={provider.key}
+                        provider={provider}
+                        namespace="default"
+                        onSkillsChange={() => setManagedRevision(revision => revision + 1)}
+                      />
+                    ),
+                  }))
+                : []
+            }
+            activeExternalMarketplaceKey={activeSkillMarketProviderKey}
+            onExternalMarketplaceChange={setActiveSkillMarketProviderKey}
+          />
         </>
       )
     }
     if (isPublishedView) {
-      return <PublishedResources key={publishedRevision} resourceType={resourceType} />
+      return <PublishedResources key={publishedRevision} resourceType={managedResourceType} />
     }
     if (isTeamAddMode && selectedGroupName) {
       return (
         <DiscoverResources
-          resourceType={resourceType}
+          resourceType={managedResourceType === 'agent' ? 'agent' : 'skill'}
           targetNamespace={selectedGroupName}
           hideSearch
         />
@@ -389,7 +484,7 @@ export function ResourceLibraryPage() {
       return (
         <InstalledResources
           key={`installed:${resourceType}`}
-          resourceType={resourceType}
+          resourceType={managedResourceType === 'agent' ? 'agent' : 'skill'}
           keyword={keywordParam}
         />
       )
@@ -425,7 +520,7 @@ export function ResourceLibraryPage() {
           </div>
         )
       }
-      if (resourceType === 'agent') {
+      if (managedResourceType === 'agent') {
         return (
           <MyResources
             key={`${managedRevision}:agent:group:${selectedGroupName || 'all'}`}
@@ -465,8 +560,8 @@ export function ResourceLibraryPage() {
     const fixedSource = effectiveSource as Exclude<MineSource, 'installed'>
     return (
       <MyResources
-        key={`${managedRevision}:${resourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
-        allowedTypes={[resourceType]}
+        key={`${managedRevision}:${managedResourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
+        allowedTypes={[managedResourceType]}
         fixedSource={fixedSource}
         fixedGroup={effectiveSource === 'group' ? selectedGroupName : undefined}
         hideSourceControls
@@ -574,7 +669,7 @@ export function ResourceLibraryPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <ResourceTypeFilter
                   value={resourceType}
-                  onValueChange={value => handleTypeChange(value as ManagedResourceType)}
+                  onValueChange={handleTypeChange}
                   filters={availableTypes}
                   marketLabels={!isMineView}
                 />
@@ -591,7 +686,7 @@ export function ResourceLibraryPage() {
                     <Input
                       value={searchInput}
                       onChange={event => setSearchInput(event.target.value)}
-                      placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
+                      placeholder={t(getResourceSearchPlaceholderKey(managedResourceType))}
                       className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
                       data-testid="resource-library-header-search-input"
                     />

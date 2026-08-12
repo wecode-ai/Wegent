@@ -390,6 +390,7 @@ class DesktopE2EServer {
     this.goalIdleStage = 'initial'
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
+    this.cloudGoalRestartStage = 'initial'
     this.goalRestartResumeRequested = false
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -569,6 +570,7 @@ class DesktopE2EServer {
         'goal_idle',
         'goal_busy_handoff',
         'goal_restart',
+        'cloud_goal_restart',
         'turn_navigation',
         'cancellation',
         'send_rejection',
@@ -1971,6 +1973,55 @@ class DesktopE2EServer {
       response.end(
         createSse([assistantMessage(FOLLOW_UP_COMPLETION_TEXT), responseCompleted(responseId)])
       )
+      return
+    }
+
+    if (this.scenario === 'cloud_goal_restart') {
+      this.recordScenarioRequest('cloud_goal_restart', modelRequest)
+      if (this.cloudGoalRestartStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          'The real Codex request did not contain the cloud Goal restart prompt'
+        )
+        this.cloudGoalRestartStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.cloudGoalRestartStage === 'continuation') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.cloudGoalRestartStage = 'awaiting_update_output'
+        await this.goalRestartResumeRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(
+            'wework-e2e-cloud-goal-restart-complete',
+            updateGoal.name,
+            updateGoal.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.cloudGoalRestartStage,
+        'awaiting_update_output',
+        `Unexpected cloud Goal restart model stage: ${this.cloudGoalRestartStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The cloud Goal continuation did not return its update_goal output'
+      )
+      this.cloudGoalRestartStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 

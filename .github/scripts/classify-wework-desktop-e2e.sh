@@ -23,6 +23,23 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
+cloud_segments=(
+  workspace-tabs
+  priority-filter
+  telemetry-consent
+  automation-lifecycle
+  model-routing
+  core-task-flow
+  window-lifecycle
+  goal-lifecycle
+  supervisor-lifecycle
+  resilience
+  conversation-state
+  workspace-attachments
+  rendering-extensions
+  browser-multi-tabs
+  embedded-browser
+)
 
 declare -A selected=()
 desktop_runner_changed=false
@@ -286,7 +303,13 @@ build_matrix() {
   fi
 
   if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    append_matrix_entry cloud Cloud e2e:desktop:cloud
+    for segment in "${cloud_segments[@]}"; do
+      append_matrix_entry \
+        "cloud-$segment" \
+        "Cloud / $segment" \
+        e2e:desktop:cloud \
+        "$segment"
+    done
   fi
 }
 

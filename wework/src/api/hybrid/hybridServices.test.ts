@@ -30,6 +30,16 @@ const mocks = vi.hoisted(() => {
   const localUploadAttachment = vi.fn()
   const localDeleteAttachment = vi.fn()
   const cloudUploadAttachment = vi.fn()
+  const localAutomationApi = {
+    listAutomations: vi.fn().mockResolvedValue({ items: [] }),
+    getAutomation: vi.fn(),
+    createAutomation: vi.fn(),
+    updateAutomation: vi.fn(),
+    deleteAutomation: vi.fn(),
+    toggleAutomation: vi.fn(),
+    runAutomationNow: vi.fn(),
+    listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
+  }
   const captureRuntimeIpcOptions = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
@@ -80,6 +90,7 @@ const mocks = vi.hoisted(() => {
       archiveAllConversations: localArchiveAllConversations,
       archiveProjectConversations: localArchiveProjectConversations,
     },
+    automationApi: localAutomationApi,
     userApi: { updateCurrentUser: localUpdateCurrentUser },
     attachmentApi: {
       uploadAttachment: localUploadAttachment,
@@ -160,6 +171,7 @@ const mocks = vi.hoisted(() => {
     localUploadAttachment,
     localDeleteAttachment,
     cloudUploadAttachment,
+    localAutomationApi,
     captureRuntimeIpcOptions,
     localListArchivedConversations,
     cloudListArchivedConversations,
@@ -175,6 +187,28 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: () => mocks.localServices,
+  createAutomationApiFromIpc: (
+    request: (
+      method: string,
+      params?: Record<string, unknown>,
+      deviceId?: string
+    ) => Promise<unknown>,
+    _requestWithDevice: unknown,
+    _options: unknown,
+    deviceId: string,
+    source: 'local' | 'cloud'
+  ) => ({
+    async listAutomations() {
+      const response = (await request('runtime.automations.list', {}, deviceId)) as {
+        items?: Record<string, unknown>[]
+      }
+      return { items: (response.items ?? []).map(item => ({ ...item, source })) }
+    },
+    async createAutomation(data: Record<string, unknown>) {
+      return request('runtime.automations.create', data, deviceId)
+    },
+    listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
+  }),
   createRuntimeWorkApiFromIpc: (
     request: (
       method: string,
@@ -1308,5 +1342,59 @@ describe('createHybridWorkbenchServices', () => {
     const services = createServices()
 
     expect(services.workspaceSessionApi).toBe(mocks.cloudWorkspaceSessionApi)
+  })
+
+  it('routes cloud automations to the selected remote executor', async () => {
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, params) => {
+      if (method === 'runtime.automations.create') {
+        return {
+          automation: {
+            id: 'cloud-automation',
+            version: 1,
+            source: 'cloud',
+            name: 'Cloud automation',
+            prompt: 'Run remotely',
+            schedule: { type: 'interval', value: 1, unit: 'hours' },
+            timezone: 'UTC',
+            enabled: true,
+            conversationMode: 'independent',
+            notificationPolicy: 'all_runs',
+            taskPayload: params,
+            createdAt: '2026-08-12T00:00:00Z',
+            updatedAt: '2026-08-12T00:00:00Z',
+          },
+        }
+      }
+      return { items: [] }
+    })
+    const services = createServices()
+
+    const response = await services.automationApi?.createAutomation({
+      source: 'cloud',
+      name: 'Cloud automation',
+      prompt: 'Run remotely',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'UTC',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'cloud-device',
+        workspacePath: '/tmp/cloud',
+        teamId: 1,
+        runtime: 'codex',
+        message: 'Run remotely',
+      },
+    })
+
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      expect.objectContaining({
+        taskRequest: expect.objectContaining({ deviceId: 'cloud-device' }),
+      }),
+      'cloud-device'
+    )
+    expect(response?.automation.source).toBe('cloud')
+    expect(mocks.localAutomationApi.createAutomation).not.toHaveBeenCalled()
   })
 })
