@@ -14,6 +14,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
+  'project-automation': './scenarios/project-automation.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set(['local-harness'])
 const scriptDir = dirname(fileURLToPath(import.meta.url))

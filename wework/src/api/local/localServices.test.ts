@@ -892,6 +892,58 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
+  test('keeps the backend model_config when the claim payload provides it', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      cloudProjectId: 'cloud-project-42',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'run the scan',
+      title: 'Scan',
+      modelId: 'wecode-kimi',
+      modelConfig: {
+        base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+        api_key: 'short-lived-token',
+        codex_catalog_model_id: 'wework-kimi-k2-7',
+        codex_responses_compat_proxy: true,
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+            api_key: 'short-lived-token',
+            codex_catalog_model_id: 'wework-kimi-k2-7',
+          }),
+        }),
+      })
+    )
+  })
+
   test('rejects local runtime task creation without a workspace path', async () => {
     const request = vi.fn()
     const services = createLocalAppServices({

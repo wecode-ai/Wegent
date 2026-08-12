@@ -99,6 +99,15 @@ import {
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
+async function waitForControlText(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if ((await control.command('getText', selector)).trim() === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function writeCodexConfig(
   codexHome,
   modelServerUrl,
@@ -146,13 +155,20 @@ async function buildExecutor() {
   if (configured)
     return resolveExecutable(configured, 'wegent-executor', 'Configured Wework executor')
 
+  const targetDir = process.env.WEWORK_E2E_EXECUTOR_TARGET_DIR?.trim()
+    ? resolve(repoDir, process.env.WEWORK_E2E_EXECUTOR_TARGET_DIR.trim())
+    : join(repoDir, 'executor', 'target', 'desktop-e2e')
   await runChecked('cargo', ['build', '--locked', '--bin', 'wegent-executor'], {
     cwd: join(repoDir, 'executor'),
+    env: { ...process.env, CARGO_TARGET_DIR: targetDir },
   })
   const binaryName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
-  const binaryPath = join(repoDir, 'executor', 'target', 'debug', binaryName)
+  const binaryPath = join(targetDir, 'debug', binaryName)
   assert.equal(await isExecutable(binaryPath), true, `Executor build did not produce ${binaryPath}`)
-  return binaryPath
+  const stagedBinaryPath = join(resultDir, binaryName)
+  await copyFile(binaryPath, stagedBinaryPath)
+  await chmod(stagedBinaryPath, 0o755)
+  return stagedBinaryPath
 }
 
 function hostCodexTarget() {
@@ -829,10 +845,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Creating another cloud project restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${replacementProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${replacementProjectId}"]`,
     'replacement-workspace',
     'Creating another cloud project restored the removed project instead of the replacement'
   )
@@ -841,7 +856,9 @@ async function verifyCloudProjectFlow(
   await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
   await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Creating a local project while cloud work was connected exposed duplicate projects',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -850,7 +867,9 @@ async function verifyCloudProjectFlow(
   await restartDesktopApp()
   const restartedProjectSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
+      snapshot.text.includes('replacement-workspace'),
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -864,10 +883,9 @@ async function verifyCloudProjectFlow(
     currentProjectId,
     'Restarting Wework restored the removed project identity'
   )
-  assert.equal(
-    (
-      await control.command('getText', `[data-testid="project-title-${restartedProjectId}"]`)
-    ).trim(),
+  await waitForControlText(
+    control,
+    `[data-testid="project-title-${restartedProjectId}"]`,
     'replacement-workspace',
     'Restarting Wework restored the removed project instead of the replacement'
   )
