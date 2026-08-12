@@ -5,6 +5,7 @@
 """Server-side ownership boundaries for generated Code Wiki content."""
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
 from app.schemas.knowledge import (
@@ -19,7 +20,9 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 
 
-def _create_generated_content(test_db, knowledge_base_id: int, user_id: int):
+def _create_generated_content(
+    test_db: Session, knowledge_base_id: int, user_id: int
+) -> tuple[KnowledgeFolder, KnowledgeDocument]:
     folder = KnowledgeFolder(
         kind_id=knowledge_base_id,
         parent_id=0,

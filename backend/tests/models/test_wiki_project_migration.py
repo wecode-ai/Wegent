@@ -10,6 +10,7 @@ from types import ModuleType
 from unittest.mock import Mock
 
 import pytest
+from pytest import MonkeyPatch
 
 
 def _load_migration() -> ModuleType:
@@ -27,7 +28,7 @@ def _load_migration() -> ModuleType:
 
 
 def _migration_with_legacy_constraint(
-    monkeypatch, constraint_name: str
+    monkeypatch: MonkeyPatch, constraint_name: str
 ) -> tuple[ModuleType, Mock]:
     migration = _load_migration()
     op = Mock()
@@ -43,8 +44,8 @@ def _migration_with_legacy_constraint(
 
 @pytest.mark.parametrize("constraint_name", ["source_url", "uniq_source_url"])
 def test_upgrade_drops_whichever_legacy_source_url_constraint_exists(
-    monkeypatch, constraint_name
-):
+    monkeypatch: MonkeyPatch, constraint_name: str
+) -> None:
     migration, op = _migration_with_legacy_constraint(monkeypatch, constraint_name)
 
     migration.upgrade()
@@ -54,7 +55,9 @@ def test_upgrade_drops_whichever_legacy_source_url_constraint_exists(
     )
 
 
-def test_upgrade_refuses_an_unknown_legacy_schema_before_changing_it(monkeypatch):
+def test_upgrade_refuses_an_unknown_legacy_schema_before_changing_it(
+    monkeypatch: MonkeyPatch,
+) -> None:
     migration = _load_migration()
     op = Mock()
     inspector = Mock()

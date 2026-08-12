@@ -618,6 +618,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 

@@ -10,6 +10,7 @@ its RAG index entry and any stored citation — stable when the agent rewords a 
 
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -427,6 +428,34 @@ def test_a_skill_identity_token_for_a_missing_user_is_refused(test_db):
 
     with pytest.raises(HTTPException):
         _verify_internal_token(authorization=f"Bearer {token}", db=test_db)
+
+
+def test_optional_jwt_lookup_propagates_database_failures() -> None:
+    """Only malformed JWTs are optional; a broken user lookup is a server failure."""
+    from app.core.security import create_access_token, get_current_user_from_token
+
+    db = Mock()
+    db.query.side_effect = RuntimeError("database unavailable")
+    token = create_access_token(data={"sub": "writer"})
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        get_current_user_from_token(token, db)
+
+
+def test_writer_does_not_recast_jwt_lookup_failures_as_invalid_tokens(
+    test_db, monkeypatch
+) -> None:
+    from app.api.endpoints.wiki import _verify_internal_token
+    from app.core import security
+
+    monkeypatch.setattr(
+        security,
+        "get_current_user_from_token",
+        Mock(side_effect=RuntimeError("database unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        _verify_internal_token(authorization="Bearer valid-token", db=test_db)
 
 
 def test_writing_a_page_does_not_read_back_the_others(

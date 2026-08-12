@@ -2261,16 +2261,6 @@ class KnowledgeOrchestrator:
         if not document:
             raise ValueError("Document not found")
 
-        from app.services.knowledge.content_scope import assert_user_content_is_mutable
-
-        assert_user_content_is_mutable(getattr(document, "origin", "user"))
-
-        skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
-        )
-        if skip_reason:
-            raise ValueError(skip_reason)
-
         # Check access permission via knowledge base
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -2288,6 +2278,16 @@ class KnowledgeOrchestrator:
             raise ValueError(
                 "You do not have permission to manage this document in this knowledge base"
             )
+
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        assert_user_content_is_mutable(getattr(document, "origin", "user"))
+
+        skip_reason = get_rag_indexing_skip_reason(
+            document.source_type, document.file_extension, document.file_size
+        )
+        if skip_reason:
+            raise ValueError(skip_reason)
 
         # Apply an optional multimodal prompt override AFTER the access check so
         # an unauthorized caller cannot poison the stored prompt. Powers the

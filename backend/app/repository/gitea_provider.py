@@ -626,6 +626,7 @@ class GiteaProvider(RepositoryProvider):
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"limit": per_page, "page": page, "sort": "updated"},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 

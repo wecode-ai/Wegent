@@ -631,6 +631,7 @@ class GitHubProvider(RepositoryProvider):
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": per_page, "page": page, "sort": "updated"},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 

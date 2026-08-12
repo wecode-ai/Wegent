@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.security import create_access_token
+from app.core.security import create_access_token, get_password_hash
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseType
@@ -172,6 +172,18 @@ def _run_url(knowledge_base_id: int) -> str:
 def _headers_for(user: User) -> dict[str, str]:
     token = create_access_token(data={"sub": user.user_name})
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_user(test_db: Session, user_name: str) -> User:
+    user = User(
+        user_name=user_name,
+        password_hash=get_password_hash("irrelevant"),
+        email=f"{user_name}@example.com",
+        is_active=True,
+    )
+    test_db.add(user)
+    test_db.commit()
+    return user
 
 
 def _add_kb_member(
@@ -479,18 +491,9 @@ def test_a_kb_maintainer_can_regenerate_without_repository_write_access(
     kind_services_use_test_db,
 ):
     """Regeneration uses the same KB ACL as other knowledge-base mutations."""
-    from app.core.security import get_password_hash
-
     with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
-    maintainer = User(
-        user_name="wiki-maintainer",
-        password_hash=get_password_hash("irrelevant"),
-        email="wiki-maintainer@example.com",
-        is_active=True,
-    )
-    test_db.add(maintainer)
-    test_db.commit()
+    maintainer = _create_user(test_db, "wiki-maintainer")
     _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
 
     with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
@@ -516,18 +519,9 @@ def test_a_kb_reporter_cannot_regenerate(
     test_db: Session,
     kind_services_use_test_db,
 ):
-    from app.core.security import get_password_hash
-
     with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
-    reporter = User(
-        user_name="wiki-reporter",
-        password_hash=get_password_hash("irrelevant"),
-        email="wiki-reporter@example.com",
-        is_active=True,
-    )
-    test_db.add(reporter)
-    test_db.commit()
+    reporter = _create_user(test_db, "wiki-reporter")
     _add_kb_member(test_db, kb_id, reporter, ResourceRole.Reporter)
 
     response = test_client.post(
@@ -544,18 +538,9 @@ def test_a_kb_maintainer_can_restore_without_becoming_the_projection_owner(
     kind_services_use_test_db,
 ):
     """The route authorizes the manager but leaves ownership to the runner."""
-    from app.core.security import get_password_hash
-
     with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
         kb_id = _create_wiki(test_client, auth_headers)
-    maintainer = User(
-        user_name="wiki-restore-maintainer",
-        password_hash=get_password_hash("irrelevant"),
-        email="wiki-restore-maintainer@example.com",
-        is_active=True,
-    )
-    test_db.add(maintainer)
-    test_db.commit()
+    maintainer = _create_user(test_db, "wiki-restore-maintainer")
     _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
 
     with patch(

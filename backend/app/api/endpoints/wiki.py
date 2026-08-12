@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -23,8 +22,6 @@ from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.wiki_service import wiki_service
 
-logger = logging.getLogger(__name__)
-
 internal_router = APIRouter()
 
 
@@ -40,13 +37,12 @@ def _verify_internal_token(
         )
     token = authorization[7:].strip()
 
-    # A user JWT is available to the executor through TASK_INFO.
-    try:
-        user = security.get_current_user_from_token(token, db)
-        if user and user.is_active:
-            return user
-    except Exception as e:
-        logger.debug(f"JWT token verification failed: {e}")
+    # A user JWT is available to the executor through TASK_INFO. Invalid JWTs
+    # return ``None`` so the skill-identity path can still authenticate; database
+    # and programming failures propagate rather than being reported as 403.
+    user = security.get_current_user_from_token(token, db)
+    if user and user.is_active:
+        return user
 
     # A skill identity token is the credential held by wiki_submit itself.
     user = _user_from_skill_identity(token, db)
@@ -85,7 +81,7 @@ def _internal_caller(
 
 
 def _assert_caller_owns_generation(
-    wiki_db: Session, caller: User, generation_id: int
+    wiki_db: Session, caller: User | None, generation_id: int
 ) -> WikiGeneration:
     """Refuse a caller asking about a generation that is not theirs.
 
@@ -117,7 +113,7 @@ def _assert_caller_owns_generation(
 
 
 def _assert_caller_may_write_generation(
-    wiki_db: Session, caller: User, generation_id: int
+    wiki_db: Session, caller: User | None, generation_id: int
 ) -> None:
     """Require the executing user and an explicitly correctable Code Wiki run."""
     generation = _assert_caller_owns_generation(wiki_db, caller, generation_id)
