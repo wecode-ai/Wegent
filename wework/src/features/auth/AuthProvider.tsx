@@ -5,6 +5,7 @@ import { ApiError, createHttpClient } from '@/api/http'
 import { getLocalUser } from '@/api/local/localSession'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import { track } from '@/telemetry/client'
 import type { User } from '@/types/api'
 import {
@@ -160,6 +161,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
   )
 
   const logout = useCallback(() => {
+    clearPluginMarketplaceCache()
     if (isLocalFirstAppRuntime()) {
       removeToken()
       setUser(getLocalUser())

@@ -1,12 +1,100 @@
-import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceApp, PluginMarketplaceItem } from '@/types/api'
+import { findMarketplaceItemForInstalledPlugin } from '@/components/plugins/findMarketplaceItemForInstalled'
+import {
+  resolveInstalledPluginLogoUrl,
+  resolvePluginLogo,
+  resolvePluginLogoUrl,
+} from '@/components/plugins/plugin-assets'
 import { pluginTrialTemplates } from './pluginTrial'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
+
+function installedPluginLabelId(plugin: InstalledPlugin): string | number | null {
+  const labels = plugin.metadata.labels
+  if (!labels || typeof labels !== 'object') return null
+  const id = (labels as Record<string, unknown>).id
+  return typeof id === 'string' || typeof id === 'number' ? id : null
+}
+
+function marketplaceLogoInterface(
+  plugin: InstalledPlugin,
+  marketplaceItems: PluginMarketplaceItem[]
+) {
+  const market = findMarketplaceItemForInstalledPlugin(
+    plugin,
+    marketplaceItems,
+    installedPluginLabelId(plugin)
+  )
+  const marketInterface = market?.interface
+  if (!marketInterface) return plugin.spec.interface ?? null
+  return {
+    logo: marketInterface.logo || plugin.spec.interface?.logo,
+    logoDark: marketInterface.logoDark || plugin.spec.interface?.logoDark,
+    composerIcon: marketInterface.composerIcon || plugin.spec.interface?.composerIcon,
+    shortDescription: marketInterface.shortDescription || plugin.spec.interface?.shortDescription,
+  }
+}
+
+function composerLogoUrls(
+  plugin: InstalledPlugin,
+  marketplaceItems: PluginMarketplaceItem[]
+): { logoUrl: string | null; logoUrlDark: string | null } {
+  const interfaceData = marketplaceLogoInterface(plugin, marketplaceItems)
+  return {
+    logoUrl: resolveInstalledPluginLogoUrl(plugin, 'light', interfaceData) || null,
+    logoUrlDark: resolveInstalledPluginLogoUrl(plugin, 'dark', interfaceData) || null,
+  }
+}
+
+/**
+ * Prefer marketplace-catalog package logos (same source as the plugin market UI)
+ * when the installed-plugin row only has unresolved relative assets.
+ */
+export function overlayMarketplaceLogosOnComposerApps(
+  apps: LocalDeviceApp[],
+  marketplaceItems: PluginMarketplaceItem[]
+): LocalDeviceApp[] {
+  if (apps.length === 0 || marketplaceItems.length === 0) return apps
+
+  return apps.map(app => {
+    if (app.source === 'wegent-connector') return app
+
+    const key = composerAppPluginKey(app).trim().toLowerCase()
+    const displayName = app.name.trim().toLowerCase()
+    const item =
+      marketplaceItems.find(candidate => candidate.name.trim().toLowerCase() === key) ||
+      marketplaceItems.find(candidate => candidate.displayName.trim().toLowerCase() === displayName)
+    if (!item?.interface) return app
+
+    const light = resolvePluginLogo({
+      pluginKey: key,
+      logo: item.interface.logo,
+      logoDark: item.interface.logoDark,
+      composerIcon: item.interface.composerIcon,
+      appearanceMode: 'light',
+    })
+    if (light.source !== 'provided') return app
+
+    return {
+      ...app,
+      logoUrl: light.url,
+      logoUrlDark: resolvePluginLogoUrl({
+        pluginKey: key,
+        logo: item.interface.logo,
+        logoDark: item.interface.logoDark,
+        composerIcon: item.interface.composerIcon,
+        appearanceMode: 'dark',
+      }),
+    }
+  })
+}
 
 function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()
 }
 
 export function composerAppPluginKey(app: LocalDeviceApp): string {
+  const pluginKey = app.pluginKey?.trim()
+  if (pluginKey) return pluginKey
   if (app.source === 'installed-plugin') {
     return app.id.replace(/^plugin:/, '')
   }
@@ -110,7 +198,10 @@ function skillFilePath(path: string): string {
   return path.endsWith('/SKILL.md') ? path : `${path.replace(/\/+$/, '')}/SKILL.md`
 }
 
-function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp | null {
+function installedPluginAsComposerApp(
+  plugin: InstalledPlugin,
+  marketplaceItems: PluginMarketplaceItem[] = []
+): LocalDeviceApp | null {
   const metadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null
   const displayName = plugin.spec.displayName || plugin.spec.source?.pluginKey || metadataName
   const pluginKey = plugin.spec.source?.pluginKey || metadataName
@@ -131,14 +222,16 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
     (command ? `command://${pluginKey}` : null)
   if (!skillPath) return null
 
-  const interfaceData = plugin.spec.interface
+  const interfaceData = marketplaceLogoInterface(plugin, marketplaceItems)
+  const logos = composerLogoUrls(plugin, marketplaceItems)
   return {
     id: `plugin:${pluginKey}`,
     name: displayName,
+    pluginKey,
     description:
       interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
-    logoUrl: interfaceData?.composerIcon || interfaceData?.logo || null,
-    logoUrlDark: interfaceData?.logoDark || null,
+    logoUrl: logos.logoUrl,
+    logoUrlDark: logos.logoUrlDark,
     isAccessible: true,
     isEnabled: true,
     pluginDisplayNames: [displayName],
@@ -150,7 +243,8 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
 
 export function enrichComposerApps(
   apps: LocalDeviceApp[],
-  installedPlugins: InstalledPlugin[]
+  installedPlugins: InstalledPlugin[],
+  marketplaceItems: PluginMarketplaceItem[] = []
 ): LocalDeviceApp[] {
   return apps.flatMap(app => {
     try {
@@ -162,15 +256,17 @@ export function enrichComposerApps(
         return []
       }
 
-      const interfaceData = plugin.spec.interface
+      const interfaceData = marketplaceLogoInterface(plugin, marketplaceItems)
+      const logos = composerLogoUrls(plugin, marketplaceItems)
       return [
         {
           ...app,
           name: plugin.spec.displayName || app.name,
+          pluginKey: plugin.spec.source.pluginKey,
           description:
             interfaceData?.shortDescription || plugin.spec.description || app.description || null,
-          logoUrl: interfaceData?.composerIcon || interfaceData?.logo || app.logoUrl || null,
-          logoUrlDark: interfaceData?.logoDark || app.logoUrlDark || null,
+          logoUrl: logos.logoUrl || app.logoUrl || null,
+          logoUrlDark: logos.logoUrlDark || app.logoUrlDark || null,
           pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
             (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
           ),
@@ -187,14 +283,15 @@ export function enrichComposerApps(
 /** Include enabled installed plugins that have no Codex/app entry yet (e.g. skill-only). */
 export function appendInstalledPluginsAsComposerApps(
   apps: LocalDeviceApp[],
-  installedPlugins: InstalledPlugin[]
+  installedPlugins: InstalledPlugin[],
+  marketplaceItems: PluginMarketplaceItem[] = []
 ): LocalDeviceApp[] {
   const extras: LocalDeviceApp[] = []
   for (const plugin of installedPlugins) {
     try {
       if (!isComposerVisiblePlugin(plugin)) continue
       if (apps.some(app => pluginMatchScore(app, plugin) > 0)) continue
-      const entry = installedPluginAsComposerApp(plugin)
+      const entry = installedPluginAsComposerApp(plugin, marketplaceItems)
       if (entry) extras.push(entry)
     } catch (error) {
       console.warn('[Wework] Skipping installed plugin for composer menu.', error)

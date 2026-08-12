@@ -19,6 +19,7 @@ export const DESKTOP_CHECKPOINTS = [
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',
   'sites-plugin-auto-install',
