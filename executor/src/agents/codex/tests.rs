@@ -2156,6 +2156,103 @@ fn codex_command_approval_response_preserves_user_decision() {
 }
 
 #[test]
+fn codex_command_approval_response_preserves_structured_decisions() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+            "itemId": "command-1",
+            "proposedExecpolicyAmendment": ["git", "push"],
+            "availableDecisions": [
+                "accept",
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["git", "push"]
+                    }
+                },
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["cargo", "publish"]
+                    }
+                },
+                {
+                    "applyNetworkPolicyAmendment": {
+                        "network_policy_amendment": {
+                            "host": "github.com",
+                            "action": "allow"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_execpolicy:2"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": ["cargo", "publish"]
+                }
+            }
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["apply_network_policy:3"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": {
+                        "host": "github.com",
+                        "action": "allow"
+                    }
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn codex_command_approval_rejects_missing_structured_decision_payloads() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    for answer in ["allow_execpolicy", "apply_network_policy:0"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({"decision": "decline"})
+        );
+    }
+}
+
+#[test]
 fn codex_permissions_approval_returns_requested_profile_and_scope() {
     let message = json!({
         "method": "item/permissions/requestApproval",
@@ -2183,7 +2280,29 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
                 "network": {"enabled": true},
                 "fileSystem": null
             },
-            "scope": "session"
+            "scope": "session",
+            "strictAutoReview": false
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["allow_turn_strict_review"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "turn",
+            "strictAutoReview": true
         })
     );
     assert_eq!(
@@ -2198,7 +2317,8 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
         .unwrap(),
         json!({
             "permissions": {},
-            "scope": "turn"
+            "scope": "turn",
+            "strictAutoReview": false
         })
     );
 }

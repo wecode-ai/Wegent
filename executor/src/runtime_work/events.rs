@@ -1441,39 +1441,154 @@ fn emit_codex_approval_request(
 }
 
 fn codex_approval_options(approval_kind: &str, params: &Value) -> Value {
-    let default_decisions = match approval_kind {
-        "permissions" => vec!["allow_once", "allow_session", "decline"],
-        _ => vec!["allow_once", "allow_session", "decline", "cancel"],
-    };
-    let decisions = if approval_kind == "command" {
-        params
-            .get("availableDecisions")
-            .or_else(|| params.get("available_decisions"))
-            .and_then(Value::as_array)
-            .map(|available| {
-                available
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(|decision| match decision {
-                        "accept" => Some("allow_once"),
-                        "acceptForSession" => Some("allow_session"),
-                        "decline" => Some("decline"),
-                        "cancel" => Some("cancel"),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .filter(|decisions| !decisions.is_empty())
-            .unwrap_or(default_decisions)
-    } else {
-        default_decisions
-    };
-    Value::Array(
-        decisions
+    if approval_kind == "permissions" {
+        return Value::Array(
+            [
+                "allow_once",
+                "allow_turn_strict_review",
+                "allow_session",
+                "decline",
+            ]
             .into_iter()
             .map(|decision| json!({"label": decision, "description": ""}))
             .collect(),
-    )
+        );
+    }
+    if approval_kind == "file_change" {
+        return Value::Array(
+            ["allow_once", "allow_session", "cancel"]
+                .into_iter()
+                .map(|decision| json!({"label": decision, "description": ""}))
+                .collect(),
+        );
+    }
+    let decisions = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array)
+        .map(|available| {
+            available
+                .iter()
+                .enumerate()
+                .filter_map(|(index, decision)| codex_approval_option(decision, index))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| codex_default_command_approval_options(params));
+    Value::Array(decisions)
+}
+
+fn codex_default_command_approval_options(params: &Value) -> Vec<Value> {
+    if params
+        .get("networkApprovalContext")
+        .or_else(|| params.get("network_approval_context"))
+        .is_some_and(|context| !context.is_null())
+    {
+        let mut options = vec![
+            json!({"label": "allow_once", "description": ""}),
+            json!({"label": "allow_session", "description": ""}),
+        ];
+        if let Some((index, amendment)) = params
+            .get("proposedNetworkPolicyAmendments")
+            .or_else(|| params.get("proposed_network_policy_amendments"))
+            .and_then(Value::as_array)
+            .and_then(|amendments| {
+                amendments.iter().enumerate().find(|(_, amendment)| {
+                    amendment.get("action").and_then(Value::as_str) == Some("allow")
+                })
+            })
+        {
+            options.push(codex_network_policy_option(amendment, index));
+        }
+        options.push(json!({"label": "cancel", "description": ""}));
+        return options;
+    }
+    if params
+        .get("additionalPermissions")
+        .or_else(|| params.get("additional_permissions"))
+        .is_some_and(|permissions| !permissions.is_null())
+    {
+        return ["allow_once", "cancel"]
+            .into_iter()
+            .map(|decision| json!({"label": decision, "description": ""}))
+            .collect();
+    }
+    let mut options = vec![json!({"label": "allow_once", "description": ""})];
+    if let Some(amendment) = params
+        .get("proposedExecpolicyAmendment")
+        .or_else(|| params.get("proposed_execpolicy_amendment"))
+    {
+        options.push(json!({
+            "label": "allow_execpolicy",
+            "description": codex_execpolicy_description(amendment),
+        }));
+    }
+    options.push(json!({"label": "cancel", "description": ""}));
+    options
+}
+
+fn codex_approval_option(decision: &Value, index: usize) -> Option<Value> {
+    if let Some(decision) = decision.as_str() {
+        let label = match decision {
+            "accept" => "allow_once",
+            "acceptForSession" => "allow_session",
+            "decline" => "decline",
+            "cancel" => "cancel",
+            _ => return None,
+        };
+        return Some(json!({"label": label, "description": ""}));
+    }
+    if let Some(amendment) = decision
+        .get("acceptWithExecpolicyAmendment")
+        .or_else(|| decision.get("accept_with_execpolicy_amendment"))
+        .and_then(|decision| {
+            decision
+                .get("execpolicy_amendment")
+                .or_else(|| decision.get("execpolicyAmendment"))
+        })
+    {
+        return Some(json!({
+            "label": format!("allow_execpolicy:{index}"),
+            "description": codex_execpolicy_description(amendment),
+        }));
+    }
+    let amendment = decision
+        .get("applyNetworkPolicyAmendment")
+        .or_else(|| decision.get("apply_network_policy_amendment"))
+        .and_then(|decision| {
+            decision
+                .get("network_policy_amendment")
+                .or_else(|| decision.get("networkPolicyAmendment"))
+        })?;
+    Some(codex_network_policy_option(amendment, index))
+}
+
+fn codex_execpolicy_description(amendment: &Value) -> String {
+    amendment
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|description| !description.is_empty())
+        .unwrap_or_default()
+}
+
+fn codex_network_policy_option(amendment: &Value, index: usize) -> Value {
+    let host = amendment
+        .get("host")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let action = amendment
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("allow");
+    json!({
+        "label": format!("apply_network_policy:{index}"),
+        "description": format!("{action}:{host}"),
+    })
 }
 
 fn value_identifier(value: &Value) -> Option<String> {
@@ -3963,6 +4078,130 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn maps_structured_codex_command_approval_decisions() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "id": 44,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "command": "curl https://example.com",
+                    "availableDecisions": [
+                        "accept",
+                        {
+                            "acceptWithExecpolicyAmendment": {
+                                "execpolicy_amendment": ["curl"]
+                            }
+                        },
+                        {
+                            "applyNetworkPolicyAmendment": {
+                                "network_policy_amendment": {
+                                    "host": "example.com",
+                                    "action": "allow"
+                                }
+                            }
+                        },
+                        "cancel"
+                    ]
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("approval request event should be emitted");
+        let options = event["payload"]["data"]["block"]["render_payload"]["questions"][0]
+            ["options"]
+            .as_array()
+            .expect("approval options");
+        assert_eq!(options[0]["label"], "allow_once");
+        assert_eq!(options[1]["label"], "allow_execpolicy:1");
+        assert_eq!(options[1]["description"], "curl");
+        assert_eq!(options[2]["label"], "apply_network_policy:2");
+        assert_eq!(options[2]["description"], "allow:example.com");
+        assert_eq!(options[3]["label"], "cancel");
+    }
+
+    #[test]
+    fn mirrors_codex_default_approval_decision_heuristics() {
+        assert_eq!(
+            codex_approval_options(
+                "command",
+                &json!({
+                    "proposedExecpolicyAmendment": ["git", "push"]
+                }),
+            ),
+            json!([
+                {"label": "allow_once", "description": ""},
+                {"label": "allow_execpolicy", "description": "git push"},
+                {"label": "cancel", "description": ""}
+            ])
+        );
+        assert_eq!(
+            codex_approval_options(
+                "command",
+                &json!({
+                    "networkApprovalContext": {"host": "example.com"},
+                    "proposedNetworkPolicyAmendments": [
+                        {"host": "example.com", "action": "deny"},
+                        {"host": "example.com", "action": "allow"}
+                    ]
+                }),
+            ),
+            json!([
+                {"label": "allow_once", "description": ""},
+                {"label": "allow_session", "description": ""},
+                {"label": "apply_network_policy:1", "description": "allow:example.com"},
+                {"label": "cancel", "description": ""}
+            ])
+        );
+        assert_eq!(
+            codex_approval_options(
+                "command",
+                &json!({"additionalPermissions": {"network": {"enabled": true}}}),
+            ),
+            json!([
+                {"label": "allow_once", "description": ""},
+                {"label": "cancel", "description": ""}
+            ])
+        );
+        assert_eq!(
+            codex_approval_options("command", &json!({"availableDecisions": []})),
+            json!([])
+        );
+        assert_eq!(
+            codex_approval_options("file_change", &json!({})),
+            json!([
+                {"label": "allow_once", "description": ""},
+                {"label": "allow_session", "description": ""},
+                {"label": "cancel", "description": ""}
+            ])
+        );
+        assert_eq!(
+            codex_approval_options("permissions", &json!({})),
+            json!([
+                {"label": "allow_once", "description": ""},
+                {"label": "allow_turn_strict_review", "description": ""},
+                {"label": "allow_session", "description": ""},
+                {"label": "decline", "description": ""}
+            ])
         );
     }
 

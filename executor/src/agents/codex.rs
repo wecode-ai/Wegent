@@ -2101,20 +2101,15 @@ fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, Str
         .and_then(Value::as_str)
         .ok_or_else(|| "approval request is missing method".to_owned())?;
     match method {
-        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            let decision = match answer {
-                "allow_once" => "accept",
-                "allow_session" => "acceptForSession",
-                "cancel" => "cancel",
-                _ => "decline",
-            };
-            Ok(json!({ "decision": decision }))
-        }
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => Ok(json!({
+            "decision": codex_command_approval_decision(message, answer)
+        })),
         "item/permissions/requestApproval" => {
             if answer == "decline" {
                 return Ok(json!({
                     "permissions": {},
                     "scope": "turn",
+                    "strictAutoReview": false,
                 }));
             }
             let permissions = message_params(message)
@@ -2124,10 +2119,104 @@ fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, Str
             Ok(json!({
                 "permissions": permissions,
                 "scope": if answer == "allow_session" { "session" } else { "turn" },
+                "strictAutoReview": answer == "allow_turn_strict_review",
             }))
         }
         _ => Err(format!("unsupported approval request method: {method}")),
     }
+}
+
+fn codex_command_approval_decision(message: &Value, answer: &str) -> Value {
+    match answer {
+        "allow_once" => json!("accept"),
+        "allow_session" => json!("acceptForSession"),
+        _ if answer == "allow_execpolicy" || answer.starts_with("allow_execpolicy:") => {
+            codex_execpolicy_approval_decision(message, answer)
+        }
+        "cancel" => json!("cancel"),
+        _ if answer.starts_with("apply_network_policy:") => {
+            codex_network_policy_approval_decision(message, answer)
+        }
+        _ => json!("decline"),
+    }
+}
+
+fn codex_execpolicy_approval_decision(message: &Value, answer: &str) -> Value {
+    let params = message_params(message);
+    if let Some(available) = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array)
+    {
+        let Some(index) = answer
+            .strip_prefix("allow_execpolicy:")
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            return json!("decline");
+        };
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("acceptWithExecpolicyAmendment")
+                    .or_else(|| decision.get("accept_with_execpolicy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"acceptWithExecpolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedExecpolicyAmendment")
+        .or_else(|| params.get("proposed_execpolicy_amendment"))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
+}
+
+fn codex_network_policy_approval_decision(message: &Value, answer: &str) -> Value {
+    let Some(index) = answer
+        .strip_prefix("apply_network_policy:")
+        .and_then(|index| index.parse::<usize>().ok())
+    else {
+        return json!("decline");
+    };
+    let params = message_params(message);
+    let available = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array);
+    if let Some(available) = available {
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("applyNetworkPolicyAmendment")
+                    .or_else(|| decision.get("apply_network_policy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"applyNetworkPolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedNetworkPolicyAmendments")
+        .or_else(|| params.get("proposed_network_policy_amendments"))
+        .and_then(Value::as_array)
+        .and_then(|amendments| amendments.get(index))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
 }
 
 fn spawn_shared_mcp_server_elicitation_response(

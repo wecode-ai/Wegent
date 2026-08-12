@@ -380,14 +380,45 @@ function localizeApprovalQuestions(
       }),
       options: (payload.questions?.[0]?.options ?? []).map(option => {
         const value = option.label?.trim() ?? ''
+        const localized = localizeApprovalOption(value, option.description ?? '', t)
         return {
           value,
-          label: t(`request_user_input.approval_${value}`),
-          description: t(`request_user_input.approval_${value}_description`),
+          label: localized.label,
+          description: localized.description,
         }
       }),
     },
   ]
+}
+
+function localizeApprovalOption(
+  value: string,
+  detail: string,
+  t: ReturnType<typeof useTranslation>['t']
+): { label: string; description: string } {
+  if (value === 'allow_execpolicy' || value.startsWith('allow_execpolicy:')) {
+    return {
+      label: t('request_user_input.approval_allow_execpolicy'),
+      description: t('request_user_input.approval_allow_execpolicy_description', { detail }),
+    }
+  }
+  if (value.startsWith('apply_network_policy:')) {
+    const separator = detail.indexOf(':')
+    const action = separator >= 0 ? detail.slice(0, separator) : 'allow'
+    const host = separator >= 0 ? detail.slice(separator + 1) : detail
+    const key =
+      action === 'deny'
+        ? 'request_user_input.approval_deny_network_host'
+        : 'request_user_input.approval_allow_network_host'
+    return {
+      label: t(key, { host }),
+      description: t(`${key}_description`, { host }),
+    }
+  }
+  return {
+    label: t(`request_user_input.approval_${value}`),
+    description: t(`request_user_input.approval_${value}_description`),
+  }
 }
 
 function responseAnswers(
