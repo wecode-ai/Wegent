@@ -14,13 +14,19 @@ This service handles:
 import asyncio
 import os
 import time
+from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from executor_manager.common.config import get_config
-from executor_manager.common.distributed_lock import get_distributed_lock
+from executor_manager.common.distributed_lock import (
+    DistributedLock,
+    DistributedLockUnavailableError,
+    get_distributed_lock,
+)
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE, TASK_API_DOMAIN
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -36,6 +42,7 @@ from executor_manager.services.sandbox.health_checker import (
     get_container_health_checker,
 )
 from executor_manager.services.sandbox.repository import get_sandbox_repository
+from executor_manager.services.sandbox.runtime_binding import get_sandbox_runtime_binder
 from executor_manager.services.sandbox.skill_sync import (
     ResolvedTaskSkills,
     SandboxSkillSyncError,
@@ -54,6 +61,23 @@ logger = setup_logger(__name__)
 # Container ready wait configuration from environment variables
 SANDBOX_READY_MAX_RETRIES = int(os.getenv("SANDBOX_READY_MAX_RETRIES", "180"))
 SANDBOX_READY_INTERVAL = float(os.getenv("SANDBOX_READY_INTERVAL", "1"))
+SANDBOX_TASK_LOCK_TTL = int(os.getenv("SANDBOX_TASK_LOCK_TTL", "60"))
+SANDBOX_TASK_LOCK_WAIT_TIMEOUT = float(
+    os.getenv("SANDBOX_TASK_LOCK_WAIT_TIMEOUT", "80")
+)
+SANDBOX_TASK_LOCK_RETRY_INTERVAL = float(
+    os.getenv("SANDBOX_TASK_LOCK_RETRY_INTERVAL", "0.2")
+)
+
+
+@dataclass
+class _TaskLifecycleLease:
+    """Owner-scoped distributed lease for one task's sandbox lifecycle."""
+
+    lock_name: str
+    owner_token: str
+    lost: asyncio.Event = field(default_factory=asyncio.Event)
+    renew_task: Optional[asyncio.Task[None]] = None
 
 
 class SandboxManager(metaclass=SingletonMeta):
@@ -76,6 +100,8 @@ class SandboxManager(metaclass=SingletonMeta):
         self._health_checker = get_container_health_checker()
         self._execution_runner = get_execution_runner()
         self._skill_synchronizer = SandboxSkillSynchronizer()
+        self._runtime_binder = get_sandbox_runtime_binder()
+        self._lifecycle_lock = DistributedLock()
         self._scheduler: Optional["SandboxScheduler"] = None
         self._shutting_down = False
         self._create_locks: Dict[str, asyncio.Lock] = {}
@@ -93,7 +119,7 @@ class SandboxManager(metaclass=SingletonMeta):
         workspace_ref: Optional[str] = None,
         bot_config: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Sandbox, Optional[str]]:
+    ) -> Tuple[Optional[Sandbox], Optional[str]]:
         """Create a new sandbox.
 
         Args:
@@ -124,15 +150,27 @@ class SandboxManager(metaclass=SingletonMeta):
             task_key = str(task_id)
             task_lock = self._create_locks.setdefault(task_key, asyncio.Lock())
             async with task_lock:
-                return await self._create_sandbox_locked(
-                    shell_type=shell_type,
-                    user_id=user_id,
-                    user_name=user_name,
-                    timeout=timeout,
-                    workspace_ref=workspace_ref,
-                    bot_config=bot_config,
-                    metadata=sandbox_metadata,
-                )
+                lease, lock_error = await self._acquire_task_lifecycle_lease(task_key)
+                if lease is None:
+                    return self._repository.load_sandbox(task_key), lock_error
+                try:
+                    result = await self._create_sandbox_locked(
+                        shell_type=shell_type,
+                        user_id=user_id,
+                        user_name=user_name,
+                        timeout=timeout,
+                        workspace_ref=workspace_ref,
+                        bot_config=bot_config,
+                        metadata=sandbox_metadata,
+                    )
+                    if lease.lost.is_set():
+                        return (
+                            result[0],
+                            "Lost the distributed sandbox lifecycle lock; retry the request",
+                        )
+                    return result
+                finally:
+                    await self._release_task_lifecycle_lease(lease)
 
         return await self._create_sandbox_locked(
             shell_type=shell_type,
@@ -143,6 +181,120 @@ class SandboxManager(metaclass=SingletonMeta):
             bot_config=bot_config,
             metadata=sandbox_metadata,
         )
+
+    async def _acquire_task_lifecycle_lease(
+        self, task_key: str
+    ) -> Tuple[Optional[_TaskLifecycleLease], Optional[str]]:
+        """Acquire the cross-replica lifecycle lease for a task."""
+        lock_name = f"task-lifecycle:{task_key}"
+        deadline = time.monotonic() + SANDBOX_TASK_LOCK_WAIT_TIMEOUT
+        while True:
+            try:
+                owner_token = await asyncio.to_thread(
+                    self._lifecycle_lock.acquire_owned,
+                    lock_name,
+                    SANDBOX_TASK_LOCK_TTL,
+                )
+            except DistributedLockUnavailableError as exc:
+                logger.error(
+                    "[SandboxManager] Distributed task lock unavailable "
+                    "task_id=%s error=%s",
+                    task_key,
+                    exc,
+                )
+                return None, f"Sandbox lifecycle lock unavailable: {exc}"
+
+            if owner_token:
+                lease = _TaskLifecycleLease(
+                    lock_name=lock_name,
+                    owner_token=owner_token,
+                )
+                lease.renew_task = asyncio.create_task(
+                    self._renew_task_lifecycle_lease(lease)
+                )
+                return lease, None
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return (
+                    None,
+                    f"Timed out waiting for sandbox lifecycle lock for task {task_key}",
+                )
+            await asyncio.sleep(min(SANDBOX_TASK_LOCK_RETRY_INTERVAL, remaining))
+
+    async def _try_acquire_task_lifecycle_lease(
+        self, task_key: str
+    ) -> Optional[_TaskLifecycleLease]:
+        """Acquire a lifecycle lease without waiting for another owner."""
+        lock_name = f"task-lifecycle:{task_key}"
+        try:
+            owner_token = await asyncio.to_thread(
+                self._lifecycle_lock.acquire_owned,
+                lock_name,
+                SANDBOX_TASK_LOCK_TTL,
+            )
+        except DistributedLockUnavailableError as exc:
+            logger.error(
+                "[SandboxManager] Lifecycle lock unavailable during heartbeat "
+                "check task_id=%s error=%s",
+                task_key,
+                exc,
+            )
+            return None
+        if not owner_token:
+            return None
+
+        lease = _TaskLifecycleLease(lock_name=lock_name, owner_token=owner_token)
+        lease.renew_task = asyncio.create_task(self._renew_task_lifecycle_lease(lease))
+        return lease
+
+    async def _renew_task_lifecycle_lease(self, lease: _TaskLifecycleLease) -> None:
+        """Renew a lifecycle lease until its owner finishes the operation."""
+        renew_interval = max(1.0, SANDBOX_TASK_LOCK_TTL / 3)
+        while True:
+            await asyncio.sleep(renew_interval)
+            try:
+                renewed = await asyncio.to_thread(
+                    self._lifecycle_lock.renew_owned,
+                    lease.lock_name,
+                    lease.owner_token,
+                    SANDBOX_TASK_LOCK_TTL,
+                )
+            except DistributedLockUnavailableError as exc:
+                logger.error(
+                    "[SandboxManager] Failed to renew lifecycle lock "
+                    "lock=%s error=%s",
+                    lease.lock_name,
+                    exc,
+                )
+                lease.lost.set()
+                return
+            if not renewed:
+                logger.error(
+                    "[SandboxManager] Lost lifecycle lock lock=%s",
+                    lease.lock_name,
+                )
+                lease.lost.set()
+                return
+
+    async def _release_task_lifecycle_lease(self, lease: _TaskLifecycleLease) -> None:
+        """Stop lease renewal and release only the caller-owned Redis lock."""
+        if lease.renew_task is not None:
+            lease.renew_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease.renew_task
+        try:
+            await asyncio.to_thread(
+                self._lifecycle_lock.release_owned,
+                lease.lock_name,
+                lease.owner_token,
+            )
+        except DistributedLockUnavailableError as exc:
+            logger.error(
+                "[SandboxManager] Failed to release lifecycle lock lock=%s error=%s",
+                lease.lock_name,
+                exc,
+            )
 
     async def _create_sandbox_locked(
         self,
@@ -161,7 +313,7 @@ class SandboxManager(metaclass=SingletonMeta):
         if task_id is not None:
             # Check by task_id only (not subtask_id) to reuse sandbox across subtasks
             existing_sandbox = self._repository.load_sandbox(str(task_id))
-            if existing_sandbox and existing_sandbox.is_active():
+            if existing_sandbox and existing_sandbox.status == SandboxStatus.RUNNING:
                 # Verify container is actually alive via health check
                 if existing_sandbox.base_url:
                     is_healthy = self._health_checker.check_health_sync(
@@ -180,6 +332,10 @@ class SandboxManager(metaclass=SingletonMeta):
                             f"[SandboxManager] Reusing existing sandbox {existing_sandbox.sandbox_id} "
                             f"for task {task_id} (health check passed)"
                         )
+                        # Renew the healthy runtime before optional Skill preparation.
+                        # A Skill transport failure must not leave the physical
+                        # sandbox logically expired for other execution paths.
+                        existing_sandbox.extend_timeout(timeout)
                         self._merge_activation_metadata(
                             existing_sandbox, sandbox_metadata, bot_config
                         )
@@ -187,11 +343,8 @@ class SandboxManager(metaclass=SingletonMeta):
                             existing_sandbox, existing_sandbox.base_url
                         )
                         if skill_error:
-                            existing_sandbox.set_failed(skill_error)
                             self._repository.save_sandbox(existing_sandbox)
                             return existing_sandbox, skill_error
-                        # Extend timeout
-                        existing_sandbox.extend_timeout(timeout)
                         self._repository.save_sandbox(existing_sandbox)
                         return existing_sandbox, None
                     else:
@@ -223,7 +376,8 @@ class SandboxManager(metaclass=SingletonMeta):
         try:
             error = await self._start_sandbox_container(sandbox)
             if error:
-                sandbox.set_failed(error)
+                if sandbox.status != SandboxStatus.RUNNING:
+                    sandbox.set_failed(error)
                 self._repository.save_sandbox(sandbox)
                 return sandbox, error
         except Exception as e:
@@ -294,12 +448,29 @@ class SandboxManager(metaclass=SingletonMeta):
             return f"Container {container_name} failed to become ready"
 
         try:
-            await self._skill_synchronizer.sync(base_url, task_data, resolved_skills)
-        except SandboxSkillSyncError as exc:
-            return str(exc)
+            await self._runtime_binder.bind(base_url, sandbox.sandbox_id)
+            sandbox.metadata["heartbeat_monitoring"] = "active"
+        except Exception as exc:
+            sandbox.metadata["heartbeat_monitoring"] = "unavailable"
+            logger.warning(
+                "[SandboxManager] Optional runtime heartbeat activation failed "
+                "sandbox_id=%s error=%s",
+                sandbox.sandbox_id,
+                exc,
+                exc_info=True,
+            )
 
         sandbox.set_running(base_url)
-        sandbox.metadata["synced_required_skills"] = resolved_skills.required_skills
+        self._repository.save_sandbox(sandbox)
+
+        try:
+            await self._skill_synchronizer.sync(base_url, task_data, resolved_skills)
+        except SandboxSkillSyncError as exc:
+            self._record_skill_sync_failure(sandbox, str(exc))
+            self._repository.save_sandbox(sandbox)
+            return str(exc)
+
+        self._record_skill_sync_success(sandbox, resolved_skills)
         self._repository.save_sandbox(sandbox)
 
         return None
@@ -310,12 +481,39 @@ class SandboxManager(metaclass=SingletonMeta):
         """Synchronize newly active Skills before reusing a running sandbox."""
         try:
             resolved = await self._skill_synchronizer.resolve(sandbox)
+            desired_fingerprint = resolved.fingerprint
+            if sandbox.metadata.get("synced_skill_fingerprint") == desired_fingerprint:
+                self._record_skill_sync_success(sandbox, resolved)
+                logger.info(
+                    "[SandboxManager] Skill sync skipped; fingerprint unchanged "
+                    "sandbox_id=%s fingerprint=%s",
+                    sandbox.sandbox_id,
+                    desired_fingerprint,
+                )
+                return None
             task = self._build_sandbox_task(sandbox, resolved)
             await self._skill_synchronizer.sync(base_url, task, resolved)
         except SandboxSkillSyncError as exc:
+            self._record_skill_sync_failure(sandbox, str(exc))
             return str(exc)
-        sandbox.metadata["synced_required_skills"] = resolved.required_skills
+        self._record_skill_sync_success(sandbox, resolved)
         return None
+
+    @staticmethod
+    def _record_skill_sync_success(
+        sandbox: Sandbox, resolved: ResolvedTaskSkills
+    ) -> None:
+        """Persist the last successfully deployed Skill configuration."""
+        sandbox.metadata["skill_sync_status"] = "ready"
+        sandbox.metadata["synced_skill_fingerprint"] = resolved.fingerprint
+        sandbox.metadata["synced_required_skills"] = list(resolved.required_skills)
+        sandbox.metadata.pop("last_skill_sync_error", None)
+
+    @staticmethod
+    def _record_skill_sync_failure(sandbox: Sandbox, error: str) -> None:
+        """Record Skill readiness failure without poisoning runtime health."""
+        sandbox.metadata["skill_sync_status"] = "failed"
+        sandbox.metadata["last_skill_sync_error"] = error
 
     @staticmethod
     def _merge_activation_metadata(
@@ -1317,32 +1515,77 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox = await self._repository.load_sandbox_async(task_id_str)
                 if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                     continue
+                if sandbox.metadata.get("heartbeat_monitoring") == "unavailable":
+                    continue
 
                 # Check heartbeat using async method to avoid blocking event loop
                 if not await heartbeat_mgr.check_heartbeat(task_id_str):
-                    # Get last heartbeat time (may be None if key expired)
-                    last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id_str)
-
                     # Check if sandbox has been running long enough to expect heartbeat
                     # Grace period: sandbox needs some time to start sending heartbeats
                     sandbox_age = time.time() - sandbox.created_at
 
                     if sandbox_age > grace_period:
-                        # Sandbox is old enough - missing heartbeat means dead
-                        # Note: last_heartbeat may be None if key already expired from Redis
-                        logger.warning(
-                            f"[SandboxManager] Heartbeat timeout for sandbox {task_id_str}, "
-                            f"age={sandbox_age:.1f}s, last_heartbeat={last_heartbeat}"
-                        )
-                        await self._handle_executor_dead(
-                            task_id_str, last_heartbeat or sandbox.last_activity_at
-                        )
+                        await self._handle_heartbeat_timeout(task_id_str)
 
             except Exception as e:
                 logger.debug(
                     f"[SandboxManager] Heartbeat check error for {task_id_str}: {e}"
                 )
                 continue
+
+    async def _handle_heartbeat_timeout(self, sandbox_id: str) -> None:
+        """Recheck a suspected dead sandbox under its lifecycle lease."""
+        lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            logger.debug(
+                "[SandboxManager] Heartbeat cleanup skipped; lifecycle lock is busy "
+                "sandbox_id=%s",
+                sandbox_id,
+            )
+            return
+
+        try:
+            sandbox = await self._repository.load_sandbox_async(sandbox_id)
+            if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
+                return
+            if sandbox.metadata.get("heartbeat_monitoring") == "unavailable":
+                logger.info(
+                    "[SandboxManager] Heartbeat cleanup skipped after lifecycle "
+                    "recheck; monitoring is unavailable sandbox_id=%s",
+                    sandbox_id,
+                )
+                return
+
+            heartbeat_mgr = get_heartbeat_manager()
+            if await heartbeat_mgr.check_heartbeat(sandbox_id):
+                return
+            last_heartbeat = await heartbeat_mgr.get_last_heartbeat(sandbox_id)
+
+            if sandbox.base_url and await self._check_container_health(
+                sandbox.base_url
+            ):
+                logger.warning(
+                    "[SandboxManager] Heartbeat missing but runtime health check passed; "
+                    "preserving sandbox_id=%s base_url=%s",
+                    sandbox_id,
+                    sandbox.base_url,
+                )
+                return
+
+            sandbox_age = time.time() - sandbox.created_at
+            logger.warning(
+                "[SandboxManager] Heartbeat timeout and runtime health check failed "
+                "sandbox_id=%s age=%.1fs last_heartbeat=%s",
+                sandbox_id,
+                sandbox_age,
+                last_heartbeat,
+            )
+            await self._handle_executor_dead(
+                sandbox_id,
+                last_heartbeat or sandbox.last_activity_at,
+            )
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def _handle_executor_dead(
         self, sandbox_id: str, last_heartbeat: float
