@@ -3339,6 +3339,18 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
     expect(screen.getByTestId('harness-session-picker')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('harness-session-picker-option-opencode'))
+    expect(screen.getByTestId('harness-session-picker-model-selector')).toHaveTextContent(
+      'Second Test Model'
+    )
+    await userEvent.click(screen.getByTestId('harness-session-picker-model-selector'))
+    await userEvent.click(screen.getByTestId('harness-session-picker-model-option-opencode-0'))
+    await userEvent.click(screen.getByTestId('harness-session-picker-create-button'))
+    await waitFor(() =>
+      expect(resolveLocalHarnessLaunchMock).toHaveBeenLastCalledWith(
+        'opencode',
+        expect.objectContaining({ label: 'Test Model' })
+      )
+    )
     await waitFor(() =>
       expect(startLocalHarnessMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -3363,21 +3375,42 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('local-harness-session-row-local-harness-1')
     )
     expect(
-      screen.getAllByTestId('embedded-local-terminal').find(element => !element.hidden)
+      within(screen.getByTestId('desktop-workbench-content')).getByTestId('embedded-local-terminal')
+    ).toHaveAttribute('data-session-id', 'local-harness-1')
+    expect(
+      within(screen.getByTestId('right-workspace-panel-shell')).getByTestId(
+        'embedded-local-terminal'
+      )
     ).toHaveAttribute('data-session-id', 'local-harness-2')
-    expect(screen.getByTestId('central-harness-close-button')).toHaveAccessibleName('归档编码会话')
+    expect(screen.getByTestId('right-workspace-harness-tab-local-harness-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('close-local-harness-session-local-harness-2')).toHaveAccessibleName(
       '归档编码会话'
     )
 
-    await userEvent.click(screen.getByTestId('central-harness-close-button'))
+    await userEvent.click(
+      screen.getByTestId('right-workspace-harness-tab-local-harness-2-close-button')
+    )
 
     await waitFor(() =>
       expect(archiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-2')
     )
     expect(screen.getByTestId('local-harness-session-row-local-harness-1')).toBeInTheDocument()
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-chat-option')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('desktop-workbench-content')).getByTestId('embedded-local-terminal')
+    ).toHaveAttribute('data-session-id', 'local-harness-1')
+    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+
+    startLocalHarnessMock.mockRejectedValueOnce(new Error('Right session failed'))
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    await userEvent.click(screen.getByTestId('harness-session-picker-create-button'))
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
+    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
   })
 
   test('prepares a project worktree before starting the primary OpenCode session', async () => {

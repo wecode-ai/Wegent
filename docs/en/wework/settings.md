@@ -60,7 +60,11 @@ tool's CLI protocol and runs the process in the current workspace through a loca
 interactive terminal appears in the center while the title bar, right workspace, and bottom panel
 remain available. The right and bottom panels can create additional harness sessions for the same
 workspace through a picker instead of exposing every installed tool inline. The primary session
-can be switched but not closed from a panel; additional sessions can be closed explicitly.
+can be switched but not closed from a panel; additional sessions can be closed explicitly. A
+session created from the right workspace opens directly as a right-side tab without replacing the
+central primary session. A session created from the bottom panel keeps the central additional-session
+behavior. The creation dialog selects both the harness and the model for that session and starts it
+only after **Create session** is confirmed.
 
 Kimi Code starts as an interactive TUI. When the terminal attaches, Wework injects the first task
 through bracketed paste instead of using the one-shot `--prompt` mode, so the same terminal remains
@@ -83,7 +87,9 @@ the harness model picker. Its default is **Don't specify a model**: Wework does 
 configuration. You can instead explicitly select a local model interface from
 **Settings → Models** or a public, personal, or group model available through the connected Wegent
 account. That choice is persisted for the harness and replaces any `--model` or `-m` value from its
-default arguments.
+default arguments. When an additional session is created from the right or bottom panel, the dialog
+starts with that persisted default, but changing the model there applies only to the new session and
+does not overwrite the harness default.
 
 Only an explicitly selected Wework model connects the harness to the Anthropic
 Messages-compatible loopback route exposed by the executor. The child process then receives a
