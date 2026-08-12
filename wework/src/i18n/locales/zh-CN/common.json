@@ -2296,7 +2296,6 @@
     "add_context_project_space": "项目空间",
     "add_context_project_space_select": "选择看板",
     "project_space_auto_join": "自动加入",
-    "project_space_context_pending": "加入看板 · {{name}}",
     "project_space_context_pending_title": "发送后会在该项目空间的看板中创建任务",
     "clear_project_space_context": "不加入项目看板",
     "mention_cloud_project_space_description": "@ 我的云空间能力,用自然语言做任何有权限的操作",

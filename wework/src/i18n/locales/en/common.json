@@ -2298,7 +2298,6 @@
     "add_context_project_space": "Project space",
     "add_context_project_space_select": "Select board",
     "project_space_auto_join": "Automatic",
-    "project_space_context_pending": "Add to board · {{name}}",
     "project_space_context_pending_title": "Sending creates a task on this project-space board",
     "clear_project_space_context": "Do not add to the project board",
     "mention_cloud_project_space_description": "@ the cloud space capability and drive any permitted action in natural language",

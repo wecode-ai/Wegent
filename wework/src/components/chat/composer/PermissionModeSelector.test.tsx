@@ -4,6 +4,16 @@ import { describe, expect, test, vi } from 'vitest'
 import { PermissionModeSelector } from './PermissionModeSelector'
 
 describe('PermissionModeSelector', () => {
+  test('renders an accessible icon-only trigger for compact toolbars', () => {
+    render(<PermissionModeSelector value="full-access" iconOnly onChange={vi.fn()} />)
+
+    const trigger = screen.getByTestId('permission-mode-menu-button')
+    expect(trigger).toHaveAccessibleName('权限模式: 完整访问')
+    expect(trigger).toHaveAttribute('title', '权限模式: 完整访问')
+    expect(trigger).toHaveTextContent('')
+    expect(trigger.querySelector('svg')).toBeInTheDocument()
+  })
+
   test('changes between restricted modes without confirmation', () => {
     const onChange = vi.fn()
     render(<PermissionModeSelector value="workspace-write" onChange={onChange} />)

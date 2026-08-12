@@ -3028,11 +3028,13 @@ last_updated = "2026-07-30T00:00:00Z"`
 
 async function verifyPermissionModes(control) {
   const trigger = '[data-testid="permission-mode-menu-button"]'
+  const getPermissionModeLabel = () =>
+    control.command('getAttribute', trigger, { value: 'aria-label' })
   await control.command('waitFor', trigger, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Full access|完整访问/,
     'The default permission mode was not full access'
   )
@@ -3049,7 +3051,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Selecting workspace mode did not update the permission mode'
   )
@@ -3075,7 +3077,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Cancelling full access changed the permission mode'
   )
@@ -3101,7 +3103,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Full access|完整访问/,
     'Confirming full access did not update the permission mode'
   )
@@ -3116,7 +3118,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Read only|只读/,
     'Selecting read-only did not update the permission mode'
   )
@@ -3131,7 +3133,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Restoring workspace mode did not update the permission mode'
   )
