@@ -39,10 +39,12 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
     const contentRect = contentRef.current?.getBoundingClientRect()
     if (!triggerRect || !contentRect) return
     let boundaryNode = triggerRef.current?.parentElement ?? null
+    let leftBoundary = 8
     let rightBoundary = window.innerWidth - 8
     while (boundaryNode && boundaryNode !== document.body) {
       const rect = boundaryNode.getBoundingClientRect()
       if (rect.width >= contentRect.width) {
+        leftBoundary = rect.left
         rightBoundary = rect.right
         break
       }
@@ -50,8 +52,12 @@ export function CodeCommentPreview({ comments, testId, children }: CodeCommentPr
     }
     let left = triggerRect.left
     if (left + contentRect.width > rightBoundary) {
-      left = Math.max(8, rightBoundary - contentRect.width)
+      left = rightBoundary - contentRect.width
     }
+    if (left < leftBoundary) {
+      left = leftBoundary
+    }
+    left = Math.max(8, left)
     let top = triggerRect.top - contentRect.height - 4
     if (top < 8) {
       top = triggerRect.bottom + 4
@@ -125,7 +131,7 @@ function CodeCommentPreviewContent({
     <div
       ref={contentRef}
       data-testid={testId}
-      className="fixed z-popover max-h-[min(360px,calc(100vh-16px))] w-[min(420px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
+      className="fixed z-popover max-h-[min(360px,calc(100vh-16px))] w-fit min-w-[280px] max-w-[min(420px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
       style={position}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
@@ -174,7 +180,7 @@ function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
         />
       )}
       {comment.comment && (
-        <p className="mt-1 break-words text-xs leading-4 text-text-primary" title={comment.comment}>
+        <p className="mt-1 truncate text-xs leading-4 text-text-primary" title={comment.comment}>
           {truncate(comment.comment, COMMENT_TEXT_LIMIT)}
         </p>
       )}
@@ -196,7 +202,7 @@ function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
 
 function PreviewLine({ label, value }: { label: string; value: string }) {
   return (
-    <p className="mt-1 break-words text-xs leading-4 text-text-secondary" title={value}>
+    <p className="mt-1 truncate text-xs leading-4 text-text-secondary" title={value}>
       <span className="text-text-tertiary">{label}: </span>
       {truncate(value, COMMENT_TEXT_LIMIT)}
     </p>

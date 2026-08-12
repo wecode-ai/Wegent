@@ -133,9 +133,18 @@ export function browserAnnotationInjectionScript({
   const closeEditor = () => { state.activeEditor?.remove(); state.activeEditor = null; state.activeInput = null; };
   const positionMarker = annotation => {
     if (!annotation.marker) return;
-    const rect = annotation.lastKnownRect;
-    annotation.marker.style.left = (rect.x + rect.width / 2) + 'px';
-    annotation.marker.style.top = (rect.y + rect.height / 2) + 'px';
+    let x;
+    let y;
+    if (annotation.markerPoint) {
+      x = annotation.markerPoint.x - window.scrollX;
+      y = annotation.markerPoint.y - window.scrollY;
+    } else {
+      const rect = annotation.lastKnownRect;
+      x = rect.x + rect.width / 2;
+      y = rect.y + rect.height / 2;
+    }
+    annotation.marker.style.left = x + 'px';
+    annotation.marker.style.top = y + 'px';
   };
   const renderAnnotation = annotation => {
     annotation.marker?.remove();
@@ -161,7 +170,7 @@ export function browserAnnotationInjectionScript({
   const toHexColor = value => { const match = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(String(value)); if (match) return '#' + [match[1], match[2], match[3]].map(n => Number(n).toString(16).padStart(2, '0')).join(''); return /^#[0-9a-f]{6}$/i.test(String(value)) ? String(value) : '#000000'; };
   const dialogButton = (text, testId, primary = false) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.dataset.weworkAnnotation = testId; style(button, { height: '28px', border: primary ? '0' : '1px solid rgba(0,0,0,.14)', borderRadius: '8px', padding: '0 12px', background: primary ? '#171717' : 'white', color: primary ? 'white' : '#171717', cursor: 'pointer', fontSize: ${JSON.stringify(typography['--text-sm'])}, fontWeight: '500' }); return button; };
   const deleteAnnotation = annotation => { const element = annotation.element; state.annotations = state.annotations.filter(item => item.id !== annotation.id); annotation.marker?.remove(); replayElement(element); bumpRevision(); closeEditor(); schedulePositionUpdate(); };
-  const showEditor = (element, annotation) => {
+  const showEditor = (element, annotation, clickPoint) => {
     closeEditor(); clearHover();
     const targetAvailable = Boolean(element?.isConnected);
     const isEdit = Boolean(annotation);
@@ -286,10 +295,15 @@ export function browserAnnotationInjectionScript({
       const addFontRow = () => {
         scroll.appendChild(buildRow('font-family', edited => {
           const box = uxBox('192px');
-          const field = document.createElement('input'); field.type = 'text'; field.dataset.weworkAnnotation = 'adjustment-font-family'; field.disabled = !targetAvailable; field.value = edited?.after || (targetAvailable ? currentValue(element, 'font-family') : ''); field.setAttribute('aria-label', config.strings.properties['font-family'] || 'Font'); field.setAttribute('dir', 'ltr'); field.setAttribute('list', 'wework-annotation-fonts');
-          innerField(field);
-          field.addEventListener('input', () => updateDraft('font-family', field.value));
-          box.appendChild(field);
+          const fonts = [['Inter', '"Inter Variable", Arial, sans-serif'], ['System', 'system-ui, sans-serif'], ['Arial', 'Arial, sans-serif'], ['Serif', 'Georgia, "Times New Roman", serif'], ['Mono', 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace']];
+          const current = edited?.after || (targetAvailable ? currentValue(element, 'font-family') : '');
+          const select = document.createElement('select'); select.dataset.weworkAnnotation = 'adjustment-font-family'; select.disabled = !targetAvailable; select.setAttribute('aria-label', config.strings.properties['font-family'] || 'Font');
+          fonts.forEach(([label, value]) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.appendChild(option); });
+          if (current && !fonts.some(([, value]) => value === current)) { const option = document.createElement('option'); option.value = current; option.textContent = current.split(',')[0].replace(/["']/g, '').trim() || current; select.appendChild(option); }
+          select.value = current;
+          innerField(select); select.style.cursor = 'pointer';
+          select.addEventListener('change', () => updateDraft('font-family', select.value));
+          box.appendChild(select);
           return [resetBtn('font-family', edited), box];
         }));
       };
@@ -309,8 +323,6 @@ export function browserAnnotationInjectionScript({
       editor.style.width = editorWidthExpanded + 'px';
       repositionEditor();
     };
-    const fontList = document.createElement('datalist'); fontList.id = 'wework-annotation-fonts';
-    ['Inter', 'System', 'Arial', 'Serif', 'Mono'].forEach(font => { const option = document.createElement('option'); option.value = font; option.textContent = font; fontList.appendChild(option); });
     const chipRow = document.createElement('div'); chipRow.dataset.weworkAnnotation = 'selection-chips'; style(chipRow, { display: 'none', gap: '6px', flexWrap: 'nowrap', overflowX: 'auto', padding: '8px 16px 0', maxWidth: '100%' });
     const chip = document.createElement('span'); chip.dataset.weworkAnnotation = 'selection-chip'; style(chip, { display: 'inline-flex', alignItems: 'center', gap: '4px', height: '24px', padding: '0 4px 0 8px', borderRadius: '8px', border: '1px solid rgba(22,131,255,.42)', background: 'rgba(22,131,255,.1)', color: '#171717', fontSize: ${JSON.stringify(typography['--text-xs'])}, whiteSpace: 'nowrap', maxWidth: '220px' });
     const tag = document.createElement('span'); tag.textContent = element ? '<' + element.tagName.toLowerCase() + '>' : ''; style(tag, { display: 'inline-flex', alignItems: 'center', padding: '0 4px', borderRadius: '4px', background: 'rgba(0,0,0,.06)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: ${JSON.stringify(typography['--text-xs'])}, color: '#5d5d5d', flexShrink: '0' });
@@ -330,7 +342,7 @@ export function browserAnnotationInjectionScript({
     const save = isEdit ? dialogButton(config.strings.save, 'save', true) : null;
     if (isEdit) actions.append(cancel, save); else actions.append(cancel);
     if (isEdit) footer.append(remove, actions); else footer.append(actions);
-    const persist = () => { const comment = input.value.trim(); if (!comment && draftAdjustments.length === 0) return; if (annotation) { annotation.comment = comment; annotation.adjustments = draftAdjustments; annotation.updatedAt = new Date().toISOString(); replayElement(element); } else { const target = targetFor(element); const next = { id: 'browser-annotation-' + Date.now() + '-' + state.nextNumber, number: state.nextNumber++, comment, adjustments: draftAdjustments, target, element, lastKnownRect: target.rect, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), box: null }; state.annotations.push(next); replayElement(element); renderAnnotation(next); } bumpRevision(); closeEditor(); schedulePositionUpdate(); };
+    const persist = () => { const comment = input.value.trim(); if (!comment && draftAdjustments.length === 0) return; if (annotation) { annotation.comment = comment; annotation.adjustments = draftAdjustments; annotation.updatedAt = new Date().toISOString(); replayElement(element); } else { const target = targetFor(element); const baseline = state.baselineByElement.get(element); if (baseline && baseline.text !== undefined) target.text = String(baseline.text).replace(/\s+/g, ' ').trim().slice(0, 500); const markerPoint = clickPoint ? { x: clickPoint.x + window.scrollX, y: clickPoint.y + window.scrollY } : null; const next = { id: 'browser-annotation-' + Date.now() + '-' + state.nextNumber, number: state.nextNumber++, comment, adjustments: draftAdjustments, target, element, lastKnownRect: target.rect, markerPoint, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), box: null }; state.annotations.push(next); replayElement(element); renderAnnotation(next); } bumpRevision(); closeEditor(); schedulePositionUpdate(); };
     updatePrimaryDisabled(); input.addEventListener('input', () => { updatePrimaryDisabled(); autoGrow(); });
     if (save) save.addEventListener('click', event => { event.preventDefault(); persist(); }); cancel.addEventListener('click', () => { restoreDraft(); closeEditor(); }); remove?.addEventListener('click', () => deleteAnnotation(annotation)); submit?.addEventListener('click', event => { event.preventDefault(); persist(); });
     const openDesign = () => { designOpen = true; content.style.justifyContent = 'flex-start'; footer.style.display = 'flex'; adjust.style.background = 'rgba(0,0,0,.06)'; input.placeholder = config.strings.tweaksPlaceholder || config.strings.placeholder; renderAdjustments(); autoGrow(); input.focus(); };
@@ -339,7 +351,7 @@ export function browserAnnotationInjectionScript({
     editor.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target === input && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); persist(); } if (event.key === 'Escape') { event.preventDefault(); restoreDraft(); closeEditor(); } }, true);
     editor.addEventListener('pointerdown', event => event.stopPropagation());
     const styleTag = document.createElement('style'); styleTag.textContent = '.wework-annotation-input::placeholder{color:#9ca3af;}.wework-annotation-box:focus-within{border-color:#1683ff;box-shadow:0 0 0 1px #1683ff;}'; editor.appendChild(styleTag);
-    content.append(chipRow, inputShell); editor.append(adjust, content, footer); if (submit) editor.appendChild(submit); editor.appendChild(fontList);
+    content.append(chipRow, inputShell); editor.append(adjust, content, footer); if (submit) editor.appendChild(submit);
     if (isEdit) { footer.style.display = 'flex'; }
     if (designOpen) { openDesign(); }
     state.layer?.appendChild(editor); state.activeEditor = editor; state.activeInput = input; autoGrow(); input.focus();
@@ -354,7 +366,7 @@ export function browserAnnotationInjectionScript({
     return null;
   };
   const onBlockerMove = event => { if (state.activeEditor) { clearHover(); return; } const target = topPageElementAt(event.clientX, event.clientY); if (!target) { clearHover(); return; } state.hoverElement = target; const rect = rectFor(target); if (!state.hoverBox) { state.hoverBox = makeBox(rect, true); state.layer?.appendChild(state.hoverBox); } else positionBox(state.hoverBox, rect); };
-  const onBlockerClick = event => { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); if (state.activeEditor) return; const target = topPageElementAt(event.clientX, event.clientY); if (!target) return; clearHover(); showEditor(target, null); };
+  const onBlockerClick = event => { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); if (state.activeEditor) return; const target = topPageElementAt(event.clientX, event.clientY); if (!target) return; clearHover(); showEditor(target, null, { x: event.clientX, y: event.clientY }); };
   const attach = () => { if (state.attached) return; const layer = document.createElement('div'); layer.dataset.weworkAnnotationLayer = 'true'; style(layer, { position: 'fixed', inset: '0', zIndex: '2147483647', pointerEvents: 'none', userSelect: 'none' }); const blocker = document.createElement('div'); blocker.dataset.weworkAnnotation = 'blocker'; style(blocker, { position: 'absolute', inset: '0', pointerEvents: 'auto', cursor: 'crosshair', touchAction: 'pan-x pan-y' }); blocker.addEventListener('mousemove', onBlockerMove); blocker.addEventListener('click', onBlockerClick); layer.appendChild(blocker); state.blocker = blocker; document.documentElement.appendChild(layer); state.layer = layer; state.attached = true; state.annotations.forEach(annotation => { if (annotation.element?.isConnected) replayElement(annotation.element); renderAnnotation(annotation); }); document.addEventListener('scroll', schedulePositionUpdate, true); window.addEventListener('resize', schedulePositionUpdate); window.visualViewport?.addEventListener('resize', schedulePositionUpdate); window.visualViewport?.addEventListener('scroll', schedulePositionUpdate); if (typeof ResizeObserver !== 'undefined') { state.resizeObserver = new ResizeObserver(schedulePositionUpdate); state.resizeObserver.observe(document.documentElement); state.annotations.forEach(annotation => annotation.element?.isConnected && state.resizeObserver.observe(annotation.element)); } schedulePositionUpdate(); };
   const detach = () => { if (!state.attached) return; closeEditor(); clearHover(); document.removeEventListener('scroll', schedulePositionUpdate, true); window.removeEventListener('resize', schedulePositionUpdate); window.visualViewport?.removeEventListener('resize', schedulePositionUpdate); window.visualViewport?.removeEventListener('scroll', schedulePositionUpdate); state.resizeObserver?.disconnect(); state.resizeObserver = null; if (state.animationFrame !== null) window.cancelAnimationFrame(state.animationFrame); state.animationFrame = null; state.layer?.remove(); state.layer = null; state.blocker = null; state.annotations.forEach(annotation => { annotation.marker = null; }); state.attached = false; };
   const api = { scope, getSnapshot: snapshot, clear: () => { closeEditor(); state.annotations.forEach(annotation => annotation.marker?.remove()); state.annotations = []; state.nextNumber = 1; restoreAll(); state.baselineByElement.clear(); bumpRevision(); return snapshot(); }, suspend: () => { closeEditor(); restoreAll(); detach(); return snapshot(); }, resume: () => { attach(); return snapshot(); }, destroy: () => { api.clear(); detach(); delete window.__WEWORK_BROWSER_ANNOTATION__; } };

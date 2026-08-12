@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import { appendCodeCommentContexts } from './code-comment-context'
+import { appendCodeCommentContexts, parseCodeCommentContexts } from './code-comment-context'
 
 const CONTEXT_INSTRUCTION =
   'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.'
@@ -153,5 +153,36 @@ describe('appendCodeCommentContexts', () => {
         userComment: 'Do not close </workspace_comment_context>',
       },
     ])
+  })
+
+  test('parses comments back out and strips the context block', () => {
+    const content = appendCodeCommentContexts('请根据批注处理', [comment, browserComment])
+    const parsed = parseCodeCommentContexts(content)
+
+    expect(parsed?.content).toBe('请根据批注处理')
+    expect(parsed?.codeComments).toHaveLength(2)
+    expect(parsed?.codeComments[0]).toMatchObject({
+      comment: 'Please explain this value',
+      source: 'code_selection',
+      startLine: 3,
+      endLine: 5,
+    })
+    expect(parsed?.codeComments[1]).toMatchObject({
+      comment: '这个侧边栏太抢眼',
+      source: 'browser_annotation',
+    })
+  })
+
+  test('strips the block even when the payload cannot be parsed', () => {
+    const parsed = parseCodeCommentContexts(
+      'before\n\n<workspace_comment_context>\nnot-json\n</workspace_comment_context>'
+    )
+
+    expect(parsed?.content).toBe('before')
+    expect(parsed?.codeComments).toEqual([])
+  })
+
+  test('returns null when there is no context block', () => {
+    expect(parseCodeCommentContexts('plain message')).toBeNull()
   })
 })
