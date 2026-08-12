@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     imagemagick \
     libayatana-appindicator3-dev \
+    libmagic1 \
     librsvg2-dev \
     libssl-dev \
     libwebkit2gtk-4.1-dev \

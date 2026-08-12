@@ -25,6 +25,10 @@ permissions:
   contents: read
   packages: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   changes:
     name: Detect Wework E2E Changes
