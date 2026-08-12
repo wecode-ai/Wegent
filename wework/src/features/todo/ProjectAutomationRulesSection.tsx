@@ -7,9 +7,13 @@ import type {
   createProjectAutomationApi,
 } from '@/api/projectAutomations'
 import type { ProjectChatAgent, createProjectChatAgentApi } from '@/api/projectChatAgents'
+import { MenuSelect } from '@/components/common/MenuSelect'
+import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
+import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from './executionStatus'
 
 type AutomationApi = ReturnType<typeof createProjectAutomationApi>
 type AgentApi = ReturnType<typeof createProjectChatAgentApi>
@@ -67,6 +71,30 @@ const formatSchedule = (schedule: VisualSchedule, t: (key: string) => string): s
   return `${frequency} ${schedule.time}`
 }
 
+const timezoneLabel = (timezone: string, t: (key: string) => string): string =>
+  timezone === 'Asia/Shanghai' ? t('workbench.project_automation_timezone_shanghai') : timezone
+
+const formatTimestamp = (value: string, timezone: string): string => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date)
+    const part = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find(candidate => candidate.type === type)?.value ?? ''
+    return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
+  } catch {
+    return value
+  }
+}
+
 const timezoneOptions = (current: string): string[] =>
   Array.from(
     new Set([current, 'Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'UTC'])
@@ -76,7 +104,7 @@ const defaultInput = (): ProjectAutomationInput => ({
   name: '',
   prompt: '',
   cronExpression: '0 3 * * *',
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  timezone: 'Asia/Shanghai',
   agentId: '',
   enabled: true,
 })
@@ -170,11 +198,15 @@ export function ProjectAutomationRulesSection({
     setError('')
     try {
       const input = { ...draft, cronExpression: scheduleToCron(schedule) }
-      const rule = selected
-        ? await api.update(projectId, selected.id, { ...input, version: selected.version })
-        : await api.create(projectId, input)
+      if (selected) {
+        await api.update(projectId, selected.id, { ...input, version: selected.version })
+      } else {
+        await api.create(projectId, input)
+      }
+      setSelected(null)
+      setDraft(null)
+      setRuns([])
       await load()
-      await selectRule(rule)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
@@ -194,6 +226,28 @@ export function ProjectAutomationRulesSection({
       await load()
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : String(removeError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleRuleEnabled = async (rule: ProjectAutomationRule, enabled: boolean) => {
+    if (!api) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.update(projectId, rule.id, {
+        name: rule.name,
+        prompt: rule.prompt,
+        cronExpression: rule.cronExpression,
+        timezone: rule.timezone,
+        agentId: rule.agentId,
+        enabled,
+        version: rule.version,
+      })
+      await load()
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : String(toggleError))
     } finally {
       setBusy(false)
     }
@@ -229,13 +283,8 @@ export function ProjectAutomationRulesSection({
 
   const statusLabel = useMemo(
     () => ({
-      pending: t('workbench.project_automation_pending'),
-      waiting_device: t('workbench.project_automation_waiting_device'),
       running: t('workbench.project_automation_running'),
-      succeeded: t('workbench.project_automation_succeeded'),
-      failed: t('workbench.project_automation_failed'),
-      skipped: t('workbench.project_automation_skipped'),
-      cancelled: t('workbench.project_automation_cancelled'),
+      completed: t('workbench.project_automation_completed'),
     }),
     [t]
   )
@@ -266,16 +315,23 @@ export function ProjectAutomationRulesSection({
         ) : null}
       </div>
 
-      {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+      {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
         {rules.length ? (
           rules.map(rule => (
-            <button
+            <div
               key={rule.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               data-testid={`project-automation-rule-${rule.id}`}
               onClick={() => void selectRule(rule)}
-              className="flex w-full items-center gap-4 rounded-xl border border-border px-4 py-3 text-left transition hover:border-text-tertiary hover:bg-surface"
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  void selectRule(rule)
+                }
+              }}
+              className="flex w-full cursor-pointer items-center gap-4 rounded-xl border border-border px-4 py-3 text-left transition hover:border-text-tertiary hover:bg-surface"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
                 <CalendarClock className="h-4 w-4" />
@@ -283,24 +339,40 @@ export function ProjectAutomationRulesSection({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{rule.name}</span>
                 <span className="mt-0.5 block text-xs text-text-muted">
-                  {formatSchedule(cronToSchedule(rule.cronExpression), t)} · {rule.agentName}
+                  {formatSchedule(cronToSchedule(rule.cronExpression), t)} ·{' '}
+                  {timezoneLabel(rule.timezone, t)} · {rule.agentName}
                 </span>
               </span>
               <span className="shrink-0 text-right text-xs text-text-muted">
                 <span className="block">
                   {rule.lastRunStatus
-                    ? statusLabel[rule.lastRunStatus]
+                    ? statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'running']
                     : rule.nextRunAt
-                      ? new Date(rule.nextRunAt).toLocaleString()
+                      ? `${formatTimestamp(rule.nextRunAt, rule.timezone)} · ${timezoneLabel(
+                          rule.timezone,
+                          t
+                        )}`
                       : t('workbench.project_automation_disabled')}
                 </span>
-                <span className="mt-1 block">
-                  {rule.enabled
-                    ? t('workbench.project_automation_enabled')
-                    : t('workbench.project_automation_disabled')}
-                </span>
               </span>
-            </button>
+              <span
+                className="shrink-0"
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
+              >
+                <SettingsSwitch
+                  data-testid={`project-automation-toggle-${rule.id}`}
+                  checked={rule.enabled}
+                  disabled={busy || !canManage}
+                  onCheckedChange={enabled => void toggleRuleEnabled(rule, enabled)}
+                  aria-label={
+                    rule.enabled
+                      ? t('workbench.project_automation_enabled')
+                      : t('workbench.project_automation_disabled')
+                  }
+                />
+              </span>
+            </div>
           ))
         ) : (
           <div className="flex min-h-36 flex-col items-center justify-center rounded-xl border border-dashed border-border px-4 text-center">
@@ -323,201 +395,167 @@ export function ProjectAutomationRulesSection({
             setSelected(null)
           }}
         >
-          <div className="overflow-y-auto px-5 pb-5 pt-4" data-testid="project-automation-editor">
-            <div className="space-y-5">
-              <label className="block text-sm font-medium">
-                {t('workbench.project_automation_name')}
-                <input
-                  data-testid="project-automation-name"
-                  value={draft.name}
-                  onChange={event => setDraft({ ...draft, name: event.target.value })}
-                  placeholder={t('workbench.project_automation_name')}
-                  className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal outline-none focus:border-text-tertiary"
-                />
-              </label>
-              <label className="block text-sm font-medium">
-                {t('workbench.project_automation_prompt')}
-                <textarea
-                  data-testid="project-automation-prompt"
-                  value={draft.prompt}
-                  onChange={event => setDraft({ ...draft, prompt: event.target.value })}
-                  placeholder={t('workbench.project_automation_prompt')}
-                  className="mt-2 min-h-28 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm font-normal outline-none focus:border-text-tertiary"
-                />
-              </label>
+          <div
+            className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4"
+            data-testid="project-automation-editor"
+          >
+            <input
+              data-testid="project-automation-name"
+              value={draft.name}
+              autoFocus={!selected}
+              onChange={event => setDraft({ ...draft, name: event.target.value })}
+              placeholder={t('workbench.project_automation_name')}
+              className="w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary"
+            />
+            <textarea
+              data-testid="project-automation-prompt"
+              value={draft.prompt}
+              onChange={event => setDraft({ ...draft, prompt: event.target.value })}
+              placeholder={t('workbench.project_automation_prompt')}
+              className="mt-3 min-h-24 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
+            />
 
-              <div className="rounded-xl bg-surface p-4">
-                <h5 className="mb-3 flex items-center gap-2 text-sm font-medium">
-                  <Clock3 className="h-4 w-4" />
-                  {t('workbench.project_automation_schedule')}
-                </h5>
-                <div className="space-y-3">
-                  <label className="block text-xs text-text-muted">
-                    {t('workbench.project_automation_frequency')}
-                    <select
-                      data-testid="project-automation-frequency"
-                      value={schedule.frequency}
-                      onChange={event =>
-                        setSchedule({
-                          ...schedule,
-                          frequency: event.target.value as ScheduleFrequency,
-                        })
-                      }
-                      className="mt-1.5 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none"
-                    >
-                      <option value="daily">{t('workbench.project_automation_daily')}</option>
-                      <option value="weekdays">{t('workbench.project_automation_weekdays')}</option>
-                      <option value="weekly">{t('workbench.project_automation_weekly')}</option>
-                    </select>
-                  </label>
-                  {schedule.frequency === 'weekly' ? (
-                    <label className="block text-xs text-text-muted">
-                      {t('workbench.project_automation_weekday')}
-                      <select
-                        data-testid="project-automation-weekday"
-                        value={schedule.weekday}
-                        onChange={event =>
-                          setSchedule({ ...schedule, weekday: event.target.value })
-                        }
-                        className="mt-1.5 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none"
-                      >
-                        {weekdayOptions(t).map(day => (
-                          <option key={day.value} value={day.value}>
-                            {day.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  <label className="block text-xs text-text-muted">
-                    {t('workbench.project_automation_time')}
-                    <input
-                      type="time"
-                      step="900"
-                      data-testid="project-automation-time"
-                      value={schedule.time}
-                      onChange={event => setSchedule({ ...schedule, time: event.target.value })}
-                      className="mt-1.5 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none"
-                    />
-                  </label>
-                  <label className="block text-xs text-text-muted">
-                    {t('workbench.project_automation_timezone')}
-                    <select
-                      data-testid="project-automation-timezone"
-                      value={draft.timezone}
-                      onChange={event => setDraft({ ...draft, timezone: event.target.value })}
-                      className="mt-1.5 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none"
-                    >
-                      {timezoneOptions(draft.timezone).map(timezone => (
-                        <option key={timezone} value={timezone}>
-                          {timezone}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </div>
-
-              <label className="block text-sm font-medium">
-                {t('workbench.project_automation_robot')}
-                <select
-                  data-testid="project-automation-agent"
-                  value={draft.agentId}
-                  onChange={event => setDraft({ ...draft, agentId: event.target.value })}
-                  className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal text-text-primary outline-none"
-                >
-                  <option value="">{t('workbench.project_automation_select_robot')}</option>
-                  {agents.map(agent => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name} · {agent.executionEnvironment}
-                      {agent.executionEnvironment === 'local'
-                        ? ` · ${
-                            devices.find(device => device.device_id === agent.executionDeviceId)
-                              ?.status ?? 'offline'
-                          }`
-                        : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={draft.enabled}
-                    onChange={event => setDraft({ ...draft, enabled: event.target.checked })}
+            <SectionTitle
+              title={t('workbench.project_automation_schedule')}
+              action={<Clock3 className="h-4 w-4" />}
+            />
+            <SettingsGroup>
+              <SettingsRow label={t('workbench.project_automation_frequency')}>
+                <MenuSelect
+                  testId="project-automation-frequency"
+                  value={schedule.frequency}
+                  pill
+                  onChange={value =>
+                    setSchedule({ ...schedule, frequency: value as ScheduleFrequency })
+                  }
+                  options={[
+                    { value: 'daily', label: t('workbench.project_automation_daily') },
+                    { value: 'weekdays', label: t('workbench.project_automation_weekdays') },
+                    { value: 'weekly', label: t('workbench.project_automation_weekly') },
+                  ]}
+                />
+              </SettingsRow>
+              {schedule.frequency === 'weekly' ? (
+                <SettingsRow label={t('workbench.project_automation_weekday')}>
+                  <MenuSelect
+                    testId="project-automation-weekday"
+                    value={schedule.weekday}
+                    pill
+                    onChange={value => setSchedule({ ...schedule, weekday: value })}
+                    options={weekdayOptions(t)}
                   />
-                  {t('workbench.project_automation_enabled')}
-                </label>
-                <div className="flex gap-2">
-                  {selected ? (
-                    <>
-                      <button
-                        type="button"
-                        data-testid="project-automation-run-now"
-                        disabled={busy}
-                        onClick={() => void runNow(selected)}
-                        className="flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm hover:bg-surface disabled:opacity-50"
-                      >
-                        {busy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
-                        {t('workbench.project_automation_run_now')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void remove(selected)}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg text-red-600 hover:bg-red-500/5"
-                        aria-label={t('workbench.delete')}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    data-testid="project-automation-save"
-                    disabled={busy || !draft.name.trim() || !draft.prompt.trim() || !draft.agentId}
-                    onClick={() => void save()}
-                    className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background disabled:opacity-50"
-                  >
-                    {t('workbench.save')}
-                  </button>
-                </div>
-              </div>
+                </SettingsRow>
+              ) : null}
+              <SettingsRow label={t('workbench.project_automation_time')}>
+                <input
+                  type="time"
+                  step={60}
+                  value={schedule.time}
+                  onChange={event => setSchedule({ ...schedule, time: event.target.value })}
+                  data-testid="project-automation-time"
+                  aria-label={t('workbench.project_automation_time')}
+                  className="h-8 rounded-full border-0 bg-surface px-2 text-sm font-medium text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                />
+              </SettingsRow>
+              <SettingsRow label={t('workbench.project_automation_timezone')}>
+                <MenuSelect
+                  testId="project-automation-timezone"
+                  value={draft.timezone}
+                  pill
+                  onChange={value => setDraft({ ...draft, timezone: value })}
+                  options={timezoneOptions(draft.timezone).map(timezone => ({
+                    value: timezone,
+                    label:
+                      timezone === 'Asia/Shanghai'
+                        ? `${timezone} · ${timezoneLabel(timezone, t)}`
+                        : timezone,
+                  }))}
+                />
+              </SettingsRow>
+            </SettingsGroup>
+
+            <div className="mt-7">
+              <SettingsGroup>
+                <SettingsRow label={t('workbench.project_automation_robot')}>
+                  <MenuSelect
+                    testId="project-automation-agent"
+                    value={draft.agentId}
+                    pill
+                    onChange={value => setDraft({ ...draft, agentId: value })}
+                    options={[
+                      { value: '', label: t('workbench.project_automation_select_robot') },
+                      ...agents.map(agent => ({
+                        value: agent.id,
+                        label: `${agent.name} · ${agent.executionEnvironment}${
+                          agent.executionEnvironment === 'local'
+                            ? ` · ${
+                                devices.find(device => device.device_id === agent.executionDeviceId)
+                                  ?.status ?? 'offline'
+                              }`
+                            : ''
+                        }`,
+                      })),
+                    ]}
+                  />
+                </SettingsRow>
+              </SettingsGroup>
             </div>
 
+            {error ? (
+              <p className="mt-4 text-sm text-red-600" data-testid="project-automation-error">
+                {error}
+              </p>
+            ) : null}
+
             {selected && runs.length ? (
-              <div className="border-t border-border pt-4" data-testid="project-automation-runs">
-                <h5 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
-                  <Clock3 className="h-4 w-4" />
+              <div className="mt-7" data-testid="project-automation-runs">
+                <h3 className="mb-2 px-1 text-sm font-medium text-text-tertiary">
                   {t('workbench.project_automation_runs')}
-                </h5>
-                <div className="space-y-1">
+                </h3>
+                <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border px-4">
                   {runs.slice(0, 5).map(run => (
-                    <div key={run.id} className="flex min-h-8 items-center gap-2 text-xs">
-                      <span className="w-24 text-text-muted">{statusLabel[run.status]}</span>
-                      <span className="flex-1 truncate text-text-muted">
-                        {new Date(run.scheduledFor).toLocaleString()}
+                    <div key={run.id} className="flex min-h-10 items-center gap-3 py-2 text-sm">
+                      <span className="w-16 shrink-0">
+                        {statusLabel[executionDisplayStatus(run.status) ?? 'running']}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-text-muted">
+                        {formatTimestamp(run.scheduledFor, run.timezone)} ·{' '}
+                        {timezoneLabel(run.timezone, t)}
+                        {run.error ? (
+                          <span
+                            className={
+                              isExecutionFailed(run.status)
+                                ? 'block truncate text-red-600'
+                                : 'block truncate text-text-muted'
+                            }
+                            title={run.error}
+                            data-testid={`project-automation-run-error-${run.id}`}
+                          >
+                            {run.error}
+                          </span>
+                        ) : null}
                       </span>
                       {run.taskId && onOpenTask ? (
                         <button
                           type="button"
-                          onClick={() => onOpenTask(run.taskId!)}
-                          className="text-blue-600 hover:underline"
+                          onClick={() => {
+                            setSelected(null)
+                            setDraft(null)
+                            setRuns([])
+                            onOpenTask(run.taskId!)
+                          }}
+                          className="shrink-0 text-blue-600 hover:underline"
                         >
                           {t('workbench.project_automation_open_task')}
                         </button>
                       ) : null}
-                      {run.status === 'waiting_device' || run.status === 'running' ? (
+                      {isExecutionRunning(run.status) ? (
                         <button
                           type="button"
                           data-testid={`project-automation-cancel-run-${run.id}`}
                           disabled={busy}
                           onClick={() => void cancelRun(run.id)}
-                          className="flex h-7 items-center gap-1 rounded-md px-2 text-text-muted hover:bg-surface"
+                          className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-text-muted hover:bg-surface"
                         >
                           <Pause className="h-3.5 w-3.5" />
                           {t('workbench.project_automation_cancel_run')}
@@ -529,6 +567,46 @@ export function ProjectAutomationRulesSection({
               </div>
             ) : null}
           </div>
+
+          <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-6 py-3">
+            <div className="flex items-center gap-1">
+              {selected ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid="project-automation-run-now"
+                    disabled={busy}
+                    onClick={() => void runNow(selected)}
+                    className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm hover:bg-surface disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                    {t('workbench.project_automation_run_now')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove(selected)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-red-600 hover:bg-red-500/5"
+                    aria-label={t('workbench.delete')}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              data-testid="project-automation-save"
+              disabled={busy || !draft.name.trim() || !draft.prompt.trim() || !draft.agentId}
+              onClick={() => void save()}
+              className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
+            >
+              {t('workbench.save')}
+            </button>
+          </footer>
         </CloudTodoModal>
       ) : null}
     </section>

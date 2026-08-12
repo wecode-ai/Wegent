@@ -12,8 +12,6 @@ from app.models.delivery import ProjectAutomationRun
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.schemas.project_automation import (
-    AutomationBugUpsert,
-    AutomationBugUpsertResponse,
     ProjectAutomationCreate,
     ProjectAutomationRunView,
     ProjectAutomationUpdate,
@@ -135,18 +133,3 @@ def cancel_run(
 
         background_tasks.add_task(emit_runtime_cancels, [execution])
     return result
-
-
-@router.post(
-    "/automation-runs/{run_id}/bugs", response_model=AutomationBugUpsertResponse
-)
-async def upsert_bug(
-    run_id: str,
-    values: AutomationBugUpsert,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> AutomationBugUpsertResponse:
-    action, item = await project_automation_service.upsert_bug(
-        db, run_id, current_user, values
-    )
-    return {"action": action, "task_id": item.id}

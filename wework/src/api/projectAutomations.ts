@@ -36,6 +36,7 @@ export interface ProjectAutomationRun {
   projectId: string
   trigger: 'scheduled' | 'manual'
   status: ProjectAutomationRunStatus
+  timezone: string
   scheduledFor: string
   expiresAt: string | null
   taskId: string | null
@@ -110,6 +111,23 @@ export function createProjectAutomationApi(client: HttpClient) {
           runtime_device_id: runtimeDeviceId,
           runtime_task_id: runtimeTaskId,
           lease_seconds: leaseSeconds,
+        }
+      )
+    },
+    runtimeStart(
+      execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      prompt: string | null,
+      model?: string | null
+    ) {
+      return client.post<LocalLoopItemExecution | null>(
+        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/runtime-start`,
+        {
+          runtime_device_id: runtimeDeviceId,
+          runtime_task_id: runtimeTaskId,
+          prompt: prompt ?? null,
+          model: model ?? null,
         }
       )
     },

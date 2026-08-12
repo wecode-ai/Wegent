@@ -1100,7 +1100,7 @@ def test_cloud_project_robot_binds_local_project(
     assert cleared.json()["localProjectId"] is None
 
 
-def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
+def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -1123,13 +1123,13 @@ def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={"project_key": "autobug", "name": "Bug automation"},
+        json={"project_key": "automation", "name": "Project automation"},
     ).json()
     agent = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
         headers=_auth(test_token),
         json={
-            "name": "Bug fixer",
+            "name": "Project assistant",
             "runtime": "codex",
             "executionEnvironment": "cloud",
             "executionDeviceId": "automation-cloud-device",
@@ -1140,8 +1140,8 @@ def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
         f"/api/v1/cloud-projects/{project['id']}/automations",
         headers=_auth(test_token),
         json={
-            "name": "Daily bug scan",
-            "prompt": "Scan regressions and report every reproducible bug.",
+            "name": "Daily project summary",
+            "prompt": "Summarize yesterday's completed work.",
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
             "agentId": agent["id"],
@@ -1153,6 +1153,7 @@ def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
     assert rule["agentId"] == agent["id"]
     assert rule["executionEnvironment"] == "cloud"
     assert rule["nextRunAt"] is not None
+    assert rule["nextRunAt"].endswith("Z")
 
     started = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
@@ -1162,6 +1163,8 @@ def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
     run = started.json()
     assert run["status"] == "running"
     assert run["taskId"]
+    assert run["timezone"] == "Asia/Shanghai"
+    assert run["scheduledFor"].endswith("Z")
 
     task = test_client.get(
         f"/api/v1/loop-items/{run['taskId']}", headers=_auth(test_token)
@@ -1169,35 +1172,8 @@ def test_cloud_project_automation_creates_scan_task_for_cloud_robot(
     assert task.status_code == 200
     assert task.json()["assignee_agent_id"] == agent["id"]
     assert task.json()["automation"]["run_id"] == run["id"]
-
-    first_bug = test_client.post(
-        f"/api/v1/cloud-projects/automation-runs/{run['id']}/bugs",
-        headers=_auth(test_token),
-        json={
-            "bugKey": "login-http-500",
-            "title": "Login returns HTTP 500",
-            "evidence": "The login endpoint returned HTTP 500.",
-            "reproduction": "Submit valid credentials.",
-            "priority": "high",
-        },
-    )
-    assert first_bug.status_code == 200, first_bug.text
-    assert first_bug.json()["action"] == "created"
-    child_id = first_bug.json()["taskId"]
-
-    repeated_bug = test_client.post(
-        f"/api/v1/cloud-projects/automation-runs/{run['id']}/bugs",
-        headers=_auth(test_token),
-        json={
-            "bugKey": "login-http-500",
-            "title": "Login still returns HTTP 500",
-            "evidence": "The regression is reproducible on the latest build.",
-            "reproduction": "Submit valid credentials twice.",
-            "priority": "urgent",
-        },
-    )
-    assert repeated_bug.status_code == 200, repeated_bug.text
-    assert repeated_bug.json() == {"action": "updated", "taskId": child_id}
+    assert task.json()["description"] == "Summarize yesterday's completed work."
+    assert task.json()["tags"] == ["automation"]
 
 
 def test_cloud_project_manual_automation_starts_when_local_device_claims(
@@ -1271,6 +1247,17 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     execution = claimed.json()
     assert execution["executionDeviceId"] == "automation-local-device"
     assert execution["status"] == "running"
+
+    started_runtime = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
+        headers=_auth(test_token),
+        json={
+            "runtime_device_id": "automation-local-device",
+            "runtime_task_id": execution["runtimeTaskId"],
+            "prompt": "Scan bugs.",
+        },
+    )
+    assert started_runtime.status_code == 200, started_runtime.text
 
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",

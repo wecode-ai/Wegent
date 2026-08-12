@@ -280,6 +280,8 @@ class LoopItemService:
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
             return False
+        if self._execution_keeps_task_ai_state_alive(db, ai_state):
+            return False
         raw_expires_at = ai_state.get("lease_expires_at")
         if not isinstance(raw_expires_at, str):
             return False
@@ -344,6 +346,41 @@ class LoopItemService:
             raw_expires_at,
         )
         return True
+
+    @staticmethod
+    def _execution_keeps_task_ai_state_alive(
+        db: Session, ai_state: dict[str, object]
+    ) -> bool:
+        """Decide whether the owning execution is still genuinely alive.
+
+        The execution row's lease is refreshed by the transport heartbeat (the
+        App puller beats every minute), while the projected task AI state only
+        extends its own lease on runtime output. A long, silent model run must
+        not be marked interrupted just because no output delta arrived.
+        """
+
+        runtime_device_id = ai_state.get("runtime_device_id")
+        runtime_task_id = ai_state.get("runtime_task_id")
+        if not isinstance(runtime_device_id, str) or not isinstance(
+            runtime_task_id, str
+        ):
+            return False
+        if not runtime_device_id or not runtime_task_id:
+            return False
+        from app.models.loop_item_execution import LoopItemExecution
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_task_id == runtime_task_id,
+                LoopItemExecution.status == "running",
+            )
+            .first()
+        )
+        if execution is None or execution.lease_expires_at is None:
+            return False
+        return execution.lease_expires_at >= LoopItemService._now()
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.ws.device_namespace import _project_chat_runtime_event_sync
@@ -19,6 +20,7 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.models.kind import Kind
+from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.project_chat import (
@@ -609,6 +611,140 @@ def test_expired_task_ai_lease_terminates_streaming_message(
     assert values["ai_state"]["status"] == "interrupted"
     assert message.status == "failed"
     assert message.metadata_json.get("lease_expired") is True
+
+
+def test_alive_execution_keeps_task_ai_state_running(
+    test_db: Session, test_user: User
+) -> None:
+    """A long, silent run must not be marked interrupted while the owning
+    execution is still heartbeating. The execution lease is the liveness
+    source; the projected task AI lease only extends on output deltas."""
+
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Heartbeat task",
+        description="",
+        status="todo",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    message_view = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            triggerMessageId=None,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-alive",
+        ),
+    )
+    assert message_view.status == "streaming"
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == message_view.message_id)
+        .one()
+    )
+    test_db.refresh(task)
+    ai_state = dict((task.metadata_json or {})["ai_state"])
+    ai_state["lease_expires_at"] = (
+        datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10)
+    ).isoformat()
+    task.metadata_json = {**dict(task.metadata_json or {}), "ai_state": ai_state}
+    now = datetime.now(UTC).replace(tzinfo=None)
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="device-1",
+        assigner_user_id=test_user.id,
+        status="running",
+        priority_weight=20,
+        queued_at=now,
+        started_at=now,
+        completed_at=EPOCH_TIME,
+        lease_expires_at=now + timedelta(minutes=5),
+        heartbeat_at=now,
+        retry_attempt=0,
+        max_retries=1,
+        error_message="",
+        execution_note="",
+        approval_status="",
+        approved_by_user_id=0,
+        approved_at=EPOCH_TIME,
+        rejected_reason="",
+        runtime_device_id="device-1",
+        runtime_task_id="runtime-task-alive",
+        execution_payload="",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    values = loop_item_service.response_values(test_db, task, test_user.id)
+    assert values["ai_state"]["status"] == "running"
+    test_db.refresh(message)
+    assert message.status == "streaming"
+
+
+def test_runtime_activity_key_unique_index_blocks_duplicate_activity(
+    test_db: Session, test_user: User
+) -> None:
+    """The database must reject a second active message for the same runtime."""
+
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Unique activity",
+        description="",
+        status="todo",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    activity_key = project_chat_service._runtime_activity_key(
+        "device-1", "codex-queue-9", ""
+    )
+    assert activity_key is not None
+    assert activity_key != project_chat_service._runtime_activity_key(
+        "device-2", "codex-queue-9", ""
+    )
+
+    def message_row() -> ProjectChatMessage:
+        return ProjectChatMessage(
+            message_id=str(uuid.uuid4()),
+            client_message_id=str(uuid.uuid4()),
+            runtime_activity_key=activity_key,
+            project_id=project.id,
+            task_id=task.id,
+            sender_type="agent",
+            sender_id="12",
+            sender_name="Bot",
+            message_type="agent_chunk",
+            content="",
+            metadata_json={},
+            trigger_message_id="",
+            reply_to_message_id="",
+            thread_root_message_id="",
+            agent_id="12",
+            runtime_device_id="device-1",
+            runtime_task_id="codex-queue-9",
+            status="streaming",
+        )
+
+    test_db.add(message_row())
+    test_db.commit()
+    test_db.add(message_row())
+    with pytest.raises(IntegrityError):
+        test_db.commit()
+    test_db.rollback()
 
 
 def _running_ai_task(

@@ -228,12 +228,6 @@ class ProjectAutomationRun(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
 
 
-class ProjectAutomationBugLink(LoopNode):
-    """Stable bug identity used to make automation-created tasks idempotent."""
-
-    __mapper_args__ = {"polymorphic_identity": "automation_bug_link"}
-
-
 class CloudProjectLocalBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "local_binding"}
 
@@ -384,6 +378,24 @@ def loop_datetime_is_unset(column: object) -> object:
 def loop_datetime_value_is_unset(value: datetime | None) -> bool:
     """Match an unset datetime value in both nullable and sentinel schemas."""
     return value is None or value in _MYSQL_UNSET_DATETIMES
+
+
+def loop_unset_datetime_for_connection(
+    connection: Connection, attribute: str
+) -> datetime | None:
+    """Return the correct unset datetime for the connected schema.
+
+    Some deployed MySQL schemas retain historical ``NOT NULL`` datetime
+    columns. Updates, unlike inserts, do not pass through the insert adapter,
+    so services clearing one of those columns must use its sentinel value.
+    """
+
+    if attribute not in _MYSQL_NON_NULL_DEFAULTS:
+        raise ValueError(f"Unsupported LoopNode datetime attribute: {attribute}")
+    if attribute in loop_node_non_nullable_attributes(connection):
+        value = _MYSQL_NON_NULL_DEFAULTS[attribute]
+        return value if isinstance(value, datetime) else None
+    return None
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)

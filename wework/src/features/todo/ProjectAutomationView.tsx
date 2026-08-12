@@ -1,5 +1,5 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
@@ -17,6 +17,7 @@ export function ProjectAutomationView({
   deviceApi,
   modelApi,
   localProjects,
+  runtimeWork,
   currentUserId,
   canManageAgents,
   onOpenTask,
@@ -29,6 +30,7 @@ export function ProjectAutomationView({
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
   localProjects: ProjectWithTasks[]
+  runtimeWork?: RuntimeWorkListResponse | null
   currentUserId?: string | number
   canManageAgents: boolean
   onOpenTask?: (item: CloudLoopItem) => void
@@ -60,6 +62,7 @@ export function ProjectAutomationView({
           deviceApi={deviceApi}
           modelApi={modelApi}
           localProjects={localProjects}
+          runtimeWork={runtimeWork}
           canManage={canManageAgents}
         />
         <section className="mt-8 border-t border-border pt-6">

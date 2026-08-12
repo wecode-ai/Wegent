@@ -25,7 +25,7 @@ class ProjectAutomationCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
     cron_expression: str = Field(min_length=1, max_length=100)
-    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
     agent_id: str = Field(min_length=1, max_length=64)
     enabled: bool = True
 
@@ -66,6 +66,7 @@ class ProjectAutomationRunView(ProjectChatSchema):
     project_id: str
     trigger: Literal["scheduled", "manual"]
     status: AutomationRunStatus
+    timezone: str
     scheduled_for: datetime
     expires_at: datetime | None
     task_id: str | None
@@ -73,16 +74,3 @@ class ProjectAutomationRunView(ProjectChatSchema):
     error: str | None
     created_at: datetime
     updated_at: datetime
-
-
-class AutomationBugUpsert(ProjectChatSchema):
-    bug_key: str = Field(min_length=1, max_length=512)
-    title: str = Field(min_length=1, max_length=255)
-    evidence: str = Field(min_length=1, max_length=100_000)
-    reproduction: str = Field(default="", max_length=100_000)
-    priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
-
-
-class AutomationBugUpsertResponse(ProjectChatSchema):
-    action: Literal["created", "updated", "reopened"]
-    task_id: str

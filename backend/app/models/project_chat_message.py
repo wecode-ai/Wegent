@@ -48,6 +48,12 @@ class ProjectChatMessage(Base):
         String(255), nullable=False, default="", server_default=""
     )
     runtime_task_id = Column(String(255), nullable=False, default="", server_default="")
+    # One activity message per (runtime device, task, trigger): robot runs use
+    # an empty trigger, chat continuations and subagent cards carry their own
+    # trigger. The unique index turns "exactly one comment per run" into a
+    # database invariant instead of a check-then-insert convention that races
+    # across threads. NULL for user messages and soft-deleted placeholders.
+    runtime_activity_key = Column(String(64), nullable=True)
     status = Column(
         String(16), nullable=False, default="completed", server_default="completed"
     )
@@ -79,5 +85,10 @@ class ProjectChatMessage(Base):
         Index("idx_project_chat_thread_order", "thread_root_message_id", "id"),
         Index("idx_project_chat_trigger_agent", "trigger_message_id", "agent_id"),
         Index("idx_project_chat_runtime", "runtime_device_id", "runtime_task_id", "id"),
+        Index(
+            "uniq_project_chat_runtime_activity",
+            "runtime_activity_key",
+            unique=True,
+        ),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )

@@ -23,7 +23,6 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
-    ProjectAutomationBugLink,
     ProjectAutomationRule,
     ProjectAutomationRun,
 )
@@ -83,7 +82,6 @@ __all__ = [
     "LoopItemCollaborator",
     "ProjectAutomationRule",
     "ProjectAutomationRun",
-    "ProjectAutomationBugLink",
     "Delivery",
     "DeliveryAsset",
     "User",

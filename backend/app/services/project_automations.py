@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,20 +14,17 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, aliased
 
 from app.models.delivery import (
-    CloudProject,
-    LoopItem,
-    ProjectAutomationBugLink,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
+    loop_unset_datetime_for_connection,
 )
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.project_automation import (
-    AutomationBugUpsert,
     ProjectAutomationCreate,
     ProjectAutomationUpdate,
 )
@@ -43,6 +39,14 @@ logger = logging.getLogger(__name__)
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _utc_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _metadata(row: object) -> dict:
@@ -129,7 +133,9 @@ class ProjectAutomationService:
         expression = values.cron_expression or str(
             metadata.get("cron_expression") or ""
         )
-        timezone_name = values.timezone or str(metadata.get("timezone") or "UTC")
+        timezone_name = values.timezone or str(
+            metadata.get("timezone") or "Asia/Shanghai"
+        )
         _next_run(expression, timezone_name, utcnow())
         if values.agent_id is not None:
             row.assignee_agent_id = self._agent(db, project_id, values.agent_id).id
@@ -144,7 +150,7 @@ class ProjectAutomationService:
         row.due_at = (
             _next_run(expression, timezone_name, utcnow())
             if row.status == "enabled"
-            else None
+            else loop_unset_datetime_for_connection(db.connection(), "due_at")
         )
         row.updated_by_user_id = user_id
         row.version += 1
@@ -159,9 +165,15 @@ class ProjectAutomationService:
         row = self._rule(db, project_id, automation_id)
         row.deleted_at = utcnow()
         row.status = "disabled"
-        row.due_at = None
+        row.due_at = loop_unset_datetime_for_connection(db.connection(), "due_at")
         row.version += 1
         db.commit()
+        logger.info(
+            "[ProjectAutomation] Deleted rule=%s project=%s user=%s",
+            automation_id,
+            project_id,
+            user_id,
+        )
 
     async def run_now(
         self, db: Session, project_id: str, automation_id: str, user_id: int
@@ -170,13 +182,16 @@ class ProjectAutomationService:
         rule = self._rule(db, project_id, automation_id)
         run = self._create_run(db, rule, "manual", utcnow(), None)
         await self._dispatch_if_available(db, rule, run)
-        return self._run_view(run)
+        return self._run_view(
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
 
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
-        self._rule(db, project_id, automation_id)
+        rule = self._rule(db, project_id, automation_id)
+        rule_timezone = str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         rows = (
             db.query(ProjectAutomationRun)
             .filter(
@@ -187,7 +202,7 @@ class ProjectAutomationService:
             .limit(100)
             .all()
         )
-        return [self._run_view(row) for row in rows]
+        return [self._run_view(row, rule_timezone) for row in rows]
 
     def cancel_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
@@ -196,6 +211,12 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+        rule = db.get(ProjectAutomationRule, run.parent_id)
+        rule_timezone = (
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            if rule is not None
+            else "Asia/Shanghai"
+        )
         if run.status not in {"pending", "waiting_device"}:
             if run.status != "running" or not run.task_id:
                 raise HTTPException(
@@ -220,12 +241,12 @@ class ProjectAutomationService:
                 note="Automation run cancelled by user",
             )
             db.refresh(run)
-            return self._run_view(run)
+            return self._run_view(run, rule_timezone)
         run.status = "cancelled"
         run.version += 1
         db.commit()
         db.refresh(run)
-        return self._run_view(run)
+        return self._run_view(run, rule_timezone)
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()
@@ -269,7 +290,7 @@ class ProjectAutomationService:
             scheduled_for = rule.due_at or now
             next_at = _next_run(
                 str(metadata.get("cron_expression") or ""),
-                str(metadata.get("timezone") or "UTC"),
+                str(metadata.get("timezone") or "Asia/Shanghai"),
                 max(scheduled_for, now),
             )
             self._expire_scheduled_waits(db, rule.id)
@@ -323,119 +344,6 @@ class ProjectAutomationService:
                 if rule is not None:
                     await self._dispatch_if_available(db, rule, run)
         return dispatched
-
-    async def upsert_bug(
-        self,
-        db: Session,
-        run_id: str,
-        user: User,
-        values: AutomationBugUpsert,
-    ) -> tuple[str, LoopItem]:
-        run = db.get(ProjectAutomationRun, run_id)
-        if run is None or run.status != "running" or not run.task_id:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "Active automation run not found"
-            )
-        rule = (
-            db.query(ProjectAutomationRule)
-            .filter(ProjectAutomationRule.id == run.parent_id)
-            .with_for_update()
-            .one_or_none()
-        )
-        if rule is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation not found")
-        require_cloud_project_role(
-            db, str(rule.cloud_project_id), user.id, BaseRole.Developer
-        )
-        digest = hashlib.sha256(values.bug_key.encode("utf-8")).hexdigest()
-        link = (
-            db.query(ProjectAutomationBugLink)
-            .filter(
-                ProjectAutomationBugLink.parent_id == rule.id,
-                ProjectAutomationBugLink.sha256 == digest,
-                loop_datetime_is_unset(ProjectAutomationBugLink.deleted_at),
-            )
-            .first()
-        )
-        evidence = values.evidence
-        if values.reproduction:
-            evidence = f"{evidence}\n\n## Reproduction\n{values.reproduction}"
-        if link is not None and link.loop_item_id:
-            item = db.get(LoopItem, link.loop_item_id)
-            if item is not None:
-                action = "reopened" if item.status == "completed" else "updated"
-                item.title = values.title
-                item.description = evidence
-                item.priority = values.priority
-                if action == "reopened":
-                    project = db.get(CloudProject, rule.cloud_project_id)
-                    statuses = (
-                        loop_item_service._project_status_ids(project)
-                        if project
-                        else []
-                    )
-                    item.status = statuses[0] if statuses else item.status
-                    item.completed_at = None
-                    agent = db.get(ProjectChatAgent, rule.assignee_agent_id)
-                    if agent is not None:
-                        config = bot_config(agent)
-                        loop_item_execution_service.create_for_assignment(
-                            db,
-                            loop_item_id=item.id,
-                            cloud_project_id=str(rule.cloud_project_id),
-                            agent=agent,
-                            assigner_user_id=user.id,
-                            environment=str(
-                                config.get("execution_environment") or "local"
-                            ),
-                            execution_device_id=(
-                                config.get("execution_device_id")
-                                if isinstance(config.get("execution_device_id"), str)
-                                else None
-                            ),
-                            priority=item.priority,
-                        )
-                item.updated_by_user_id = user.id
-                item.version += 1
-                db.commit()
-                db.refresh(item)
-                return action, item
-        item = loop_item_service.create(
-            db,
-            str(rule.cloud_project_id),
-            user.id,
-            LoopItemCreate(
-                title=values.title,
-                description=evidence,
-                parent_id=run.task_id,
-                assignee_agent_id=rule.assignee_agent_id,
-                priority=values.priority,
-                tags=["automation", "bug"],
-            ),
-            commit=False,
-        )
-        item_metadata = _metadata(item)
-        item_metadata["automation"] = {
-            "rule_id": rule.id,
-            "run_id": run.id,
-            "bug_key": values.bug_key,
-            "trigger": _metadata(run).get("trigger"),
-            "scheduled_for": _metadata(run).get("scheduled_for"),
-        }
-        item.metadata_json = item_metadata
-        link = ProjectAutomationBugLink(
-            cloud_project_id=rule.cloud_project_id,
-            parent_id=rule.id,
-            loop_item_id=item.id,
-            name=values.bug_key,
-            sha256=digest,
-            status="active",
-            created_by_user_id=user.id,
-        )
-        db.add(link)
-        db.commit()
-        db.refresh(item)
-        return "created", item
 
     async def _dispatch_if_available(
         self, db: Session, rule: ProjectAutomationRule, run: ProjectAutomationRun
@@ -540,7 +448,7 @@ class ProjectAutomationService:
         agent: ProjectChatAgent,
         device_id: str,
     ) -> None:
-        """Create the scan task and its queued execution for an available runner."""
+        """Create the scheduled task and its queued execution."""
 
         creator = db.get(User, rule.created_by_user_id)
         if creator is None:
@@ -555,7 +463,7 @@ class ProjectAutomationService:
             if isinstance(scheduled_value, str)
             else run.created_at
         )
-        timezone_name = str(_metadata(rule).get("timezone") or "UTC")
+        timezone_name = str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         try:
             local_scheduled_for = scheduled_for.replace(tzinfo=timezone.utc).astimezone(
                 ZoneInfo(timezone_name)
@@ -568,10 +476,10 @@ class ProjectAutomationService:
             creator.id,
             LoopItemCreate(
                 title=f"{rule.title} · {local_scheduled_for:%Y-%m-%d %H:%M}",
-                description=self._scan_prompt(rule, run),
+                description=rule.description or "",
                 assignee_agent_id=agent.id,
                 priority="medium",
-                tags=["automation", "bug-scan"],
+                tags=["automation"],
             ),
         )
         item_metadata = _metadata(item)
@@ -595,16 +503,6 @@ class ProjectAutomationService:
             device_id,
         )
 
-    @staticmethod
-    def _scan_prompt(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
-        return (
-            f"{rule.description}\n\n"
-            "This is a Wework board automation scan. Do not fix multiple bugs in this "
-            "parent task. For every bug, call report_automation_bug with a stable bug_key, "
-            "evidence, reproduction steps, and priority. Each reported bug becomes an "
-            f"independent child repair task. Automation run id: {run.id}."
-        )
-
     def _create_run(
         self,
         db: Session,
@@ -625,6 +523,7 @@ class ProjectAutomationService:
             created_by_user_id=rule.created_by_user_id,
             metadata_json={
                 "trigger": trigger,
+                "timezone": str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
                 "scheduled_for": scheduled_for.isoformat(),
                 "error": None,
             },
@@ -705,7 +604,7 @@ class ProjectAutomationService:
             "name": row.title or "",
             "prompt": row.description or "",
             "cron_expression": str(metadata.get("cron_expression") or ""),
-            "timezone": str(metadata.get("timezone") or "UTC"),
+            "timezone": str(metadata.get("timezone") or "Asia/Shanghai"),
             "agent_id": row.assignee_agent_id,
             "agent_name": (
                 (agent.title or agent.name or "AI") if agent else "Unavailable"
@@ -715,16 +614,20 @@ class ProjectAutomationService:
             ),
             "execution_device_id": config.get("execution_device_id"),
             "enabled": row.status == "enabled",
-            "next_run_at": row.due_at,
-            "last_run_at": datetime.fromisoformat(last_run) if last_run else None,
+            "next_run_at": _utc_aware(row.due_at),
+            "last_run_at": _utc_aware(
+                datetime.fromisoformat(last_run) if last_run else None
+            ),
             "last_run_status": last_run_row.status if last_run_row else None,
             "version": row.version,
-            "created_at": row.created_at,
-            "updated_at": row.updated_at,
+            "created_at": _utc_aware(row.created_at),
+            "updated_at": _utc_aware(row.updated_at),
         }
 
     @staticmethod
-    def _run_view(row: ProjectAutomationRun) -> dict:
+    def _run_view(
+        row: ProjectAutomationRun, fallback_timezone: str = "Asia/Shanghai"
+    ) -> dict:
         metadata = _metadata(row)
         scheduled = metadata.get("scheduled_for")
         return {
@@ -733,15 +636,16 @@ class ProjectAutomationService:
             "project_id": str(row.cloud_project_id),
             "trigger": metadata.get("trigger") or row.source or "scheduled",
             "status": row.status,
-            "scheduled_for": (
+            "timezone": str(metadata.get("timezone") or fallback_timezone),
+            "scheduled_for": _utc_aware(
                 datetime.fromisoformat(scheduled) if scheduled else row.created_at
             ),
-            "expires_at": row.due_at,
+            "expires_at": _utc_aware(row.due_at),
             "task_id": row.task_id,
             "device_id": row.device_id or None,
             "error": row.description or None,
-            "created_at": row.created_at,
-            "updated_at": row.updated_at,
+            "created_at": _utc_aware(row.created_at),
+            "updated_at": _utc_aware(row.updated_at),
         }
 
 

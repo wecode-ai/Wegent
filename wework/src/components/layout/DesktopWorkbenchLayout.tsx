@@ -861,6 +861,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               <CloudTodoWorkspace
                 user={state.user}
                 localProjects={localTodoProjects}
+                runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 activeProjectId={

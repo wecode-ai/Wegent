@@ -68,11 +68,10 @@ describe('ProjectAutomationRulesSection', () => {
     fireEvent.change(screen.getByTestId('project-automation-prompt'), {
       target: { value: '扫描回归 Bug' },
     })
-    fireEvent.change(screen.getByTestId('project-automation-frequency'), {
-      target: { value: 'weekdays' },
-    })
+    fireEvent.click(screen.getByTestId('project-automation-frequency'))
+    fireEvent.click(screen.getByTestId('project-automation-frequency-option-weekdays'))
     fireEvent.change(screen.getByTestId('project-automation-time'), {
-      target: { value: '04:30' },
+      target: { value: '04:37' },
     })
     fireEvent.click(screen.getByTestId('project-automation-save'))
 
@@ -82,7 +81,8 @@ describe('ProjectAutomationRulesSection', () => {
         expect.objectContaining({
           name: '每日 Bug 扫描',
           prompt: '扫描回归 Bug',
-          cronExpression: '30 4 * * 1-5',
+          cronExpression: '37 4 * * 1-5',
+          timezone: 'Asia/Shanghai',
           agentId: 'agent-1',
         })
       )
@@ -96,6 +96,7 @@ describe('ProjectAutomationRulesSection', () => {
       projectId: '1',
       trigger: 'scheduled' as const,
       status: 'waiting_device' as const,
+      timezone: 'Asia/Shanghai',
       scheduledFor: '2026-08-11T19:00:00Z',
       expiresAt: '2026-08-12T19:00:00Z',
       taskId: null,
@@ -124,7 +125,56 @@ describe('ProjectAutomationRulesSection', () => {
     fireEvent.click(await screen.findByTestId('project-automation-rule-rule-1'))
 
     expect(await screen.findByTestId('project-automation-runs')).toHaveTextContent(
-      'workbench.project_automation_waiting_device'
+      'workbench.project_automation_running'
     )
+    expect(screen.getByTestId('project-automation-cancel-run-run-1')).toBeInTheDocument()
+    expect(screen.getByTestId('project-automation-rules')).toHaveTextContent('2026-08-12 03:00')
+    expect(screen.getByTestId('project-automation-rules')).toHaveTextContent(
+      'workbench.project_automation_timezone_shanghai'
+    )
+  })
+
+  it('shows a finished run as completed and keeps its outcome text', async () => {
+    const finishedRun = {
+      id: 'run-2',
+      automationId: rule.id,
+      projectId: '1',
+      trigger: 'scheduled' as const,
+      status: 'failed' as const,
+      timezone: 'Asia/Shanghai',
+      scheduledFor: '2026-08-11T19:00:00Z',
+      expiresAt: null,
+      taskId: null,
+      deviceId: null,
+      error: 'Robot is unavailable',
+      createdAt: '2026-08-11T19:00:00Z',
+      updatedAt: '2026-08-11T19:00:00Z',
+    }
+    const api = {
+      list: vi.fn().mockResolvedValue([rule]),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([finishedRun]),
+      cancelRun: vi.fn(),
+    }
+    const agentApi = {
+      list: vi.fn().mockResolvedValue([agent]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+
+    render(<ProjectAutomationRulesSection projectId="1" api={api} agentApi={agentApi} canManage />)
+
+    fireEvent.click(await screen.findByTestId('project-automation-rule-rule-1'))
+
+    expect(await screen.findByTestId('project-automation-runs')).toHaveTextContent(
+      'workbench.project_automation_completed'
+    )
+    expect(screen.getByTestId('project-automation-run-error-run-2')).toHaveTextContent(
+      'Robot is unavailable'
+    )
+    expect(screen.queryByTestId('project-automation-cancel-run-run-2')).not.toBeInTheDocument()
   })
 })

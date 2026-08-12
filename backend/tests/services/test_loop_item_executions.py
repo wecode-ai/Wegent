@@ -16,6 +16,7 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRun,
     ProjectChatAgent,
+    loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
 from app.models.loop_item_execution import LoopItemExecution
@@ -360,6 +361,67 @@ def test_runtime_completion_finishes_project_automation(
     test_db.refresh(run)
     assert run.status == "succeeded"
     assert run.completed_at is not None
+    # A successful run without spawned child tasks must not inherit the
+    # bug-scan wording ("No bugs found.").
+    assert run.description == ""
+
+
+def test_automation_summary_is_generic_with_child_tasks(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        task_id=item.id,
+        title="Automation run",
+        description="",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    child = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        title="Child work",
+        description="",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(run)
+    test_db.add(child)
+    test_db.commit()
+    child_execution = _make_execution(test_db, child, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.heartbeat(
+        test_db,
+        execution_id=child_execution.id,
+        runtime_device_id="cloud-device-1",
+        runtime_task_id="codex-robot-child",
+    )
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id="codex-robot-child",
+        event_name="response.completed",
+        payload={"data": {}},
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    test_db.refresh(run)
+    assert run.status == "succeeded"
+    assert run.description == "Completed 1 child task(s)."
 
 
 def test_complete_truncates_long_execution_note(
@@ -639,9 +701,321 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert "do not call list_spaces" in project_chat
     assert f"/todos/{item.id}" in project_chat
     assert payload["cloudProjectId"] == str(project.id)
-    assert payload["ephemeral"] is True
-    assert payload["continuable"] is True
+    assert "ephemeral" not in payload
+    assert "continuable" not in payload
     assert payload["runtime"] == "codex"
+
+
+def test_runtime_payload_uses_robot_bound_local_project() -> None:
+    from types import SimpleNamespace
+
+    payload = loop_item_execution_service._build_runtime_payload(
+        item=SimpleNamespace(
+            id="item-1",
+            cloud_project_id="project-1",
+            title="Bound task",
+            local_project_id=0,
+        ),
+        agent=SimpleNamespace(
+            id="agent-1",
+            title="Robot",
+            name="Robot",
+            local_project_id=91,
+            device_id=None,
+            metadata_json={},
+        ),
+        creator=SimpleNamespace(id=1, user_name="tester"),
+        team=None,
+        prompt="Run task",
+        runtime_task_id="runtime-task-1",
+    )
+
+    assert payload["local_project_id"] == 91
+    assert payload["executionRequest"]["standalone_chat_workspace"] is False
+
+
+def test_claim_binds_canonical_runtime_identity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    assert claimed.runtime_task_id == f"codex-queue-{claimed.id}"
+    assert claimed.runtime_device_id == "cloud-device-1"
+
+    task = loop_item_execution_service.resolve_task_context(
+        test_db, execution=claimed, user_id=test_user.id
+    )
+    payload = loop_item_execution_service.build_runtime_payload(
+        test_db, execution=claimed, task=task
+    )
+    assert payload is not None
+    assert payload["taskId"] == f"codex-queue-{claimed.id}"
+    assert payload["executionRequest"]["task_id"] == f"codex-queue-{claimed.id}"
+    assert payload["executionRequest"]["subtask_id"] == (
+        f"codex-queue-{claimed.id}-assistant"
+    )
+
+
+def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+
+    first = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    second = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    assert first is not None and second is not None
+    assert first.message_id == second.message_id
+    messages = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == item.id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .all()
+    )
+    assert len(messages) == 1
+    assert messages[0].status == "streaming"
+    assert messages[0].runtime_task_id == f"codex-queue-{claimed.id}"
+
+
+def test_runtime_event_opens_activity_when_start_report_races_ahead(
+    test_db: Session, test_user: User
+) -> None:
+    """Events arriving before the transport's start report must not be dropped."""
+
+    from app.services.project_chat.service import project_chat_service
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+
+    result = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.output_text.delta",
+        payload={"data": {"delta": "hello from the executor"}},
+    )
+    assert result is not None
+    message, mode = result
+    assert mode == "delta"
+    assert message.content == "hello from the executor"
+
+
+def test_requeue_drops_empty_placeholder_activity(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
+
+    loop_item_execution_service.fail(
+        test_db,
+        execution_id=claimed.id,
+        error="device went offline",
+        requeue_infra=True,
+    )
+    messages = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .all()
+    )
+    assert messages == []
+
+
+def test_placeholder_cleanup_allows_reopening_same_runtime(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+
+    first = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    loop_item_execution_service.close_placeholder_activity(test_db, execution=claimed)
+    second = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    assert first is not None and second is not None
+    assert first.message_id != second.message_id
+
+    active = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .all()
+    )
+    assert [message.message_id for message in active] == [second.message_id]
+
+
+def test_terminal_report_closes_streaming_activity(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
+
+    loop_item_execution_service.complete(
+        test_db,
+        execution_id=claimed.id,
+        note="verified and fixed",
+    )
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert message.status == "completed"
+    assert message.content == "verified and fixed"
+
+
+def test_terminal_failure_closes_streaming_activity_with_error(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
+
+    loop_item_execution_service.fail(
+        test_db,
+        execution_id=claimed.id,
+        error="stream disconnected before completion",
+        requeue=False,
+    )
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert message.status == "failed"
+    assert message.content == "stream disconnected before completion"
+
+
+def test_automation_run_uses_the_same_generic_project_context_as_other_tasks(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Scheduled bug scan")
+    item.description = "Scan the checkout for reproducible bugs."
+    item.metadata_json = {"automation": {"run_id": "run-123"}}
+    test_db.commit()
+    execution = _make_execution(test_db, item, bot, test_user)
+
+    task = loop_item_execution_service.resolve_task_context(
+        test_db, execution=execution, user_id=test_user.id
+    )
+    assert task is not None
+    assert task.description == "Scan the checkout for reproducible bugs."
+
+    payload = loop_item_execution_service.build_runtime_payload(
+        test_db, execution=execution, task=task
+    )
+    assert payload is not None
+    project_chat = payload["additionalContext"]["projectChat"]["value"]
+    assert "get_board_item" in project_chat
+    assert "report_automation_bug" not in project_chat
+    assert "automation scan" not in project_chat
+    assert "run-123" not in project_chat
 
 
 def test_claim_batch_moves_queued_to_claimed_within_capacity(

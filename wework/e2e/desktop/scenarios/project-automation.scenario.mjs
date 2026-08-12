@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
 const RULE_ID = 'automation-rule-1'
+const MODEL_NAME = 'gpt-5-codex'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -32,6 +33,21 @@ const AGENT = {
   version: 1,
   createdAt: '2026-08-11T00:00:00',
   updatedAt: '2026-08-11T00:00:00',
+}
+
+const MODEL = {
+  name: MODEL_NAME,
+  type: 'runtime',
+  displayName: 'GPT-5 Codex',
+  provider: 'openai',
+  modelId: 'gpt-5-codex',
+  namespace: 'default',
+  config: {
+    protocol: 'openai-responses',
+    apiFormat: 'responses',
+  },
+  runtime: { family: 'openai.openai-responses' },
+  isActive: true,
 }
 
 const RULE = {
@@ -70,6 +86,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const runs = []
   let createdPayload = null
   let cancelRequested = false
+  let modelRequests = 0
 
   return {
     async handleHttp(request, response, url) {
@@ -89,6 +106,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
         json(response, 200, [AGENT])
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
+        modelRequests += 1
+        json(response, 200, { data: [MODEL] })
         return true
       }
       if (
@@ -170,9 +192,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
       if (request.method === 'GET' && url.pathname === '/api/devices') {
         json(response, 200, {
-          devices: [
+          items: [
             {
-              device_id: AGENT.executionDeviceId,
+              device_id: 'local-device',
               device_name: 'E2E Mac',
               device_type: 'local',
               status: 'offline',
@@ -202,6 +224,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const modelDeadline = Date.now() + uiTimeoutMs
+      while (modelRequests === 0 && Date.now() < modelDeadline) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+      }
+      assert.ok(modelRequests >= 1, 'cloud model catalog did not load before the automation view')
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       await control.command('click', '[data-testid="cloud-project-automation-view"]')
       await control.command('waitFor', '[data-testid="project-automation-rules"]', {
         timeoutMs: uiTimeoutMs,
@@ -213,9 +241,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('fill', '[data-testid="project-automation-prompt"]', {
         value: '扫描回归 Bug，并为每个 Bug 创建独立修复任务。',
       })
-      await control.command('fill', '[data-testid="project-automation-agent"]', {
-        value: AGENT_ID,
-      })
+      await control.command('click', '[data-testid="project-automation-agent"]')
+      await control.command('click', `[data-testid="project-automation-agent-option-${AGENT_ID}"]`)
+      await captureScreenshot(control, 'project-automation-00-create-dialog.png')
       await control.command('click', '[data-testid="project-automation-save"]')
       await control.command(
         'waitFor',
@@ -255,10 +283,47 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'project-automation-02-cancelled-run.png')
+
+      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-add"]')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-model"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-model-menu"]', {
+        text: 'GPT-5 Codex',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]')
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-name"]', {
+        value: '回归巡检机器人',
+      })
+      await control.command('click', '[data-testid="cloud-project-chat-agent-device"]')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device-menu"]', {
+        text: 'local-device',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'click',
+        '[data-testid="cloud-project-chat-agent-device-option-local-device"]'
+      )
+      const saveWithoutModel = await control.command(
+        'getAttribute',
+        '[data-testid="cloud-project-chat-agent-save"]',
+        { value: 'disabled' }
+      )
+      assert.equal(saveWithoutModel, '', 'save must stay disabled while no model is selected')
+      await captureScreenshot(control, 'project-automation-03-robot-model-required.png')
     },
 
     diagnostics() {
-      return { cancelRequested, createdPayload, rules, runs }
+      return {
+        cancelRequested,
+        createdPayload,
+        modelRequests,
+        rules,
+        runs,
+      }
     },
   }
 }

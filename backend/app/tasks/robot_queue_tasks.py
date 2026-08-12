@@ -31,7 +31,6 @@ from app.services.device_service import device_service
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
-from app.services.project_chat.service import bot_config, project_chat_service
 
 logger = logging.getLogger(__name__)
 
@@ -918,9 +917,9 @@ async def _dispatch_execution(
     )
     if payload is None:
         raise RuntimeError(f"Execution {execution.id} payload cannot be built")
-    # Give every run a unique runtime task id so its events map back to this
-    # execution and repeated runs of the same task never collide.
-    task_id = f"codex-queue-{execution.id}"
+    # The canonical runtime task id is bound at claim time; keep the same
+    # identity here so events always map back to this execution.
+    task_id = execution.runtime_task_id or f"codex-queue-{execution.id}"
     payload["taskId"] = task_id
     execution_request = payload.get("executionRequest")
     if isinstance(execution_request, dict):
@@ -975,29 +974,15 @@ async def _dispatch_execution(
         task_id,
         event_name,
     )
-    runtime_task_id = task_id
     try:
-        from app.schemas.project_chat import ProjectChatAgentStart
-
-        start_request = ProjectChatAgentStart(
-            project_id=str(task.cloud_project_id),
-            task_id=task.id,
-            trigger_message_id=None,
-            agent_id=agent.id,
-            runtime_device_id=execution.execution_device_id,
-            runtime_task_id=runtime_task_id,
-            prompt=prompt,
-            auto_retry=True,
-            model=bot_config(agent).get("model"),
-        )
-        project_chat_service.start_agent_response(
+        loop_item_execution_service.open_execution_activity(
             db,
-            user_id=creator.id,
-            request=start_request,
+            execution=execution,
+            prompt=prompt,
         )
     except Exception:
         logger.exception(
-            "[RobotQueue] Failed to start project chat agent response for execution=%s",
+            "[RobotQueue] Failed to open activity comment for execution=%s",
             execution.id,
         )
     logger.info(
@@ -1006,7 +991,7 @@ async def _dispatch_execution(
         task.id,
         agent.id,
         execution.execution_device_id,
-        runtime_task_id,
+        task_id,
     )
 
 

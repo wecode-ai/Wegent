@@ -62,6 +62,18 @@ ACTIVE_STATUSES = {
     STATUS_RUNNING,
 }
 
+# Canonical runtime task identity. The backend owns the name so every channel
+# (cloud RPC, local App puller) reports the same task id and events always
+# match the execution row before any output can arrive.
+RUNTIME_TASK_ID_PREFIX = "codex-queue"
+
+
+def runtime_task_id_for(execution_id: int) -> str:
+    """Return the canonical runtime task id for one execution."""
+
+    return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
+
+
 PRIORITY_WEIGHTS = {
     "none": 0,
     "low": 10,
@@ -308,6 +320,11 @@ class LoopItemExecutionService:
         if claimed != 1:
             return None
         db.refresh(candidate)
+        self._persist_runtime_identity(
+            db,
+            execution=candidate,
+            runtime_device_id=execution_device_id,
+        )
         return candidate
 
     def claim_next_for_device(
@@ -391,6 +408,11 @@ class LoopItemExecutionService:
         if claimed != 1:
             return None
         db.refresh(candidate)
+        self._persist_runtime_identity(
+            db,
+            execution=candidate,
+            runtime_device_id=execution_device_id,
+        )
         return candidate
 
     def claim_batch_for_device(
@@ -599,7 +621,31 @@ class LoopItemExecutionService:
         if claimed != 1:
             return None
         db.refresh(candidate)
+        self._persist_runtime_identity(
+            db,
+            execution=candidate,
+            runtime_device_id=execution_device_id,
+        )
         return candidate
+
+    @staticmethod
+    def _persist_runtime_identity(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        runtime_device_id: str,
+    ) -> None:
+        """Bind the canonical runtime task identity before the executor runs.
+
+        The runtime task id is derived from the execution id and stored on the
+        row at claim time, so runtime events can match the execution even when
+        they arrive before the transport reports the created task.
+        """
+
+        execution.runtime_device_id = runtime_device_id
+        execution.runtime_task_id = runtime_task_id_for(execution.id)
+        db.commit()
+        db.refresh(execution)
 
     # ------------------------------------------------------------------
     # Runtime write-back
@@ -630,6 +676,117 @@ class LoopItemExecutionService:
         db.refresh(row)
         return row
 
+    def execution_for_runtime(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+    ) -> Optional[LoopItemExecution]:
+        """Resolve the running execution owned by a runtime task identity."""
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_task_id == runtime_task_id,
+                LoopItemExecution.status == STATUS_RUNNING,
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+
+    def open_execution_activity(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        prompt: Optional[str] = None,
+    ) -> Optional[object]:
+        """Open the reviewable AI activity message for a started robot run.
+
+        The runtime identity is bound at claim time, so every execution channel
+        (cloud RPC and the local App puller) opens exactly one streaming
+        message before any runtime event can arrive. The project chat service
+        key is (project, task, agent, runtime ids), making this idempotent.
+        """
+
+        if not execution.runtime_device_id or not execution.runtime_task_id:
+            return None
+        from app.schemas.project_chat import ProjectChatAgentStart
+        from app.services.project_chat.service import bot_config, project_chat_service
+
+        existing_streaming = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+                ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                ProjectChatMessage.sender_type == "agent",
+                ProjectChatMessage.status == "streaming",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .count()
+        )
+        logger.info(
+            "[LoopItemExecution] Open activity execution=%s runtime_task_id=%s "
+            "existing_streaming=%s",
+            execution.id,
+            execution.runtime_task_id,
+            existing_streaming,
+        )
+        agent = db.get(ProjectChatAgent, execution.agent_id)
+        if agent is None or not agent.created_by_user_id:
+            logger.warning(
+                "[LoopItemExecution] Activity open skipped: agent=%s unavailable",
+                execution.agent_id,
+            )
+            return None
+        return project_chat_service.start_agent_response(
+            db,
+            user_id=int(agent.created_by_user_id),
+            request=ProjectChatAgentStart(
+                project_id=str(execution.cloud_project_id),
+                task_id=execution.loop_item_id,
+                trigger_message_id=None,
+                agent_id=agent.id,
+                runtime_device_id=execution.runtime_device_id,
+                runtime_task_id=execution.runtime_task_id,
+                prompt=prompt or self.build_robot_prompt(agent),
+                auto_retry=True,
+                model=bot_config(agent).get("model"),
+            ),
+        )
+
+    def close_placeholder_activity(
+        self, db: Session, *, execution: LoopItemExecution
+    ) -> None:
+        """Drop an empty streaming activity when a run is handed back to queue.
+
+        The message is only a placeholder until the first output arrives, so a
+        requeued run must not leave a fake "AI 执行" card behind. Content-bearing
+        messages are left untouched and closed by the normal terminal path.
+        """
+
+        if not execution.runtime_device_id or not execution.runtime_task_id:
+            return
+        rows = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+                ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                ProjectChatMessage.sender_type == "agent",
+                ProjectChatMessage.status == "streaming",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .all()
+        )
+        for row in rows:
+            if (row.content or "").strip():
+                continue
+            row.deleted_at = utcnow()
+            row.runtime_activity_key = None
+        db.commit()
+
     def complete(
         self, db: Session, *, execution_id: int, note: Optional[str] = None
     ) -> Optional[LoopItemExecution]:
@@ -644,6 +801,12 @@ class LoopItemExecutionService:
         if note:
             row.execution_note = self._execution_note(note)
         db.commit()
+        self._finish_runtime_activity(
+            db,
+            execution=row,
+            status_value="completed",
+            content=note,
+        )
         self._finish_project_automation_run(db, row.loop_item_id, "succeeded", note)
         db.refresh(row)
         return row
@@ -691,10 +854,55 @@ class LoopItemExecutionService:
         if note:
             row.execution_note = self._execution_note(note)
         db.commit()
-        if row.status == STATUS_FAILED:
+        if row.status == STATUS_QUEUED:
+            self.close_placeholder_activity(db, execution=row)
+        elif row.status == STATUS_FAILED:
+            self._finish_runtime_activity(
+                db,
+                execution=row,
+                status_value="failed",
+                content=error,
+                error=error,
+            )
             self._finish_project_automation_run(db, row.loop_item_id, "failed", error)
         db.refresh(row)
         return row
+
+    def _finish_runtime_activity(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        status_value: str,
+        content: Optional[str],
+        error: Optional[str] = None,
+    ) -> None:
+        """Close the streaming activity when a channel reports a terminal state.
+
+        Runtime events normally close the message through the project chat
+        projection; direct App-side terminal reports (complete/fail) use this
+        so a started run never leaves a streaming comment behind.
+        """
+
+        if not execution.runtime_device_id or not execution.runtime_task_id:
+            return
+        from app.services.project_chat.service import project_chat_service
+
+        try:
+            project_chat_service.finish_runtime_activity(
+                db,
+                runtime_device_id=execution.runtime_device_id,
+                runtime_task_id=execution.runtime_task_id,
+                status_value=status_value,
+                content=content,
+                error=error,
+            )
+        except Exception:
+            logger.exception(
+                "[LoopItemExecution] Activity finish failed execution=%s status=%s",
+                execution.id,
+                status_value,
+            )
 
     def _finish_project_automation_run(
         self,
@@ -703,7 +911,7 @@ class LoopItemExecutionService:
         status_value: str,
         note: Optional[str],
     ) -> None:
-        """Finish an automation after its scan and child repairs terminate."""
+        """Finish an automation after its run and child tasks terminate."""
 
         from app.models.delivery import ProjectAutomationRun
 
@@ -735,7 +943,7 @@ class LoopItemExecutionService:
             )
             if is_scan_task and not children:
                 terminal_status = "succeeded"
-                summary = str(note).strip() if note else "No bugs found."
+                summary = str(note).strip() if note else ""
             else:
                 executions = [
                     self.latest_for_item(db, item_id=child.id) for child in children
@@ -759,13 +967,13 @@ class LoopItemExecutionService:
                     for execution in executions
                 )
                 summary = (
-                    f"Scan found {len(children)} bug(s): "
-                    f"{completed_count} repaired, "
-                    f"{len(children) - completed_count} require attention."
+                    f"Completed {len(children)} child task(s)."
+                    if completed_count == len(children)
+                    else f"Completed {completed_count} of {len(children)} child task(s)."
                 )
         run.status = terminal_status
         if is_scan_task and status_value in {"failed", "cancelled"}:
-            summary = str(note).strip() if note else f"Scan {terminal_status}."
+            summary = str(note).strip() if note else f"Run {terminal_status}."
         run.description = summary[:2000]
         run.completed_at = utcnow()
         run.version += 1
@@ -820,15 +1028,10 @@ class LoopItemExecutionService:
         cloud dispatches and cloud-project local pulls.
         """
 
-        row = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.runtime_device_id == device_id,
-                LoopItemExecution.runtime_task_id == runtime_task_id,
-                LoopItemExecution.status == STATUS_RUNNING,
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .first()
+        row = self.execution_for_runtime(
+            db,
+            runtime_device_id=device_id,
+            runtime_task_id=runtime_task_id,
         )
         if row is None:
             return None
@@ -953,14 +1156,36 @@ class LoopItemExecutionService:
                     or "wework-gpt-5.6-sol",
                 )
                 model_config["codex_responses_compat_proxy"] = True
-        return self._build_runtime_payload(
+        runtime_task_id = getattr(
+            execution, "runtime_task_id", None
+        ) or runtime_task_id_for(execution.id)
+        payload = self._build_runtime_payload(
             item=task,
             agent=agent,
             creator=creator,
             team=team,
             prompt=self.build_robot_prompt(agent),
             model_config=model_config,
+            runtime_task_id=runtime_task_id,
         )
+        request = payload.get("executionRequest") or {}
+        bot = request.get("bot") if isinstance(request, dict) else None
+        model_config_value = (
+            request.get("model_config") if isinstance(request, dict) else None
+        )
+        logger.info(
+            "[LoopItemExecution] Runtime payload built execution=%s bot_count=%s "
+            "model_config_base_url=%s",
+            execution.id,
+            len(bot) if isinstance(bot, list) else -1,
+            (
+                model_config_value.get("base_url")
+                if isinstance(model_config_value, dict)
+                else None
+            )
+            or None,
+        )
+        return payload
 
     @staticmethod
     def build_robot_prompt(agent: object) -> str:
@@ -1015,6 +1240,7 @@ class LoopItemExecutionService:
         team: Optional[object],
         prompt: str,
         model_config: Optional[dict] = None,
+        runtime_task_id: str,
     ) -> dict:
         """Build the same runtime.tasks.create payload the App sends."""
 
@@ -1033,7 +1259,7 @@ class LoopItemExecutionService:
             runtime_model_id = (
                 model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
             )
-        task_id = f"codex-robot-{getattr(item, 'id', '')}"
+        task_id = runtime_task_id
         subtask_id = f"{task_id}-assistant"
         team_id = int(getattr(team, "id", 0) or 0)
         team_name = getattr(team, "name", "") or ""
@@ -1042,6 +1268,11 @@ class LoopItemExecutionService:
             getattr(agent, "title", None) or getattr(agent, "name", None) or "AI"
         )
         title = getattr(item, "title", None) or getattr(item, "name", None) or ""
+        local_project_id = int(
+            getattr(item, "local_project_id", 0)
+            or getattr(agent, "local_project_id", 0)
+            or 0
+        )
         identity = (
             f"你是 {agent_name}，这个项目任务的 AI 执行者。\n{system_prompt}"
             if system_prompt
@@ -1073,7 +1304,7 @@ class LoopItemExecutionService:
             "system_prompt": identity,
             "prompt": prompt,
             "model_config": model_config or {},
-            "standalone_chat_workspace": True,
+            "standalone_chat_workspace": local_project_id <= 0,
             "enable_tools": True,
             "enable_web_search": False,
             # Match the App's default send. Enabling this unconditionally adds
@@ -1090,9 +1321,8 @@ class LoopItemExecutionService:
             "message": prompt,
             "title": title,
             **({"modelId": runtime_model_id} if runtime_model_id else {}),
-            "ephemeral": True,
-            "continuable": True,
             "cloudProjectId": str(getattr(item, "cloud_project_id", "")),
+            **({"local_project_id": local_project_id} if local_project_id > 0 else {}),
             "executionRequest": execution_request,
             "additionalContext": {
                 "projectChat": {

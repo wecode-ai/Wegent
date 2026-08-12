@@ -9,6 +9,7 @@ the queue page, the local App puller (claim/heartbeat/write-back), and the
 cloud Celery dispatcher (which also calls the service directly).
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -39,6 +40,8 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.project_automations import project_automation_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 claim_router = APIRouter()
@@ -342,38 +345,26 @@ def runtime_start_execution(
         execution_id=execution_id,
         user_id=current_user.id,
     )
-    from app.schemas.project_chat import ProjectChatAgentStart
-    from app.services.project_chat.service import project_chat_service
-
     heartbeat_view = loop_item_execution_service.heartbeat(
         db,
         execution_id=execution_id,
         runtime_device_id=values.runtime_device_id,
         runtime_task_id=values.runtime_task_id,
     )
-    item = db.get(LoopItem, row.loop_item_id)
-    agent = db.get(ProjectChatAgent, row.agent_id)
-    if item is not None and agent is not None:
+    if heartbeat_view is not None:
         try:
-            project_chat_service.start_agent_response(
+            loop_item_execution_service.open_execution_activity(
                 db,
-                user_id=current_user.id,
-                request=ProjectChatAgentStart(
-                    project_id=str(project_id),
-                    task_id=item.id,
-                    trigger_message_id=None,
-                    agent_id=agent.id,
-                    runtime_device_id=values.runtime_device_id,
-                    runtime_task_id=values.runtime_task_id,
-                    prompt=values.prompt,
-                    auto_retry=True,
-                    model=values.model or agent.model,
-                ),
+                execution=row,
+                prompt=values.prompt,
             )
         except Exception:
             # The run itself is healthy; the activity message is best-effort.
-            pass
-    return heartbeat_view
+            logger.exception(
+                "[LoopItemExecution] Runtime start activity open failed execution=%s",
+                execution_id,
+            )
+    return _execution_view(db, row) if heartbeat_view is not None else None
 
 
 @router.post(

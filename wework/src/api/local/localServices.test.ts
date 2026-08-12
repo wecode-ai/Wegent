@@ -654,6 +654,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
+      bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
       modelId: 'gpt-5',
       modelOptions: {
         reasoning: 'medium',
@@ -712,6 +713,7 @@ describe('createLocalAppServices', () => {
           local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
+      bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
       executionRequest: expect.objectContaining({
         task_id: 'task-1',
         subtask_id: expect.any(String),
@@ -726,6 +728,7 @@ describe('createLocalAppServices', () => {
           email: 'hongyu9@example.com',
         },
         cloudProjectId: 'cloud-project-42',
+        bot: [{ id: 'bot-1', name: 'Bot', shell_type: 'codex' }],
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -783,6 +786,58 @@ describe('createLocalAppServices', () => {
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('keeps the backend model_config when the claim payload provides it', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      cloudProjectId: 'cloud-project-42',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'run the scan',
+      title: 'Scan',
+      modelId: 'wecode-kimi',
+      modelConfig: {
+        base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+        api_key: 'short-lived-token',
+        codex_catalog_model_id: 'wework-kimi-k2-7',
+        codex_responses_compat_proxy: true,
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+            api_key: 'short-lived-token',
+            codex_catalog_model_id: 'wework-kimi-k2-7',
+          }),
+        }),
+      })
+    )
   })
 
   test('rejects local runtime task creation without a workspace path', async () => {

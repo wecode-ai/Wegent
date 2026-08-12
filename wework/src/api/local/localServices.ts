@@ -1424,10 +1424,12 @@ interface BuildLocalRuntimeExecutionRequestInput {
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
@@ -1479,14 +1481,19 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
   const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(
-      input.runtime,
-      input.modelId,
-      input.modelType,
-      input.modelOptions,
-      input.cloudModelGateway
-    ),
+    input.modelConfig ??
+      localRuntimeModelConfig(
+        input.runtime,
+        input.modelId,
+        input.modelType,
+        input.modelOptions,
+        input.cloudModelGateway
+      ),
     input.modelOptions
   )
   const reasoning = runtimeReasoning(input.modelOptions)
@@ -1525,7 +1532,7 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [],
+    bot: input.bot ?? [],
     mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
@@ -1714,10 +1721,12 @@ async function createLocalRuntimeTaskPayload(
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,

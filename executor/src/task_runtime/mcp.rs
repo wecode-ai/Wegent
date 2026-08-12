@@ -11,6 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
@@ -33,7 +34,20 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
         .or_else(|| request.extra.get("cloud_project_id"))
         .and_then(id_value)
         .filter(|value| !value.is_empty());
-    if bound_project_id.is_none() && !prompt_references_cloud_projects(&request.prompt) {
+    let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
+    log_executor_event(
+        "space mcp injection decision",
+        &[
+            ("task_id", request.task_id.clone()),
+            (
+                "bound_project_id",
+                bound_project_id.as_deref().unwrap_or("").to_owned(),
+            ),
+            ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
+            ("shell_type", request.resolved_shell_type().unwrap_or_default()),
+        ],
+    );
+    if bound_project_id.is_none() && !prompt_has_cloud_ref {
         return;
     }
     let Ok(executable) = env::current_exe() else {
@@ -100,6 +114,13 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     } else {
         request.mcp_servers.push(server);
     }
+    log_executor_event(
+        "space mcp server injected",
+        &[
+            ("task_id", request.task_id.clone()),
+            ("mcp_server_count", request.mcp_servers.len().to_string()),
+        ],
+    );
 }
 
 fn prompt_references_cloud_projects(prompt: &Value) -> bool {
@@ -201,9 +222,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
         .map(ToOwned::to_owned)
         .or_else(|| default_project_id.clone());
     if requested_project_id.as_deref().is_some_and(|project_id| {
-        is_dingtalk_aitable_project(runtime, project_id)
-            && is_task_provider_tool(name)
-            && !is_backend_only_tool(name)
+        is_dingtalk_aitable_project(runtime, project_id) && is_task_provider_tool(name)
     }) {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
         return text_result(dingtalk_route_redirect(runtime, project_id), false);
@@ -238,9 +257,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
 
     let should_use_backend = backend_url.is_some()
         && auth_token.is_some()
-        && (name == "create_space"
-            || is_backend_only_tool(name)
-            || (requested_project_id.is_some() && !is_locally_routed));
+        && (name == "create_space" || (requested_project_id.is_some() && !is_locally_routed));
     if should_use_backend {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
         return match call_backend_tool(
@@ -622,7 +639,6 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "create_board_item"
             | "update_board_item"
             | "add_board_item_comment"
-            | "report_automation_bug"
             | "list_item_attachments"
             | "upload_item_attachment"
             | "read_item_attachment"
@@ -637,10 +653,6 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "update_table_field"
             | "delete_table_field"
     )
-}
-
-fn is_backend_only_tool(name: &str) -> bool {
-    matches!(name, "report_automation_bug")
 }
 
 async fn call_backend_tool(
@@ -714,15 +726,6 @@ async fn call_backend_tool(
             .json(&json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
             })),
-        "report_automation_bug" => {
-            let run_id = string_argument(arguments, "run_id").map_err(|e| e.to_string())?;
-            client
-                .post(format!(
-                    "{base}/cloud-projects/automation-runs/{}/bugs",
-                    encode_segment(run_id)
-                ))
-                .json(arguments.get("bug").unwrap_or(arguments))
-        }
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -1164,31 +1167,6 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "report_automation_bug",
-            "Report or update one bug found by a Wework board automation scan",
-            json!({
-                "type": "object",
-                "properties": {
-                    "run_id": {"type": "string"},
-                    "bug": {
-                        "type": "object",
-                        "properties": {
-                            "bug_key": {"type": "string", "minLength": 1, "maxLength": 512},
-                            "title": {"type": "string", "minLength": 1, "maxLength": 255},
-                            "evidence": {"type": "string", "minLength": 1, "maxLength": 100000},
-                            "reproduction": {"type": "string", "maxLength": 100000},
-                            "priority": {
-                                "type": "string",
-                                "enum": ["none", "low", "medium", "high", "urgent"]
-                            }
-                        },
-                        "required": ["bug_key", "title", "evidence"]
-                    }
-                },
-                "required": ["run_id", "bug"]
-            }),
-        ),
-        tool(
             "list_item_attachments",
             "List attachments of a board item. Use read_item_attachment to inspect contents.",
             json!({
@@ -1406,9 +1384,9 @@ fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> V
     tools()
         .into_iter()
         .filter(|tool| {
-            tool["name"].as_str().map_or(true, |name| {
-                !is_task_provider_tool(name) || is_backend_only_tool(name)
-            })
+            tool["name"]
+                .as_str()
+                .map_or(true, |name| !is_task_provider_tool(name))
         })
         .collect()
 }
@@ -1826,6 +1804,27 @@ mod tests {
     }
 
     #[test]
+    fn backend_task_search_filters_by_parent_id() {
+        let response = json!({
+            "items": [
+                {"id": "parent", "parent_id": null},
+                {"id": "matching-child", "parent_id": "requested-parent"},
+                {"id": "other-child", "parent_id": "other-parent"}
+            ]
+        });
+
+        let result = filter_backend_tasks(
+            response,
+            &json!({"parent_id": "requested-parent", "limit": 50}),
+        );
+
+        assert_eq!(
+            result,
+            json!([{"id": "matching-child", "parent_id": "requested-parent"}])
+        );
+    }
+
+    #[test]
     fn exposes_only_wework_space_business_vocabulary() {
         let serialized = serde_json::to_string(&tools()).unwrap().to_lowercase();
 
@@ -1837,6 +1836,7 @@ mod tests {
             "project_id",
             "task_id",
             "\"todo\"",
+            "report_automation_bug",
         ] {
             assert!(!serialized.contains(forbidden), "found {forbidden}");
         }
